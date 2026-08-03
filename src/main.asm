@@ -142,7 +142,7 @@ main:
     ld a,ROM_BANK
     ld (slot_backup.slot0),a
 
-    ; Set UART
+    ; Bring the transport up for the debugger
     call transport_activate
 
     ; Show the text

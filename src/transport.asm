@@ -17,6 +17,12 @@
 ;     transport_drain               discard anything pending (100ms quiet)
 ;     transport_drain_with_timeout  same, DE = timeout
 ;
+;   A read or write that times out does NOT return to its caller. It jumps to
+;   the implementation's timeout handler, which stores an error and re-enters
+;   the main loop via drain_main. Every caller above already depends on that —
+;   none of them check for a timeout — so a second implementation has to
+;   preserve it rather than returning an error code.
+;
 ;   Lifecycle (called at the points where the debugger takes and gives back
 ;   the machine)
 ;     transport_init                once, when MAIN is first entered

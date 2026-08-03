@@ -18,7 +18,7 @@ sp_backup:  defw    0
 
 
 ; Test that subroutine returns correctly.
-UT_read_uart_byte_timeout:
+UT_transport_read_byte_timeout:
     ld (sp_backup),sp
     ; Redirect timeout jump
     ld hl,transport_read_byte.timeout
@@ -38,7 +38,7 @@ UT_read_uart_byte_timeout:
 
 
 ; Tests setting of the joystick IO mode.
-UT_set_uart_joystick:
+UT_transport_activate:
     ; Joy port 1
     MEMSETBYTE uart_joyport_selection, 1
     call transport_activate

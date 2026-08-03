@@ -121,7 +121,7 @@ payload_exec_asm:	PAYLOAD_EXEC_ASM = receive_buffer.payload
 
 
 ;===========================================================================
-; Main use: uart.asm
+; Main use: transport_uart.asm
 
 ; Color is changed after each received message.
 border_color:	defb BLACK

@@ -1,5 +1,8 @@
 ;===========================================================================
-; uart.asm
+; transport_uart.asm
+;
+; The joy-port serial transport: upstream dezogif's, unchanged.
+; Implements the interface described in transport.asm.
 ;
 ; Routines for the lowel handling of the UART.
 ; I.e.
@@ -32,7 +35,7 @@
 ; backup.asm's restore path, where a CALL would cost bytes and a stack slot it
 ; does not have. A transport with nothing to hand back expands this to nothing.
 ; Changes:
-;   A
+;   -   (NEXTREG reg,imm is ED 91 nn nn; it touches no Z80 register)
 ;===========================================================================
     MACRO TRANSPORT_DEACTIVATE
     ; Disable joy port IO mode to enable the joysticks

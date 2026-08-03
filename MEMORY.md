@@ -5,6 +5,36 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-03 — Two build modes (UART / WiFi), not a transport replacement
+
+**Decided.** The stub keeps upstream's joy-port serial transport and gains an
+ESP-01 WiFi one beside it. The mode is chosen **at assembly time**; one mode
+per ROM.
+
+**Why.** The serial path works today and costs nothing to keep. It is the
+answer for a debuggee that owns the ESP itself — the ESP-contention risk in
+plan §10 stops being a limitation and becomes a build choice. It also keeps
+upstreaming plausible, since upstream's own transport is still there.
+
+**Consequence, and it is the useful part.** The transport interface is now
+load-bearing rather than tidy: `commands.asm`, `message.asm` and
+`breakpoints.asm` must be assemblable against either mode without knowing
+which. **That makes the UART build a free regression check on the
+abstraction** — if a change breaks serial mode, the ESP assumptions leaked.
+M1's success criterion now has two halves, WiFi working *and* UART still
+equivalent to upstream.
+
+**Not done yet, deliberately.** No `-DTRANSPORT=…` switch, no second Makefile
+target, no stub `wifi.asm`. There is no WiFi code to select between, and
+scaffolding ahead of the thing it scaffolds is how the switch ends up shaped
+wrong. This entry records the decision; M1 implements it.
+
+**Rejected.** Replacing the serial transport outright (the original plan, and
+what every document said until now); carrying both modes in one ROM (8 KB, and
+§10's budget already has ~3.3 KB free — not enough for two AT-command stacks).
+
+---
+
 ## 2026-08-03 — The combined work is GPLv3; upstream's MIT notice is kept
 
 **Decided.** `LICENSE` is the GPLv3 text and covers this project as a whole.

@@ -21,7 +21,10 @@ Next's ESP-01 WiFi module**, is feasible and most of the hard work already exist
   disproportionate payoff: the joysticks stay with the game permanently, and the hardware
   gains a route for PC-initiated break.
 
-**Recommended shape:** fork dezogif, replace the transport layer, add asynchronous break.
+**Recommended shape:** fork dezogif, add a second transport behind an assembly-time switch, add
+asynchronous break. **The joy-port serial transport stays** — the ROM is built in either UART mode
+or WiFi mode, so a user with a working cable setup keeps it, and the serial build remains the
+fallback whenever the ESP is unavailable or in use by the debuggee (§10).
 Everything above the byte stream (DZRP, breakpoints, memory paging, the DeZog client) is
 inherited unchanged.
 
@@ -35,6 +38,9 @@ inherited unchanged.
 
 - A Z80 debug stub for real Next hardware, deployed as a replacement `enNextMf.rom`.
 - DZRP over TCP via the on-board ESP-01, to an unmodified DeZog in VS Code.
+- **Two build modes, chosen at assembly time: UART (upstream's joy-port serial) and WiFi.**
+  Upstream's transport is retained, not replaced. One mode per ROM — the 8 KB budget rules out
+  carrying both.
 - Asynchronous (PC-initiated) break, which dezogif cannot do.
 
 ### Explicitly out of scope
@@ -110,7 +116,10 @@ instead of `i_UART0_RX`, and `uart0_tx_esp` is forced idle. Same register interf
 (`0x133B` Tx/status, `0x143B` Rx/prescaler, `0x153B` select, `0x163B` frame).
 
 **Consequence:** a dezogif-derived stub becomes a WiFi stub by simply *not* flipping the mux.
-The DZRP layer above is untouched, and the joysticks stay with the game permanently.
+The DZRP layer above is untouched, and the joysticks stay with the game permanently. Because the
+register interface is identical either way, the two transports differ only in bring-up and
+framing — which is what makes an **assembly-time mode switch** cheap rather than a fork of the
+whole layer. Only one mode is in a given ROM: the 8 KB budget (§10) does not allow both.
 
 ### 3.2 The UART RX has a real interrupt in the IM2 fabric
 `zxnext.vhd:1943` — `uart0_rx_near_full or uart0_rx_avail`, enabled by NR `0xC6` bits 2:0,
@@ -285,19 +294,24 @@ it:
 
 | Area | dezogif | This project |
 |---|---|---|
-| Transport | Serial on joy port | **ESP-01 WiFi, TCP** |
-| Joysticks | Taken over while stopped | **Never touched** |
-| Cable | D-SUB 9 + USB serial adapter | **None** |
-| PC-initiated pause | **Impossible** | **Yes** (Copper NMI poll) |
+| Transport | Serial on joy port | **Either**, chosen at assembly time: serial as upstream, or **ESP-01 WiFi, TCP** |
+| Joysticks | Taken over while stopped | **Never touched** in WiFi mode; as upstream in UART mode |
+| Cable | D-SUB 9 + USB serial adapter | **None** in WiFi mode; as upstream in UART mode |
+| PC-initiated pause | **Impossible** | **Yes** (Copper NMI poll), WiFi mode |
 | Breakpoint while running | Impossible | Yes, follows from the above |
 | Bootstrap | `enNextMf.rom` | Same |
 | Memory choreography | slot 7 MAIN / slot 6 SWAP / AltROM | Same |
 | Breakpoints | `RST 0` + DeZog-side bookkeeping | Same |
 | PC client | DeZog | Same |
 
-Everything in the "Same" rows is inherited. The genuinely new work is the transport layer and
+Everything in the "Same" rows is inherited. The genuinely new work is the second transport and
 the asynchronous break — perhaps 20-30% of the stub, concentrated in two well-isolated modules
 (`uart.asm` and the NMI entry path).
+
+Keeping both modes is what makes the isolation a *requirement* rather than good manners: the two
+paths have to sit behind one interface that `commands.asm` and `message.asm` cannot tell apart,
+because both are assembled against it. It also makes the UART build a live regression check on
+that interface — if a change breaks UART mode, the abstraction leaked.
 
 ---
 
@@ -467,11 +481,16 @@ Doing (a) first is deliberate: it isolates "is the ESP path alive at all" from "
 parser right". Run in jnext where possible, but note (b) cannot run in jnext until §8.2 lands —
 hardware first is acceptable here.
 
-### M1 — Fork, swap the transport, feature parity
-Fork dezogif. Replace `uart.asm`'s joy-port mux setup with ESP bring-up, `CIPSERVER` listen and
-the `+IPD` / `AT+CIPSEND` framing. Keep break-on-NMI-button. Success: DeZog attaches over WiFi
-with `remoteType: "cspect"` + `hostname`, and registers/memory/breakpoints/stepping all behave
-exactly as dezogif does over serial. **No cable, joysticks still work.**
+### M1 — Fork, add the second transport, feature parity
+Fork dezogif. Put the joy-port serial path behind a transport interface, then add beside it an ESP
+bring-up, `CIPSERVER` listen and the `+IPD` / `AT+CIPSEND` framing, with the mode selected at
+assembly time. Keep break-on-NMI-button. Success, and both halves are required:
+
+- **WiFi mode** — DeZog attaches over WiFi with `remoteType: "cspect"` + `hostname`, and
+  registers/memory/breakpoints/stepping behave exactly as dezogif does over serial. **No cable,
+  joysticks still work.**
+- **UART mode** — still byte-for-byte equivalent in behaviour to upstream dezogif. This is the
+  cheap proof that the interface did not leak, and it is not optional.
 
 ### M2 — Asynchronous break
 Add the Copper-driven periodic NMI poll (§4.3). Success: `CMD_PAUSE` from DeZog stops a freely
@@ -492,7 +511,7 @@ Named DeZog remote type; contribute the transport abstraction back to dezogif if
 | Risk | Detail | Mitigation / status |
 |---|---|---|
 | **AltROM constraint** | The debuggee may not use any ROM other than the one the stub patched into AltROM | Inherited from dezogif; document loudly. No known fix |
-| **ESP contention** | One ESP. A program that uses WiFi cannot be debugged over WiFi. NextZXOS/NextSync also reconfigure it | Document. Detect and report rather than hang |
+| **ESP contention** | One ESP. A program that uses WiFi cannot be debugged over WiFi. NextZXOS/NextSync also reconfigure it | Detect and report rather than hang — and **this is the reason the UART build is kept**: for a debuggee that owns the ESP, the serial ROM is the answer, not a workaround |
 | **State transparency** | Several NextREGs are write-only; a full snapshot is impossible on hardware | Permanent ceiling vs an emulator. Accept and document |
 | **No watchpoints / coverage / true reverse debugging** | Would require tracing every instruction | Ruled out by dezogif's design doc; DeZog lite history remains |
 | **`nmi66h` filters the Copper NMI** | Inherited `mf_rom.asm` reads NR `0x02`, masks `00011100b` and returns unless zero — button causes only. The Copper `MOVE $02,$08` sets exactly that bit (`nmi_gen_nr_mf` covers CPU and Copper, `zxnext.vhd:3832`; latched at `:3843-3848`), so **M2's break mechanism is filtered out by the code M1 inherits**. Demonstrated: bench T4 | M2 must modify the cause check to accept a software cause, clear the latch on the way out, and invert bench T4 in the same change. Not optional, and not discovered late — it is the first thing M2 touches |

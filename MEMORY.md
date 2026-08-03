@@ -16,44 +16,31 @@ two build modes rather than the identity of the fork ([[#Two build modes]]).
 distinguishes this project and does not go stale when the transport story
 changes again.
 
-**Two things that did NOT change, on purpose.**
+**What did not change: the sources.** No string in `src/` carries the project
+name in a way a user sees, and churning 8,600 lines of mostly-upstream
+assembly for a rename would cost every future `git blame` against
+maziac/dezogif for nothing.
 
-- The **checkout on disk** is still `/home/jorgegv/src/spectrum/dezogif_esp`.
-  So is the auto-memory directory derived from it,
-  `-home-jorgegv-src-spectrum-dezogif-esp`. Anything in `.claude/` naming
-  those paths still says `dezogif_esp` and is correct.
-- The **sources**. No string in `src/` carries the project name in a way a
-  user sees, and churning 8,600 lines of mostly-upstream assembly for a rename
-  would cost every future `git blame` against maziac/dezogif for nothing.
+**The move, completed the same day.** The GitHub repo, the `origin` remote,
+the checkout on disk and the auto-memory directory were all renamed by the
+user; the three stale strings left in `.claude/` (WORKTREES.md's layout and
+"stay in the worktree" rule, worktree-launch's briefing footer, handover's
+memory path) were flipped, and the paragraph explaining the name/path mismatch
+was deleted rather than reworded, because it only existed while they disagreed.
 
-**Rejected.** Renaming the on-disk directory as part of this — but see below,
-because the user has since said they will move it.
+**Two things worth knowing from doing it.**
 
-### Pending: when the on-disk directory is renamed
-
-The user intends to move the checkout to `dezogif_ng` and will say when. At
-that point exactly these have to change, and nothing else — the sweep has
-already been done, so this is a checklist, not a search:
-
-1. `.claude/docs/WORKTREES.md` — the layout diagram, the "Stay in the
-   worktree" rule, and the paragraph explaining the mismatch, which stops
-   being true and should be deleted rather than reworded.
-2. `.claude/skills/worktree-launch/SKILL.md` — the "Do NOT touch …" line in
-   the agent briefing footer.
-3. `.claude/skills/handover/SKILL.md` — the auto-memory path. **This one is
-   not cosmetic.** Claude Code derives that directory name from the on-disk
-   path, so after the move it becomes
-   `-home-jorgegv-src-spectrum-dezogif-ng`, a *different, empty* directory.
-   Existing handover memories stay behind in the old one and will silently
-   not be found. Move the contents across, or accept losing them.
-
-Also worth a thought at the same time, though neither is in this repo: the
-`git worktree` registrations under `.git/worktrees` (none exist right now, so
-move while that stays true), and anything in `~/.claude/settings*.json` with a
-path-scoped permission for the old location.
-
-The git remote and the GitHub repo name are the user's, and independent of
-this.
+- The **auto-memory directory** was the item flagged as a data-loss risk,
+  since Claude Code derives its name from the on-disk path and a move points
+  it at a new, empty one. In the event nothing was lost: that directory had
+  never had a `memory/` subdirectory, because no handover had ever been saved.
+  The hazard is real and simply had not fired yet — it will, the first time
+  this repo is moved after handovers exist.
+- **`git worktree` registrations do not survive a move.** A leftover review
+  worktree's `.git` file still pointed at the old repo path, and
+  `git worktree remove` refused it ("not a .git file, error code 7").
+  `git worktree repair <path>` fixes the pointer and removal then works. Move
+  with no worktrees registered and the problem does not arise.
 
 ---
 

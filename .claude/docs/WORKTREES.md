@@ -7,12 +7,8 @@ and cleans up.
 
 ## Layout
 
-The project was renamed `dezogif_esp` → `dezogif_ng` on 2026-08-03, but the **checkout on disk
-still sits at the old path**. That mismatch is deliberate, not a leftover: paths below that say
-`dezogif_esp` are real locations, paths that say `dezogif_ng` are the project's name.
-
 ```
-/home/jorgegv/src/spectrum/dezogif_esp/     ← main checkout (old dir name), always on main
+/home/jorgegv/src/spectrum/dezogif_ng/      ← main checkout, always on main
 /home/jorgegv/tmp/worktrees/dezogif_ng/
 ├── agent-a562cf38/                         ← worktree, own branch, shared .git
 ├── agent-ad6b7cf6/
@@ -36,7 +32,7 @@ from `~/.jnext/sdcard/` at run time rather than from the checkout.
 
 1. **Stay in the worktree.** Agents work ONLY in their assigned worktree path.
    Never `cd` to the main checkout, never modify
-   `/home/jorgegv/src/spectrum/dezogif_esp/` directly.
+   `/home/jorgegv/src/spectrum/dezogif_ng/` directly.
 
 2. **Use `git -C` for git ops.** Never `cd <worktree> && git <cmd>`. The
    warn-cd-git hook warns.

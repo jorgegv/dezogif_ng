@@ -56,7 +56,7 @@ BRANCH: <BRANCH>
 BASE: main @ <SHA>
 
 Hard rules per CLAUDE.md:
-- Work ONLY in this worktree. Do NOT touch /home/jorgegv/src/spectrum/dezogif_esp directly.
+- Work ONLY in this worktree. Do NOT touch /home/jorgegv/src/spectrum/dezogif_ng directly.
 - Do NOT write to main. Commit only on branch <BRANCH>.
 - Do NOT push. The user authorizes pushes separately.
 - Use `git -C <worktree-path> <cmd>` for git ops (not `cd ... && git ...`).

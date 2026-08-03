@@ -14,11 +14,17 @@ NMI"). Nothing happened: the screen never changed.
 off by NR `0x06` bit 3 (`zxnext.vhd:2090`), because adding a read-modify-write
 of that bit "fixed" it. Both observations were real; the causal link was not.
 
-**What actually happened.** The failing run used *dezogif's* Multiface ROM,
-which declines software NMIs by design — `nmi66h` masks NR `0x02` with
-`00011100b` and returns unless the result is zero. The "fix" run used the
-*stock* Multiface ROM, which accepts them. The variable that changed was the
-ROM, not the register. Two changes at once, and the wrong one got the credit.
+**Why that link does not hold.** More than one thing differed between the
+failing run and the working one — the Multiface ROM in the SD image as well as
+the register write — and the ad-hoc runs were never committed, so which
+difference mattered is no longer recoverable from this repo. What *is*
+verifiable is that the register cannot have been the blocker (see the table
+below, measured properly) and that a sufficient alternative cause exists and is
+still in the tree: `nmi66h` (`src/mf_rom.asm:41-60`) masks NR `0x02` with
+`00011100b` and returns unless the result is zero, so dezogif's ROM declines a
+software NMI whatever NR `0x06` says. Do not read the paragraph above as
+"the ROM was the cause" — read it as "the experiment could not tell", which
+is the actual failure.
 
 **Measured properly, 2026-08-04**, with the Copper fixture against the stock
 ROM, one variable at a time:

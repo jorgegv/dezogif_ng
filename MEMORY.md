@@ -26,9 +26,34 @@ changes again.
   user sees, and churning 8,600 lines of mostly-upstream assembly for a rename
   would cost every future `git blame` against maziac/dezogif for nothing.
 
-**Rejected.** Renaming the on-disk directory as part of this (the user is
-handling the GitHub rename and the remote; the local directory is theirs to
-move if they want it).
+**Rejected.** Renaming the on-disk directory as part of this — but see below,
+because the user has since said they will move it.
+
+### Pending: when the on-disk directory is renamed
+
+The user intends to move the checkout to `dezogif_ng` and will say when. At
+that point exactly these have to change, and nothing else — the sweep has
+already been done, so this is a checklist, not a search:
+
+1. `.claude/docs/WORKTREES.md` — the layout diagram, the "Stay in the
+   worktree" rule, and the paragraph explaining the mismatch, which stops
+   being true and should be deleted rather than reworded.
+2. `.claude/skills/worktree-launch/SKILL.md` — the "Do NOT touch …" line in
+   the agent briefing footer.
+3. `.claude/skills/handover/SKILL.md` — the auto-memory path. **This one is
+   not cosmetic.** Claude Code derives that directory name from the on-disk
+   path, so after the move it becomes
+   `-home-jorgegv-src-spectrum-dezogif-ng`, a *different, empty* directory.
+   Existing handover memories stay behind in the old one and will silently
+   not be found. Move the contents across, or accept losing them.
+
+Also worth a thought at the same time, though neither is in this repo: the
+`git worktree` registrations under `.git/worktrees` (none exist right now, so
+move while that stays true), and anything in `~/.claude/settings*.json` with a
+path-scoped permission for the old location.
+
+The git remote and the GitHub repo name are the user's, and independent of
+this.
 
 ---
 

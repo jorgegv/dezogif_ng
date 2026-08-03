@@ -114,6 +114,13 @@ NMIs only. NR `0x02` bit 3 reads back as `nr_02_generate_mf_nmi`, which `zxnext.
 latches on any accepted NR `0x02` bit-3 write and clears only on an explicit write of bit 3 = 0.
 So a software NMI is filtered by design, and the bench asserts that.
 
+**A jnext `--delayed-nmi` option is in development (2026-08-03) and changes this.** A *button*
+NMI is the cause `nmi66h` accepts, so once the bench can fire one headlessly, T4 should become a
+**takeover** assertion — the same ≥25% repaint T3 already demonstrates for the stock Multiface
+ROM — instead of a decline. That is the first check this bench would have that proves the stub is
+alive, rather than proving it correctly ignores something. Do not scaffold for it before the
+option ships; see plan §8.2.
+
 **This is a live constraint on M2, not a testing detail.** The plan's asynchronous break is a
 Copper `MOVE $02,$08`, which sets the same latch through the same signal (`nmi_gen_nr_mf` covers
 CPU and Copper alike, `zxnext.vhd:3832`). It will be filtered by that same check until `nmi66h`

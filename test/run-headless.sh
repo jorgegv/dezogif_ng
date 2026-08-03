@@ -169,6 +169,13 @@ fi
 # write of bit 3 = 0. Our fixture is exactly such a write, so upstream's stub
 # is *designed* to ignore it, and the screen must be untouched.
 #
+# Two separate things would change this expectation, and they are not the same:
+#   - jnext gaining a headless button-NMI (a --delayed-nmi option is in development as of
+#     2026-08-03). nmi66h accepts a button cause, so that lets the bench assert a real takeover
+#     for the FIRST time — the strongest check available here. It does not require any stub
+#     change at all.
+#   - M2 teaching nmi66h to accept a software cause, below.
+#
 # M2 MUST FLIP THIS. The plan's asynchronous break is a Copper `MOVE $02,$08`,
 # which sets the same latch through the same signal (nmi_gen_nr_mf covers CPU
 # and Copper alike, zxnext.vhd:3832) and will be filtered by the same check

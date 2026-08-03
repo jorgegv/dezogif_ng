@@ -439,6 +439,25 @@ demo-driven, not completeness-driven — and `esp_at.h` already anticipates the 
 "full datasheet-level fidelity" as its own v1.1 issue and noting the file is *shaped* so that
 widening is filling in blanks rather than surgery.
 
+**Third gap, already being closed: no headless M1-button NMI.** jnext exposes the Multiface NMI
+only as the F9 host key and the toolbar button, so a headless run cannot press it — which is why
+`test/nmi_trigger.asm` uses the *software* NMI (NR `0x02` bit 3) instead, and why the bench's T4
+can only assert that the stub **declines** a non-button cause (§Testing in CLAUDE.md). A
+`--delayed-nmi` CLI option is in development in jnext as of 2026-08-03, and this project is
+exactly the demonstrated consumer that motivates it.
+
+**What it changes for the bench, when it lands.** A button NMI is the cause `nmi66h` accepts, so
+the bench would for the first time be able to assert the thing that actually matters: that the
+stub takes over and comes up. Concretely — fire the button NMI in place of (or beside) the
+software fixture, and require a takeover, i.e. the same ≥25% repaint that T3 already demonstrates
+for the stock Multiface ROM. That converts T4 from "declines a cause it should decline" into a
+genuine liveness check on the stub, and it is the single largest strengthening available to this
+bench.
+
+Deliberately not wired up ahead of time: the option does not exist yet, its flag spelling is not
+final, and scaffolding for an interface that has not shipped is how the scaffolding ends up the
+wrong shape.
+
 ### 8.3 A validation experiment worth doing first
 
 Drop **dezogif's existing** `enNextMf.rom` onto a jnext SD image and press the emulated NMI

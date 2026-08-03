@@ -561,6 +561,17 @@ Named DeZog remote type; contribute the transport abstraction back to dezogif if
    from a debuggee's own NR `0x02` write? The latch does not say who wrote it, and it persists
    until explicitly cleared. Answer this before writing M2's entry path.
 6. Is Maziac interested in the transport work upstream, or is a permanent fork the honest plan?
+7. **Is asynchronous break reachable in UART mode too?** The mux routes UART0's RX to the ESP-01
+   pin (`i_UART0_RX`) whenever `joy_iomode_uart_en` is `'0'` — which is the state a UART-mode
+   build leaves behind while the debuggee runs, since it clears NR `0x0B` to give the joysticks
+   back (§4, `backup.asm`). So the ESP pin is the live RX source even in a serial build. Whether
+   that is *exploitable* is unverified and deliberately not claimed: the ESP-01 needs bring-up
+   before it forwards anything, its baud would have to match what the serial build leaves the
+   peripheral at, and nothing polls the RX FIFO while the debuggee runs in UART mode. Worth a
+   spike, not a design decision.
+
+Note on question 7: the hardware fact is cited, the opportunity is not. Do not promote it to a
+design assumption without measuring it — see ERRORS.md on what deriving instead of reading costs.
 
 ---
 

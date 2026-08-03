@@ -5,28 +5,47 @@ attempting similar logic.
 
 ---
 
-## Firing a Multiface NMI headless — the NR 0x06 gate
+## Firing a Multiface NMI headless — and what actually blocked it
 
-**Symptom.** Injected guest code wrote NR `0x02` bit 3 (documented as "generate
-Multiface NMI"). Nothing happened: the screen never changed, with either the
-stock Multiface ROM or dezogif's.
+**Symptom.** Injected guest code wrote NR `0x02` bit 3 ("generate Multiface
+NMI"). Nothing happened: the screen never changed.
 
-**Attempt 1 (failed).** NR `0x02` = 0x08 alone.
+**What was concluded at the time, and it was wrong.** That the NMI was gated
+off by NR `0x06` bit 3 (`zxnext.vhd:2090`), because adding a read-modify-write
+of that bit "fixed" it. Both observations were real; the causal link was not.
 
-**Attempt 2 (worked).** Set NR `0x06` bit 3 first, read-modify-write, then
-NR `0x02` = 0x08.
+**What actually happened.** The failing run used *dezogif's* Multiface ROM,
+which declines software NMIs by design — `nmi66h` masks NR `0x02` with
+`00011100b` and returns unless the result is zero. The "fix" run used the
+*stock* Multiface ROM, which accepts them. The variable that changed was the
+ROM, not the register. Two changes at once, and the wrong one got the credit.
 
-**Root cause.** `zxnext.vhd:2090`:
+**Measured properly, 2026-08-04**, with the Copper fixture against the stock
+ROM, one variable at a time:
 
-```vhdl
-nmi_assert_mf <= '1' when (hotkey_m1 = '1' or nmi_sw_gen_mf = '1')
-                 and nr_06_button_m1_nmi_en = '1' else '0';
-```
+| NR `0x06` bit 3 | result |
+|---|---|
+| set by the fixture | NMI fires, 91.41% repaint |
+| left untouched | NMI fires, 91.41% repaint |
+| explicitly cleared | **no NMI**, 0.00% |
 
-Every MF NMI source — button, CPU/Copper NR `0x02` write, I/O trap — is gated
-by NR `0x06` bit 3 (`zxnext.vhd:5166`), power-on `'0'`. The project plan said
-this path was "ungated"; it was wrong, and the wrongness cost the first
-attempt. **The VHDL is the authority — read it first, not after.**
+So the gate in `zxnext.vhd:2090` is real and jnext models it faithfully — and
+**NextZXOS leaves NR `0x06` bit 3 set after boot**, which is why a guest that
+never touches it still gets its NMI. The register's *power-on* value is 0
+(`zxnext.vhd:1110`); by the time anything runs under NextZXOS it is 1.
+
+**Consequences.**
+
+- The fixtures still set the bit, deliberately: it costs seven bytes and makes
+  them independent of what the firmware happened to leave behind.
+- For the stub, the risk is not "must set it" but "**the debuggee may clear
+  it**" — and if it does, M2's asynchronous break stops working silently.
+  Re-asserting it from the poll is cheap insurance.
+
+**Lesson, and it is not the one this entry used to teach.** Two variables
+changed between the failing run and the working one, and the conclusion picked
+the interesting one. A fix that is never tested by *removing* it is a
+correlation. The three-row table above took one extra emulator run.
 
 ---
 

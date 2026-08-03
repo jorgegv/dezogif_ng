@@ -94,12 +94,16 @@ strongest:
 1. **It assembles** — necessary, proves nothing. Enforced by the in-source `ASSERT`s
    (`main_end` within budget) plus the Makefile's 8192-byte ROM size check.
 2. **`make check-reproducible`** — the same source gives the same ROM.
-3. **`make test`** — four headless jnext runs, judged on screenshots (`test/run-headless.sh`):
+3. **`make test`** — five headless jnext runs, judged on screenshots (`test/run-headless.sh`):
    - T1 the bench boots a Next at all
    - T2 our `enNextMf.rom` does not perturb the NextZXOS boot
    - T3 **control** — the software-NMI fixture really fires the Multiface NMI, shown against the
      SD image's stock MF ROM. If T3 fails the bench is broken and T4 means nothing.
    - T4 our stub **declines** that NMI and leaves the screen alone — see below
+   - T5 a two-instruction **Copper** list raises the Multiface NMI on its own, at a chosen
+     raster line, with no CPU involvement. That is M2's break mechanism, and it is now known
+     to work headless rather than assumed to. Shown against the stock MF ROM for T3's reason:
+     our stub declines it, and would decline it whether or not the Copper worked.
    Screen comparison is a **percentage of differing pixels** (`test/screen-diff.py`), not a byte
    compare: NextZXOS idling changes 0.01% of the screen and that once produced a false PASS.
 4. **`build/ut.nex`** — the upstream Z80 unit tests under `src/unit_tests/`. These are

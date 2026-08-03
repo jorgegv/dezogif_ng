@@ -46,6 +46,7 @@ TEST = test
 MAIN_ASM    = $(SRC)/main.asm
 UT_ASM      = $(SRC)/unit_tests/unit_tests.asm
 TRIGGER_ASM = $(TEST)/nmi_trigger.asm
+COPPER_ASM  = $(TEST)/copper_nmi.asm
 
 ASM_FILES    = $(wildcard $(SRC)/*.asm) $(wildcard $(SRC)/zx/*.inc)
 UT_ASM_FILES = $(wildcard $(SRC)/unit_tests/*.asm) $(wildcard $(SRC)/unit_tests/*.inc) $(ASM_FILES)
@@ -55,6 +56,7 @@ MF_NMI_BIN  = $(OUT)/mf_nmi.bin
 ROM         = $(OUT)/enNextMf.rom
 UT_BIN      = $(OUT)/ut.nex
 TRIGGER_BIN = $(OUT)/nmi_trigger.bin
+COPPER_BIN  = $(OUT)/copper_nmi.bin
 
 ROM_SIZE = 8192
 
@@ -82,9 +84,9 @@ unit_tests: $(UT_BIN)
 mf_rom: $(ROM)
 
 # Run the local headless test suite in jnext (no VS Code, no hardware)
-test: $(ROM) $(TRIGGER_BIN)
+test: $(ROM) $(TRIGGER_BIN) $(COPPER_BIN)
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" ROM="$(ROM)" \
-	 TRIGGER_BIN="$(TRIGGER_BIN)" $(TEST)/run-headless.sh
+	 TRIGGER_BIN="$(TRIGGER_BIN)" COPPER_BIN="$(COPPER_BIN)" $(TEST)/run-headless.sh
 
 # Check the ROM builds byte-identically twice with BUILD_TIME pinned
 check-reproducible:
@@ -120,6 +122,9 @@ $(UT_BIN): $(UT_ASM_FILES) Makefile | $(OUT)
 
 $(TRIGGER_BIN): $(TRIGGER_ASM) Makefile | $(OUT)
 	$(SJASMPLUS) -DNMI_TRIGGER_BIN=\"$@\" $(TRIGGER_ASM)
+
+$(COPPER_BIN): $(COPPER_ASM) Makefile | $(OUT)
+	$(SJASMPLUS) -DCOPPER_NMI_BIN=\"$@\" $(COPPER_ASM)
 
 # The deployable ROM is the NMI entry code followed by the debugger image.
 # tbblue.fw loads exactly ROM_SIZE bytes, so a wrong size is a build error

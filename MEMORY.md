@@ -206,7 +206,9 @@ bit 3 from guest code, after setting NR `0x06` bit 3.
 `--delayed-keypress` (which injects Spectrum membrane keys) cannot reach it.
 `zxnext.vhd:3832` makes a CPU write of NR `0x02` bit 3 an MF NMI source, and
 `zxnext.vhd:2090` ANDs every MF NMI source with NR `0x06` bit 3, whose
-power-on value is 0. See [[ERRORS.md]] for the two attempts this took.
+power-on value is 0 — though NextZXOS leaves it set, so a guest inherits it
+(measured 2026-08-04; see [[ERRORS.md]], which used to credit that gate with a
+failure dezogif's own cause check had caused).
 
 **Consequence for the design.** §3.3 of the plan claimed the Copper NMI was
 "ungated". It is not. M2's Copper break must set NR `0x06` bit 3 itself and

@@ -14,6 +14,11 @@
 #   T4  our stub declines that NMI, because it is not a button press — which
 #       is what upstream's nmi66h is written to do. See the note at T4; M2
 #       has to invert this one.
+#   T5  the COPPER can raise the Multiface NMI on its own, at a chosen raster
+#       line, with no CPU involvement — the mechanism M2's asynchronous break
+#       is built on. Shown against the stock MF ROM for the same reason as T3:
+#       our stub declines it, and would decline it whether or not the Copper
+#       worked, so the stub cannot be the thing that demonstrates it.
 #
 # T3 is not decoration. Without it a broken fixture would make T4 look like a
 # stub bug (or, worse, a change in T4's screen would look like a pass). If T3
@@ -37,6 +42,7 @@ SD_IMAGE=${SD_IMAGE:-$HOME/.jnext/sdcard/cspect-next-1gb-fixed.img}
 OUT=${OUT:-build}
 ROM=${ROM:-$OUT/enNextMf.rom}
 TRIGGER_BIN=${TRIGGER_BIN:-$OUT/nmi_trigger.bin}
+COPPER_BIN=${COPPER_BIN:-$OUT/copper_nmi.bin}
 
 # Frame budget. The Next needs ~900 frames to reach the NextZXOS welcome
 # screen; the fixture is injected there and the screen is captured 150 frames
@@ -72,6 +78,7 @@ die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [ -f "$SD_IMAGE" ]   || die "SD card image not found: $SD_IMAGE"
 [ -f "$ROM" ]        || die "ROM not built: $ROM (run 'make mf_rom')"
 [ -f "$TRIGGER_BIN" ]|| die "NMI fixture not built: $TRIGGER_BIN (run 'make test')"
+[ -f "$COPPER_BIN" ] || die "Copper fixture not built: $COPPER_BIN (run 'make test')"
 command -v mcopy >/dev/null || die "mtools (mcopy) is required to install the ROM into the SD image"
 python3 -c 'import PIL' 2>/dev/null || die "python3 Pillow is required to compare screenshots"
 
@@ -127,11 +134,12 @@ run() {
     [ -s "$shot" ] || die "no screenshot written: $shot"
 }
 
-log "== running the bench (4 headless runs, ~30s)"
+log "== running the bench (5 headless runs, ~40s)"
 run "$sd_stock" "$SHOTS/boot-stock.png"
 run "$sd_ours"  "$SHOTS/boot-ours.png"
 run "$sd_stock" "$SHOTS/nmi-stock.png" "$TRIGGER_BIN"
 run "$sd_ours"  "$SHOTS/nmi-ours.png"  "$TRIGGER_BIN"
+run "$sd_stock" "$SHOTS/copper-stock.png" "$COPPER_BIN"
 
 # --- assertions ------------------------------------------------------------
 
@@ -188,11 +196,19 @@ else
     pass "T4 our stub declines a non-button NMI and leaves the screen alone ($ours_pct% changed), as nmi66h's cause check intends"
 fi
 
+# T5 — the Copper NMI, M2's mechanism.
+copper_pct=$(diff_pct "$SHOTS/boot-stock.png" "$SHOTS/copper-stock.png")
+if took_over "$copper_pct"; then
+    pass "T5 a two-instruction Copper list raises the Multiface NMI ($copper_pct% repainted) — M2's break mechanism works headless"
+else
+    fail "T5 the Copper did not raise the Multiface NMI (only $copper_pct% changed; see $SHOTS/copper-stock.png)"
+fi
+
 log ""
 if [ "$failures" -eq 0 ]; then
-    verdict="4/4 checks passed"
+    verdict="5/5 checks passed"
 else
-    verdict="$failures of 4 checks FAILED"
+    verdict="$failures of 5 checks FAILED"
 fi
 log "$verdict  (screenshots in $SHOTS)"
 

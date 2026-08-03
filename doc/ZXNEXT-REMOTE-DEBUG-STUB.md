@@ -524,6 +524,15 @@ Two independent proofs, on real hardware, before any porting work:
   the PC connecting *to the Next*. This is the shape the real thing uses (§4.2), so it is the
   one that must ultimately pass.
 - **c)** A Copper list (`WAIT`/`MOVE $02,$08`) whose NMI you can observe firing.
+  **DONE (2026-08-04), in jnext, headless.** `test/copper_nmi.asm` writes a two-instruction list
+  — `WAIT line 100,0` then `MOVE $02,$08` — and the stock Multiface ROM takes the screen, 91.41%
+  repainted. It is bench check T5, so it stays proven.
+
+  Measured at the same time, one variable at a time: with NR `0x06` bit 3 **set** the NMI fires,
+  **left untouched** it fires, **explicitly cleared** it does not (0.00%). So the §3.3 gate is
+  real and jnext models it — and NextZXOS leaves that bit set after boot, so a guest inherits it
+  rather than needing to set it. See ERRORS.md; an earlier entry credited that gate with a
+  failure actually caused by dezogif's own cause check.
 
 Doing (a) first is deliberate: it isolates "is the ESP path alive at all" from "is my `+IPD`
 parser right". Run in jnext where possible, but note (b) cannot run in jnext until §8.2 lands —
@@ -563,7 +572,7 @@ Named DeZog remote type; contribute the transport abstraction back to dezogif if
 | **State transparency** | Several NextREGs are write-only; a full snapshot is impossible on hardware | Permanent ceiling vs an emulator. Accept and document |
 | **No watchpoints / coverage / true reverse debugging** | Would require tracing every instruction | Ruled out by dezogif's design doc; DeZog lite history remains |
 | **`nmi66h` filters the Copper NMI** | Inherited `mf_rom.asm` reads NR `0x02`, masks `00011100b` and returns unless zero — button causes only. The Copper `MOVE $02,$08` sets exactly that bit (`nmi_gen_nr_mf` covers CPU and Copper, `zxnext.vhd:3832`; latched at `:3843-3848`), so **M2's break mechanism is filtered out by the code M1 inherits**. Demonstrated: bench T4 | M2 must modify the cause check to accept a software cause, clear the latch on the way out, and invert bench T4 in the same change. Not optional, and not discovered late — it is the first thing M2 touches |
-| **NR `0x06` bit 3 gates every MF NMI** | Power-on 0 (`zxnext.vhd:2090`, `:5166`). The stub must set it and cope with the debuggee clearing it | Set on entry; re-assert from the poll. Cheap, but must not be forgotten |
+| **NR `0x06` bit 3 gates every MF NMI** | Power-on 0 (`zxnext.vhd:2090`, `:5166`), but **NextZXOS leaves it set** — measured 2026-08-04, see M0(c). So the live risk is not that the stub forgets to set it, it is that the **debuggee clears it** and the break then dies silently | Set on entry anyway (seven bytes, removes the dependency on what the firmware left); re-assert from the poll |
 | **Timing intrusiveness** | ~0.3%/frame for the NMI poll; contention-timed and tape/beeper code will notice | Make the poll disableable; document |
 | **Latency** | 10-100 ms per round trip | Batch; DZRP's bounded reads help |
 | **Core version dependency** | dezogif needs ≥03.01.10 for stackless NMI | Inherited; check at startup and refuse loudly |

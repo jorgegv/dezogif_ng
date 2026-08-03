@@ -62,5 +62,6 @@ A REJECT needs at least one BLOCKER or MAJOR. MINOR-only findings are stated in 
 
 - Anything that touches the `main` branch.
 - Anything that pushes to origin.
-- Anything that changes the MIT licence or the attribution to Maziac / Chris Kirby.
+- Anything that changes licensing: the GPLv3 `LICENSE` covering the combined work, the MIT
+  notice preserved in `NOTICE`, or the attribution to Maziac / Chris Kirby.
 - Anything that diverges the fork from upstream dezogif in a way that makes future upstreaming impossible.

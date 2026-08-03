@@ -4,10 +4,11 @@ A Z80 debug stub that runs on **real ZX Spectrum Next hardware** and is debugged
 [DeZog](https://github.com/maziac/DeZog) in VS Code, speaking DZRP.
 
 It is a fork of [maziac/dezogif](https://github.com/maziac/dezogif), whose transport is a serial
-cable on the joystick port. This fork moves that transport to the Next's on-board **ESP-01 WiFi
-module** — the same UART peripheral behind a pin mux — which removes the cable, leaves the
-joysticks with the game permanently, and opens a route for **PC-initiated break**, something the
-serial version cannot do.
+cable on the joystick port. The goal of this fork is to **move that transport to the Next's
+on-board ESP-01 WiFi module** — the same UART peripheral behind a pin mux. That would remove the
+cable, leave the joysticks with the game permanently, and open a route for **PC-initiated
+break**, which the serial version cannot do. None of it is written yet: what is here today is
+upstream's serial stub, plus this project's build, test bench and documentation.
 
 Maintained by [jorgegv](https://github.com/jorgegv). Original author: maziac.
 

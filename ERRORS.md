@@ -51,6 +51,40 @@ measures (T3 exists for exactly this reason).
 
 ---
 
+## Deriving a hardware fact instead of reading the VHDL — got it backwards
+
+**Symptom.** A plan-document note explaining why PC-initiated break cannot
+work in UART mode claimed that handing the joy ports back to the debuggee
+"re-points UART0's RX **at** the joystick pin". Exactly inverted.
+
+**What is actually true**, and all three sources agree:
+
+- `zxnext.vhd:3340` — `uart0_rx <= joy_uart_rx when joy_iomode_uart_en = '1'
+  and nr_0b_joy_iomode_0 = '0' else i_UART0_RX`. The joystick pin is selected
+  only when the enable is `'1'`; otherwise RX is `i_UART0_RX`, the ESP pin.
+- `zxnext.vhd:3536` — `joy_iomode_uart_en <= '1' when nr_0b_joy_iomode_en =
+  '1' and nr_0b_joy_iomode(1) = '1'`.
+- `src/backup.asm:63` — resuming the debuggee writes
+  `REG_JOYSTICK_IO_MODE,0`, comment "Disable joy port IO mode to enable the
+  joysticks". That is the enable going to `'0'`.
+
+So while the debuggee runs, RX is pointed **away** from the joystick pin —
+where the serial cable physically is — and onto the ESP pin. The conclusion
+(no PC byte can arrive while running, in UART mode) was right; the mechanism
+was backwards.
+
+**Cause.** The fact was derived from a summary of §3.1 rather than read from
+the VHDL, in a document whose own first hard rule is that the VHDL is the
+authority. A plausible-sounding derivation is indistinguishable from a
+correct one until someone checks the source.
+
+**Lesson.** For any claim about UART/ESP routing, NMI generation, Multiface
+paging or MMU behaviour, open the VHDL and quote the line. Do not paraphrase
+a paraphrase. Caught by the independent reviewer; the author had already
+written it into the plan.
+
+---
+
 ## "sjasmplus is not installed"
 
 **Symptom.** `which sjasmplus` fails; CLAUDE.md recorded installing it as the

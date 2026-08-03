@@ -177,10 +177,14 @@ corrupts the program being debugged.
 *This section describes **WiFi mode**. UART mode is upstream's architecture unchanged — the same
 diagram with the ESP box replaced by the joy-port cable — and §4.2's TCP/server discussion has no
 counterpart there. §4.3 is the interesting difference: PC-initiated break is absent from UART mode
-for a concrete reason, not by choice. Upstream hands the joy ports back to the debuggee while it
-runs, which per §3.1 re-points UART0's RX at the joystick pin, so no byte from the PC can arrive
-until the machine is already stopped. WiFi mode never flips that mux, which is exactly why the
-break becomes reachable.*
+for a concrete reason, not by choice. Upstream hands the joy ports back to the debuggee before
+resuming it — `backup.asm` writes `REG_JOYSTICK_IO_MODE,0` — which clears `joy_iomode_uart_en`
+(`zxnext.vhd:3536`) and so re-points UART0's RX **away from the joystick pin and onto the ESP-01
+pin** (`zxnext.vhd:3340`: `uart0_rx <= joy_uart_rx when joy_iomode_uart_en = '1' ... else
+i_UART0_RX`). The PC's cable is on the joystick pin, so while the debuggee runs its bytes have
+nowhere to land. WiFi mode never touches that register, UART0 stays on the ESP-01 pin
+permanently, and that is exactly why a byte from the PC can reach it at any time — which is what
+makes the break reachable.*
 
 ```
    PC (dev machine)                        ZX Spectrum Next (real hardware)

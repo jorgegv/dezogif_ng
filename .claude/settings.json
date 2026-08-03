@@ -1,0 +1,76 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(find:*)",
+      "Bash(awk:*)",
+      "Bash(sed:*)",
+      "Bash(perl:*)",
+      "Bash(xxd:*)",
+      "Bash(tail:*)",
+      "Bash(head:*)",
+      "Bash(tee:*)",
+      "Bash(file:*)",
+      "Bash(wc:*)",
+      "Bash(sort:*)",
+      "Bash(uniq:*)",
+      "Bash(comm:*)",
+      "Bash(diff:*)",
+      "Bash(mkdir:*)",
+      "Bash(chmod:*)",
+      "Bash(xargs:*)",
+      "Bash(shuf:*)",
+      "Bash(basename:*)",
+      "Bash(dirname:*)",
+
+      "Bash(git:*)",
+      "Bash(git -C *:*)",
+      "Bash(GIT_EDITOR=true git:*)",
+      "Bash(GIT_EDITOR=true git -C *:*)",
+      "Bash(DEZOGIF_ALLOW_MAIN_WRITE=1 git:*)",
+      "Bash(DEZOGIF_ALLOW_MAIN_WRITE=1 git -C *:*)",
+
+      "Bash(make:*)",
+      "Bash(make -C *:*)",
+      "Bash(LANG=C make:*)",
+      "Bash(LANG=C make -C *:*)",
+      "Bash(sjasmplus:*)",
+
+      "Bash(timeout:*)",
+      "Bash(bash:*)",
+
+      "Bash(/home/jorgegv/src/spectrum/jnext/build/jnext:*)",
+      "Bash(/home/jorgegv/src/spectrum/jnext/build/gui-release/jnext:*)",
+
+      "Bash(nc:*)",
+      "Bash(socat:*)",
+      "Bash(python3:*)",
+      "Bash(mono *:*)",
+
+      "WebFetch",
+      "Write"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-push.sh" },
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-amend.sh" },
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-main-write.sh" },
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/warn-cd-git.sh" }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/session-start.sh" }
+        ]
+      }
+    ]
+  }
+}

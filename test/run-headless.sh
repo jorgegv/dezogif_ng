@@ -167,8 +167,13 @@ fi
 
 log ""
 if [ "$failures" -eq 0 ]; then
-    log "all 4 checks passed  (screenshots in $SHOTS)"
+    verdict="4/4 checks passed"
 else
-    log "$failures check(s) FAILED  (screenshots in $SHOTS)"
+    verdict="$failures of 4 checks FAILED"
 fi
+log "$verdict  (screenshots in $SHOTS)"
+
+# Picked up by the SessionStart hook, so a new session knows where it stands.
+printf '%s\n' "$verdict" > "$OUT/last-test.txt"
+
 exit "$((failures > 0 ? 1 : 0))"

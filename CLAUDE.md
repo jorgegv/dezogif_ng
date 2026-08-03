@@ -4,8 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Purpose
 
-`dezogif_esp` is a **Z80 debug stub that runs on real ZX Spectrum Next hardware**, debugged from a
-PC over the Next's **ESP-01 WiFi module**. It is a fork of
+`dezogif_esp` is a **Z80 debug stub that runs on real ZX Spectrum Next hardware**, intended to be
+debugged from a PC over the Next's **ESP-01 WiFi module**. It is a fork of
 [maziac/dezogif](https://github.com/maziac/dezogif), whose transport is a serial cable on the
 joystick port.
 

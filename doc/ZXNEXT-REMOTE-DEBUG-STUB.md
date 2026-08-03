@@ -40,8 +40,10 @@ inherited unchanged.
 - A Z80 debug stub for real Next hardware, deployed as a replacement `enNextMf.rom`.
 - DZRP over TCP via the on-board ESP-01, to an unmodified DeZog in VS Code.
 - **Two build modes, chosen at assembly time: UART (upstream's joy-port serial) and WiFi.**
-  Upstream's transport is retained, not replaced. One mode per ROM — the 8 KB budget rules out
-  carrying both.
+  Upstream's transport is retained, not replaced. One mode per ROM, by design: a runtime switch
+  would put a branch in the hot path of every transport call and buy nothing a rebuild does not.
+  Capacity is *not* the argument — see MEMORY.md; the free space is measured, an AT-command
+  stack's size is not.
 - Asynchronous (PC-initiated) break, which dezogif cannot do.
 
 ### Explicitly out of scope
@@ -120,7 +122,7 @@ instead of `i_UART0_RX`, and `uart0_tx_esp` is forced idle. Same register interf
 The DZRP layer above is untouched, and the joysticks stay with the game permanently. Because the
 register interface is identical either way, the two transports differ only in bring-up and
 framing — which is what makes an **assembly-time mode switch** cheap rather than a fork of the
-whole layer. Only one mode is in a given ROM: the 8 KB budget (§10) does not allow both.
+whole layer. One mode per ROM, chosen for the reasons in §1 — not on capacity grounds.
 
 ### 3.2 The UART RX has a real interrupt in the IM2 fabric
 `zxnext.vhd:1943` — `uart0_rx_near_full or uart0_rx_avail`, enabled by NR `0xC6` bits 2:0,
@@ -172,9 +174,13 @@ corrupts the program being debugged.
 
 ## 4. Architecture
 
-*This section describes **WiFi mode**. UART mode is upstream's architecture
-unchanged — same diagram with the ESP box replaced by the joy-port cable, and §4.2/§4.3's
-transport and break discussion not applying.*
+*This section describes **WiFi mode**. UART mode is upstream's architecture unchanged — the same
+diagram with the ESP box replaced by the joy-port cable — and §4.2's TCP/server discussion has no
+counterpart there. §4.3 is the interesting difference: PC-initiated break is absent from UART mode
+for a concrete reason, not by choice. Upstream hands the joy ports back to the debuggee while it
+runs, which per §3.1 re-points UART0's RX at the joystick pin, so no byte from the PC can arrive
+until the machine is already stopped. WiFi mode never flips that mux, which is exactly why the
+break becomes reachable.*
 
 ```
    PC (dev machine)                        ZX Spectrum Next (real hardware)

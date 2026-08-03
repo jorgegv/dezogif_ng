@@ -1,4 +1,4 @@
-# dezogif_esp — a ZX Spectrum Next debug stub over WiFi
+# dezogif_ng — a ZX Spectrum Next debug stub over WiFi
 
 A Z80 debug stub that runs on **real ZX Spectrum Next hardware** and is debugged from a PC with
 [DeZog](https://github.com/maziac/DeZog) in VS Code, speaking DZRP.

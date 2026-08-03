@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Local headless test bench for the dezogif_esp stub.
+# Local headless test bench for the dezogif_ng stub.
 #
 # No VS Code, no DeZog, no hardware: everything here runs jnext headless and
 # judges PNG screenshots. Invoked by `make test`.

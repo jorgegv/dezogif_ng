@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Purpose
 
-`dezogif_esp` is a **Z80 debug stub that runs on real ZX Spectrum Next hardware**, intended to be
+`dezogif_ng` is a **Z80 debug stub that runs on real ZX Spectrum Next hardware**, intended to be
 debugged from a PC over the Next's **ESP-01 WiFi module**. It is a fork of
 [maziac/dezogif](https://github.com/maziac/dezogif), whose transport is a serial cable on the
 joystick port.
@@ -141,7 +141,7 @@ consumer** — never speculatively. See the plan §8.2.
 - **Never `git commit --amend`** — always a new commit. Enforced by a hook
   (`DEZOGIF_ALLOW_AMEND=1` to override).
 - **Git worktrees live OUTSIDE the repository directory**, at
-  `~/tmp/worktrees/dezogif_esp/<name>`. Never inside the repo, not even gitignored.
+  `~/tmp/worktrees/dezogif_ng/<name>`. Never inside the repo, not even gitignored.
 - For git commands against another directory, always `git -C /abs/path <cmd>` rather than
   `cd /abs/path && git <cmd>`.
 - **When a feature or fix is developed, ALWAYS schedule an independent agent for code review.**

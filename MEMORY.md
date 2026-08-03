@@ -5,6 +5,33 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-03 — Renamed `dezogif_esp` → `dezogif_ng`
+
+**Decided.** The project is `dezogif_ng`. Documentation and `.claude/` config
+were renamed; **the Z80 sources were deliberately not touched.**
+
+**Why.** `_esp` named a transport, and the transport turned out to be one of
+two build modes rather than the identity of the fork ([[#Two build modes]]).
+`_ng` names the relationship to upstream instead, which is what actually
+distinguishes this project and does not go stale when the transport story
+changes again.
+
+**Two things that did NOT change, on purpose.**
+
+- The **checkout on disk** is still `/home/jorgegv/src/spectrum/dezogif_esp`.
+  So is the auto-memory directory derived from it,
+  `-home-jorgegv-src-spectrum-dezogif-esp`. Anything in `.claude/` naming
+  those paths still says `dezogif_esp` and is correct.
+- The **sources**. No string in `src/` carries the project name in a way a
+  user sees, and churning 8,600 lines of mostly-upstream assembly for a rename
+  would cost every future `git blame` against maziac/dezogif for nothing.
+
+**Rejected.** Renaming the on-disk directory as part of this (the user is
+handling the GitHub rename and the remote; the local directory is theirs to
+move if they want it).
+
+---
+
 ## 2026-08-03 — Two build modes (UART / WiFi), not a transport replacement
 
 **Decided.** The stub keeps upstream's joy-port serial transport and gains an
@@ -65,7 +92,7 @@ workspace).
 
 ## 2026-08-03 — Continue in this fork; do not start a new repo
 
-**Decided.** Keep `dezogif_esp` as a fork of maziac/dezogif (359 upstream
+**Decided.** Keep `dezogif_ng` as a fork of maziac/dezogif (359 upstream
 commits, last 2023-06-13) and adapt it, rather than starting a fresh project
 that borrows ideas.
 
@@ -162,7 +189,7 @@ deliverable is the ROM; a NEX of the debugger has no consumer.
 
 ## 2026-08-03 — Worktrees live under `~/tmp/worktrees`
 
-**Decided.** Agent worktrees go to `~/tmp/worktrees/dezogif_esp/<name>`.
+**Decided.** Agent worktrees go to `~/tmp/worktrees/dezogif_ng/<name>`.
 
 **Why.** User instruction, 2026-08-03. Never inside the repo (that was the
 old `.claude/worktrees/` layout inherited from jnext's docs, which also

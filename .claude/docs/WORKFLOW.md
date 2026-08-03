@@ -7,7 +7,7 @@ feedback.
 ## Branch & merge
 
 - **No writes to `main` by any agent.** Workers commit on their own branch in
-  their own worktree (`~/tmp/worktrees/dezogif_esp/<name>`, outside the repo).
+  their own worktree (`~/tmp/worktrees/dezogif_ng/<name>`, outside the repo).
   The manager merges to main, and only after independent review approves.
 - **One branch per independent unit of work.** When parallel agents are
   dispatched, each gets its own branch + worktree. This prevents code-trashing.

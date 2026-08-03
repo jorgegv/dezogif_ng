@@ -1,6 +1,6 @@
 ---
 name: cmds
-description: List all project-local skills, subagents, and reference docs for the dezogif_esp repo with one-line descriptions. Use when the user says "what skills do I have", "list commands", "what's available", "what can you do here", or asks to discover the project's .claude/ inventory.
+description: List all project-local skills, subagents, and reference docs for the dezogif_ng repo with one-line descriptions. Use when the user says "what skills do I have", "list commands", "what's available", "what can you do here", or asks to discover the project's .claude/ inventory.
 ---
 
 # Discover available skills, subagents, and docs

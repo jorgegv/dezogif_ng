@@ -31,5 +31,5 @@ if [ -f "$REPO_ROOT/build/last-test.txt" ]; then
 fi
 
 # Print to stdout (the SessionStart hook output is shown in the conversation).
-printf '[dezogif_esp] branch=%s @ %s • +%s vs main / +%s vs origin/main • tree=%s%s\n' \
+printf '[dezogif_ng] branch=%s @ %s • +%s vs main / +%s vs origin/main • tree=%s%s\n' \
   "$branch" "$short" "$ahead_main" "$ahead_origin" "$tree" "$last_test"

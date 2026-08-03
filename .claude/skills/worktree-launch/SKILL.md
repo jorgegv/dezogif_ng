@@ -1,6 +1,6 @@
 ---
 name: worktree-launch
-description: Create a fresh agent worktree under ~/tmp/worktrees/dezogif_esp/ (OUTSIDE the repo) off an up-to-date main, with the project's hygiene rules baked in. Use when the user says "spin up a worktree", "create a worktree for agent X", "set up a worktree for branch Y", or when about to dispatch an agent that needs an isolated work area.
+description: Create a fresh agent worktree under ~/tmp/worktrees/dezogif_ng/ (OUTSIDE the repo) off an up-to-date main, with the project's hygiene rules baked in. Use when the user says "spin up a worktree", "create a worktree for agent X", "set up a worktree for branch Y", or when about to dispatch an agent that needs an isolated work area.
 ---
 
 # Launch an agent worktree
@@ -32,13 +32,13 @@ If `behind` > 0, ask the user whether to fast-forward main first. Do NOT auto-pu
 ### 2. Create the worktree
 
 ```bash
-git worktree add ~/tmp/worktrees/dezogif_esp/agent-<ID> -b <BRANCH> main
+git worktree add ~/tmp/worktrees/dezogif_ng/agent-<ID> -b <BRANCH> main
 ```
 
 ### 3. Smoke-test the fresh worktree
 
 ```bash
-make -C ~/tmp/worktrees/dezogif_esp/agent-<ID> all
+make -C ~/tmp/worktrees/dezogif_ng/agent-<ID> all
 ```
 
 Nothing needs provisioning: every artefact is built into the gitignored `build/`,
@@ -51,7 +51,7 @@ stop — the base is wrong, not the agent's work.
 This goes into the agent's prompt:
 
 ```
-WORKING DIRECTORY: ~/tmp/worktrees/dezogif_esp/agent-<ID>
+WORKING DIRECTORY: ~/tmp/worktrees/dezogif_ng/agent-<ID>
 BRANCH: <BRANCH>
 BASE: main @ <SHA>
 
@@ -80,7 +80,7 @@ Hard rules per CLAUDE.md:
 After the agent's branch is merged to main:
 
 ```bash
-git worktree remove ~/tmp/worktrees/dezogif_esp/agent-<ID>
+git worktree remove ~/tmp/worktrees/dezogif_ng/agent-<ID>
 git branch -d <BRANCH>   # only if user authorizes
 ```
 

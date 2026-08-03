@@ -7,7 +7,7 @@ description: Look up authoritative ZX Next FPGA hardware behavior in the VHDL so
 
 Authoritative hardware spec lookup. The VHDL at
 `/home/jorgegv/src/spectrum/ZX_Spectrum_Next_FPGA/cores/zxnext/src/` is the
-single oracle for dezogif_esp (not CSpect, not Fuse, not ZEsarUX, not the wiki).
+single oracle for dezogif_ng (not CSpect, not Fuse, not ZEsarUX, not the wiki).
 
 ## Inputs
 

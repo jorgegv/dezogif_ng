@@ -1,15 +1,19 @@
 # Worktrees
 
-Worktrees live **outside the repository**, at `~/tmp/worktrees/dezogif_esp/<name>/`.
+Worktrees live **outside the repository**, at `~/tmp/worktrees/dezogif_ng/<name>/`.
 Never inside the repo — not even gitignored. Each agent gets its own worktree
 off `main`; the manager creates them, agents work in them, the manager merges
 and cleans up.
 
 ## Layout
 
+The project was renamed `dezogif_esp` → `dezogif_ng` on 2026-08-03, but the **checkout on disk
+still sits at the old path**. That mismatch is deliberate, not a leftover: paths below that say
+`dezogif_esp` are real locations, paths that say `dezogif_ng` are the project's name.
+
 ```
-/home/jorgegv/src/spectrum/dezogif_esp/     ← main checkout, always on main
-/home/jorgegv/tmp/worktrees/dezogif_esp/
+/home/jorgegv/src/spectrum/dezogif_esp/     ← main checkout (old dir name), always on main
+/home/jorgegv/tmp/worktrees/dezogif_ng/
 ├── agent-a562cf38/                         ← worktree, own branch, shared .git
 ├── agent-ad6b7cf6/
 └── ...
@@ -54,8 +58,8 @@ stale SHA. `/worktree-launch` checks and asks first. If it happened anyway, the
 second-to-merge agent rebases **on its own branch**:
 
 ```bash
-git -C ~/tmp/worktrees/dezogif_esp/<name> fetch origin
-git -C ~/tmp/worktrees/dezogif_esp/<name> rebase origin/main
+git -C ~/tmp/worktrees/dezogif_ng/<name> fetch origin
+git -C ~/tmp/worktrees/dezogif_ng/<name> rebase origin/main
 ```
 
 ## Cleanup
@@ -63,7 +67,7 @@ git -C ~/tmp/worktrees/dezogif_esp/<name> rebase origin/main
 After a worker's branch is merged:
 
 ```bash
-git worktree remove ~/tmp/worktrees/dezogif_esp/<name>
+git worktree remove ~/tmp/worktrees/dezogif_ng/<name>
 git branch -d <branch-name>   # only if the user authorises branch deletion
 ```
 

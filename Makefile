@@ -1,4 +1,4 @@
-# Makefile — dezogif_esp
+# Makefile — dezogif_ng
 #
 # `make` with no target lists every target that has a `#` comment on the line
 # immediately above it. Target names print in bold red.

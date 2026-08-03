@@ -1,6 +1,6 @@
 ---
 name: handover
-description: Produce an end-of-session dezogif_esp handover memo (branch, HEAD, commits-ahead, build/test state, next-session priorities) and save it as an auto-memory entry. Use when the user says "prepare for handover", "prepare for session handover", "EOD", or similar.
+description: Produce an end-of-session dezogif_ng handover memo (branch, HEAD, commits-ahead, build/test state, next-session priorities) and save it as an auto-memory entry. Use when the user says "prepare for handover", "prepare for session handover", "EOD", or similar.
 ---
 
 # Session handover
@@ -35,7 +35,7 @@ Save to `/home/jorgegv/.claude/projects/-home-jorgegv-src-spectrum-dezogif-esp/m
 
 ```yaml
 ---
-name: dezogif_esp session handover <YYYY-MM-DD><suffix>
+name: dezogif_ng session handover <YYYY-MM-DD><suffix>
 description: <one line — branch, what was done, what's next>
 metadata:
   type: project

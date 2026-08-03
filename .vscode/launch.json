@@ -85,35 +85,6 @@
         {
             "type": "dezog",
             "request": "launch",
-            "name": "ZEsarUX",
-            "remoteType": "zrcp",
-            "zrcp": {
-                "hostname": "localhost",
-                "port": 10000,
-                "socketTimeout": 50
-            },
-            "sjasmplus": [
-                {
-                    "path": "build/dezogif.sld",
-                    "srcDirs": [
-                        "src"
-                    ]
-                }
-            ],
-            "startAutomatically": true,
-            "commandsAfterLaunch": [
-                "-md 0x000 0x0100 0xC000 0x0100"
-            ],
-            "rootFolder": "${workspaceFolder}",
-            "topOfStack": "stack_top",
-            "load": "build/dezogif.nex",
-            "smallValuesMaximum": 513,
-            "tmpDir": ".tmp"
-        },
-
-        {
-            "type": "dezog",
-            "request": "launch",
             "name": "CSpect MF ROM",
             "remoteType": "cspect",
             "cspect": {

@@ -246,13 +246,13 @@ enter_debugger:
     ld d,BREAK_REASON.BREAKPOINT_HIT
 .no_reason:
 
-    ; Make sure the joyport is configured for the UART
-    call set_uart_joystick
+    ; Make sure the transport is usable by the debugger
+    call transport_activate
 
     ; Drain receive message queue
     ld h,d	; Save break reason
     ld de,526	; Drain buffer with timeout of 1 ms (=526)
-    call drain_rx_buffer_with_timeout
+    call transport_drain_with_timeout
     ld d,h	; Restore break reason
 
     ; Send pause notification

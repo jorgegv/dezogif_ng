@@ -31,7 +31,7 @@ LOADED_BANK:    EQU 92
     include "data_const.asm"
     include "mf.asm"
     include "utilities.asm"
-    include "uart.asm"
+    include "transport.asm"
     include "message.asm"
     include "commands.asm"
     include "backup.asm"

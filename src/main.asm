@@ -28,7 +28,7 @@
     include "data_const.asm"
     include "mf.asm"
     include "utilities.asm"
-    include "uart.asm"
+    include "transport.asm"
     include "message.asm"
     include "commands.asm"
     include "backup.asm"
@@ -73,7 +73,7 @@ main_bank_entry:
     ;nextreg REG_MMU+SWAP_SLOT,a
 
     ; Set baudrate
-    call set_uart_baudrate
+    call transport_init
 
     ; Init text printing
     call text.init
@@ -83,7 +83,7 @@ main_bank_entry:
     ld (uart_joyport_selection),a
 
     ; Enable flashing border
-    call uart_flashing_border.enable
+    call transport_flashing_border.enable
 
     ; Enable slow border change
     ld a,1
@@ -103,7 +103,7 @@ drain_main:
     ; Store error
     ld (last_error),a
     ; Drain
-    call drain_rx_buffer
+    call transport_drain
 
     ; Flow through
 
@@ -143,7 +143,7 @@ main:
     ld (slot_backup.slot0),a
 
     ; Set UART
-    call set_uart_joystick
+    call transport_activate
 
     ; Show the text
     call show_ui
@@ -155,7 +155,7 @@ main_loop:
     push bc, de
 
     ; Check if byte available.
-    call check_uart_byte_available
+    call transport_byte_available
     ; If so leave loop and enter command loop
     jp nz,cmd_loop
 .continue:

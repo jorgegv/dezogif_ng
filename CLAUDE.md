@@ -131,8 +131,10 @@ The bench never writes the reference SD image; it reflink-copies it into `build/
 
 Two known jnext gaps this project will hit, both deliberate absences with no consumer until now:
 `AT+CIPSERVER` (with `AT+CIPMUX=1`, which jnext currently **refuses** with `ERROR`) and
-`AT+CIPMODE` passthrough. File them as jnext issues **with this project as the demonstrated
-consumer** — never speculatively. See the plan §8.2.
+`AT+CIPMODE` passthrough. The server-mode triad is filed as
+[jnext#210](https://github.com/jorgegv/jnext/issues/210) (v1.0); `AT+CIPMODE` deliberately is
+not, because server mode forbids passthrough. File anything further as jnext issues **with this
+project as the demonstrated consumer** — never speculatively. See the plan §8.2.
 
 ## Constraints for development
 

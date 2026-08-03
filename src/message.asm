@@ -92,7 +92,7 @@ end		defb	; For the RET
 ;===========================================================================
 cmd_loop:
     ; Wait on next command
-    call wait_for_uart_rx
+    call transport_wait_rx
     ; Receive length sequence number and command
     ld hl,receive_buffer
     ld de,receive_buffer.payload-receive_buffer
@@ -111,7 +111,7 @@ cmd_loop:
 ; Immediately returns if no message is available.
 ;===========================================================================
 execute_cmds_loop:
-    call check_uart_byte_available
+    call transport_byte_available
     ret z
 .loop:
     ; Receive length sequence number and command
@@ -127,7 +127,7 @@ execute_cmds_loop:
     ld de,256*200
 .wait:
     push de
-    call check_uart_byte_available
+    call transport_byte_available
     pop de
     jr nz,.loop
     dec de
@@ -139,7 +139,7 @@ execute_cmds_loop:
 
 
 ;===========================================================================
-; Receives a number of bytes from the UART.
+; Receives a number of bytes from the transport.
 ; The received bytes are written at HL.
 ; Parameter:
 ;  HL = pointer to the buffer to write to.
@@ -153,7 +153,7 @@ receive_bytes:
 .loop:
     push de
     ; Get byte
-    call read_uart_byte
+    call transport_read_byte
     ; Store
     ldi (hl),a
     ;out (BORDER),a
@@ -179,11 +179,11 @@ receive_message:
     ld hl,receive_buffer
     ; Receive the length, 2 bytes:
     ; Get first byte
-    call read_uart_byte
+    call transport_read_byte
     ; Store
     ldi (hl),a
     ; Get second byte
-    call read_uart_byte
+    call transport_read_byte
     ; Store
     ldi (hl),a
 
@@ -195,7 +195,7 @@ receive_message:
     or d
     ret z	; all bytes received
     ; Get next byte
-    call read_uart_byte
+    call transport_read_byte
     ; Store
     ldi (hl),a
     ; Next
@@ -221,13 +221,13 @@ send_message:
     ; First length byte
     ldi a,(hl)
     ld e,a
-    ; Write to UART
-    call write_uart_byte
+    ; Write to the transport
+    call transport_write_byte
     ; Second length byte
     ldi a,(hl)
     ld d,a
-    ; Write to UART
-    call write_uart_byte
+    ; Write to the transport
+    call transport_write_byte
 
     ; DE contains the length
 .loop:
@@ -237,8 +237,8 @@ send_message:
 
     ; Get next byte
     ldi a,(hl)
-    ; Write to UART
-    call write_uart_byte
+    ; Write to the transport
+    call transport_write_byte
     ; Next
     dec de
     jr .loop
@@ -276,26 +276,26 @@ send_length_and_seqno:
 send_4bytes_length_and_seqno:
     ; Write first byte to recognize message
     ld a,MESSAGE_START_BYTE
-    call write_uart_byte
+    call transport_write_byte
     ; First length byte
     ld a,e
-    ; Write to UART
-    call write_uart_byte
+    ; Write to the transport
+    call transport_write_byte
     ; Second length byte
     ld a,d
-    ; Write to UART
-    call write_uart_byte
+    ; Write to the transport
+    call transport_write_byte
     ; Third length byte
     ld a,l
-    ; Write to UART
-    call write_uart_byte
+    ; Write to the transport
+    call transport_write_byte
     ; Fourth length byte
     ld a,h
-    ; Write to UART
-    call write_uart_byte
+    ; Write to the transport
+    call transport_write_byte
     ; Sequence number
     ld a,(receive_buffer.seq_no)
-    jp write_uart_byte
+    jp transport_write_byte
 
 
 ;===========================================================================
@@ -320,35 +320,35 @@ send_ntf_pause:
     ld (prgm_state),a
     ; Write first byte to recognize message
     ld a,MESSAGE_START_BYTE
-    call write_uart_byte
+    call transport_write_byte
     ; First length byte
     ld a,7
-    call write_uart_byte
+    call transport_write_byte
     ; Rest of length + seqno=0
     xor a
     ld e,4
 .loop:
-    call write_uart_byte
+    call transport_write_byte
     dec e
     jr nz,.loop
     ; NTF_PAUSE id
     ld a,1	; NTF_PAUSE
-    call write_uart_byte
+    call transport_write_byte
     ; Breakpoint reason
     ld a,d
-    call write_uart_byte
+    call transport_write_byte
     ; Breakpoint
     ld a,l
-    call write_uart_byte
+    call transport_write_byte
     ld a,h
-    call write_uart_byte
+    call transport_write_byte
     ; Bank
     rlca : rlca : rlca ; Get slot
     and 0111b
     add REG_MMU
     call read_tbblue_reg
     inc a	; bank+1
-    call write_uart_byte
+    call transport_write_byte
     ; Empty reason string
     xor a
-    jp write_uart_byte
+    jp transport_write_byte

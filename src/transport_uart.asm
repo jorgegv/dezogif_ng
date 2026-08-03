@@ -20,6 +20,27 @@
 
 
 ;===========================================================================
+; TRANSPORT_DEACTIVATE — the debugger is about to resume the debuggee.
+;
+; The joy ports were taken over for the serial link while the debugger had the
+; machine; this hands them back. Clearing NR 0x0B is also what re-points
+; UART0's RX away from the joystick pin and onto the ESP-01 pin
+; (zxnext.vhd:3340, :3536) — which is why a byte from the PC cannot arrive
+; while the debuggee runs in this mode. See plan §4.
+;
+; A macro rather than a subroutine: the single caller is inline in
+; backup.asm's restore path, where a CALL would cost bytes and a stack slot it
+; does not have. A transport with nothing to hand back expands this to nothing.
+; Changes:
+;   A
+;===========================================================================
+    MACRO TRANSPORT_DEACTIVATE
+    ; Disable joy port IO mode to enable the joysticks
+    nextreg REG_JOYSTICK_IO_MODE,0
+    ENDM
+
+
+;===========================================================================
 ; Constants
 ;===========================================================================
 
@@ -90,14 +111,14 @@ baudrate_table:
 ; Clears the receive FIFO.
 ; Default is to use a 100ms timeout.
 ; For return from the breakpoints a faster version is used,
-; drain_rx_buffer_with_timeout.
+; transport_drain_with_timeout.
 ; The timeout is passed via DE. Unit=53/28000=1.9us, i.e. 526 => 1ms.
 ; Changes:
 ;   A, BC, DE
 ;===========================================================================
-drain_rx_buffer:
+transport_drain:
     ld de,53000 ; 100 ms
-drain_rx_buffer_with_timeout:
+transport_drain_with_timeout:
     ld (.read_next_byte+1),de
     ld bc,UART_TX
 
@@ -149,7 +170,7 @@ change_border_color:
 ; Changes:
 ;   A, DE, BC
 ;===========================================================================
-wait_for_uart_rx:
+transport_wait_rx:
     ; Write layer 2 previous value
     ld a,(backup.layer_2_port)
     ld bc,LAYER_2_PORT
@@ -178,7 +199,7 @@ wait_for_uart_rx:
 ; Changes:
 ;   AF
 ;===========================================================================
-check_uart_byte_available:
+transport_byte_available:
     ld a,HIGH UART_TX
     in a,(LOW UART_TX)
     ; Read status bits
@@ -193,7 +214,7 @@ check_uart_byte_available:
 ; Changes:
 ;   BC, DE
 ;===========================================================================
-read_uart_byte:
+transport_read_byte:
     ; Change border
 .flash1:
     ld a,BLUE
@@ -218,7 +239,7 @@ read_uart_byte:
 
     ; "Timeout"
 .timeout:
-    nop ; LOGPOINT read_uart_byte: ERROR=TIMEOUT
+    nop ; LOGPOINT transport_read_byte: ERROR=TIMEOUT
     jp rx_timeout   ; ASSERTION
 
 .byte_received:
@@ -260,27 +281,27 @@ tx_timeout: ; The receive timeout handler
 ;===========================================================================
 ; Enables flashing of the border while receiving data.
 ;===========================================================================
-uart_flashing_border.enable:
+transport_flashing_border.enable:
     ld a,0x3E   ; LD A,n
-    ld (read_uart_byte.flash1),a
-    ld (read_uart_byte.flash2),a
+    ld (transport_read_byte.flash1),a
+    ld (transport_read_byte.flash2),a
     ld a,BLUE
-    ld (read_uart_byte.flash1+1),a
+    ld (transport_read_byte.flash1+1),a
     ld a,YELLOW
-    ld (read_uart_byte.flash2+1),a
+    ld (transport_read_byte.flash2+1),a
     ret
 
 
 ;===========================================================================
 ; Disables flashing of the border while receiving data.
 ;===========================================================================
-uart_flashing_border.disable:
+transport_flashing_border.disable:
     ld a,0x18   ; JR 2
-    ld (read_uart_byte.flash1),a
-    ld (read_uart_byte.flash2),a
+    ld (transport_read_byte.flash1),a
+    ld (transport_read_byte.flash2),a
     ld a,2
-    ld (read_uart_byte.flash1+1),a
-    ld (read_uart_byte.flash2+1),a
+    ld (transport_read_byte.flash1+1),a
+    ld (transport_read_byte.flash2+1),a
     ret
 
 
@@ -293,7 +314,7 @@ uart_flashing_border.disable:
 ; Changes:
 ;  BC
 ;===========================================================================
-write_uart_byte:
+transport_write_byte:
     push de, af
     ; Wait for TX ready
     call wait_for_uart_tx
@@ -336,7 +357,7 @@ wait_for_uart_tx:
 ; Changes:
 ;  AF, BC (=PORT_UART_TX), E
 ;===========================================================================
-wait_for_uart_tx_empty:
+transport_flush:
     ; Send response back
     ld bc,UART_TX
     ; Check if ready for transmit
@@ -351,7 +372,7 @@ wait_for_uart_tx_empty:
     or e
     jr nz,.wait_tx
 
-    nop ; LOGPOINT wait_for_uart_tx_empty: ERROR=TIMEOUT
+    nop ; LOGPOINT transport_flush: ERROR=TIMEOUT
     jp tx_timeout   ; ASSERTION
 
 
@@ -368,7 +389,7 @@ wait_for_uart_tx_empty:
 ; Changes:
 ;  A, BC, DE, HL
 ;===========================================================================
-set_uart_baudrate:
+transport_init:
     ; Set 8 bit
     ld bc,UART_FRAME
     ld a,00011000b   ; 8 bit
@@ -419,7 +440,7 @@ set_uart_baudrate:
 ; Changed:
 ;  AF, BC, HL
 ;===========================================================================
-set_uart_joystick:
+transport_activate:
     ; Core 3.01.10
     ld a,(uart_joyport_selection)
     dec a

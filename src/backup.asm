@@ -56,11 +56,10 @@ save_registers:
 ;   -
 ; ===========================================================================
 restore_registers:
-    ; Wait for TX ready. (This is to make sure everything is transmitted before the joyport configuration is changed.)
-    call wait_for_uart_tx_empty
+    ; Wait for TX ready, so everything queued is out before the transport is torn down.
+    call transport_flush
 
-    ; Disable joy port IO mode to enable the joysticks
-    nextreg REG_JOYSTICK_IO_MODE,0
+    TRANSPORT_DEACTIVATE
 
     ; Skip IM
     ld sp,backup.r

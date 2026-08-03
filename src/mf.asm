@@ -127,11 +127,11 @@ mf_nmi_button_pressed:
     ld a,l	; Bit 2 contains the interrupt state.
     ld (backup.interrupt_state),a
 
-    ; Make sure the joyport is configured for the UART
-    call set_uart_joystick
+    ; Make sure the transport is usable by the debugger
+    call transport_activate
 
     ; First drain receive message queue
-    call drain_rx_buffer
+    call transport_drain
 
     ; Send pause notification
     ld d,BREAK_REASON.MANUAL_BREAK

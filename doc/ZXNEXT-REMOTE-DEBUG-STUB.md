@@ -433,6 +433,16 @@ addition.
 **Secondary — `AT+CIPMODE` passthrough**, needed only for the fallback client transport (§4.2),
 and useful for the M0 spike.
 
+**Filed as [jnext#210](https://github.com/jorgegv/jnext/issues/210)** (milestone v1.0, 2026-08-03):
+the server-mode triad only — `AT+CIPMUX=1`, `AT+CIPSERVER`, and the multiplexed `+IPD,<id>,<len>:`
+form — with this project named as the consumer. `AT+CIPMODE` was **deliberately left out of that
+issue**: server mode forbids passthrough, so the chosen design cannot use it even if it existed,
+and asking for it would be exactly the speculative widening jnext's own scoping rule refuses. The
+issue also carries forward the nextsync constraint (`CIPMUX` default stays 0, refusal only on the
+wrong value) so an implementer does not meet the existing `ERROR` cold and assume it was an
+oversight. jnext#154 (v1.1) remains the home for broad datasheet fidelity; #210 is the narrow
+evidenced slice its own closing note invites.
+
 The correct etiquette is to file these as jnext issues **with this project as the demonstrated
 consumer**, not to ask for them speculatively. jnext's own rule is that features are
 demo-driven, not completeness-driven — and `esp_at.h` already anticipates the widening, tracking

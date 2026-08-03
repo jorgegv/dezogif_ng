@@ -5,6 +5,49 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-03 — The transport interface: subroutines, plus one macro
+
+**Decided.** The seam M1 needs is `src/transport.asm`, which includes an
+implementation (`src/transport_uart.asm`, upstream's serial path). The
+interface is seven subroutines for the byte stream — `transport_read_byte`,
+`transport_write_byte`, `transport_byte_available`, `transport_wait_rx`,
+`transport_flush`, `transport_drain`, `transport_drain_with_timeout` — plus
+`transport_init` / `transport_activate`, and **one macro**,
+`TRANSPORT_DEACTIVATE`.
+
+**Why a macro for that one.** Its single caller is inline in `backup.asm`'s
+resume path, where a `CALL` costs bytes and a stack slot the routine does not
+have. As a macro it also expands to *nothing* in a transport with nothing to
+hand back, which is what an assembly-time mode switch should do. Subroutines
+everywhere else, because upstream already paid for the `CALL` there.
+
+**The gate was byte-identity, and it held.** With `BUILD_TIME` pinned,
+`enNextMf.rom`, `main.bin` and `mf_nmi.bin` are byte-for-byte identical before
+and after — the whole change is label renames, an include split and one macro
+that expands to the instruction it replaced. That is the strongest available
+evidence that a refactor of ~60 call sites across eight files changed no
+behaviour, and it is worth preserving as the standard for the next one.
+
+**What still leaks, and it is not what I expected.** After the extraction,
+`commands.asm`, `message.asm` and `breakpoints.asm` — the three files
+CLAUDE.md's rule names — are clean. What remains is **UI**, not protocol:
+
+- `uart_joyport_selection` (`data.asm`), written by `main.asm` and displayed
+  by `ui.asm`; `read_key_joyport` in `ui.asm` — the 1/2/N joy-port selector.
+- `BAUDRATE` in `constants.asm`, and the on-screen strings in
+  `data_const.asm` ("ZX Next UART DeZog Interface", "ESP UART Baudrate: ").
+
+Deliberately **not** resolved tonight: what WiFi mode shows instead of a
+joy-port selector is a design question (an IP address and a port, presumably)
+and improvising it at 1am would produce the wrong shape. It is the next
+decision M1 needs, not a leftover.
+
+**Not done, still deliberately.** No `-DTRANSPORT=…` switch. `transport.asm`
+is where it goes and says so, but with one implementation a switch can only
+select that one; the reasoning in the entry below still applies.
+
+---
+
 ## 2026-08-03 — Renamed `dezogif_esp` → `dezogif_ng`
 
 **Decided.** The project is `dezogif_ng`. Documentation and `.claude/` config

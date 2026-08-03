@@ -1,3 +1,21 @@
+This project is a derivative work of maziac's dezogif
+(https://github.com/maziac/dezogif), which is distributed under the MIT
+licence reproduced below. That notice is retained here because the MIT licence
+requires it, and it continues to govern maziac's original code wherever it
+appears in this repository.
+
+The combined work — maziac's code together with the modifications made here —
+is distributed under the **GNU General Public License, version 3**. See the
+LICENSE file in the root of this repository for its full text. The GPLv3 is
+the licence of this project as a whole; the MIT terms below are preserved as
+the upstream notice, not as an alternative licence for the combination.
+
+Also acknowledged: Chris Kirby's NDS-NextDevSystem
+(https://github.com/Ckirby101/NDS-NextDevSystem), which dezogif used as its
+starting point.
+
+--------------------------------------------------------------------------------
+
 MIT License
 
 Copyright (c) 2020 maziac

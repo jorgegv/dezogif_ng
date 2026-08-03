@@ -308,7 +308,14 @@ upstream churn to track; and its `src/` is already factored with `uart.asm` sepa
 `commands.asm`/`breakpoints.asm`/`mf.asm`. Rewriting the memory choreography and the DZRP
 command layer from scratch would be months of work to arrive at the same place, with new bugs.
 
-Keep the MIT licence and the attribution to both Maziac and Chris Kirby.
+**Licensing (decided 2026-08-03).** The combined work is distributed under **GPLv3** (`LICENSE`).
+Upstream's MIT notice is retained verbatim in `NOTICE` — MIT requires it, and it continues to
+govern Maziac's original code. The attribution to both Maziac and Chris Kirby stays.
+
+This has a consequence for the paragraph below: **GPLv3 code cannot be merged into an MIT
+project.** Offering the transport back upstream is now a licensing decision as well as a
+technical one — any part genuinely meant for dezogif has to be written with the intention of
+also offering it under MIT, and that has to be decided when it is written.
 
 If the transport abstraction turns out clean, offer it back upstream as an option rather than
 maintaining a permanent fork.

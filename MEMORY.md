@@ -5,6 +5,29 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-03 — The combined work is GPLv3; upstream's MIT notice is kept
+
+**Decided.** `LICENSE` is the GPLv3 text and covers this project as a whole.
+Upstream's MIT licence moved to `NOTICE`, unchanged, with a header explaining
+the relationship.
+
+**Why.** MIT is GPL-compatible in one direction: a derivative may be
+distributed under GPLv3 provided the MIT notice is preserved. Keeping the
+notice in `NOTICE` satisfies that, and aligns this project with jnext, which
+is GPLv3.
+
+**Consequence, and it is not small.** Contributing the transport back to
+dezogif — §6 of the plan, and milestone M4 — is now a *licensing* problem as
+well as a technical one, because GPLv3 code cannot be merged into an MIT
+project. Anything genuinely intended for upstream has to be written with the
+intent of offering it under MIT too, decided at the time it is written.
+
+**Rejected.** Dual-licensing the whole repo (complexity with no demonstrated
+need); staying MIT (the user's call, and GPLv3 matches the rest of the
+workspace).
+
+---
+
 ## 2026-08-03 — Continue in this fork; do not start a new repo
 
 **Decided.** Keep `dezogif_esp` as a fork of maziac/dezogif (359 upstream

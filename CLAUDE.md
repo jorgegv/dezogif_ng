@@ -48,9 +48,15 @@ to work.
 - **A stub that assembles is not a stub that runs.** Any change to the transport, the NMI path or
   bank handling needs evidence from an actual run — in jnext at minimum, on hardware for anything
   touching the ESP.
-- **Fork hygiene.** MIT licence and the attribution to Maziac and to Chris Kirby (NDS-NextDevSystem)
-  stay. Keep the transport layer isolated enough that it could be offered upstream; do not scatter
-  ESP assumptions through `commands.asm` / `breakpoints.asm`.
+- **Licensing.** The combined work is **GPLv3** (`LICENSE`). Upstream's MIT notice is retained
+  verbatim in `NOTICE`, as the MIT licence requires, and still governs Maziac's original code.
+  The attribution to Maziac and to Chris Kirby (NDS-NextDevSystem) stays. Never remove or
+  reword the MIT block in `NOTICE`.
+- **Fork hygiene.** Keep the transport layer isolated; do not scatter ESP assumptions through
+  `commands.asm` / `breakpoints.asm`. Note that contributing it back to dezogif is now a
+  **licensing** question as well as a technical one: GPLv3 code cannot simply be merged into an
+  MIT project, so anything genuinely intended for upstream must be written to be offered under
+  MIT as well, and that decision has to be made when it is written, not afterwards.
 
 ## Building
 

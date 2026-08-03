@@ -18,9 +18,10 @@ of that bit "fixed" it. Both observations were real; the causal link was not.
 failing run and the working one — the Multiface ROM in the SD image as well as
 the register write — and the ad-hoc runs were never committed, so which
 difference mattered is no longer recoverable from this repo. What *is*
-verifiable is that the register cannot have been the blocker (see the table
-below, measured properly) and that a sufficient alternative cause exists and is
-still in the tree: `nmi66h` (`src/mf_rom.asm:41-60`) masks NR `0x02` with
+verifiable is that under the injection timing this bench now uses the register
+is already set by the time anything runs, so it cannot be what a same-timing
+attempt saw differ (see the table below); and that a sufficient alternative
+cause exists and is still in the tree: `nmi66h` (`src/mf_rom.asm:41-60`) masks NR `0x02` with
 `00011100b` and returns unless the result is zero, so dezogif's ROM declines a
 software NMI whatever NR `0x06` says. Do not read the paragraph above as
 "the ROM was the cause" — read it as "the experiment could not tell", which

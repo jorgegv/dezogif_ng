@@ -9,7 +9,8 @@ Status: exploration complete, not started
 ## 0. Executive summary
 
 A debug stub running on **real ZX Spectrum Next hardware**, debugged from a PC **over the
-Next's ESP-01 WiFi module**, is feasible and most of the hard work already exists.
+Next's ESP-01 WiFi module**, is feasible and most of the hard work already exists. The stub keeps
+upstream's joy-port serial transport too, and the mode is chosen when the ROM is assembled.
 
 - The reference implementation of a Next debug stub — **dezogif** — already exists, is MIT
   licensed, and works. It talks **DZRP** to **DeZog** in VS Code.
@@ -17,9 +18,9 @@ Next's ESP-01 WiFi module**, is feasible and most of the hard work already exist
   source of its headline limitation: *you cannot pause the running program from the PC; you
   must physically press the NMI button.*
 - On the Next, the joy-port serial and the ESP WiFi module are **the same UART peripheral
-  behind a pin mux**. Moving the transport to the ESP is therefore a small change with a
-  disproportionate payoff: the joysticks stay with the game permanently, and the hardware
-  gains a route for PC-initiated break.
+  behind a pin mux**. Adding an ESP transport beside the serial one is therefore a small
+  change with a disproportionate payoff: in WiFi mode the joysticks stay with the game
+  permanently, and the hardware gains a route for PC-initiated break.
 
 **Recommended shape:** fork dezogif, add a second transport behind an assembly-time switch, add
 asynchronous break. **The joy-port serial transport stays** — the ROM is built in either UART mode
@@ -170,6 +171,10 @@ corrupts the program being debugged.
 ---
 
 ## 4. Architecture
+
+*This section describes **WiFi mode**. UART mode is upstream's architecture
+unchanged — same diagram with the ESP box replaced by the joy-port cable, and §4.2/§4.3's
+transport and break discussion not applying.*
 
 ```
    PC (dev machine)                        ZX Spectrum Next (real hardware)
@@ -337,6 +342,10 @@ maintaining a permanent fork.
 ---
 
 ## 7. Relationship to DeZog (the PC side)
+
+*Also **WiFi mode**. In UART mode the client is upstream's: DeZog's `zxnext` remote over the
+serial port, which is exactly why that remote's serial-only nature is a problem for WiFi and not
+for UART.*
 
 **No upstream change is required to start.** DeZog has five remote types:
 
@@ -607,7 +616,10 @@ Facts checked directly against a primary source during the analysis:
 
 ---
 
-## Appendix B — End-to-end workflow
+## Appendix B — End-to-end workflow (WiFi mode)
+
+*UART mode's workflow is upstream dezogif's, unchanged: serial cable, `remoteType: "zxnext"`,
+and no PC-initiated break.*
 
 What using this actually looks like, once M2 is complete. Machine column is where each operation
 happens.

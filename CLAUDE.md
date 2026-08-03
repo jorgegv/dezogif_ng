@@ -7,9 +7,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `dezogif_esp` is a **Z80 debug stub that runs on real ZX Spectrum Next hardware**, debugged from a
 PC over the Next's **ESP-01 WiFi module**. It is a fork of
 [maziac/dezogif](https://github.com/maziac/dezogif), whose transport is a serial cable on the
-joystick port. This fork **adds a WiFi transport alongside it and selects between the two at
-assembly time** — the ROM is built in either UART mode or WiFi mode — and adds PC-initiated break
-in WiFi mode. The serial transport is kept, not replaced.
+joystick port.
+
+The goal is to **add a WiFi transport alongside that serial one and select between them at
+assembly time**, so the ROM can be built in either UART mode or WiFi mode, and to add
+PC-initiated break in WiFi mode. The serial transport will be kept, not replaced.
+
+**None of that exists yet.** Today the tree builds exactly one ROM, behaviourally upstream's
+serial stub; there is no ESP code and no mode switch. What this fork has actually added so far is
+the build system, the headless test bench and the documentation.
 
 It is deployed by replacing `machines/next/enNextMf.rom` on the Next's SD card — the stub *is* the
 Multiface ROM. The PC-side client is **DeZog** in VS Code, speaking **DZRP**.
@@ -54,9 +60,10 @@ to work.
   verbatim in `NOTICE`, as the MIT licence requires, and still governs Maziac's original code.
   The attribution to Maziac and to Chris Kirby (NDS-NextDevSystem) stays. Never remove or
   reword the MIT block in `NOTICE`.
-- **Two transports, one interface.** The ROM is assembled in either UART mode or WiFi mode. Both
-  are supported; upstream's serial path is never deleted. `commands.asm`, `message.asm` and
-  `breakpoints.asm` must not be able to tell which mode they were assembled against — no ESP
+- **Two transports, one interface** (design rule for M1 onwards; not yet built). The ROM will be
+  assembled in either UART mode or WiFi mode, and upstream's serial path is never deleted.
+  `commands.asm`, `message.asm` and `breakpoints.asm` must not be able to tell which mode they
+  were assembled against — no ESP
   assumption may leak above the transport interface. **UART mode is the regression check on that
   boundary**: if a change breaks the serial build, the abstraction leaked, and that is a bug in
   the change, not in the serial path.

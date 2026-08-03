@@ -30,8 +30,13 @@ scaffolding ahead of the thing it scaffolds is how the switch ends up shaped
 wrong. This entry records the decision; M1 implements it.
 
 **Rejected.** Replacing the serial transport outright (the original plan, and
-what every document said until now); carrying both modes in one ROM (8 KB, and
-§10's budget already has ~3.3 KB free — not enough for two AT-command stacks).
+what every document said until now); carrying both modes in one ROM, selected
+at runtime. The second was rejected on complexity — a runtime switch buys
+nothing a rebuild does not, and it puts a branch in the hot path of every
+transport call. A capacity argument is *available* but has not been made: the
+~3.3 KB free is measured (`main_end` 0xF1B6 to image end 0xFEC0), the size of
+an AT-command stack is not, because none has been written. Do not cite the
+budget as though it settled this.
 
 ---
 
@@ -67,8 +72,8 @@ that borrows ideas.
 **Why.** It builds clean today (0 errors, 0 warnings, 8192-byte ROM) with the
 sjasmplus already on this machine. The upstream history is the only existing
 documentation of *why* the memory choreography is shaped the way it is, and
-~2,600 lines of Z80 unit tests come with it. The transport swap is genuinely
-localised: `read_uart_byte`/`write_uart_byte` have ~60 call sites but are two
+~2,600 lines of Z80 unit tests come with it. Adding a second transport is
+genuinely localised: `read_uart_byte`/`write_uart_byte` have ~60 call sites but are two
 functions, and every DZRP response already computes its length up front
 (`send_length_and_seqno`), which is exactly what `AT+CIPSEND=<id>,<len>`
 needs. ~3.3 KB of the 8 KB ROM is free (`main_end` 0xF1B6, image ends 0xFEC0).

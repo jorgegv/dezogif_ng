@@ -85,7 +85,10 @@ See CLAUDE.md §Testing. Highlights:
 - `make test` is the gate: four headless jnext runs, judged on screenshots.
 - **T3 is a control.** If it fails, the bench is broken and T4's verdict is
   worthless — fix the bench before reading anything into T4.
-- **T4 is currently RED on purpose.** Do not make it green by weakening it.
+- **T4 asserts a DECLINE, not a takeover.** Upstream's `nmi66h` serves button
+  NMIs only, so the software fixture is correctly ignored. M2 must invert that
+  assertion when it teaches `nmi66h` to accept the Copper/software cause —
+  until then, a takeover at T4 is a regression, not progress.
 - The `src/unit_tests/` suite needs VS Code + DeZog and therefore gates
   nothing. Treat it as a manual layer, and say so rather than implying
   coverage it does not give.

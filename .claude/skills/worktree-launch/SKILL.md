@@ -62,8 +62,8 @@ Hard rules per CLAUDE.md:
 - Use `git -C <worktree-path> <cmd>` for git ops (not `cd ... && git ...`).
 - When done, report:
   - List of commit SHAs on <BRANCH>
-  - `make test` output on <BRANCH> (T1-T4), verbatim — including T4, which is
-    RED at HEAD and must not be made green by weakening the assertion
+  - `make test` output on <BRANCH> (T1-T4), verbatim. All four pass at HEAD;
+    a failure is never to be fixed by weakening the assertion
   - Anything that needs reviewer attention
 - Do NOT mark work complete without an independent reviewer agent approving.
 ```

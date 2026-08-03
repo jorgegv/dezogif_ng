@@ -31,7 +31,7 @@ If none were run since the last commit, say "not verified this session". Never i
 
 ## Memo content
 
-Save to `/home/jorgegv/.claude/projects/-home-jorgegv-src-spectrum-dezogif_esp/memory/project_session_handover_<YYYY-MM-DD><suffix>.md`. Suffix is `_eod`, `b_eod`, `c_eod`… by count for the day. Frontmatter:
+Save to `/home/jorgegv/.claude/projects/-home-jorgegv-src-spectrum-dezogif-esp/memory/project_session_handover_<YYYY-MM-DD><suffix>.md`. Suffix is `_eod`, `b_eod`, `c_eod`… by count for the day. Frontmatter:
 
 ```yaml
 ---

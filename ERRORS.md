@@ -41,7 +41,9 @@ idling, not a takeover. For comparison, the stock Multiface monitor repaints
 **91.41%** of the screen.
 
 **Fix.** `test/screen-diff.py` reports the percentage of differing pixels and
-the bench requires ≥25%. T4 then correctly went red.
+the bench requires ≥25%. T4 then correctly went red — and stayed red until the
+real cause was found (`nmi66h` serves button NMIs only), at which point T4 was
+rewritten to assert the *decline*, which is what actually should happen today.
 
 **Lesson.** A green test whose assertion cannot distinguish success from
 noise is worse than no test. Always check what the *positive* case actually

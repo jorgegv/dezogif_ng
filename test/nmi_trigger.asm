@@ -25,6 +25,13 @@
 ; every MF NMI source including the Copper one, so it is not optional.
 ; NR 0x06 reads back (zxnext.vhd:5900), so the enable is a read-modify-write
 ; and leaves the other bits of NR 0x06 alone.
+;
+; Note what this fixture can and cannot reach today. The NMI *is* delivered —
+; the stock Multiface ROM proves it (bench T3) — but mf_rom.asm's nmi66h then
+; reads NR 0x02, masks 00011100b and returns unless it is zero, i.e. it serves
+; button presses only. NR 0x02 bit 3 reads back as nr_02_generate_mf_nmi
+; (zxnext.vhd:3843-3847), set by this very write, so the stub declines. That
+; is the bench's T4 expectation, and M2's Copper break will hit the same gate.
 ;===========================================================================
 
     DEVICE ZXSPECTRUMNEXT

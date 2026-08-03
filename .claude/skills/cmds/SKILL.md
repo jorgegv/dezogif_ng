@@ -12,7 +12,8 @@ List everything under `.claude/` for this project so the user knows what's avail
 Run this in a single Bash call (parse frontmatter `description:` field with awk; fall back to "(no description)"):
 
 ```bash
-ROOT=/home/jorgegv/src/spectrum/dezogif_esp/.claude
+# Derived, not hardcoded, so this works from a worktree too.
+ROOT="$(git rev-parse --show-toplevel)/.claude"
 
 emit() {
   local file="$1" name="$2"

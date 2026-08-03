@@ -75,6 +75,17 @@ cope with the debuggee clearing it. The plan has been corrected.
 **Rejected.** Driving the GUI with xdotool (unreliable under Wayland); asking
 for a jnext CLI flag before proving we need one.
 
+**What it exposed.** The stub does not respond to that NMI, and the reason is
+in `mf_rom.asm` `nmi66h`: it reads NR `0x02`, masks `00011100b` and returns
+unless the result is zero — *button presses only*. NR `0x02` bit 3 reads back
+as `nr_02_generate_mf_nmi`, latched by `zxnext.vhd:3843-3847` on any accepted
+bit-3 write and cleared only by an explicit write of bit 3 = 0. So a software
+NMI is filtered by design, and the bench's T4 asserts the decline. **M2's
+Copper break hits the same gate** (`nmi_gen_nr_mf` covers CPU and Copper
+alike, `zxnext.vhd:3832`), so M2 must modify `nmi66h` and invert T4 in the
+same change. Found by the independent reviewer of this branch, not by the
+author.
+
 ---
 
 ## 2026-08-03 — Build directory is `build/`, Makefile is semantic

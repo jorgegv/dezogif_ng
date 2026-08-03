@@ -78,7 +78,7 @@ strongest:
    - T2 our `enNextMf.rom` does not perturb the NextZXOS boot
    - T3 **control** — the software-NMI fixture really fires the Multiface NMI, shown against the
      SD image's stock MF ROM. If T3 fails the bench is broken and T4 means nothing.
-   - T4 our stub takes the screen when that NMI fires
+   - T4 our stub **declines** that NMI and leaves the screen alone — see below
    Screen comparison is a **percentage of differing pixels** (`test/screen-diff.py`), not a byte
    compare: NextZXOS idling changes 0.01% of the screen and that once produced a false PASS.
 4. **`build/ut.nex`** — the upstream Z80 unit tests under `src/unit_tests/`. These are
@@ -87,9 +87,17 @@ strongest:
 5. **Real hardware** — the only truth for ESP timing, WiFi behaviour and anything the emulator
    models rather than is.
 
-**`make test` T4 is currently RED**, and deliberately so: the ROM installs and boots, but the
-stub does not come up on the NMI. Explaining that is the first task of M1. Do not "fix" it by
-weakening the assertion.
+**Why T4 expects a decline, and what M2 has to change.** `mf_rom.asm`'s `nmi66h` reads NR `0x02`
+on entry, masks `00011100b` and returns immediately unless the result is zero — it serves *button*
+NMIs only. NR `0x02` bit 3 reads back as `nr_02_generate_mf_nmi`, which `zxnext.vhd:3843-3847`
+latches on any accepted NR `0x02` bit-3 write and clears only on an explicit write of bit 3 = 0.
+So a software NMI is filtered by design, and the bench asserts that.
+
+**This is a live constraint on M2, not a testing detail.** The plan's asynchronous break is a
+Copper `MOVE $02,$08`, which sets the same latch through the same signal (`nmi_gen_nr_mf` covers
+CPU and Copper alike, `zxnext.vhd:3832`). It will be filtered by that same check until `nmi66h`
+is taught to accept a software cause — and then T4's assertion must be inverted, deliberately and
+in the same change.
 
 The bench never writes the reference SD image; it reflink-copies it into `build/`.
 

@@ -11,7 +11,9 @@
 #   T2  installing our enNextMf.rom does not perturb the NextZXOS boot
 #   T3  CONTROL: the software-NMI fixture really does fire the Multiface NMI,
 #       demonstrated against the SD image's own (stock) Multiface ROM
-#   T4  our stub takes over the screen when that NMI fires
+#   T4  our stub declines that NMI, because it is not a button press — which
+#       is what upstream's nmi66h is written to do. See the note at T4; M2
+#       has to invert this one.
 #
 # T3 is not decoration. Without it a broken fixture would make T4 look like a
 # stub bug (or, worse, a change in T4's screen would look like a pass). If T3
@@ -158,11 +160,25 @@ else
 fi
 
 # T4 — the actual subject.
+#
+# The expectation here is DECLINE, not takeover, and that is not a workaround.
+# mf_rom.asm's nmi66h reads NR 0x02 on entry, masks 00011100b and returns
+# immediately unless the result is zero — "return if not a button press".
+# NR 0x02 bit 3 reads back as nr_02_generate_mf_nmi, which zxnext.vhd:3843-3847
+# latches on ANY accepted NR 0x02 bit-3 write and clears only on an explicit
+# write of bit 3 = 0. Our fixture is exactly such a write, so upstream's stub
+# is *designed* to ignore it, and the screen must be untouched.
+#
+# M2 MUST FLIP THIS. The plan's asynchronous break is a Copper `MOVE $02,$08`,
+# which sets the same latch through the same signal (nmi_gen_nr_mf covers CPU
+# and Copper alike, zxnext.vhd:3832) and will be filtered by the same check
+# until nmi66h is taught to accept a software cause. When that lands, this
+# assertion becomes took_over and the message becomes a takeover.
 ours_pct=$(diff_pct "$SHOTS/boot-ours.png" "$SHOTS/nmi-ours.png")
 if took_over "$ours_pct"; then
-    pass "T4 our stub takes over the screen on Multiface NMI ($ours_pct% of the screen repainted)"
+    fail "T4 our stub took the screen on a NON-BUTTON NMI ($ours_pct%) — nmi66h's cause check has changed; if that was deliberate (M2), invert this assertion"
 else
-    fail "T4 our stub does not take over on Multiface NMI (only $ours_pct% of the screen changed; see $SHOTS/nmi-ours.png)"
+    pass "T4 our stub declines a non-button NMI and leaves the screen alone ($ours_pct% changed), as nmi66h's cause check intends"
 fi
 
 log ""

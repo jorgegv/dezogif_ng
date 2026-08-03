@@ -13,12 +13,15 @@ single oracle for dezogif_esp (not CSpect, not Fuse, not ZEsarUX, not the wiki).
 
 Argument or implicit from user message:
 
-- A **subsystem name** (mmu, divmmc, ula, copper, sprite, ctc, dma, multiface, ay, nextreg, layer2, tilemap), OR
+- A **subsystem name**. Only some have their own file under `device/`: copper, ctc, divmmc,
+  dma, multiface, im2. Everything else (mmu, ula, sprite, ay, nextreg, layer2, tilemap) lives
+  inline in `zxnext.vhd` or under `video/` / `audio/`, and is reached by grep. OR
 - A **free-text pattern** (e.g. `"NextREG 8E"`, `"7FFD bit 4"`, `"automap RAM bank"`).
 
 ## Steps
 
-1. If a known subsystem name, prefer reading the corresponding `device/<name>.vhd` file in full. Otherwise grep across all `.vhd` files for the pattern.
+1. If the subsystem has a `device/<name>.vhd` (see the list above), read it in full. Otherwise
+   — which is the common case — grep across all `.vhd` files for the pattern.
 
 2. For grep results, read **±30 lines** around each hit to capture the full process body.
 

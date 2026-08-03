@@ -47,7 +47,7 @@ For each unit:
    - The worktree path (worker MUST work there, not in the main repo).
    - The forbidden actions: no writes to main, no pushes, no `cd` (use `git -C`).
    - The post-work expectation: report SHAs and verbatim `make test` output (T1-T4).
-     T4 is RED at HEAD; making it green by weakening the assertion is a REJECT.
+     All four pass at HEAD; making a failure green by weakening an assertion is a REJECT.
 
 3. Spawn workers in parallel when units are independent. Single message, multiple `Agent` tool calls.
 
@@ -57,7 +57,7 @@ After each worker reports complete:
 
 1. Spawn `code-reviewer` (or another independent reviewer) — NEVER the worker who wrote the code.
 2. Give the reviewer the worktree path, the original mandate, and the worker's report.
-3. Wait for verdict: APPROVE / APPROVE-WITH-NITS / REJECT.
+3. Wait for verdict: APPROVE or REJECT. Binary — "approve with nits" is not a verdict (CLAUDE.md).
 4. If REJECT, send the findings back to the original worker for revision (still on their branch, not yours).
 
 ### Merge
@@ -100,4 +100,4 @@ Only after APPROVE:
 - ❌ Push to origin.
 - ❌ Use the same agent for code AND review.
 - ❌ Skip the worktree-per-unit pattern when units are independent.
-- ❌ Forget to update `FEATURES.md` after merging a significant change (CLAUDE.md mandate). Pending work lives in GitHub issues, not `TODO.md`.
+- ❌ Update `CHANGELOG.md` unprompted. Per CLAUDE.md it is touched only when the user asks, and only for changes a *user of the stub* would notice.

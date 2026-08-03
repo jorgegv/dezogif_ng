@@ -30,7 +30,7 @@
 ; the stock Multiface ROM proves it (bench T3) — but mf_rom.asm's nmi66h then
 ; reads NR 0x02, masks 00011100b and returns unless it is zero, i.e. it serves
 ; button presses only. NR 0x02 bit 3 reads back as nr_02_generate_mf_nmi
-; (zxnext.vhd:3843-3847), set by this very write, so the stub declines. That
+; (zxnext.vhd:3843-3848), set by this very write, so the stub declines. That
 ; is the bench's T4 expectation, and M2's Copper break will hit the same gate.
 ;===========================================================================
 

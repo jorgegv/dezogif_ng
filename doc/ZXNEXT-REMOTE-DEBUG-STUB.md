@@ -488,7 +488,7 @@ Named DeZog remote type; contribute the transport abstraction back to dezogif if
 | **ESP contention** | One ESP. A program that uses WiFi cannot be debugged over WiFi. NextZXOS/NextSync also reconfigure it | Document. Detect and report rather than hang |
 | **State transparency** | Several NextREGs are write-only; a full snapshot is impossible on hardware | Permanent ceiling vs an emulator. Accept and document |
 | **No watchpoints / coverage / true reverse debugging** | Would require tracing every instruction | Ruled out by dezogif's design doc; DeZog lite history remains |
-| **`nmi66h` filters the Copper NMI** | Inherited `mf_rom.asm` reads NR `0x02`, masks `00011100b` and returns unless zero — button causes only. The Copper `MOVE $02,$08` sets exactly that bit (`nmi_gen_nr_mf` covers CPU and Copper, `zxnext.vhd:3832`; latched at `:3843-3847`), so **M2's break mechanism is filtered out by the code M1 inherits**. Demonstrated: bench T4 | M2 must modify the cause check to accept a software cause, clear the latch on the way out, and invert bench T4 in the same change. Not optional, and not discovered late — it is the first thing M2 touches |
+| **`nmi66h` filters the Copper NMI** | Inherited `mf_rom.asm` reads NR `0x02`, masks `00011100b` and returns unless zero — button causes only. The Copper `MOVE $02,$08` sets exactly that bit (`nmi_gen_nr_mf` covers CPU and Copper, `zxnext.vhd:3832`; latched at `:3843-3848`), so **M2's break mechanism is filtered out by the code M1 inherits**. Demonstrated: bench T4 | M2 must modify the cause check to accept a software cause, clear the latch on the way out, and invert bench T4 in the same change. Not optional, and not discovered late — it is the first thing M2 touches |
 | **NR `0x06` bit 3 gates every MF NMI** | Power-on 0 (`zxnext.vhd:2090`, `:5166`). The stub must set it and cope with the debuggee clearing it | Set on entry; re-assert from the poll. Cheap, but must not be forgotten |
 | **Timing intrusiveness** | ~0.3%/frame for the NMI poll; contention-timed and tape/beeper code will notice | Make the poll disableable; document |
 | **Latency** | 10-100 ms per round trip | Batch; DZRP's bounded reads help |
@@ -557,7 +557,7 @@ Facts checked directly against a primary source during the analysis:
 | Copper writes to NR `0x02` generate NMI | `zxnext.vhd:3830-3833` | **verified** |
 | …but every MF NMI source is gated by NR `0x06` bit 3 (default 0) | `zxnext.vhd:2090`, `:5166` | **verified** — corrects an earlier "ungated" claim |
 | A software MF NMI enters the stock Multiface ROM under jnext | `make test` T3, 91% repaint | **verified** |
-| dezogif declines a software MF NMI: `nmi66h` serves button causes only | `mf_rom.asm` `nmi66h`, `zxnext.vhd:3843-3847`; `make test` T4 | **verified** |
+| dezogif declines a software MF NMI: `nmi66h` serves button causes only | `mf_rom.asm` `nmi66h`, `zxnext.vhd:3843-3848`; `make test` T4 | **verified** |
 | I/O trap on `0x2FFD`/`0x3FFD` generates MF NMI | `zxnext.vhd:3835` | **verified** |
 | Prescaler formula and width | `ports.txt` (`0x143B`), `uart.h` | **verified** |
 | dezogif ships as `enNextMf.rom` | its `readme.md` + `releases/enNextMf.rom` | **verified** |

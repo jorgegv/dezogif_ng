@@ -14,7 +14,8 @@ single oracle for dezogif_esp (not CSpect, not Fuse, not ZEsarUX, not the wiki).
 Argument or implicit from user message:
 
 - A **subsystem name**. Only some have their own file under `device/`: copper, ctc, divmmc,
-  dma, multiface, im2. Everything else (mmu, ula, sprite, ay, nextreg, layer2, tilemap) lives
+  dma, multiface (and the IM2 fabric, which is three files — `im2_control`, `im2_device`,
+  `im2_peripheral`). Everything else (mmu, ula, sprite, ay, nextreg, layer2, tilemap) lives
   inline in `zxnext.vhd` or under `video/` / `audio/`, and is reached by grep. OR
 - A **free-text pattern** (e.g. `"NextREG 8E"`, `"7FFD bit 4"`, `"automap RAM bank"`).
 

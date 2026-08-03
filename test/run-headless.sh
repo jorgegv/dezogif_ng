@@ -164,7 +164,7 @@ fi
 # The expectation here is DECLINE, not takeover, and that is not a workaround.
 # mf_rom.asm's nmi66h reads NR 0x02 on entry, masks 00011100b and returns
 # immediately unless the result is zero — "return if not a button press".
-# NR 0x02 bit 3 reads back as nr_02_generate_mf_nmi, which zxnext.vhd:3843-3847
+# NR 0x02 bit 3 reads back as nr_02_generate_mf_nmi, which zxnext.vhd:3843-3848
 # latches on ANY accepted NR 0x02 bit-3 write and clears only on an explicit
 # write of bit 3 = 0. Our fixture is exactly such a write, so upstream's stub
 # is *designed* to ignore it, and the screen must be untouched.

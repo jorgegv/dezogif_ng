@@ -89,7 +89,7 @@ strongest:
 
 **Why T4 expects a decline, and what M2 has to change.** `mf_rom.asm`'s `nmi66h` reads NR `0x02`
 on entry, masks `00011100b` and returns immediately unless the result is zero — it serves *button*
-NMIs only. NR `0x02` bit 3 reads back as `nr_02_generate_mf_nmi`, which `zxnext.vhd:3843-3847`
+NMIs only. NR `0x02` bit 3 reads back as `nr_02_generate_mf_nmi`, which `zxnext.vhd:3843-3848`
 latches on any accepted NR `0x02` bit-3 write and clears only on an explicit write of bit 3 = 0.
 So a software NMI is filtered by design, and the bench asserts that.
 

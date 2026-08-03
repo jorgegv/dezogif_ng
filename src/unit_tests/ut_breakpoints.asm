@@ -24,7 +24,7 @@ UT_clear_tmp_breakpoints.UT_simple:
     ld (tmp_breakpoint_1.opcode),a
     ld (tmp_breakpoint_2.opcode),a
 
-	; Test 
+    ; Test
     call clear_tmp_breakpoints
 
     TEST_MEMORY_BYTE tmp_breakpoint_1.opcode, 0
@@ -49,7 +49,7 @@ UT_clear_tmp_breakpoints.UT_first:
     ld a,0x55
     ld (tmp_breakpoint_2.opcode),a  ; not used
 
-	; Test 
+    ; Test
     call clear_tmp_breakpoints
 
     TEST_MEMORY_BYTE tmp_breakpoint_1.opcode, 0
@@ -77,7 +77,7 @@ UT_clear_tmp_breakpoints.UT_second:
     ld a,0x55
     ld (tmp_breakpoint_1.opcode),a  ; not used
 
-	; Test 
+    ; Test
     call clear_tmp_breakpoints
 
     TEST_MEMORY_BYTE tmp_breakpoint_1.opcode, 0
@@ -179,7 +179,6 @@ UT_check_tmp_breakpoints.UT_second_bp:
 
     TEST_FLAG_Z
  TC_END
-    
+
 
     ENDMODULE
-    

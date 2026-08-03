@@ -72,5 +72,4 @@ modify_bank:
 
     ; Save the bank number inside the bank (self modifying code)
     ld (SWAP_ADDR+dbg_enter.bank),a
-	ret
-
+    ret

@@ -49,26 +49,26 @@ nmi66h:
 
     ; Core 03.01.10: Check for the cause of the NMI and return if not a button press
     ld a,REG_RESET
-	ld bc,IO_NEXTREG_REG
-	out (c),a
-	; Read register
+    ld bc,IO_NEXTREG_REG
+    out (c),a
+    ; Read register
     inc b
-	in a,(c)
+    in a,(c)
     and 00011100b
 ;    and 0
 ;    or 1
     jr z,.is_button_cause
 
     IF 0
-	; Change border to blue
-	ld a,BLUE
+    ; Change border to blue
+    ld a,BLUE
     out (BORDER),a
-	ENDIF
+    ENDIF
 
     ; Immediately return if there is some other reason than a button press
 
     ; Clear reason bits
-	in a,(c)    ; Read again
+    in a,(c)    ; Read again
     and 10000000b  ; Preserve esp/expbus bit
     nextreg REG_RESET,a
 
@@ -90,33 +90,33 @@ nmi66h:
 
     ; First backup contents of IO_NEXTREG_REG
     ld bc,IO_NEXTREG_REG
-	in a,(c)
+    in a,(c)
     push af
 
-	; Now backup main slot.
-	ld a,REG_MMU+MAIN_SLOT
-	out (c),a
-	; Read register
+    ; Now backup main slot.
+    ld a,REG_MMU+MAIN_SLOT
+    out (c),a
+    ; Read register
     inc b
-	in a,(c)	; A contains the previous bank number for MAIN_SLOT
+    in a,(c)	; A contains the previous bank number for MAIN_SLOT
 
-	; Page in slot 7
-	nextreg REG_MMU+MAIN_SLOT,MAIN_BANK
-	; Save previous bank
-	ld (slot_backup.slot7),a
+    ; Page in slot 7
+    nextreg REG_MMU+MAIN_SLOT,MAIN_BANK
+    ; Save previous bank
+    ld (slot_backup.slot7),a
 
     ; Save IO_NEXTREG_REG
     pop af
     ld (backup.io_next_reg),a
 
     ; Save clock
-	ld a,REG_TURBO_MODE
-	dec b   ; IO_NEXTREG_REG
-	out (c),a
-	; Read register
+    ld a,REG_TURBO_MODE
+    dec b   ; IO_NEXTREG_REG
+    out (c),a
+    ; Read register
     inc b
-	in a,(c)
-	ld (backup.speed),a
+    in a,(c)
+    ld (backup.speed),a
 
     ; Check for Symbol Shift being pressed the same time -> Init
     ld bc,PORT_KEYB_BNMSHIFTSPACE
@@ -127,36 +127,36 @@ nmi66h:
     ; Speed up
     nextreg REG_TURBO_MODE,RTM_28MHZ
 
-	; Compare with magic number
+    ; Compare with magic number
     push hl
 
     if 01
-	ld a,(main_prg_copy+magic_number_a)
-	ld hl,MAIN_ADDR+magic_number_a
-	cp (hl)
-	jr nz,init_main_bank
-	ld a,(main_prg_copy+magic_number_b)
+    ld a,(main_prg_copy+magic_number_a)
+    ld hl,MAIN_ADDR+magic_number_a
+    cp (hl)
+    jr nz,init_main_bank
+    ld a,(main_prg_copy+magic_number_b)
     inc hl
-	cp (hl)
-	jr nz,init_main_bank
-	ld a,(main_prg_copy+magic_number_c)
-	ld hl,MAIN_ADDR+magic_number_c
-	cp (hl)
-	jr nz,init_main_bank
-	ld a,(main_prg_copy+magic_number_d)
-	inc hl
-	cp (hl)
-	jr nz,init_main_bank
+    cp (hl)
+    jr nz,init_main_bank
+    ld a,(main_prg_copy+magic_number_c)
+    ld hl,MAIN_ADDR+magic_number_c
+    cp (hl)
+    jr nz,init_main_bank
+    ld a,(main_prg_copy+magic_number_d)
+    inc hl
+    cp (hl)
+    jr nz,init_main_bank
     ; Also check build time
-	ld a,(main_prg_copy+build_time_rel)
-	ld hl,MAIN_ADDR+build_time_rel
-	cp (hl)
-	jr nz,init_main_bank
-	ld a,(main_prg_copy+build_time_rel+1)
-	inc hl
+    ld a,(main_prg_copy+build_time_rel)
+    ld hl,MAIN_ADDR+build_time_rel
+    cp (hl)
+    jr nz,init_main_bank
+    ld a,(main_prg_copy+build_time_rel+1)
+    inc hl
  ;inc a
-	cp (hl)
-	jr nz,init_main_bank
+    cp (hl)
+    jr nz,init_main_bank
     endif
 
     pop hl, bc
@@ -193,8 +193,8 @@ init_main_bank:
     out (BORDER),a  ; a is 0 = BLACK
     ; pop bc, af ; doesn't matter. program control is now moved to dezog.
 
-	; Maximize clock speed
-	nextreg REG_TURBO_MODE,RTM_28MHZ
+    ; Maximize clock speed
+    nextreg REG_TURBO_MODE,RTM_28MHZ
 
     ; Reset layer 2 writing/reading
     ld bc,LAYER_2_PORT
@@ -244,4 +244,3 @@ stack:
 backup_sp:      defw 0
 
     ENDMODULE
-

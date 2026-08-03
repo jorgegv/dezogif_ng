@@ -62,13 +62,13 @@ DIVIDE_CTRL_REG:	EQU 0xE3
 ;   BC, F
 ;===========================================================================
 read_tbblue_reg:
-	; Select register in A
-	ld bc,IO_NEXTREG_REG
-	out (c),a
-	; Read register
-	inc b	; IO_NEXTREG_DAT
-	in a,(c)
-	ret
+    ; Select register in A
+    ld bc,IO_NEXTREG_REG
+    out (c),a
+    ; Read register
+    inc b	; IO_NEXTREG_DAT
+    in a,(c)
+    ret
 
 ;===========================================================================
 ; Reads a TBBLUE register.
@@ -84,13 +84,13 @@ read_tbblue_reg:
 ;   F
 ;===========================================================================
 read_tbblue_reg_multiple:
-	; Select register in A
-	out (c),a
-	; Read register
-	inc b	; IO_NEXTREG_DAT
-	in a,(c)
-	dec b
-	ret
+    ; Select register in A
+    out (c),a
+    ; Read register
+    inc b	; IO_NEXTREG_DAT
+    in a,(c)
+    dec b
+    ret
 
 
 ;===========================================================================
@@ -99,22 +99,22 @@ read_tbblue_reg_multiple:
 ; Changes:
 ;   A
 ;===========================================================================
-	MACRO WAIT_SPACE color?
-	ld a,color?
-	out (BORDER),a
-	; Wait on key press
+    MACRO WAIT_SPACE color?
+    ld a,color?
+    out (BORDER),a
+    ; Wait on key press
 .not_pressed:
-	ld a,HIGH PORT_KEYB_BNMSHIFTSPACE
-	in a,(LOW PORT_KEYB_BNMSHIFTSPACE)
-	bit 0,a	; SPACE
-	jr nz,.not_pressed
-	; Wait on key release
+    ld a,HIGH PORT_KEYB_BNMSHIFTSPACE
+    in a,(LOW PORT_KEYB_BNMSHIFTSPACE)
+    bit 0,a	; SPACE
+    jr nz,.not_pressed
+    ; Wait on key release
 .pressed:
-	ld a,HIGH PORT_KEYB_BNMSHIFTSPACE
-	in a,(LOW PORT_KEYB_BNMSHIFTSPACE)
-	bit 0,a	; SPACE
-	jr z,.pressed
-	ENDM
+    ld a,HIGH PORT_KEYB_BNMSHIFTSPACE
+    in a,(LOW PORT_KEYB_BNMSHIFTSPACE)
+    bit 0,a	; SPACE
+    jr z,.pressed
+    ENDM
 
 
 ;===========================================================================
@@ -129,11 +129,11 @@ read_tbblue_reg_multiple:
 ;===========================================================================
 /*
 write_tbblue_reg:
-	ld (.register+2),a
-	ld a,d
+    ld (.register+2),a
+    ld a,d
 .register:
-	nextreg 0,a
-	ret
+    nextreg 0,a
+    ret
 */
 
 
@@ -146,18 +146,18 @@ write_tbblue_reg:
 ; See http://sgate.emt.bme.hu/patai/publications/z80guide/part4.html
 ;===========================================================================
 div_hl_e:
-	xor a		; Clearing the upper 8 bits of AHL
-	ld b,16		; The length of the dividend (16 bits)
+    xor a		; Clearing the upper 8 bits of AHL
+    ld b,16		; The length of the dividend (16 bits)
 .loop:
-	add hl,hl	; Advancing a bit
-	rla
-	cp e		; Checking if the divisor divides the digits chosen (in A)
-	jp c,.skip	; If not, advancing without subtraction
-	sub e		; Subtracting the divisor
-	inc l		; and setting the next digit of the quotient
+    add hl,hl	; Advancing a bit
+    rla
+    cp e		; Checking if the divisor divides the digits chosen (in A)
+    jp c,.skip	; If not, advancing without subtraction
+    sub e		; Subtracting the divisor
+    inc l		; and setting the next digit of the quotient
 .skip:
-	djnz .loop
-	ret
+    djnz .loop
+    ret
 
 
 ;===========================================================================
@@ -175,12 +175,12 @@ div_hl_e:
 ; - DE = DE+1
 ;===========================================================================
 itoa_2digits:
-	cp 100
-	jr c,.below100
+    cp 100
+    jr c,.below100
 
-	; A >= 100, print just "??"
-	ld a,'?'
-	ldi (de),a
+    ; A >= 100, print just "??"
+    ld a,'?'
+    ldi (de),a
     ld (de),a
     ret
 
@@ -192,14 +192,14 @@ itoa_2digits:
     sub c
     jr nc,.loop10
     add c
-	ld c,a
+    ld c,a
     ; Print higher digit
     ld a,b
     add a,'0'
     ldi (de),a
     ; Print lower digit
     ld a,c
-	add a,'0'
+    add a,'0'
     ld (de),a
     ret
 
@@ -215,31 +215,30 @@ itoa_2digits:
 ; - DE = DE + 4
 ;===========================================================================
 itoa_5digits:
-	; 10000s
-	ld bc,10000
-	call .inner_sub
-	ldi (de),a
-	; 1000s
-	ld bc,1000
-	call .inner_sub
-	ldi (de),a
+    ; 10000s
+    ld bc,10000
+    call .inner_sub
+    ldi (de),a
+    ; 1000s
+    ld bc,1000
+    call .inner_sub
+    ldi (de),a
 .three_digits:
-	; 100s
-	ld bc,100
-	call .inner_sub
-	ldi (de),a
-	; hl < 100
-	ld a,l
-	jr itoa_2digits.below100
+    ; 100s
+    ld bc,100
+    call .inner_sub
+    ldi (de),a
+    ; hl < 100
+    ld a,l
+    jr itoa_2digits.below100
 
 ; Return in A the digit (char).
 .inner_sub:
-	xor a
+    xor a
 .sub_loop:
-	inc a
-	sbc hl,bc
-	jr nc,.sub_loop
-	add a,'0'-1
-	add hl,bc
-	ret
-
+    inc a
+    sbc hl,bc
+    jr nc,.sub_loop
+    add a,'0'-1
+    add hl,bc
+    ret

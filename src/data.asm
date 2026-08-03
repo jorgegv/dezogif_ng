@@ -97,18 +97,18 @@ backup_top:
 ; The UART data is put here before being interpreted.
 receive_buffer:
 .length:
-	defw 0, 0		; 4 bytes length
+    defw 0, 0		; 4 bytes length
 .seq_no:
-	defb 0
+    defb 0
 .command:
-	defb 0
+    defb 0
 .payload:
-	defs PAYLOAD_EXEC_ASM	; maximum used count for CMD_EXEC_ASM
+    defs PAYLOAD_EXEC_ASM	; maximum used count for CMD_EXEC_ASM
 .end
 
 ; Just for testing buffer overflow:
-	defb 0	; WPMEM
-	defb  0xff, 0xff
+    defb 0	; WPMEM
+    defb  0xff, 0xff
 
 payload_set_reg:	PAYLOAD_SET_REG = receive_buffer.payload
 payload_add_breakpoint:	PAYLOAD_ADD_BREAKPOINT = receive_buffer.payload
@@ -176,17 +176,16 @@ prgm_state:	defb PRGM_IDLE
 text_one_char:
     defb AT, 14*8, 4*8
 .char:
-	defb 0, 0
+    defb 0, 0
 
 text_core_version:
     defb AT, 6*8, 2*8
 .major:
-	defb '00'
-	defb '.'
+    defb '00'
+    defb '.'
 .minor:
-	defb '00'
-	defb '.'
+    defb '00'
+    defb '.'
 .subminor:
-	defb '00'
-	defb 0
-
+    defb '00'
+    defb 0

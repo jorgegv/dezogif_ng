@@ -16,38 +16,38 @@
 ; Save all registers.
 ; ===========================================================================
 save_registers:
-	ld (backup.sp),sp
+    ld (backup.sp),sp
 
-	; Use new stack
-	ld sp,backup.af+2
+    ; Use new stack
+    ld sp,backup.af+2
 
-	; Save registers
-	push af, bc, de, hl, ix, iy		; Note: AF and BC need to be corrected later. A and BC is wrong, flags contain the interrupt state
+    ; Save registers
+    push af, bc, de, hl, ix, iy		; Note: AF and BC need to be corrected later. A and BC is wrong, flags contain the interrupt state
 
-	; Switch registers
-	exx
-	ex af,af'
+    ; Switch registers
+    exx
+    ex af,af'
 
-	push af, bc, de, hl
+    push af, bc, de, hl
 
-	; I and R register
-	ld a,r
-	ld l,a
-	ld a,i
-	ld h,a
-	push hl
+    ; I and R register
+    ld a,r
+    ld l,a
+    ld a,i
+    ld h,a
+    push hl
 
-	; Save IM, note: IM cannot be saved
-	ld hl,0xFF	; 0xFF = undefined
-	push hl
+    ; Save IM, note: IM cannot be saved
+    ld hl,0xFF	; 0xFF = undefined
+    push hl
 
-	; Switch back registers
-	ex af,af'
-	exx
-	; End of register saving through pushing
+    ; Switch back registers
+    ex af,af'
+    exx
+    ; End of register saving through pushing
 
 .ret_jump:
-	jp 0x0000	; Self-modified
+    jp 0x0000	; Self-modified
 
 
 ;===========================================================================
@@ -59,95 +59,95 @@ restore_registers:
     ; Wait for TX ready. (This is to make sure everything is transmitted before the joyport configuration is changed.)
     call wait_for_uart_tx_empty
 
-	; Disable joy port IO mode to enable the joysticks
-	nextreg REG_JOYSTICK_IO_MODE,0
+    ; Disable joy port IO mode to enable the joysticks
+    nextreg REG_JOYSTICK_IO_MODE,0
 
-	; Skip IM
-	ld sp,backup.r
+    ; Skip IM
+    ld sp,backup.r
 
-	; I and R register
-	pop hl
-	ld a,l
-	ld r,a
-	ld a,h
-	ld i,a
+    ; I and R register
+    pop hl
+    ld a,l
+    ld r,a
+    ld a,h
+    ld i,a
 
-	; Switch registers
-	exx
-	ex af,af'
+    ; Switch registers
+    exx
+    ex af,af'
 
-	pop hl
-	pop de
-	pop bc
-	pop af
+    pop hl
+    pop de
+    pop bc
+    pop af
 
-	; Switch back registers
-	ex af,af'
-	exx
+    ; Switch back registers
+    ex af,af'
+    exx
 
-	pop iy
-	pop ix
-	pop hl		; Will be loaded later again
-	pop de
-	pop bc
+    pop iy
+    pop ix
+    pop hl		; Will be loaded later again
+    pop de
+    pop bc
 
-	; Restore clock speed
-	ld a,(backup.speed)
-	nextreg REG_TURBO_MODE,a
+    ; Restore clock speed
+    ld a,(backup.speed)
+    nextreg REG_TURBO_MODE,a
 
-	; Restore AF
-	pop hl	; AF
-	ld (debugged_prgm_stack_copy.af),hl
+    ; Restore AF
+    pop hl	; AF
+    ld (debugged_prgm_stack_copy.af),hl
 
-	; Load SP, so that it is possible to call subroutines.
-	ld sp,debug_stack.top
+    ; Load SP, so that it is possible to call subroutines.
+    ld sp,debug_stack.top
 
-	; Correct PC on stack (might have been changed by DeZog)
-	ld hl,(backup.pc)
-	ld (debugged_prgm_stack_copy.return1),hl
+    ; Correct PC on stack (might have been changed by DeZog)
+    ld hl,(backup.pc)
+    ld (debugged_prgm_stack_copy.return1),hl
 
-	; Correct the debugged program stack, i.e. put AF and return address on the stack
-	ld hl,(backup.sp)	; Destination
-	add hl,-4	; "PUSH" 2 values
-	ld (backup.sp),hl
-	ld de,4
-	ld bc,debugged_prgm_stack_copy.af
-	call write_debugged_prgm_mem
+    ; Correct the debugged program stack, i.e. put AF and return address on the stack
+    ld hl,(backup.sp)	; Destination
+    add hl,-4	; "PUSH" 2 values
+    ld (backup.sp),hl
+    ld de,4
+    ld bc,debugged_prgm_stack_copy.af
+    call write_debugged_prgm_mem
 
-	; Restore layer 2 reading/writing
-	call restore_layer2_rw
-	; It's still possible to read/write in slot 7
+    ; Restore layer 2 reading/writing
+    call restore_layer2_rw
+    ; It's still possible to read/write in slot 7
 
-	; Restore IO_NEXTREG_REG
-	ld bc,IO_NEXTREG_REG
-	ld a,(backup.io_next_reg)
-	out (c),a
+    ; Restore IO_NEXTREG_REG
+    ld bc,IO_NEXTREG_REG
+    ld a,(backup.io_next_reg)
+    out (c),a
 
-	; Restore DE value
-	ld de,(backup.de)
-	; Restore BC value
-	ld bc,(backup.bc)
-	; Load correct value of HL
-	ld hl,(backup.hl)
-	; Get debugged program stack
-	ld sp,(backup.sp)
+    ; Restore DE value
+    ld de,(backup.de)
+    ; Restore BC value
+    ld bc,(backup.bc)
+    ; Load correct value of HL
+    ld hl,(backup.hl)
+    ; Get debugged program stack
+    ld sp,(backup.sp)
 
-	; Check interrupt state
-	ld a,(backup.interrupt_state)
-	bit 2,a
-	; NZ if interrupts enabled
+    ; Check interrupt state
+    ld a,(backup.interrupt_state)
+    bit 2,a
+    ; NZ if interrupts enabled
 
-	; Change main state
-	ld a,PRGM_RUNNING
-	ld (prgm_state),a
+    ; Change main state
+    ld a,PRGM_RUNNING
+    ld (prgm_state),a
 
-	; Set bank to restore for slot 7
-	ld a,(slot_backup.slot7)
+    ; Set bank to restore for slot 7
+    ld a,(slot_backup.slot7)
 
 .ret_jump1:	; Label for unit tests
-	jp nz,exit_code_ei
+    jp nz,exit_code_ei
 .ret_jump2:	; Label for unit tests
-	jp exit_code_di
+    jp exit_code_di
 
 
 
@@ -160,20 +160,20 @@ restore_registers:
 ; - [SP]:	    BC
 ; ===========================================================================
 adjust_debugged_program_stack_for_bp:
-	ld de,(debugged_prgm_stack_copy.return1)
-	dec de
-	ld (backup.pc),de
+    ld de,(debugged_prgm_stack_copy.return1)
+    dec de
+    ld (backup.pc),de
 
-	; Adjust debugged program SP
-	ld hl,(backup.sp)
-	add hl,4*2	; Skip complete stack
-	ld (backup.sp),hl
+    ; Adjust debugged program SP
+    ld hl,(backup.sp)
+    add hl,4*2	; Skip complete stack
+    ld (backup.sp),hl
 
 .af:
-	; Backup AF
-	ld hl,(debugged_prgm_stack_copy.af)
-	ld (backup.af),hl
-	ret
+    ; Backup AF
+    ld hl,(debugged_prgm_stack_copy.af)
+    ld (backup.af),hl
+    ret
 
 
 ;===========================================================================
@@ -183,11 +183,11 @@ adjust_debugged_program_stack_for_bp:
 ; - [SP]:	The return address
 ; ===========================================================================
 adjust_debugged_program_stack_for_nmi:
-	; Adjust debugged program SP
-	ld hl,(backup.sp)
-	inc hl : inc hl	; Skip complete stack
-	ld (backup.sp),hl
-	ret
+    ; Adjust debugged program SP
+    ld hl,(backup.sp)
+    inc hl : inc hl	; Skip complete stack
+    ld (backup.sp),hl
+    ret
 
 
 ;===========================================================================
@@ -196,17 +196,17 @@ adjust_debugged_program_stack_for_nmi:
 ;   A, BC
 ; ===========================================================================
 save_layer2_rw:
-	; Save layer 2 reading/writing
+    ; Save layer 2 reading/writing
     ld bc,LAYER_2_PORT
     in a,(c)
-	push af
-	; Turn off layer 2 reading/writing
-	and 11111010b	; Disable read/write only
-	out (c),a
-	; Store
-	pop af
-	ld (backup.layer_2_port),a
-	ret
+    push af
+    ; Turn off layer 2 reading/writing
+    and 11111010b	; Disable read/write only
+    out (c),a
+    ; Store
+    pop af
+    ld (backup.layer_2_port),a
+    ret
 
 
 ;===========================================================================
@@ -215,11 +215,11 @@ save_layer2_rw:
 ;   A, BC
 ; ===========================================================================
 restore_layer2_rw:
-	; Restore layer 2 reading/writing
-	ld a,(backup.layer_2_port)
-	ld bc,LAYER_2_PORT
-	out (c),a
-	ret
+    ; Restore layer 2 reading/writing
+    ld a,(backup.layer_2_port)
+    ld bc,LAYER_2_PORT
+    out (c),a
+    ret
 
 
 ;===========================================================================
@@ -228,11 +228,11 @@ restore_layer2_rw:
 ;   AF, BC
 ; ===========================================================================
 save_swap_slot:
-	ld a,REG_MMU+SWAP_SLOT
+    ld a,REG_MMU+SWAP_SLOT
 save_slot:	; Save the slot in A
-	call read_tbblue_reg
-	ld (slot_backup.tmp_slot),a
-	ret
+    call read_tbblue_reg
+    ld (slot_backup.tmp_slot),a
+    ret
 
 
 ;===========================================================================
@@ -241,10 +241,10 @@ save_slot:	; Save the slot in A
 ;   A
 ; ===========================================================================
 restore_swap_slot:
-	ld a,(slot_backup.tmp_slot)
+    ld a,(slot_backup.tmp_slot)
 restore_slot:	; Restore the slot in A
-	nextreg REG_MMU+SWAP_SLOT,a
-	ret
+    nextreg REG_MMU+SWAP_SLOT,a
+    ret
 
 
 
@@ -262,20 +262,20 @@ restore_slot:	; Restore the slot in A
 ;
 ; ===========================================================================
 read_debugged_prgm_mem:
-	push bc
-	ld bc,.read_write
-	ld (memory_loop.inner_call+1),bc	; function pointer
-	call save_swap_slot
-	pop bc
-	jp memory_loop.inner
+    push bc
+    ld bc,.read_write
+    ld (memory_loop.inner_call+1),bc	; function pointer
+    call save_swap_slot
+    pop bc
+    jp memory_loop.inner
 
 ; Inner call for 'loop_memory'
 .read_write:
-	; Get byte
-	ld a,(hl)
-	; Write byte
-	ldi (bc),a
-	ret
+    ; Get byte
+    ld a,(hl)
+    ; Write byte
+    ldi (bc),a
+    ret
 
 
 ;===========================================================================
@@ -290,20 +290,20 @@ read_debugged_prgm_mem:
 ;
 ; ===========================================================================
 write_debugged_prgm_mem:
-	push bc
-	ld bc,.read_write
-	ld (memory_loop.inner_call+1),bc	; function pointer
-	call save_swap_slot
-	pop bc
-	jp memory_loop.inner
+    push bc
+    ld bc,.read_write
+    ld (memory_loop.inner_call+1),bc	; function pointer
+    call save_swap_slot
+    pop bc
+    jp memory_loop.inner
 
 ; Inner call for 'loop_memory'
 .read_write:
-	; Get byte
-	ldi a,(bc)
-	; Write byte
-	ld (hl),a
-	ret
+    ; Get byte
+    ldi a,(bc)
+    ; Write byte
+    ld (hl),a
+    ret
 
 
 ; ===========================================================================
@@ -320,69 +320,68 @@ write_debugged_prgm_mem:
 ;        contains the memory at the location. DE and HL should not be changed.
 ; ===========================================================================
 memory_loop:
-	; Phase 1: memory in range 0xE000-0xFFFF
-	ld (.inner_call+1),bc	; function pointer
-	call save_swap_slot
+    ; Phase 1: memory in range 0xE000-0xFFFF
+    ld (.inner_call+1),bc	; function pointer
+    call save_swap_slot
 .inner:	; Beginning from here BC is not touched anymore
-	ld a,h
-	cp MAIN_SLOT*0x20	; 0xE0
-	jr c,.phase2
+    ld a,h
+    cp MAIN_SLOT*0x20	; 0xE0
+    jr c,.phase2
 
-	; Modify HL
-	and 0x1F
-	add HIGH SWAP_ADDR	; 0xC0
-	ld h,a
+    ; Modify HL
+    and 0x1F
+    add HIGH SWAP_ADDR	; 0xC0
+    ld h,a
 
 .phase1:
-	; Page in slot 7 area to swap slot
-	ld a,(slot_backup.slot7)
-	nextreg REG_MMU+SWAP_SLOT,a
+    ; Page in slot 7 area to swap slot
+    ld a,(slot_backup.slot7)
+    nextreg REG_MMU+SWAP_SLOT,a
 
-	call .inner_loop
+    call .inner_loop
 
-	; End if de was 0
-	jp z,restore_swap_slot
+    ; End if de was 0
+    jp z,restore_swap_slot
 
-	; Page in original banks
-	call restore_swap_slot
+    ; Page in original banks
+    call restore_swap_slot
 
-	; Correct the address
-	ld hl,0x0000
+    ; Correct the address
+    ld hl,0x0000
 
 .phase2:
-	; Phase 2: memory in range 0x0000-0xDFFF
-	call .inner_loop
-	ret z	; Return if DE was 0
+    ; Phase 2: memory in range 0x0000-0xDFFF
+    call .inner_loop
+    ret z	; Return if DE was 0
 
-	; Phase 1 again: memory in range 0xE000-0xFFFF
-	ld hl,SWAP_ADDR	; Correct HL to 0xC000
-	jr .phase1
+    ; Phase 1 again: memory in range 0xE000-0xFFFF
+    ld hl,SWAP_ADDR	; Correct HL to 0xC000
+    jr .phase1
 
 
-	; On a return DE contains the rest of the bytes to copy.
-	; Returns with Z if DE is zero, otherwise NZ.
+    ; On a return DE contains the rest of the bytes to copy.
+    ; Returns with Z if DE is zero, otherwise NZ.
 .inner_loop:
-	; Check counter
-	ld a,e
-	or d
-	ret z
+    ; Check counter
+    ld a,e
+    or d
+    ret z
 
 .inner_call:
-	call 0x0000	; Self-modifying code
+    call 0x0000	; Self-modifying code
 
-	; Decrement counter
-	dec de
-	; Increment pointer
-	inc l
-	jr nz,.inner_loop
-	inc h
-	ld a,h
-	cp 0x20*(SWAP_SLOT+1)	; Compare with end of slot memory area
-	jr nz,.inner_loop
+    ; Decrement counter
+    dec de
+    ; Increment pointer
+    inc l
+    jr nz,.inner_loop
+    inc h
+    ld a,h
+    cp 0x20*(SWAP_SLOT+1)	; Compare with end of slot memory area
+    jr nz,.inner_loop
 
-	; End of bank(s) reached
-	; Check DE once again
-	ld a,e
-	or d
-	ret
-
+    ; End of bank(s) reached
+    ; Check DE once again
+    ld a,e
+    or d
+    ret

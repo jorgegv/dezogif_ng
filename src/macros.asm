@@ -16,10 +16,10 @@
 ; Changes:
 ;   A
 ;===========================================================================
-	MACRO WRITE_TBBLUE_REG tbblue_reg?, z80_reg?
-	ld a,z80_reg?
-	nextreg tbblue_reg?,a
-	ENDM
+    MACRO WRITE_TBBLUE_REG tbblue_reg?, z80_reg?
+    ld a,z80_reg?
+    nextreg tbblue_reg?,a
+    ENDM
 
 
 ;===========================================================================
@@ -31,12 +31,12 @@
 ; Changes:
 ;   BC, DE, HL
 ;===========================================================================
-	MACRO MEMCOPY dest?, src?, count?
-	ld bc,count?
+    MACRO MEMCOPY dest?, src?, count?
+    ld bc,count?
     ld hl,src?
     ld de,dest?
     ldir
-	ENDM
+    ENDM
 
 
 ;===========================================================================
@@ -48,13 +48,13 @@
 ; Changes:
 ;   F, BC, DE, HL
 ;===========================================================================
-	MACRO MEMFILL dest?, value?, count?
-	ld bc,count?-1
+    MACRO MEMFILL dest?, value?, count?
+    ld bc,count?-1
     ld hl,dest?
-	ld (hl),value?
+    ld (hl),value?
     ld de,dest?+1
     ldir
-	ENDM
+    ENDM
 
 
 ;===========================================================================
@@ -65,9 +65,9 @@
 ; Changes:
 ;   F, BC, DE, HL
 ;===========================================================================
-	MACRO MEMCLEAR dest?, count?
-	MEMFILL dest?, 0, count?
-	ENDM
+    MACRO MEMCLEAR dest?, count?
+    MEMFILL dest?, 0, count?
+    ENDM
 
 ;===========================================================================
 ; Macro to clear the memory area at HL with zeroes.
@@ -76,13 +76,13 @@
 ; Changes:
 ;   F, BC, DE, HL
 ;===========================================================================
-	MACRO MEMCLEARHL count?
-	ld bc,count?-1
-	ld (hl),0
+    MACRO MEMCLEARHL count?
+    ld bc,count?-1
+    ld (hl),0
     ld de,hl
-	inc de
+    inc de
     ldir
-	ENDM
+    ENDM
 
 
 ;===========================================================================
@@ -93,10 +93,10 @@
 ; Changes:
 ;   A
 ;===========================================================================
-	MACRO MEMSETBYTE dest?, value?
-	ld a,value?
-	ld (dest?),a
-	ENDM
+    MACRO MEMSETBYTE dest?, value?
+    ld a,value?
+    ld (dest?),a
+    ENDM
 
 
 ;===========================================================================
@@ -107,12 +107,12 @@
 ; Changes:
 ;   HL
 ;===========================================================================
-	MACRO MEMSETWORD dest?, value?
-	ld a,value? & 0xFF
-	ld (dest?),a
-	ld a,value? >> 8
-	ld (dest?+1),a
-	ENDM
+    MACRO MEMSETWORD dest?, value?
+    ld a,value? & 0xFF
+    ld (dest?),a
+    ld a,value? >> 8
+    ld (dest?+1),a
+    ENDM
 
 ;===========================================================================
 ; Creates text data from a number.
@@ -124,7 +124,7 @@
 ; Changes:
 ;   -
 ;===========================================================================
-	MACRO STRINGIFY number?
+    MACRO STRINGIFY number?
 value = number?
 divisor = 1000000
 digit = 0
@@ -138,20 +138,20 @@ skip = skip + digit
 value = value-digit * divisor
 divisor = divisor / 10
     EDUP
-	ENDM
+    ENDM
 
 
 ;===========================================================================
 ; Creates a Multiface NMI break.
 ; Note: did not work for me!
 ;===========================================================================
-	MACRO MF_BREAK
-	push af
-	ld a,r
-	di
-	in a,(0x3F)
-	rst 8
-	ENDM
+    MACRO MF_BREAK
+    push af
+    ld a,r
+    di
+    in a,(0x3F)
+    rst 8
+    ENDM
 
 
 
@@ -168,9 +168,9 @@ divisor = divisor / 10
 ; Changes:
 ;   -
 ;===========================================================================
-	MACRO DBG_CLEAR
-	call debug.clear
-	ENDM
+    MACRO DBG_CLEAR
+    call debug.clear
+    ENDM
 
 
 ;===========================================================================
@@ -180,12 +180,12 @@ divisor = divisor / 10
 ; Changes:
 ;   -
 ;===========================================================================
-	MACRO DBG_LOG val?
-	push af
-	ld a,val?
-	call debug.log
-	pop af
-	ENDM
+    MACRO DBG_LOG val?
+    push af
+    ld a,val?
+    call debug.log
+    pop af
+    ENDM
 
 
 ;===========================================================================
@@ -196,15 +196,15 @@ divisor = divisor / 10
 ; Changes:
 ;   -
 ;===========================================================================
-	MACRO DBG_LOG_NUMBER number?
-	push hl
-	ld hl,number?
-	call debug.log_number
-	pop hl
-	ENDM
-	MACRO DBG_LOG_NUMBER_A
-	call debug.log_number_a
-	ENDM
+    MACRO DBG_LOG_NUMBER number?
+    push hl
+    ld hl,number?
+    call debug.log_number
+    pop hl
+    ENDM
+    MACRO DBG_LOG_NUMBER_A
+    call debug.log_number_a
+    ENDM
 
 
 ;===========================================================================
@@ -215,18 +215,18 @@ divisor = divisor / 10
 ; Changes:
 ;   -
 ;===========================================================================
-	MACRO DBG_PRINT
-	call debug.print
-	ENDM
+    MACRO DBG_PRINT
+    call debug.print
+    ENDM
 
  ELSE
-	; Define empty macros
-	MACRO DBG_CLEAR
-	ENDM
-	MACRO DBG_LOG val?
-	ENDM
-	MACRO DBG_LOG_NUMBER number?
-	ENDM
-	MACRO DBG_PRINT
-	ENDM
+    ; Define empty macros
+    MACRO DBG_CLEAR
+    ENDM
+    MACRO DBG_LOG val?
+    ENDM
+    MACRO DBG_LOG_NUMBER number?
+    ENDM
+    MACRO DBG_PRINT
+    ENDM
  ENDIF

@@ -139,7 +139,7 @@ show_ui:
 
     ; Print text
     ld de,INTRO_TEXT
-	call text.ula.print_string
+    call text.ula.print_string
 
     ; Show core version
     ld a,REG_VERSION
@@ -169,9 +169,9 @@ show_ui:
     jp p,.core_version_continue
 
     ; Core version not supported
-	ld a,(last_error)
-	or a
-	jr nz,.core_version_continue	; There is already an error
+    ld a,(last_error)
+    or a
+    jr nz,.core_version_continue	; There is already an error
 
     ; Report "core version not supported" error
     ld a,ERROR_CORE_VERSION_NOT_SUPPORTED
@@ -180,17 +180,17 @@ show_ui:
 .core_version_continue:
     ; Print
     ld de,text_core_version
-	call text.ula.print_string
+    call text.ula.print_string
 
     ; Get display timing
     ld a,REG_VIDEO_TIMING
     call read_tbblue_reg
-	and 0111b			;video timing is in bottom 3 bits, e.g. HDMI=111b
+    and 0111b			;video timing is in bottom 3 bits, e.g. HDMI=111b
     ; Print the number
     add '0' ; convert to ASCII
     ld (text_one_char.char),a
     ld de,text_one_char
-	call text.ula.print_string
+    call text.ula.print_string
 
     ; Show right selected joy port option
     ld hl,SELECTED_TEXT_TABLE
@@ -198,7 +198,7 @@ show_ui:
     add a   ; *2
     add hl,a
     ld de,(hl)
-	call text.ula.print_string
+    call text.ula.print_string
 
     ; Show border option
     ld de,BORDER_ON_TEXT
@@ -207,33 +207,33 @@ show_ui:
     jr z,.print_border
     ld de,BORDER_OFF_TEXT
 .print_border:
-	call text.ula.print_string
+    call text.ula.print_string
 
     ; Print 3 lines debugging
  IFDEF DEBUG
     ; Caclulate screen address
-	ld de,256*8*debug.TEXT_START_POSITION_LINE + 8*debug.TEXT_START_POSITION_CLMN
-	call text.ula.calc_address
-	ld de,debug.text
-	call text.ula.print_string
+    ld de,256*8*debug.TEXT_START_POSITION_LINE + 8*debug.TEXT_START_POSITION_CLMN
+    call text.ula.calc_address
+    ld de,debug.text
+    call text.ula.print_string
  ENDIF
 
-	; Show possibly error
-	ld a,(last_error)
-	or a
-	ret z	; 0 = no error
+    ; Show possibly error
+    ld a,(last_error)
+    or a
+    ret z	; 0 = no error
 
-	; Print "Last error:"
+    ; Print "Last error:"
     ld de,TEXT_LAST_ERROR
-	call text.ula.print_string
-	push hl	; Save pointer to screen
+    call text.ula.print_string
+    push hl	; Save pointer to screen
 
-	; Print error message
-	ld a,(last_error)
-	dec a
-	add a	; 2*A
-	ld hl,ERROR_TEXT_TABLE
-	add hl,a
+    ; Print error message
+    ld a,(last_error)
+    dec a
+    add a	; 2*A
+    ld hl,ERROR_TEXT_TABLE
+    add hl,a
     ld de,(hl)
-	pop hl	; Restore pointer to screen
+    pop hl	; Restore pointer to screen
     jp text.ula.print_string

@@ -136,7 +136,7 @@ main:
 
     ; Init interrupt state
     xor a
-	ld (backup.interrupt_state),a
+    ld (backup.interrupt_state),a
 
     ; Init slot 0 bank
     ld a,ROM_BANK
@@ -226,4 +226,3 @@ main_end:
 ;===========================================================================
 
     include "mf_rom.asm"
-

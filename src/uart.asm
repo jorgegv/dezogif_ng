@@ -75,7 +75,7 @@ UART_TX_EMPTY:      equ 4   ; 1=Tx buffer is empty
 ; Baudrate timing calculation table.
 ; BAUDRATE must be 230400 at least otherwise a 1 byte table is not sufficient.
 baudrate_table:
-	defb 28000000/BAUDRATE
+    defb 28000000/BAUDRATE
     defb 28571429/BAUDRATE
     defb 29464286/BAUDRATE
     defb 30000000/BAUDRATE
@@ -99,13 +99,13 @@ drain_rx_buffer:
     ld de,53000 ; 100 ms
 drain_rx_buffer_with_timeout:
     ld (.read_next_byte+1),de
-	ld bc,UART_TX
+    ld bc,UART_TX
 
 .read_next_byte:
     ld de,53000 ; 100ms
     ; 53 T-states => 265*53/28000 = 0.5ms
 .read_loop:
-	in a,(c)					; Read status bits
+    in a,(c)					; Read status bits
     bit UART_RX_FIFO_EMPTY,a
     jr nz,.read_byte
 
@@ -157,14 +157,14 @@ wait_for_uart_rx:
 
 .loop:
     ; Check if byte available.
-	ld a,HIGH UART_TX
-	in a,(LOW UART_TX)	; Read status bits
+    ld a,HIGH UART_TX
+    in a,(LOW UART_TX)	; Read status bits
     bit UART_RX_FIFO_EMPTY,a
     jr z,.loop   ; Wait until byte available
 
     ; Disable layer 2 read/write
     ld a,(backup.layer_2_port)
-	and 11111010b	; Disable read/write only
+    and 11111010b	; Disable read/write only
     ld bc,LAYER_2_PORT
     out (c),a
     ret       ; RET if byte available
@@ -179,9 +179,9 @@ wait_for_uart_rx:
 ;   AF
 ;===========================================================================
 check_uart_byte_available:
-	ld a,HIGH UART_TX
-	in a,(LOW UART_TX)
-	; Read status bits
+    ld a,HIGH UART_TX
+    in a,(LOW UART_TX)
+    ; Read status bits
     bit UART_RX_FIFO_EMPTY,a
     ret
 
@@ -201,11 +201,11 @@ read_uart_byte:
 
     ; Wait on byte
     ld de,40000 ; => 100ms
-	ld bc,UART_TX
+    ld bc,UART_TX
 
     ; 68 T-states => 200*68/27Mhz = 0.5ms
 .wait_loop:
-	in a,(c)					; Read status bits
+    in a,(c)					; Read status bits
     bit UART_RX_FIFO_OVERFLOW,a
     jr nz,.rx_overflow
     bit UART_RX_FIFO_EMPTY,a
@@ -294,11 +294,11 @@ uart_flashing_border.disable:
 ;  BC
 ;===========================================================================
 write_uart_byte:
-	push de, af
+    push de, af
     ; Wait for TX ready
     call wait_for_uart_tx
     ; Transmit byte
-	pop af, de
+    pop af, de
     out (c),a
     ret
 
@@ -371,38 +371,38 @@ wait_for_uart_tx_empty:
 set_uart_baudrate:
     ; Set 8 bit
     ld bc,UART_FRAME
-	ld a,00011000b   ; 8 bit
-	out	(c),a
+    ld a,00011000b   ; 8 bit
+    out	(c),a
 
     ; Select UART and clear prescaler MSB
     ld bc,UART_SELECT
-	ld a,00010000b
-	out	(c),a
+    ld a,00010000b
+    out	(c),a
 
     ; Get display timing
     ld a,REG_VIDEO_TIMING
     call read_tbblue_reg
-	and 0111b			;video timing is in bottom 3 bits, e.g. HDMI=111b
+    and 0111b			;video timing is in bottom 3 bits, e.g. HDMI=111b
 
     ; Get baudrate prescale values from table
-	ld hl,baudrate_table
-	add hl,a
-	ld a,(hl)
+    ld hl,baudrate_table
+    add hl,a
+    ld a,(hl)
     ; ignoring the high byte
 
     ; Write low byte of prescaler
-	ld bc,UART_RX ; Writing=set baudrate
+    ld bc,UART_RX ; Writing=set baudrate
     ld l,a
     and 0x7F
-	out	(c),a		;set lower 7 bits
+    out	(c),a		;set lower 7 bits
 
     ; Write 2nd byte of prescaler
     rlc l
     ld a,0x40
     rla
- 	out	(c),a		;set to upper bits
+    out	(c),a		;set to upper bits
 
-	ret
+    ret
 
 
 ;===========================================================================

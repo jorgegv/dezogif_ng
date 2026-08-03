@@ -31,7 +31,7 @@
 
 
 
-	MODULE debug
+    MODULE debug
 
 ; Data area
 
@@ -69,30 +69,30 @@ text_last_printed_screen_addr:
 ;  -
 ;===========================================================================
 clear:
-	push af, hl, de, bc
-	ld hl,text
-	ld (text_next_ptr),hl
-	; Fill with '-'
-	MEMFILL text, '-', text_end-text
-	; Caclulate screen address
-	ld de,256*8*TEXT_START_POSITION_LINE + 8*TEXT_START_POSITION_CLMN
-	call text.ula.calc_address
-	ld (text_last_printed_screen_addr),hl	; store screen start address
-	push hl
-	; Print "----" line
-	ld hl,text_end
-	ld (text_next_ptr),hl
-	ld hl,text
-	ld (text_last_printed_ptr),hl
-	call print
-	; Start for next character
-	pop hl
-	ld (text_last_printed_screen_addr),hl	; store screen start address
-	ld hl,text
-	ld (text_next_ptr),hl
-	ld (text_last_printed_ptr),hl
-	pop bc, de, hl, af
-	ret
+    push af, hl, de, bc
+    ld hl,text
+    ld (text_next_ptr),hl
+    ; Fill with '-'
+    MEMFILL text, '-', text_end-text
+    ; Caclulate screen address
+    ld de,256*8*TEXT_START_POSITION_LINE + 8*TEXT_START_POSITION_CLMN
+    call text.ula.calc_address
+    ld (text_last_printed_screen_addr),hl	; store screen start address
+    push hl
+    ; Print "----" line
+    ld hl,text_end
+    ld (text_next_ptr),hl
+    ld hl,text
+    ld (text_last_printed_ptr),hl
+    call print
+    ; Start for next character
+    pop hl
+    ld (text_last_printed_screen_addr),hl	; store screen start address
+    ld hl,text
+    ld (text_next_ptr),hl
+    ld (text_last_printed_ptr),hl
+    pop bc, de, hl, af
+    ret
 
 
 ;===========================================================================
@@ -103,18 +103,18 @@ clear:
 ;  -
 ;===========================================================================
 log:
-	push af, hl, de
-	ld hl,(text_next_ptr)
-	ld de,text_end
-	or a
-	sbc hl,de	; Check if too big
-	jr z,.skip
-	add hl,de
-	ldi (hl),a
-	ld (text_next_ptr),hl
+    push af, hl, de
+    ld hl,(text_next_ptr)
+    ld de,text_end
+    or a
+    sbc hl,de	; Check if too big
+    jr z,.skip
+    add hl,de
+    ldi (hl),a
+    ld (text_next_ptr),hl
 .skip:
-	pop de, hl, af
-	ret
+    pop de, hl, af
+    ret
 
 
 ;===========================================================================
@@ -128,45 +128,45 @@ log:
 ;  -
 ;===========================================================================
 log_number:
-	push af, bc, de, hl
-	; Prefix
-	ld a,'#'
-	call debug.log
+    push af, bc, de, hl
+    ; Prefix
+    ld a,'#'
+    call debug.log
 
-	; Number
-	ld de,(text_next_ptr)
-	call itoa_5digits
-	inc de
-	ld (text_next_ptr),de
+    ; Number
+    ld de,(text_next_ptr)
+    call itoa_5digits
+    inc de
+    ld (text_next_ptr),de
 
-	; Suffix
-	ld a,'_'
-	call debug.log
-	pop hl, de, bc, af
-	ret
+    ; Suffix
+    ld a,'_'
+    call debug.log
+    pop hl, de, bc, af
+    ret
 
 ; Logs the nnumber in A
 log_number_a:
-	push af, bc, de, hl
-	; Store to hl
-	ld l,a
-	ld h,0
+    push af, bc, de, hl
+    ; Store to hl
+    ld l,a
+    ld h,0
 
-	; Prefix
-	ld a,'#'
-	call debug.log
+    ; Prefix
+    ld a,'#'
+    call debug.log
 
-	; Number
-	ld de,(text_next_ptr)
-	call itoa_5digits.three_digits
-	inc de
-	ld (text_next_ptr),de
+    ; Number
+    ld de,(text_next_ptr)
+    call itoa_5digits.three_digits
+    inc de
+    ld (text_next_ptr),de
 
-	; Suffix
-	ld a,'_'
-	call debug.log
-	pop hl, de, bc, af
-	ret
+    ; Suffix
+    ld a,'_'
+    call debug.log
+    pop hl, de, bc, af
+    ret
 
 
 ;===========================================================================
@@ -175,35 +175,35 @@ log_number_a:
 ;  -
 ;===========================================================================
 print:
-	push af, bc, de, hl, ix
-	ld de,(text_last_printed_ptr)
-	ld hl,(text_last_printed_screen_addr)
+    push af, bc, de, hl, ix
+    ld de,(text_last_printed_ptr)
+    ld hl,(text_last_printed_screen_addr)
 
 .loop:
-	; Check for end
-	push hl
-	ld hl,(text_next_ptr)
-	or a
-	sbc hl,de
-	pop hl
-	jr z,.end
+    ; Check for end
+    push hl
+    ld hl,(text_next_ptr)
+    or a
+    sbc hl,de
+    pop hl
+    jr z,.end
 
-	; print
-	ld a,(de)
+    ; print
+    ld a,(de)
     call .print_char
-	inc l	; Next x-position
+    inc l	; Next x-position
 
-	; increment read pointer
-	ld de,(text_last_printed_ptr)
-	inc de
-	ld (text_last_printed_ptr),de
-	jr .loop
+    ; increment read pointer
+    ld de,(text_last_printed_ptr)
+    inc de
+    ld (text_last_printed_ptr),de
+    jr .loop
 
 .end:
-	; Remember
-	ld (text_last_printed_screen_addr),hl
-	pop ix, hl, bc, de, af
-	ret
+    ; Remember
+    ld (text_last_printed_screen_addr),hl
+    pop ix, hl, bc, de, af
+    ret
 
 ; Prints A by replacing, not XORing.
 .print_char:
@@ -234,6 +234,4 @@ print:
     pop hl
     ret
 
-	ENDMODULE
-
-
+    ENDMODULE

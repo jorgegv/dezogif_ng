@@ -28,23 +28,23 @@ MESSAGE_START_BYTE:	equ 0xA5
 ;===========================================================================
 
 ; CMD_SET_REG
-	STRUCT PAYLOAD_SET_REG
+    STRUCT PAYLOAD_SET_REG
 register_number	defb
 register_value	defw
-	ENDS
+    ENDS
 
 ; CMD_ADD_BREAKPOINT
-	STRUCT PAYLOAD_ADD_BREAKPOINT
+    STRUCT PAYLOAD_ADD_BREAKPOINT
 bp_address	defw
-	ENDS
+    ENDS
 
 ; CMD_REMOVE_BREAKPOINT
-	STRUCT PAYLOAD_REMOVE_BREAKPOINT
+    STRUCT PAYLOAD_REMOVE_BREAKPOINT
 bp_id	defw
-	ENDS
+    ENDS
 
 ; CMD_CONTINUE
-	STRUCT PAYLOAD_CONTINUE
+    STRUCT PAYLOAD_CONTINUE
 bp1_enable	defb
 bp1_address	defw
 bp2_enable	defb
@@ -52,33 +52,33 @@ bp2_address	defw
 alternate_command	defb
 range_start	defw
 range_end	defw
-	ENDS
+    ENDS
 
 ; CMD_READ_MEM
-	STRUCT PAYLOAD_READ_MEM
+    STRUCT PAYLOAD_READ_MEM
 reserved	defb
 mem_start	defw
 mem_size	defw
-	ENDS
+    ENDS
 
 ; CMD_WRITE_MEM
-	STRUCT PAYLOAD_WRITE_MEM
+    STRUCT PAYLOAD_WRITE_MEM
 reserved	defb
 mem_start	defw
-	ENDS
+    ENDS
 
 ; CMD_SET_SLOT
-	STRUCT PAYLOAD_SET_SLOT
+    STRUCT PAYLOAD_SET_SLOT
 slot	defb
 bank	defb
-	ENDS
+    ENDS
 
 ; CMD_EXEC_ASM
-	STRUCT PAYLOAD_EXEC_ASM
+    STRUCT PAYLOAD_EXEC_ASM
 context	defb
 code	defs 100
 end		defb	; For the RET
-	ENDS
+    ENDS
 
 
 
@@ -91,17 +91,17 @@ end		defb	; For the RET
 ;  -, At the end the registers are restored.
 ;===========================================================================
 cmd_loop:
-	; Wait on next command
-	call wait_for_uart_rx
-	; Receive length sequence number and command
-	ld hl,receive_buffer
-	ld de,receive_buffer.payload-receive_buffer
-	call receive_bytes
-	;ld a,BLUE
-	;out (BORDER),a
-	; Handle command
-	call cmd_call
-	jr cmd_loop
+    ; Wait on next command
+    call wait_for_uart_rx
+    ; Receive length sequence number and command
+    ld hl,receive_buffer
+    ld de,receive_buffer.payload-receive_buffer
+    call receive_bytes
+    ;ld a,BLUE
+    ;out (BORDER),a
+    ; Handle command
+    call cmd_call
+    jr cmd_loop
 
 
 /*
@@ -111,30 +111,30 @@ cmd_loop:
 ; Immediately returns if no message is available.
 ;===========================================================================
 execute_cmds_loop:
-	call check_uart_byte_available
-	ret z
+    call check_uart_byte_available
+    ret z
 .loop:
-	; Receive length sequence number and command
-	ld hl,receive_buffer
-	ld de,receive_buffer.payload-receive_buffer
-	call receive_bytes
-	;ld a,BLUE
-	;out (BORDER),a
-	; Handle command
-	call cmd_call
+    ; Receive length sequence number and command
+    ld hl,receive_buffer
+    ld de,receive_buffer.payload-receive_buffer
+    call receive_bytes
+    ;ld a,BLUE
+    ;out (BORDER),a
+    ; Handle command
+    call cmd_call
 
-	; Check for some time to see if another command is available
-	ld de,256*200
+    ; Check for some time to see if another command is available
+    ld de,256*200
 .wait:
-	push de
-	call check_uart_byte_available
-	pop de
-	jr nz,.loop
-	dec de
-	ld a,d
-	or e
-	jr nz,.wait
-	ret
+    push de
+    call check_uart_byte_available
+    pop de
+    jr nz,.loop
+    dec de
+    ld a,d
+    or e
+    jr nz,.wait
+    ret
 */
 
 
@@ -151,18 +151,18 @@ execute_cmds_loop:
 ;===========================================================================
 receive_bytes:
 .loop:
-	push de
-	; Get byte
-	call read_uart_byte
-	; Store
-	ldi (hl),a
-	;out (BORDER),a
-	pop de
-	dec de
-	ld a,e
-	or d
-	jr nz,.loop
-	ret
+    push de
+    ; Get byte
+    call read_uart_byte
+    ; Store
+    ldi (hl),a
+    ;out (BORDER),a
+    pop de
+    dec de
+    ld a,e
+    or d
+    jr nz,.loop
+    ret
 
 /*
 ;===========================================================================
@@ -176,31 +176,31 @@ receive_bytes:
 ;  A, HL, DE, BC
 ;===========================================================================
 receive_message:
-	ld hl,receive_buffer
-	; Receive the length, 2 bytes:
-	; Get first byte
-	call read_uart_byte
-	; Store
-	ldi (hl),a
-	; Get second byte
-	call read_uart_byte
-	; Store
-	ldi (hl),a
+    ld hl,receive_buffer
+    ; Receive the length, 2 bytes:
+    ; Get first byte
+    call read_uart_byte
+    ; Store
+    ldi (hl),a
+    ; Get second byte
+    call read_uart_byte
+    ; Store
+    ldi (hl),a
 
-	; Receive the rest
-	ld de,(receive_buffer.length)
+    ; Receive the rest
+    ld de,(receive_buffer.length)
 .loop:
-	; Check if all bytes received
-	ld a,e
-	or d
-	ret z	; all bytes received
-	; Get next byte
-	call read_uart_byte
-	; Store
-	ldi (hl),a
-	; Next
-	dec de
-	jr .loop
+    ; Check if all bytes received
+    ld a,e
+    or d
+    ret z	; all bytes received
+    ; Get next byte
+    call read_uart_byte
+    ; Store
+    ldi (hl),a
+    ; Next
+    dec de
+    jr .loop
 */
 
 /*
@@ -217,31 +217,31 @@ receive_message:
 ;  A, HL, BC
 ;===========================================================================
 send_message:
-	; Get length
-	; First length byte
-	ldi a,(hl)
-	ld e,a
-	; Write to UART
-	call write_uart_byte
-	; Second length byte
-	ldi a,(hl)
-	ld d,a
-	; Write to UART
-	call write_uart_byte
+    ; Get length
+    ; First length byte
+    ldi a,(hl)
+    ld e,a
+    ; Write to UART
+    call write_uart_byte
+    ; Second length byte
+    ldi a,(hl)
+    ld d,a
+    ; Write to UART
+    call write_uart_byte
 
-	; DE contains the length
+    ; DE contains the length
 .loop:
-	ld a,e
-	or d
-	ret z		; Return if all bytes are sent
+    ld a,e
+    or d
+    ret z		; Return if all bytes are sent
 
-	; Get next byte
-	ldi a,(hl)
-	; Write to UART
-	call write_uart_byte
-	; Next
-	dec de
-	jr .loop
+    ; Get next byte
+    ldi a,(hl)
+    ; Write to UART
+    call write_uart_byte
+    ; Next
+    dec de
+    jr .loop
 */
 
 
@@ -257,10 +257,10 @@ send_message:
 ;  A, DE, BC, HL=0
 ;===========================================================================
 send_length_and_seqno:
-	; Store Length MSB=0
-	ld hl,0
-	; jp send_4bytes_length_and_seqno
-	; Flow through
+    ; Store Length MSB=0
+    ld hl,0
+    ; jp send_4bytes_length_and_seqno
+    ; Flow through
 
 ;===========================================================================
 ; Sends a 4 bytes length and the sequence number.
@@ -274,28 +274,28 @@ send_length_and_seqno:
 ;  A, DE, BC
 ;===========================================================================
 send_4bytes_length_and_seqno:
-	; Write first byte to recognize message
-	ld a,MESSAGE_START_BYTE
-	call write_uart_byte
-	; First length byte
-	ld a,e
-	; Write to UART
-	call write_uart_byte
-	; Second length byte
-	ld a,d
-	; Write to UART
-	call write_uart_byte
-	; Third length byte
-	ld a,l
-	; Write to UART
-	call write_uart_byte
-	; Fourth length byte
-	ld a,h
-	; Write to UART
-	call write_uart_byte
-	; Sequence number
-	ld a,(receive_buffer.seq_no)
-	jp write_uart_byte
+    ; Write first byte to recognize message
+    ld a,MESSAGE_START_BYTE
+    call write_uart_byte
+    ; First length byte
+    ld a,e
+    ; Write to UART
+    call write_uart_byte
+    ; Second length byte
+    ld a,d
+    ; Write to UART
+    call write_uart_byte
+    ; Third length byte
+    ld a,l
+    ; Write to UART
+    call write_uart_byte
+    ; Fourth length byte
+    ld a,h
+    ; Write to UART
+    call write_uart_byte
+    ; Sequence number
+    ld a,(receive_buffer.seq_no)
+    jp write_uart_byte
 
 
 ;===========================================================================
@@ -314,42 +314,41 @@ send_4bytes_length_and_seqno:
 ;  A, E, BC
 ;===========================================================================
 send_ntf_pause:
-	; LOGPOINT [CMD] send_ntf_pause: reason=${D}, breakpoint=${HL:hex}h (${HL})
-	; Change main state
-	ld a,PRGM_STOPPED
-	ld (prgm_state),a
-	; Write first byte to recognize message
-	ld a,MESSAGE_START_BYTE
-	call write_uart_byte
-	; First length byte
-	ld a,7
-	call write_uart_byte
-	; Rest of length + seqno=0
-	xor a
-	ld e,4
+    ; LOGPOINT [CMD] send_ntf_pause: reason=${D}, breakpoint=${HL:hex}h (${HL})
+    ; Change main state
+    ld a,PRGM_STOPPED
+    ld (prgm_state),a
+    ; Write first byte to recognize message
+    ld a,MESSAGE_START_BYTE
+    call write_uart_byte
+    ; First length byte
+    ld a,7
+    call write_uart_byte
+    ; Rest of length + seqno=0
+    xor a
+    ld e,4
 .loop:
-	call write_uart_byte
-	dec e
-	jr nz,.loop
-	; NTF_PAUSE id
-	ld a,1	; NTF_PAUSE
-	call write_uart_byte
-	; Breakpoint reason
-	ld a,d
-	call write_uart_byte
-	; Breakpoint
-	ld a,l
-	call write_uart_byte
-	ld a,h
-	call write_uart_byte
-	; Bank
-	rlca : rlca : rlca ; Get slot
-	and 0111b
-	add REG_MMU
-	call read_tbblue_reg
-	inc a	; bank+1
-	call write_uart_byte
-	; Empty reason string
-	xor a
-	jp write_uart_byte
-
+    call write_uart_byte
+    dec e
+    jr nz,.loop
+    ; NTF_PAUSE id
+    ld a,1	; NTF_PAUSE
+    call write_uart_byte
+    ; Breakpoint reason
+    ld a,d
+    call write_uart_byte
+    ; Breakpoint
+    ld a,l
+    call write_uart_byte
+    ld a,h
+    call write_uart_byte
+    ; Bank
+    rlca : rlca : rlca ; Get slot
+    and 0111b
+    add REG_MMU
+    call read_tbblue_reg
+    inc a	; bank+1
+    call write_uart_byte
+    ; Empty reason string
+    xor a
+    jp write_uart_byte

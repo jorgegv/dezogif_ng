@@ -6,4 +6,4 @@
 *.lst
 *.nex
 notes.md
-out/
+build/

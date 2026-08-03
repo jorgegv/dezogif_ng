@@ -15,7 +15,7 @@ MF_DIFF_TO_RAM:  equ MF_ORIGIN_ROM+0x2000-MF.main_prg_copy ; At 0x2000
 
 
  IFNDEF UNIT_TEST
-    OUTPUT "out/mf_nmi.bin"
+    OUTPUT MF_NMI_BIN
  ENDIF
 
 ;===========================================================================

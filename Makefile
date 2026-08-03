@@ -12,7 +12,9 @@ UT = $(OUT)/ut
 UT_BIN = $(UT).nex
 
 SRC = src
-OUT = out
+OUT = build
+MAIN_BIN = $(OUT)/main.bin
+MF_NMI_BIN = $(OUT)/mf_nmi.bin
 MAIN_ASM = $(SRC)/main.asm
 ASM_FILES = $(wildcard $(SRC)/*.asm)
 UT_ASM = $(SRC)/unit_tests/unit_tests.asm
@@ -34,14 +36,14 @@ clean:
 main:	$(PRG_BIN)
 
 $(PRG_BIN):	$(ASM_FILES) Makefile $(OUT)/
-	$(ASM) --inc=$(SRC) --sld=$(SLD_OUT) --lstlab --lst=$(LIST_OUT) --fullpath -DBIN_FILE=\"$(PRG_BIN)\" -DBUILD_TIME=`date +%s` $(MAIN_ASM)
+	$(ASM) --inc=$(SRC) --sld=$(SLD_OUT) --lstlab --lst=$(LIST_OUT) --fullpath -DBIN_FILE=\"$(PRG_BIN)\" -DMAIN_BIN=\"$(MAIN_BIN)\" -DMF_NMI_BIN=\"$(MF_NMI_BIN)\" -DBUILD_TIME=`date +%s` $(MAIN_ASM)
 
 
 # Build the unit tests
 unit_tests:	$(UT_BIN)
 
 $(UT_BIN):	$(UT_ASM_FILES) Makefile $(OUT)/
-	$(ASM) --inc=$(SRC) --sld=$(UT).sld --lstlab --lst=$(UT).list --fullpath -DBIN_FILE=\"$(UT_BIN)\" -DBUILD_TIME=`date +%s` $(UT_ASM)
+	$(ASM) --inc=$(SRC) --sld=$(UT).sld --lstlab --lst=$(UT).list --fullpath -DBIN_FILE=\"$(UT_BIN)\" -DMAIN_BIN=\"$(MAIN_BIN)\" -DMF_NMI_BIN=\"$(MF_NMI_BIN)\" -DBUILD_TIME=`date +%s` $(UT_ASM)
 
 
 # Build the MF rom
@@ -49,9 +51,9 @@ mf_rom:	$(OUT)/enNextMf.rom
 
 $(OUT)/enNextMf.rom:	$(PRG_BIN)
 	# Simply concatenate the mf_nmi code and the main.bin
-	cat $(OUT)/mf_nmi.bin $(OUT)/main.bin > $(OUT)/enNextMf.rom
+	cat $(MF_NMI_BIN) $(MAIN_BIN) > $(OUT)/enNextMf.rom
 
 
-# Create 'out' folder:
+# Create build folder:
 $(OUT)/:
 	mkdir -p $@

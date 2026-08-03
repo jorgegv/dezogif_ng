@@ -21,7 +21,7 @@
             },
             "sjasmplus": [
                 {
-                    "path": "out/dezogif.sld",
+                    "path": "build/dezogif.sld",
                     "srcDirs": [
                         "src"
                     ],
@@ -35,7 +35,7 @@
             "rootFolder": "${workspaceFolder}",
             "topOfStack": "debug_stack.top",
             "loadObjs": [
-                { "path": "out/enNextMf.rom", "start": "0"}
+                { "path": "build/enNextMf.rom", "start": "0"}
             ],
             "execAddress": "0x0066",
             "smallValuesMaximum": 513,
@@ -60,7 +60,7 @@
             },
             "sjasmplus": [
                 {
-                    "path": "out/dezogif.sld",
+                    "path": "build/dezogif.sld",
                     "srcDirs": [
                         "src"
                     ]
@@ -73,7 +73,7 @@
             "topOfStack": "debug_stack.top",
             "loadObjs": [
                 {
-                    "path": "out/main.bin",
+                    "path": "build/main.bin",
                     "start": "0xE000"
                 }
             ],
@@ -94,7 +94,7 @@
             },
             "sjasmplus": [
                 {
-                    "path": "out/dezogif.sld",
+                    "path": "build/dezogif.sld",
                     "srcDirs": [
                         "src"
                     ]
@@ -106,7 +106,7 @@
             ],
             "rootFolder": "${workspaceFolder}",
             "topOfStack": "stack_top",
-            "load": "out/dezogif.nex",
+            "load": "build/dezogif.nex",
             "smallValuesMaximum": 513,
             "tmpDir": ".tmp"
         },
@@ -123,7 +123,7 @@
             },
             "sjasmplus": [
                 {
-                    "path": "out/dezogif.sld",
+                    "path": "build/dezogif.sld",
                     "srcDirs": [
                         "src"
                     ]
@@ -145,7 +145,7 @@
             "topOfStack": "debug_stack.top",
             "loadObjs": [
                 {
-                    "path": "out/enNextMf.rom",
+                    "path": "build/enNextMf.rom",
                     "start": "MF_ORIGIN_ROM"
                 }
             ],
@@ -160,7 +160,7 @@
             "remoteType": "zrcp",
             "sjasmplus": [
                 {
-                    "path": "out/dezogif.sld",
+                    "path": "build/dezogif.sld",
                     "srcDirs": [
                         "src"
                     ]
@@ -181,7 +181,7 @@
             "topOfStack": "debug_stack.top",
             "loadObjs": [
                 {
-                    "path": "out/enNextMf.rom",
+                    "path": "build/enNextMf.rom",
                     "start": "MF_ORIGIN_ROM"
                 }
             ],
@@ -212,14 +212,14 @@
             "unitTestTimeout": 2,
             "sjasmplus": [
                 {
-                    "path": "out/ut.sld",
+                    "path": "build/ut.sld",
                     "srcDirs": [
                         "src"
                     ]
                 }
             ],
             "rootFolder": "${workspaceFolder}",
-            "load": "out/ut.nex",
+            "load": "build/ut.nex",
         }
 
     ]

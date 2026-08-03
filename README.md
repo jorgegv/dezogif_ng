@@ -1,10 +1,17 @@
-# DeZog ZX Next Uart Interface
+# dezogif_esp — a ZX Spectrum Next debug stub over WiFi
 
-# Introduction
+A Z80 debug stub that runs on **real ZX Spectrum Next hardware** and is debugged from a PC with
+[DeZog](https://github.com/maziac/DeZog) in VS Code, speaking DZRP.
 
-This is a ZXNext assembler program named 'dezogif' that communicates via the UART with a debugger on a PC.
+It is a fork of [maziac/dezogif](https://github.com/maziac/dezogif), whose transport is a serial
+cable on the joystick port. This fork moves that transport to the Next's on-board **ESP-01 WiFi
+module** — the same UART peripheral behind a pin mux — which removes the cable, leaves the
+joysticks with the game permanently, and opens a route for **PC-initiated break**, something the
+serial version cannot do.
 
-It is intended to use this with the DeZog, a vscode debug adapter.
+Maintained by [jorgegv](https://github.com/jorgegv). Original author: maziac.
+
+**Status: Work in Progress**
 
 
 # Design
@@ -25,14 +32,36 @@ The program is started when DeZog sends a DZRP continue request.
 
 See [Design.md](doc/legacy/Design.md) for more info.
 
+Lifting the "cannot stop from DeZog" limitation is the point of this fork; the mechanism is a
+Copper-driven periodic NMI, and it is milestone M2 of the plan.
+
 
 # Build
 
+The assembler is [sjasmplus](https://github.com/z00m128/sjasmplus). Running `make` with no target
+lists everything available:
+
 ~~~
-make main
+make all        # the ROM, the program and the unit tests
+make mf_rom     # build/enNextMf.rom, the deployable artefact
 ~~~
 
-will create the enNextMf.rom binary.
+Build output goes to `build/`.
+
+
+# Testing
+
+~~~
+make test
+~~~
+
+runs a local headless test bench in the [jnext](https://github.com/jorgegv/jnext) emulator — no
+VS Code, no hardware. It installs the freshly built ROM into a copy of an SD card image, boots a
+Next, fires a Multiface NMI from guest code and judges the resulting screenshots. `make
+check-reproducible` verifies that a pinned `BUILD_TIME` yields a byte-identical ROM.
+
+The Z80 unit tests under `src/unit_tests/` are DeZog-driven and need VS Code; they are a manual
+layer.
 
 
 # Deployment
@@ -50,14 +79,21 @@ Note: the SW (enNextMf.rom) is known to work with ZXNext core 03.01.10 and core 
 
 # License
 
-This program is licensed under the [MIT license](https://github.com/maziac/dezogif/blob/master/LICENSE.txt).
+This project is licensed under the [GNU General Public License v3](LICENSE).
 
-The source code is available on [github](https://github.com/maziac/dezogif).
+It is a derivative work of [maziac/dezogif](https://github.com/maziac/dezogif), which is under
+the MIT licence. That notice is retained in [NOTICE](NOTICE) and still governs maziac's original
+code; the GPLv3 covers the combined work.
 
 
 # Acknowledgements
 
-Many thanks to Chris Kirby. I have used his NDS code https://github.com/Ckirby101/NDS-NextDevSystem as starting point and used e.g. his routine to set the baudrate.
+To **maziac**, for dezogif and for DeZog itself. Everything above the byte stream here — the
+memory choreography, the AltROM trick, the breakpoint design, the DZRP command layer — is
+maziac's work, and this fork would have been months of rediscovery without it.
 
+And, in maziac's own words from the original readme:
 
-
+> Many thanks to Chris Kirby. I have used his NDS code
+> https://github.com/Ckirby101/NDS-NextDevSystem as starting point and used e.g. his routine to
+> set the baudrate.

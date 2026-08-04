@@ -45,6 +45,38 @@
 
 set -euo pipefail
 
+# ---------------------------------------------------------------------------
+# SERIALISE BENCH RUNS ACROSS PROCESSES.
+#
+# The pre-flight further down refuses to START when something is already
+# listening on our port. That is necessary and not sufficient, and the gap is
+# the dangerous direction: once OUR jnext has bound the port, ANOTHER bench
+# run's client connects to OUR stub, and both runs then report each other's
+# traffic as their own.
+#
+# Measured on 2026-08-05, with several agents working in parallel: a W2 log
+# that should carry exactly 2 client connections carried 14, and four jnext
+# processes were alive at once. It cost a spurious W2 failure, an
+# AT+CIPSERVER that could not bind mid-script, and a conformance run aimed at
+# CSpect that was partly answered by our own stub — the last one detectable
+# only because C1 reported `dezogif v2.2.1`.
+#
+# THE FAILURES GO BOTH WAYS, which is why this is a mutex and not a louder
+# warning: a contaminated run can just as easily come out GREEN, with the
+# checks answered by somebody else's healthy stub. A green light nobody can
+# trust is worse than a red one.
+#
+# flock is advisory and process-scoped, so it serialises every cooperating
+# bench without any of them needing to know about the others. The lock lives
+# on $HOME (real disk) rather than /tmp, which is tmpfs on this machine.
+# ---------------------------------------------------------------------------
+BENCH_LOCK=${BENCH_LOCK:-$HOME/tmp/dezogif_ng-bench.lock}
+if [ -z "${BENCH_LOCK_HELD:-}" ] && command -v flock >/dev/null 2>&1; then
+    mkdir -p "$(dirname "$BENCH_LOCK")"
+    export BENCH_LOCK_HELD=1
+    exec flock "$BENCH_LOCK" "$0" "$@"
+fi
+
 JNEXT=${JNEXT:-$HOME/src/spectrum/jnext/build/gui-release/jnext}
 SD_IMAGE=${SD_IMAGE:-$HOME/.jnext/sdcard/cspect-next-1gb-fixed.img}
 OUT=${OUT:-build}
@@ -289,12 +321,22 @@ else
     done
     stop_stub
 
+    # CONTAMINATION CHECK, belt to the flock's braces. If another bench run's
+    # client reached our stub, this run's verdict is worthless in EITHER
+    # direction — the checks may have been answered by somebody else's healthy
+    # stub, which comes out GREEN. orphan-notify.py makes exactly 2
+    # connections; a few more is retry margin, and 14 was the observed
+    # signature of a second agent's suite running at the same time.
+    connects=$(grep -c "accepted as cid" "$jlog2" || true)
+
     # The precondition, asserted rather than assumed: the stub really did try to
     # send to a connection the module had already closed. Without this line the
     # rest of W2 would pass without having tested anything.
     refused=$(grep -c "which is not open — answering ERROR" "$jlog2" || true)
 
-    if [ "$refused" -lt 1 ]; then
+    if [ "$connects" -gt 6 ]; then
+        fail "W2 CONTAMINATED — $connects connections in $jlog2 where this fixture makes 2. Another bench run reached our stub, so this verdict means nothing in either direction. Re-run with no other jnext alive (pgrep jnext)."
+    elif [ "$refused" -lt 1 ]; then
         fail "W2 the precondition never happened — no AT+CIPSEND was refused in $jlog2, so nothing was tested"
     elif [ "$orphan_rc" -ne 0 ]; then
         fail "W2 the stub did not serve a client after the orphaned notification (see $jlog2)"

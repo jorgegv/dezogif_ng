@@ -49,6 +49,17 @@
 
 set -euo pipefail
 
+# Serialise against the other port-binding benches. This one uses the same
+# port 11000, so a concurrent run-dzrp-stub.sh would answer this fixture's
+# client or vice versa. See the long note in run-dzrp-stub.sh for what that
+# cost on 2026-08-05; both scripts take the same lock.
+BENCH_LOCK=${BENCH_LOCK:-$HOME/tmp/dezogif_ng-bench.lock}
+if [ -z "${BENCH_LOCK_HELD:-}" ] && command -v flock >/dev/null 2>&1; then
+    mkdir -p "$(dirname "$BENCH_LOCK")"
+    export BENCH_LOCK_HELD=1
+    exec flock "$BENCH_LOCK" "$0" "$@"
+fi
+
 JNEXT=${JNEXT:-$HOME/src/spectrum/jnext/build/gui-release/jnext}
 SD_IMAGE=${SD_IMAGE:-$HOME/.jnext/sdcard/cspect-next-1gb-fixed.img}
 OUT=${OUT:-build}

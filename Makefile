@@ -4,7 +4,7 @@
 # immediately above it. Target names print in bold red.
 
 .DEFAULT_GOAL := help
-.PHONY: help all main unit_tests mf_rom test check-reproducible clean
+.PHONY: help all main unit_tests mf_rom mfselect test test-mfselect check-reproducible clean
 
 # Show this help
 help:
@@ -29,6 +29,13 @@ SJASMPLUS ?= $(shell command -v sjasmplus 2>/dev/null || echo $(HOME)/src/spectr
 JNEXT     ?= $(HOME)/src/spectrum/jnext/build/gui-release/jnext
 SD_IMAGE  ?= $(HOME)/.jnext/sdcard/cspect-next-1gb-fixed.img
 
+# z88dk, for mfselect only. The stub itself is sjasmplus and must stay that way
+# (DeZog cannot do banking with z88dk — see MEMORY.md); mfselect is a
+# standalone NextZXOS utility DeZog never sees, so that constraint does not
+# reach it.
+ZCC       ?= zcc
+ZCCFLAGS   = +zxn -subtype=nex -clib=sdcc_iy -SO3 -compiler=sdcc -create-app
+
 # Stamped into the ROM (constants.asm: BUILD_TIME16). Pin it to compare two
 # builds byte for byte — see `make check-reproducible`.
 BUILD_TIME ?= $(shell date +%s)
@@ -43,10 +50,14 @@ SRC  = src
 OUT  = build
 TEST = test
 
+TOOLS = tools
+
 MAIN_ASM    = $(SRC)/main.asm
 UT_ASM      = $(SRC)/unit_tests/unit_tests.asm
 TRIGGER_ASM = $(TEST)/nmi_trigger.asm
 COPPER_ASM  = $(TEST)/copper_nmi.asm
+MFSELECT_C  = $(TOOLS)/mfselect/mfselect.c
+ROMSUM      = $(TOOLS)/romsum.py
 
 ASM_FILES    = $(wildcard $(SRC)/*.asm) $(wildcard $(SRC)/zx/*.inc)
 UT_ASM_FILES = $(wildcard $(SRC)/unit_tests/*.asm) $(wildcard $(SRC)/unit_tests/*.inc) $(ASM_FILES)
@@ -57,6 +68,12 @@ ROM         = $(OUT)/enNextMf.rom
 UT_BIN      = $(OUT)/ut.nex
 TRIGGER_BIN = $(OUT)/nmi_trigger.bin
 COPPER_BIN  = $(OUT)/copper_nmi.bin
+
+# mfselect's deployables: the utility, and the checksum of the ROM it installs.
+# The .sum is a build product on purpose — a checksum computed on the Next from
+# an already-corrupt file would just bless the corruption.
+MFSELECT_NEX = $(OUT)/mfselect.nex
+DEZOGIF_SUM  = $(OUT)/dezogif.sum
 
 ROM_SIZE = 8192
 
@@ -83,10 +100,18 @@ unit_tests: $(UT_BIN)
 # Build the deployable Multiface ROM (build/enNextMf.rom)
 mf_rom: $(ROM)
 
+# Build the mfselect ROM switcher (build/mfselect.nex + build/dezogif.sum)
+mfselect: $(MFSELECT_NEX) $(DEZOGIF_SUM)
+
 # Run the local headless test suite in jnext (no VS Code, no hardware)
 test: $(ROM) $(TRIGGER_BIN) $(COPPER_BIN)
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" ROM="$(ROM)" \
 	 TRIGGER_BIN="$(TRIGGER_BIN)" COPPER_BIN="$(COPPER_BIN)" $(TEST)/run-headless.sh
+
+# Run the mfselect headless bench (2 jnext runs; not part of `make test`)
+test-mfselect: $(MFSELECT_NEX) $(DEZOGIF_SUM) $(ROM)
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" NEX="$(MFSELECT_NEX)" \
+	 ROM="$(ROM)" SUM="$(DEZOGIF_SUM)" ROMSUM="$(ROMSUM)" $(TEST)/run-mfselect.sh
 
 # Check the ROM builds byte-identically twice with BUILD_TIME pinned
 check-reproducible:
@@ -135,6 +160,14 @@ $(ROM): $(MF_NMI_BIN) $(MAIN_BIN)
 	if [ "$$size" -ne $(ROM_SIZE) ]; then \
 	  echo "ERROR: $@ is $$size bytes, expected $(ROM_SIZE)" >&2; rm -f $@; exit 1; \
 	fi
+
+# zcc writes mfselect.nex plus its intermediates next to the -o basename, so
+# pointing that at $(OUT) keeps the source tree clean.
+$(MFSELECT_NEX): $(MFSELECT_C) Makefile | $(OUT)
+	$(ZCC) $(ZCCFLAGS) $(MFSELECT_C) -o $(OUT)/mfselect
+
+$(DEZOGIF_SUM): $(ROM) $(ROMSUM) | $(OUT)
+	python3 $(ROMSUM) $(ROM) > $@
 
 $(OUT):
 	mkdir -p $@

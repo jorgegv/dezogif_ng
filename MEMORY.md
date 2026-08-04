@@ -5,6 +5,58 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-04 — mfselect is z88dk C, and its first run is guarded
+
+**Decided (user).** `mfselect` — the on-Next switcher between the stock
+Multiface ROM and ours ([issue #1]) — is written in **z88dk C**, not sjasmplus,
+and assumes NextZXOS is present at all times.
+
+**Why this does not contradict the sjasmplus decision below.** That decision is
+about the *stub*, and its reason is specific: DeZog cannot do banking with
+z88dk, and the stub is nothing but banking. mfselect is a standalone NextZXOS
+utility DeZog never sees, so the constraint does not reach it. z88dk also ships
+the esxdos API bindings (`esx_f_open`/`read`/`write`/`stat`), which removed the
+one genuine unknown — the `RST $08` calling convention — from the task. The
+stub stays sjasmplus.
+
+**The design decision worth keeping, and it is not the language.** The obvious
+first-run rule — "no backup yet, so save whatever is installed as the original"
+— **destroys the stock ROM for exactly the people most likely to run this
+first**. Anyone who followed Appendix B.1 step A3 already has *our* ROM at the
+official path; capturing that as "the original" labels the debug stub as the
+stock Multiface ROM and leaves no copy of the real one on the card. So the
+capture refuses when the installed ROM matches `dezogif.sum`, and asks before
+capturing anything else — "not ours" is not proof of "stock". Bench check M4
+asserts the refusal, answering Y anyway to prove the guard fires before the
+question.
+
+**Consequences that shaped the rest.**
+
+- The guard needs our ROM's checksum, and it is read from `dezogif.sum` **at
+  run time**, not compiled in. `BUILD_TIME` is stamped into the ROM, so every
+  build changes it; a compiled-in constant would silently stop matching the
+  moment the stub was rebuilt. The `.sum` is a *build* product for the opposite
+  reason: computing it on the card would bless an already-corrupt file.
+- CRC-16/CCITT, in two independent implementations (`tools/romsum.py` on the
+  host, `crc16()` on the Next). Bench check M2 requires them to agree — the
+  `.sum` files are worthless if they do not.
+- Every install reads the copy back and re-checksums it. A short write on a
+  tired card is the failure this must not hide.
+
+**Not decided.** Whether a soft reset suffices instead of a power cycle. The
+on-screen advice says power-cycle, which is safe either way, but nothing has
+established that a soft reset is insufficient. It is a tbblue firmware
+question, so the project's "read the VHDL" rule gives no answer.
+
+**Rejected.** sjasmplus (the user's call, and the banking constraint does not
+apply); a compiled-in checksum constant; 8.3-unsafe names like
+`enNextMf.orig.rom` from the issue draft, in favour of `original.rom` /
+`dezogif.rom`.
+
+[issue #1]: https://github.com/jorgegv/dezogif_ng/issues/1
+
+---
+
 ## 2026-08-04 — WiFi mode's UI is a connect string, not a selector
 
 **Decided (user).** In WiFi mode the stub's screen shows a line of the shape:

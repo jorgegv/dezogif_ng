@@ -106,10 +106,13 @@ strongest:
      our stub declines it, and would decline it whether or not the Copper worked.
    Screen comparison is a **percentage of differing pixels** (`test/screen-diff.py`), not a byte
    compare: NextZXOS idling changes 0.01% of the screen and that once produced a false PASS.
-4. **`build/ut.nex`** — the upstream Z80 unit tests under `src/unit_tests/`. These are
+4. **`make test-mfselect`** — the mfselect bench, 2 headless runs, 4 checks, asserting on files
+   pulled back off the SD image rather than on pixels. Deliberately **not** part of `make test`:
+   mfselect is separate tooling and is not in `make all` either. See `doc/MFSELECT.md`.
+5. **`build/ut.nex`** — the upstream Z80 unit tests under `src/unit_tests/`. These are
    **DeZog-driven** (`"unitTests": true` + zsim) and therefore need VS Code; they are a manual
    layer and gate nothing. Making them headless would need a driver we do not have.
-5. **Real hardware** — the only truth for ESP timing, WiFi behaviour and anything the emulator
+6. **Real hardware** — the only truth for ESP timing, WiFi behaviour and anything the emulator
    models rather than is.
 
 **Why T4 expects a decline, and what M2 has to change.** `mf_rom.asm`'s `nmi66h` reads NR `0x02`

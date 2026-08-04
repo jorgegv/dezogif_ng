@@ -5,6 +5,63 @@ attempting similar logic.
 
 ---
 
+## Running a NEX headless: `jnext prog.nex` does NOT boot NextZXOS
+
+**Symptom.** `mfselect.nex` printed its banner and then froze. Identical
+screenshot at frame 400 and at frame 1500, so not slowness.
+
+**Cause.** The jnext log says it outright:
+
+```
+--load: will load 'build/mfselect.nex' after 0 frame(s)
+Machine ROM loaded from SD '/MACHINES/NEXT/48.rom': Next 48K fallback
+```
+
+The NEX is injected at frame 0 with **NextZXOS never booted**. mfselect's every
+file access is the esxdos API, so the first `RST $08` had nothing to call and
+hung. The program was correct; the harness was not running it under the OS it
+requires. There is no `--load-delay` to fix this.
+
+**Fix.** Boot NextZXOS, then type the launch command, exactly as jnext's own
+regression suite does it (`test/00regression/scripts/nextsync-func.sh`):
+`--delayed-keypress-frames 400 space / 470 down / 500 enter` reaches the command
+line, then `.nexload /mfselect/mfselect.nex` one keypress at a time. `/` is
+SYMBOL SHIFT + V, so the key name is `sym+v`.
+
+**Lesson.** When a guest program hangs, read the emulator's own log before
+reading the guest. It stated the machine configuration in two lines and would
+have saved the whole investigation.
+
+---
+
+## z88dk's zxn console cannot position or colour text
+
+**Symptom.** `printf("\x0c")` to clear the screen printed `?`. So did every
+other ZX control code.
+
+**Three approaches that did not work**, in order:
+
+1. `printf("\x0c")` — prints `?`. A probe then showed 12 (cls), 22 (AT), 16
+   (INK) and 17 (PAPER) *all* print as `?`: the console is a plain character
+   sink.
+2. `#include <conio.h>` for `clrscr()` — `file 'conio.h' not found`. conio
+   exists only for the classic clib, not `-clib=sdcc_iy`.
+3. `-pragma-redirect:fputc_cons=fputc_cons_native`, to route printf through the
+   ROM print routine — `undefined symbol: fputc_cons_native`. No such driver for
+   the `zxn` target.
+
+**Fix.** Write the display file directly: ~40 lines giving `put_char`,
+`print_at`, `attr_run` and `cls`, taking the font from the address in the
+`CHARS` system variable (0x5C36) rather than assuming 0x3D00. This also drops
+stdio entirely.
+
+**Lesson.** One 15-line probe program settled what three rounds of guessing had
+not — and it answered four questions at once (cls, AT, INK, PAPER) because it
+tested them all in one screenshot. When a library's behaviour is unknown,
+probing is cheaper than the first wrong guess.
+
+---
+
 ## Firing a Multiface NMI headless — and what actually blocked it
 
 **Symptom.** Injected guest code wrote NR `0x02` bit 3 ("generate Multiface

@@ -138,7 +138,16 @@ cleanup() {
     fi
     rm -f "$sd"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+# A handler that just RETURNS does not stop a bash script: the shell defers the
+# signal until the running foreground command finishes, runs the handler, and
+# then carries on with the next line. Trapping INT/TERM with `cleanup` alone
+# therefore cleaned up and then completed the run as if nothing had happened —
+# which looks identical to a working interrupt from the outside, because the
+# image is gone either way. These two handlers exit instead, and the EXIT trap
+# above does the cleaning on the way out.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 cp --reflink=auto -f "$SD_IMAGE" "$sd"
 

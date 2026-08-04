@@ -52,6 +52,25 @@ subshell, so the signal never reaches the script and its trap never runs. The
 run then completes normally and looks like a pass. Launch the script alone,
 take `$!`, and signal that.
 
+**And getting the signal to the right process still was not enough — a bash
+trap does not stop a script.** `trap cleanup EXIT INT TERM`, with a handler
+that simply returns, makes the shell defer the signal until the running
+foreground command finishes, run the handler once, and then **carry on with the
+next line**. So the bench cleaned up and then completed the whole run as if
+nothing had happened, exiting 0. From the outside that is indistinguishable
+from a working interrupt, because the image is gone either way — which is
+exactly why it was reported as "verified at three interrupt points" when
+nothing had been interrupted at all. The fix is `trap cleanup EXIT` plus
+`trap 'exit 130' INT` / `trap 'exit 143' TERM`, so the handler *exits* and the
+EXIT trap does the cleaning on the way out.
+
+**The test that finally settled it asserts the run did NOT finish** — no
+`All checks passed` in the output, and exit 143 — rather than only that the
+image is gone. Checked against the old trap to be sure it discriminates: old
+exits 0 having completed, new exits 143 having stopped. Four wrong mechanisms
+were asserted on this one bench script before that test existed. **Every one of
+them was caught by measuring, none by reasoning.**
+
 **Still outstanding, deliberately untouched:** `run-headless.sh` leaves
 `sd-stock.img` *and* `sd-ours.img` per run, and `run-mfselect.sh` its own —
 same mechanism, and `make clean` is the only thing that reclaims them. They

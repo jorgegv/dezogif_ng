@@ -30,10 +30,24 @@ answers are only interesting on silicon:
   H5  Throughput, MEASURED. The plan calls "tens of KB/s" an "estimate".
 
 H4 and H5 exist to move two rows of the plan's Appendix A off the "estimate"
-rung of its evidence ladder. They cannot fail in any interesting way — they
-report numbers — so they are reported as MEASURED rather than PASS, and they
-never affect the exit code. A check that cannot fail must not be allowed to
-look like one that can.
+rung of its evidence ladder. Their *numbers* are reported as MEASURED rather
+than PASS, because a figure is not a verdict and a check that cannot fail must
+not be allowed to look like one that can.
+
+That is a statement about the numbers, NOT about the whole of H5. H5 also
+carries a real FAIL: a large payload that comes back corrupted is the
+reassembly path meeting framing we did not write, which is a genuine finding
+and does flip the exit code. An earlier version of this paragraph said H4 and
+H5 "never affect the exit code", which was simply false of the code beneath it.
+
+WHAT H3 CANNOT DO, stated here because the first draft of the accompanying
+document claimed otherwise twice. H3 shows that the connection id is READ from
+the `+IPD` header rather than assumed. It does NOT observe what the module's
+ids actually ARE, and no PC-side check can: the headers are consumed by the
+stub, and what reaches this script is DZRP frames with the id already stripped.
+So MEMORY.md's open question — whether real ESP-AT firmware numbers inbound
+connections from 1 as jnext does — is NOT answerable from here, by this bench
+or any successor to it that talks only over the socket.
 
 H1 IS LOAD-BEARING FAR BEYOND ITS ONE LINE OF CODE. A TCP connection that
 completes proves, in a single observation and on real hardware: that tbblue
@@ -104,19 +118,39 @@ def connect(host, port, timeout, attempts=20):
     preamble must NOT be present. Autodetecting would quietly accept a ROM that
     emits it — which would mean the UART build was installed by mistake, the
     single likeliest setup error, and exactly the thing H1 cannot distinguish.
+
+    THE RETRY COVERS THE CMD_INIT AS WELL AS THE CONNECT, and the first version
+    of this function did not: the init was one line below the `except`, so a
+    protocol-level stall aborted immediately with every remaining attempt
+    unused, while this docstring claimed the retry protected against exactly
+    that. It matters most on the target this bench is for. The stub's own RX
+    budget is about 100 ms (`ESP_RX_WAIT` in transport_esp.asm), against a WiFi
+    round trip the plan files as an unmeasured 10-100 ms ESTIMATE — so a jitter
+    spike past that budget makes the *stub* reset through `rx_timeout` and drop
+    the exchange, which is a transient this must ride out rather than report as
+    a dead machine. Found in review, by measurement rather than by reading.
     """
     last = None
     for _ in range(attempts):
+        d = None
         try:
             d = dzrp.Dzrp(dzrp.TcpTransport(host, port, timeout),
                           start_byte=None, base_timeout=timeout)
-        except OSError as e:
+            d.command(dzrp.CMD_INIT, dzrp.init_payload())
+            return d
+        except (OSError, dzrp.DzrpError) as e:
             last = e
+            # Close before retrying. The module serves four inbound connections
+            # at most, so leaking one per attempt would exhaust them long
+            # before the attempts ran out, and turn a transient into a wedge.
+            if d is not None:
+                try:
+                    d.close()
+                except Exception:
+                    pass
             time.sleep(0.25)
-            continue
-        d.command(dzrp.CMD_INIT, dzrp.init_payload())
-        return d
-    raise OSError("could not connect to %s:%d — %s" % (host, port, last))
+    raise OSError("could not connect to %s:%d after %d attempts — %s" % (
+        host, port, attempts, last))
 
 
 class Results:
@@ -178,11 +212,34 @@ def h1_listener(host, port, timeout, results):
 # explicit that C2 must not be "fixed" by weakening it, and weakening it is
 # exactly what a suppression would be. When #7 lands, this table empties and the
 # bench goes green on its own.
+# IT MATCHES THE FAILURE, NOT JUST THE CHECK NUMBER. C2 (chk_length_convention)
+# has more than one way to fail: the documented one, where the remote answers a
+# command whose length counted seq+cmd too, and a desync where it answers
+# something unexpected entirely. Only the first is issue #7. Keyed on the check
+# number alone, a hardware-only desync would be waved through as "already fails
+# in the emulator" — which is the one thing this table must never do.
 KNOWN_RED = {
-    "C2": "issue #7 — cmd_init reads the program name until a NUL and ignores the "
-          "frame's length field. src/commands.asm is common to both builds and is "
-          "untouched by the WiFi work, so the serial ROM has always done this",
+    "C2": {
+        "signature": "length counted seq+cmd too",
+        "why": "issue #7 — cmd_init reads the program name until a NUL and ignores the "
+               "frame's length field. src/commands.asm is common to both builds and is "
+               "untouched by the WiFi work, so the serial ROM has always done this",
+    },
 }
+
+
+def classify(fail_lines):
+    """Split conformance FAIL lines into (known-red, novel), by code AND text."""
+    known, novel = [], []
+    for line in fail_lines:
+        fields = line.split()
+        code = fields[1] if len(fields) > 1 else "?"
+        entry = KNOWN_RED.get(code)
+        if entry and entry["signature"] in line:
+            known.append(code)
+        else:
+            novel.append(code)
+    return known, novel
 
 
 def h2_conformance(remote, results, extra_args):
@@ -208,20 +265,19 @@ def h2_conformance(remote, results, extra_args):
         results.add("H2", FAIL, "the conformance suite could not talk to the remote at all")
         return
 
-    failed = [line.split()[1] for line in proc.stdout.splitlines()
-              if line.startswith("FAIL ") and len(line.split()) > 1]
-    novel = [c for c in failed if c not in KNOWN_RED]
+    fail_lines = [line for line in proc.stdout.splitlines() if line.startswith("FAIL ")]
+    known, novel = classify(fail_lines)
 
-    if failed and not novel:
-        results.add("H2", FAIL, "%s failed, and %s ALREADY fails against the emulator: %s. "
-                                "Nothing here is a hardware finding" % (
-                                    ", ".join(failed),
-                                    "it" if len(failed) == 1 else "they all",
-                                    "; ".join(KNOWN_RED[c] for c in failed)))
+    if known and not novel:
+        results.add("H2", FAIL, "%s failed, and %s ALREADY fails against the emulator in "
+                                "exactly this way: %s. Nothing here is a hardware finding" % (
+                                    ", ".join(known),
+                                    "it" if len(known) == 1 else "they all",
+                                    "; ".join(KNOWN_RED[c]["why"] for c in known)))
     elif novel:
         results.add("H2", FAIL, "%s failed, of which %s %s NOT known-red — that is new on this "
                                 "remote and is the part worth investigating" % (
-                                    ", ".join(failed), ", ".join(novel),
+                                    ", ".join(known + novel), ", ".join(novel),
                                     "is" if len(novel) == 1 else "are"))
     else:
         results.add("H2", FAIL, "the conformance suite exited %d — its own output above is "

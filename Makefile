@@ -5,7 +5,8 @@
 
 .DEFAULT_GOAL := help
 .PHONY: help all main unit-tests mf-rom mf-rom-wifi mf-rom-sum mfselect test test-mfselect \
-        test-esp test-dzrp test-dzrp-stub bump check-reproducible check-reproducible-wifi clean
+        test-esp test-dzrp test-dzrp-stub test-hardware bump check-reproducible \
+        check-reproducible-wifi clean
 
 # Show this help
 help:

@@ -18,7 +18,7 @@ known, and all three are in the exact area the WiFi build depends on:
 |---|---|
 | It models **baud as timing only** | The stub's 115200 would have passed at *any* rate. That the real ESP-01 answers at 115200 until told otherwise is filed in the plan's Appendix A as **inferred**, not verified |
 | Its ESP module is **permanently associated** — jnext implements no `AT+CWJAP=` at all, only the query form | Association has never been exercised by any test and never can be. It is a prerequisite the user satisfies once; see [WIFI-SETUP.md](WIFI-SETUP.md) |
-| It numbers inbound connection ids **from 1**, because it reserves slot 0 for outbound `AT+CIPSTART` | That is a **jnext design choice**. MEMORY.md says outright that hardware may number differently and that this must not be promoted to a hardware fact without measuring it. H3 measures it |
+| It numbers inbound connection ids **from 1**, because it reserves slot 0 for outbound `AT+CIPSTART` | That is a **jnext design choice**. MEMORY.md says outright that hardware may number differently and that this must not be promoted to a hardware fact without measuring it. **This bench does not settle it** — see H3 below |
 
 Two more claims are **estimates** — arithmetic, never measured. H4 and H5 exist to replace them
 with numbers.
@@ -96,15 +96,25 @@ that UART0 came up at a rate the real module answers at; and that `ATE0`, `AT+CI
 are one. Work through: is the *WiFi* ROM installed; was M1 pressed since power-on; is the Next
 associated; is the IP right; has something else on the machine taken the ESP.
 
-### H3 is the one that answers an open hardware question
+### H3, and precisely what it does and does not establish
 
 Two connections open at once, each given its own payload, each required to get *its own* payload
 back. With one connection a stub that ignored the header and hardcoded an id would pass — this is
 bench check E4's shape, and E4 earned its place by being the only check that failed when the id was
-hardcoded to 1.
+hardcoded to 1. Verified the same way here: hardcoding the id in `transport_esp.asm` turns H3 red.
 
 A wrong id does not produce an error. It produces a reply delivered to the wrong socket: no error,
 no data, and something that reads as a DZRP bug rather than a framing one.
+
+**It does NOT measure the module's id numbering, and no PC-side check can.** H3 shows the id is
+read from the header rather than assumed — a property of our code. What the ids actually *are* is
+invisible from here: the `+IPD` headers are consumed by the stub, and what reaches the PC is DZRP
+frames with the id already stripped. So MEMORY.md's open question — whether real ESP-AT firmware
+numbers inbound connections from 1 the way jnext does — **survives a green run of this bench**.
+Settling it needs the ids observed on the Next side, which this bench has no channel for.
+
+The first version of this page claimed H3 would move that row to `verified`, in two separate
+places. It would not have, and the review caught it.
 
 ### H2 may be red for a reason that is not the hardware's fault
 
@@ -167,8 +177,8 @@ and nothing else:
 | The real ESP-01 answers at 115200 until told otherwise | inferred | verified, if H1 passes |
 | ESP TCP throughput | estimate | measured, by H5 |
 | Round-trip latency 10-100 ms | estimate | measured, by H4 |
-| Inbound connection ids on real firmware | unverified | verified, by H3 |
 | tbblue does not checksum `enNextMf.rom` | inferred | verified, if the ROM boots |
+| Inbound connection ids on real firmware | unverified | **still unverified** — H3 cannot see them, and neither can any PC-side check |
 
 **Update Appendix A when the run happens, and put the numbers in it.** A measurement nobody wrote
 down is an estimate again by the next session.

@@ -19,11 +19,14 @@ running at all. T6 exercises, in one run, Multiface paging, the relocation of
 `MAIN` into a RAM bank at slot 7, `show_ui`, and the core-version check passing
 against core 03.02.03.
 
-**It also retires plan §8.3.** That section proposed dropping upstream's
-released ROM onto a jnext SD image as third-party validation of jnext's
-Multiface/AltROM/stackless-NMI implementations, to be done *before* writing new
-Z80 code. Our own build coming up is the same evidence, so the experiment is
-answered rather than pending.
+**It answers plan §8.3 for the entry path, and only that.** That section
+proposed dropping upstream's released ROM onto a jnext SD image as third-party
+validation of jnext's Multiface/AltROM/stackless-NMI implementations, before
+writing new Z80 code. Our own build coming up is the same evidence for
+**Multiface paging and the entry side of stackless NMI**. It is *not* evidence
+for AltROM or for the return-to-debuggee half — see the scope limit below. An
+earlier draft of this entry said "retires §8.3" flatly; that was the same
+overclaim, one paragraph up from where I had just corrected it.
 
 **T6 did not replace T4, and both CLAUDE.md and the plan said it would.** That
 was wrong and is corrected in both. The two send **different causes** to the
@@ -36,13 +39,24 @@ and nobody would have noticed until M2 broke something silently.
 **What T6 does not cover — larger than the first draft of this entry admitted,
 and the reviewer had to point it out.** That draft said only that a *second*
 press after a resume was untested, which implies the first resume was covered.
-It is not. **T6 never resumes at all.** No DZRP client attaches, so
-`message.asm`'s `cmd_loop` blocks on its first `transport_wait_rx` and stays
-there until the run is killed by the frame limit. Nothing past "the debugger
-came up" executes: not the exit path, not `backup.asm`'s restoration, and not
-the **return-to-debuggee half of stackless NMI** — the half plan §3.4 says
-actually matters, because without it entering the debugger corrupts the program
-being debugged. Of stackless NMI, T6 exercises the **entry side only**.
+It is not. **T6 never resumes at all.** No DZRP client attaches, so the stub
+idles in `main.asm`'s `main_loop`, whose `transport_byte_available` poll is a
+status-bit read returning immediately; with no byte ever arriving its
+`jp nz,cmd_loop` never fires, so `cmd_loop` — and the blocking
+`transport_wait_rx` inside it — are never reached at all, and the run ends on
+the frame limit. Nothing past "the debugger came up" executes: not the exit
+path, not `backup.asm`'s restoration, and not the **return-to-debuggee half of
+stackless NMI** — the half plan §3.4 says actually matters, because without it
+entering the debugger corrupts the program being debugged. Of stackless NMI,
+T6 exercises the **entry side only**.
+
+**Two rounds of review were needed to get this paragraph right, and the second
+correction was to the mechanism, not the conclusion.** The first version of it
+claimed `cmd_loop` blocks on `transport_wait_rx`. It does not — `cmd_loop` is
+never entered. That wrong mechanism had been asserted confidently, propagated
+into four files, and was caught only by someone tracing `main.asm:154-191`
+against the source. It is the failure ERRORS.md already names: a plausible
+mechanism stated instead of a traced one.
 
 So the Appendix A row is scoped to that, and the honest summary is: the stub
 comes up. Not "the NMI path is sound".

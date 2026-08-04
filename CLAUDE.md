@@ -110,7 +110,9 @@ strongest:
      the relocation of `MAIN` into a RAM bank at slot 7, `show_ui`, and the core-version check,
      in one run. Needs jnext ≥ 0.99.118 for `--delayed-nmi`; the bench checks for it and says so.
      **Scope limit, do not over-read it: T6 never resumes.** No DZRP client attaches, so
-     `cmd_loop` blocks on its first `transport_wait_rx` until the frame limit ends the run. The
+     the stub idles in `main_loop`, whose `transport_byte_available` poll returns immediately and
+     whose `jp nz,cmd_loop` therefore never fires — `cmd_loop` and its blocking `transport_wait_rx`
+     are never reached. The frame limit ends the run. The
      exit path, `backup.asm` and the **return-to-debuggee half of stackless NMI** are therefore
      untested — only the entry side is. Closing that needs issue #2's protocol suite, not another
      screenshot.

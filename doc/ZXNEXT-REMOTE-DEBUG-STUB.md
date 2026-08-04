@@ -472,8 +472,10 @@ the regression check M2 must invert deliberately when it teaches `nmi66h` to acc
 cause.
 
 **What T6 does not cover, and it is more than "the second press".** **T6 never resumes.** No DZRP
-client attaches, so `message.asm`'s `cmd_loop` blocks on its first `transport_wait_rx` and stays
-there until the frame limit kills the run. Nothing beyond "the debugger came up" executes: not the
+client attaches, so the stub idles in `main.asm`'s `main_loop`, whose
+`transport_byte_available` poll returns immediately and whose `jp nz,cmd_loop` therefore never
+fires — `cmd_loop`, and the blocking `transport_wait_rx` inside it, are never reached. The frame
+limit ends the run. Nothing beyond "the debugger came up" executes: not the
 exit path, not `backup.asm`'s restoration, and not the **return-to-debuggee half of stackless
 NMI** — the half §3.4 identifies as the one that matters, since without it entering the debugger
 corrupts the debuggee. Of stackless NMI, only the **entry side** is verified.

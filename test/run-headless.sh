@@ -244,9 +244,11 @@ fi
 # would have noticed.
 #
 # WHAT IT DOES NOT COVER, and this is larger than it looks. T6 NEVER RESUMES.
-# No DZRP client attaches, so message.asm's cmd_loop blocks on its first
-# transport_wait_rx and stays there until --delayed-automatic-exit-frames kills
-# the run. Nothing after "the debugger came up" executes: not the exit path,
+# No DZRP client attaches, so the stub idles in main.asm's main_loop: its
+# transport_byte_available poll is a status-bit read that returns at once, so
+# the `jp nz,cmd_loop` never fires and cmd_loop — with the blocking
+# transport_wait_rx inside it — is never reached at all. The run ends when
+# --delayed-automatic-exit-frames kills it. Nothing after "the debugger came up" executes: not the exit path,
 # not backup.asm's restoration, and not the return-to-debuggee half of
 # stackless NMI — which is the half plan §3.4 says actually matters, because
 # without it entering the debugger corrupts the program being debugged. What

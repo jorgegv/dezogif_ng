@@ -94,6 +94,22 @@ when issue #7 merged first and took C9 for its own check. Two meanings for
 one identifier is the kind of thing that survives into a report and misleads
 someone a month later.
 
+**Measured on the combined tree, 2026-08-05, after rebasing onto build 0006**
+(which carries issue #7, the WiFi UI and the `esp_conn_valid` change):
+`make test-dzrp-stub` = **W1/W2/W3 pass, 11 passed / 1 failed of 12**. C2 is
+green, main's C9 is green, C10 and C11 are green, C12 is the only red.
+
+**That flips the target's exit code from 0 to 1, and the trade is deliberate.**
+`main` had just reached 9/9. C12 does not break anything — the stub's
+`CMD_PAUSE` behaviour is unchanged and always was silent — but a suite that
+reports it honestly cannot exit 0. **Rejected: dropping C12 to keep the gate
+green.** That is weakening a check to make it pass, which is the one thing this
+project's testing culture refuses; C2 lived as a standing red for the same
+reason until issue #7 fixed it. The alternative, if the green gate is judged
+worth more tonight, is a one-line removal of C12's entry from `CHECKS` — the
+check code stays and moves to the branch that fixes `CMD_PAUSE`, which is the
+fix-and-check-together shape issue #7 itself used.
+
 ---
 
 ## 2026-08-05 — WiFi mode draws its own screen, and the old one was wrong

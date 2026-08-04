@@ -81,8 +81,25 @@ any CSpect result meant anything.
 
 ## Result against our own stub
 
-**2026-08-04, issue #7 fixed — `make test-dzrp-stub`: W1 and W2 pass, and 9 passed, 0 failed, 0
-unsupported of 9.** Version negotiation, the absent preamble, both length checks, loopback
+**2026-08-05, execution control added — `make test-dzrp-stub`: W1, W2 and W3 pass, and 11 passed,
+1 failed, 0 unsupported of 12.** The one red is **C12**, `CMD_PAUSE`, described below; it is a
+pre-existing stub behaviour that this suite is the first thing to look at, not a regression.
+
+**The headline is C10 and C11: the stub resumes a debuggee, and the debuggee runs.** That had
+never been shown anywhere in this project — not on hardware, not in the emulator — and until it
+was, the exit path, `backup.asm`'s restoration and the AltROM patch were code nothing had ever
+executed. C10's fixture runs after `CMD_CONTINUE`, writes its marker, stops on the temporary
+breakpoint at 0x8016, and the `NTF_PAUSE` names that address (reason 0, bank 5). C11 adds that
+`BC`/`IX` reached the *running program* as `CMD_SET_REGISTER` set them, and that
+`PC`/`SP`/`AF`/`BC`/`DE`/`HL`/`IX` came back as the program left them, with `SP` returned to
+0x9F00 after an `RST 0` moved it.
+
+**A consequence worth naming separately: the AltROM patch is exercised.** The fixture's breakpoint
+is an `RST 0`, which can only reach the debugger through the modified code `copy_altrom` installs
+at 0x0000/0x0066 in the Alt ROM.
+
+**2026-08-04, issue #7 fixed — the same bench was then 9 passed, 0 failed, 0 unsupported of 9**,
+with W1 and W2 passing: version negotiation, the absent preamble, both length checks, loopback
 round-trips exact at 0/1/255/256/1024/2047/2048/2049/4096 bytes, sequence echo across five
 commands, a 37-byte register block, and a 64-byte memory write/read round trip.
 

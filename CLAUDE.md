@@ -243,11 +243,13 @@ strongest:
    and came back as it left them. **Still not covered**: the stackless-NMI *return address*
    (C10 sets `PC` itself, so `save_nmi_return_address` is never involved) and the M1 button
    breaking a *running* debuggee — both need a second NMI timed against live traffic.
-   **C12 is a standing red, and it is pre-existing**: `CMD_PAUSE` is mapped to
+   **Result 2026-08-05: W1, W2 and W3 pass, 11 passed / 1 failed of 12.**
+   **C12 is the one red, and it is pre-existing**: `CMD_PAUSE` is mapped to
    `cmd_not_supported`, which stores an error and jumps to `drain_main`, so the stub sends **no
    response at all** where the spec requires one and a client would wait forever. Same shape as C2
    was — common code the WiFi work never touched — so fixing it changes the serial ROM and needs
-   its own branch.
+   its own branch, and **the target therefore exits 1 until that branch lands**, exactly as it did
+   while C2 was red.
    See `doc/DZRP-TESTING.md`. Like `test-esp`, not part of `make test`: it binds a host TCP port.
    **It says nothing about hardware.**
 4d. **`make test-unit`** — the Z80 unit tests under `src/unit_tests/`, headless (issue #3). One

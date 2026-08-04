@@ -190,7 +190,20 @@ ESP_TX_WAIT:    equ 10000
 ; The longest dotted quad, "255.255.255.255". Bounds the copy out of AT+CIFSR's
 ; answer, so a stream that never produces the closing quote cannot run off the
 ; end of the buffer.
+;
+; OVERRIDABLE ON PURPOSE, and it is the only way this boundary can be tested.
+; jnext's emulated module answers AT+CIFSR with 192.168.1.50 and nothing can
+; change that — `STA_IP` is a `static constexpr` in
+; esp01/include/esp01/esp_at.h with no command-line option behind it. Twelve
+; characters never reach a bound of fifteen, so every bench in this repository
+; was green while an address of exactly fifteen was being refused. Lowering the
+; bound to 12 makes jnext's own answer the maximum-length case and to 11 makes
+; it the too-long case, which is what test/run-ip-boundary.sh does. The
+; alternative was a host-side model of the loop, which would have tested a
+; transcription of this code rather than this code.
+ IFNDEF ESP_IP_MAX
 ESP_IP_MAX:     equ 15
+ ENDIF
 
 ; What the UI has to say about the link. Decided once, during bring-up, because
 ; show_ui is re-entered on every redraw and an AT round trip per redraw would
@@ -249,6 +262,9 @@ esp_str_staip:      defb "+CIFSR:STAIP,",34,0
 esp_str_port:       defb ":"
     STRINGIFY ESP_SERVER_PORT
     defb 0
+esp_str_port_end:
+; Length including the NUL, which is what gets written after the address.
+ESP_PORT_LEN:   equ esp_str_port_end - esp_str_port
 
 
 ;===========================================================================
@@ -303,15 +319,26 @@ esp_text_connect:
     defb AT, 0, 6*8
     defb "Remote debugger active."
     defb AT, 0, 7*8
-    ; 11 columns, so the longest possible tail — 15 for the address, 6 for
-    ; ":11000" — ends exactly at column 32. There is no room for the colon
-    ; MEMORY.md's sketch put after "at", and that is why it is not there.
+    ; There is no room for the colon MEMORY.md's sketch put after "at", and the
+    ; ASSERTs below are why: this prefix plus the longest address plus the port
+    ; already ends exactly at column 32.
+esp_connect_prefix:
     defb "Connect at "
 esp_connect_address:
-    ; "<address>:<port>" + NUL, written by esp_query_address. 22 bytes are
-    ; reachable (15 + 6 + 1); the slack is for a shorter port never costing a
-    ; rebuild of this arithmetic.
+    ; "<address>:<port>" + NUL, written by esp_query_address.
     defs 24, 0
+esp_connect_address_end:
+
+; The two bounds this line has to respect, checked by the assembler rather than
+; by hand — the by-hand version of the first one is exactly what shipped an
+; off-by-one in the loop that fills it.
+;
+; 1. The buffer holds the longest address, the port and its NUL.
+    ASSERT esp_connect_address_end - esp_connect_address >= ESP_IP_MAX + ESP_PORT_LEN
+; 2. The whole line fits the 32-column screen. The NUL is not drawn, hence the
+;    -1; nothing follows it on that row, so print_string returns at the NUL and
+;    the 32-column case never takes the wrap at all.
+    ASSERT (esp_connect_address - esp_connect_prefix) + ESP_IP_MAX + ESP_PORT_LEN - 1 <= 32
 
 esp_text_no_address:
     defb AT, 0, 6*8
@@ -325,11 +352,15 @@ esp_text_failed:
     defb AT, 0, 7*8
     defb "is fitted and enabled.", 0
 
-; Indexed by esp_link_state.
+; Indexed by esp_link_state, which esp_show_status does not range-check — so
+; the table must have an entry for every state, and the assembler says so
+; rather than a reader counting them.
 esp_status_text_table:
     defw esp_text_connect
     defw esp_text_no_address
     defw esp_text_failed
+esp_status_text_table_end:
+    ASSERT (esp_status_text_table_end - esp_status_text_table) / 2 == ESP_LINK_FAILED + 1
 
 esp_tx_len:         defb 0
 esp_tx_byte:        defb 0
@@ -1246,26 +1277,46 @@ esp_query_address:
     call esp_wait_string
     ret c
 
-    ; Copy the address up to the closing quote, bounded by ESP_IP_MAX.
+    ; Copy the address up to the closing quote.
+    ;
+    ; B COUNTS WHAT HAS BEEN STORED, and the bound is tested BEFORE storing —
+    ; it is not a DJNZ pass count. That distinction is the whole of a bug this
+    ; routine shipped with: bounding the passes meant the pass that would have
+    ; read the closing quote after a maximum-length address had already been
+    ; spent on the last character, so an address of exactly ESP_IP_MAX
+    ; characters was refused as "too long". 192.168.100.136 is 15 characters
+    ; and is an ordinary private address, so this was not an edge case.
+    ;
+    ; No test here could have caught it: jnext's module always answers
+    ; 192.168.1.50 (esp01/include/esp01/esp_at.h, a constexpr — there is no
+    ; option for it), which is 12 characters and never reaches the bound. That
+    ; is what ESP_IP_MAX being overridable is for; see its definition and
+    ; test/run-ip-boundary.sh.
     ld de,esp_connect_address
-    ld b,ESP_IP_MAX
+    ld b,0                      ; characters stored so far
 .char:
     push bc, de
     call esp_try_read_raw
     pop de, bc
     ret c
-    cp 34                       ; the closing quote
+    cp 34                       ; the closing quote ends the address
     jr z,.end_of_address
-    ld (de),a
-    inc de
-    djnz .char
-    ret                         ; longer than any address can be: refuse it
-
-.end_of_address:
-    ; B still holds what it was set to if the very first byte was the quote,
-    ; i.e. the module reported an empty address.
+    ; Not the quote, so it has to go in the buffer — and if the buffer is
+    ; already full the address is longer than any address can be.
+    ld c,a                      ; esp_try_read_raw's byte, kept out of A's way
     ld a,b
     cp ESP_IP_MAX
+    ret nc
+    ld a,c
+    ld (de),a
+    inc de
+    inc b
+    jr .char
+
+.end_of_address:
+    ; Nothing stored means the module reported an empty address.
+    ld a,b
+    or a
     ret z
 
     ; An unassociated module reports 0.0.0.0. The whole of 0.0.0.0/8 is "this

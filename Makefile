@@ -6,7 +6,7 @@
 .DEFAULT_GOAL := help
 .PHONY: help all main unit-tests ut-headless mf-rom mf-rom-wifi mf-rom-sum mfselect test \
         test-unit test-mfselect \
-        test-esp test-dzrp test-dzrp-stub test-hardware bump check-reproducible \
+        test-esp test-dzrp test-dzrp-stub test-ip-boundary test-hardware bump check-reproducible \
         check-reproducible-wifi clean
 
 # Show this help
@@ -97,6 +97,22 @@ else ifeq ($(TRANSPORT),wifi)
   VARIANT_FLAGS  = -DTRANSPORT_WIFI
 else
   $(error TRANSPORT must be 'uart' or 'wifi', not '$(TRANSPORT)')
+endif
+
+# IP_MAX — a bench seam, and the only way the address parser's boundary can be
+# reached. jnext's emulated module always answers AT+CIFSR with 192.168.1.50
+# (12 characters) and there is no option to change it, so a bound of 15 is
+# never touched by any run. Lowering the bound moves the boundary onto jnext's
+# own answer instead. See test/run-ip-boundary.sh.
+#
+# IT GETS ITS OWN OUTPUT NAME, for the same reason the two transports do: a
+# probe ROM left at the name a shipped one is read from is a wrong-file bug
+# that make cannot see, because nothing here depends on the flag's value.
+IP_MAX ?=
+
+ifneq ($(IP_MAX),)
+  VARIANT_SUFFIX := $(VARIANT_SUFFIX)-ipmax$(IP_MAX)
+  VARIANT_FLAGS  += -DESP_IP_MAX=$(IP_MAX)
 endif
 
 
@@ -338,6 +354,23 @@ test-dzrp-stub:
 	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
 	 ROM="$(OUT)/enNextMf-wifi.rom" DZRP_ARGS="$(DZRP_ARGS)" $(TEST)/run-dzrp-stub.sh
+
+# The address parser's length boundary, which no other bench can reach: jnext
+# always answers AT+CIFSR with a 12-character address and there is no option to
+# change it, so the shipped bound of 15 is never touched. This moves the BOUND
+# instead of the address — same Z80 code, same emulator, one constant different.
+# See test/run-ip-boundary.sh for why that is the shape.
+#
+# The two probe ROMs get their own names via IP_MAX, so neither can be left
+# where a shipped ROM is read from.
+#
+# Run the AT+CIFSR address-length boundary bench (2 jnext runs; not part of `make test`)
+test-ip-boundary:
+	@$(MAKE) --no-print-directory TRANSPORT=wifi IP_MAX=12 mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi IP_MAX=11 mf-rom
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
+	 ROM_OK="$(OUT)/enNextMf-wifi-ipmax12.rom" \
+	 ROM_TOOLONG="$(OUT)/enNextMf-wifi-ipmax11.rom" $(TEST)/run-ip-boundary.sh
 
 # Run the DZRP conformance suite against a remote (REMOTE=tcp:<host>:<port>)
 test-dzrp:

@@ -5,6 +5,51 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-04 — FIRST RUN ON REAL HARDWARE: the stub comes up on a Next
+
+**Measured, not decided.** A real ZX Spectrum Next, our WiFi ROM installed by
+mfselect, M1 button pressed: **the stub takes over and paints its UI.** Core
+reported **03.02.01**, above the 03.01.10 stackless NMI needs, so the version
+check passed. The error area was clear.
+
+Everything this project had ever produced ran in jnext. This is the first
+evidence that any of it works on silicon, and it lands three separate results
+at once:
+
+1. **The stub runs.** Multiface paging, the relocation of `MAIN` into a RAM
+   bank at slot 7, `show_ui` and the core-version check all work on real
+   hardware, not just in the emulator. It also answers plan open question 2 —
+   tbblue does **not** checksum `enNextMf.rom`, because ours booted.
+2. **mfselect runs, on its first ever hardware outing**, and did the whole job:
+   identified the installed ROM as not-ours, captured it as `original.rom`
+   (**CRC 6320**), installed the WiFi build, read it back and verified it
+   (**B5C6**).
+3. **The stock Multiface ROM's CRC is 6320 on real hardware — the same value
+   bench check M2 reports in the emulator.** So jnext's reference SD image
+   carries the authentic Multiface ROM, and mfselect's on-Next CRC16 agrees
+   with `tools/romsum.py` on silicon as well as under emulation. Neither was
+   certain before; both were assumed.
+
+**What this run does NOT establish, and the reason is a UI gap rather than a
+doubt about the stub.** The screen **cannot tell you which build is running**.
+The connect-string UI is M1's last unbuilt item, so the WiFi build still draws
+upstream's UART screen — byte for byte the same screen the UART build draws.
+Whether the ESP came up and is listening is therefore **not visible**, and an
+observer's "it looks like it started listening" is an inference from the
+absence of an error, not evidence. `make test-hardware NEXT_IP=<ip>` (check H1)
+is what settles it.
+
+**And the screen states a baud rate that is wrong for the build it is running.**
+`data_const.asm` draws `BAUDRATE` unconditionally, which is upstream's joy-port
+921600, while the WiFi build's UART is set from `transport_esp.asm`'s own
+`ESP_BAUDRATE` = 115200 with its own prescaler table. So a WiFi ROM reports
+"ESP UART Baudrate: 921600" while running the ESP at 115200. Not a functional
+defect — the peripheral really is at 115200 — but the screen lies, in exactly
+the place somebody would look first when the ESP misbehaves. It makes the
+connect-string UI a correctness fix, not only a nicety.
+
+---
+
 ## 2026-08-04 — mfselect offers three ROMs; the card carries both of ours
 
 **Decided, issue #5.** mfselect's menu is now four entries — the stock
@@ -718,10 +763,20 @@ question.
 - Every install reads the copy back and re-checksums it. A short write on a
   tired card is the failure this must not hide.
 
-**Not decided.** Whether a soft reset suffices instead of a power cycle. The
-on-screen advice says power-cycle, which is safe either way, but nothing has
-established that a soft reset is insufficient. It is a tbblue firmware
-question, so the project's "read the VHDL" rule gives no answer.
+**~~Not decided.~~ ANSWERED ON HARDWARE, 2026-08-04: a soft reset is NOT
+enough.** This entry used to say the question was open, that the advice was
+"safe either way", and that the project's "read the VHDL" rule could not settle
+it because it is a tbblue firmware question. The user settled it by doing it:
+after installing our WiFi ROM, a **Reset button press** followed by NMI brought
+up the **stock Multiface menu** — the old ROM, still live. A **power cycle**
+then brought up ours. So the firmware reads the Multiface ROM at power-on and
+nothing short of that re-reads it, and mfselect's yellow POWER-CYCLE advice is
+correct rather than merely cautious.
+
+Worth keeping for the method as much as the answer: this cost one button press
+to establish and had sat unanswerable for a day, because no emulator run and no
+amount of VHDL could reach it. Some questions are only hardware's to answer,
+and the cheap ones should be asked the moment hardware is available.
 
 **Rejected.** sjasmplus (the user's call, and the banking constraint does not
 apply); a compiled-in checksum constant; 8.3-unsafe names like

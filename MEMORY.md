@@ -234,8 +234,15 @@ findings.
 **Two divergences the emulator cannot show, written down before they bite.**
 
 - **Association.** jnext has no `AT+CWJAP=` at all, only the query form, so the
-  emulated module is permanently on a network. Hardware is not, and the stub
-  will need a bring-up path the bench can never exercise.
+  emulated module is permanently on a network. ~~Hardware is not, and the stub
+  will need a bring-up path the bench can never exercise.~~ **Both halves of
+  that turned out wrong, later the same day.** Hardware *is* already associated
+  — a configured Next comes up that way (reported on hardware, 2026-08-04) —
+  and the stub therefore needs **no bring-up path at all**: WiFi is a
+  prerequisite the user satisfies once with `wifi2.bas`, and the stub only
+  verifies it has an address. See the WiFi entry at the top of this file. What
+  survives is the narrow original point: the bench cannot exercise association
+  either way, so nothing here can ever test it.
 - **Baud.** jnext models baud as *timing* only, so the fixture would have
   passed at any rate. It is pinned to **115200** anyway — what a real ESP-01
   answers at until told otherwise — because a value that only works in the

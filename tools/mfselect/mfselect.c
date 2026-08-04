@@ -7,6 +7,17 @@
  * no fallback if it is absent. Loading this NEX without NextZXOS underneath
  * hangs on the first RST $08 — see doc/MFSELECT.md.
  *
+ * THE /mfselect/ DIRECTORY IS HARDCODED AND MUST STAY THAT WAY. Installed
+ * anywhere else this program does not work at all. That is not laziness: a NEX
+ * cannot discover where it lives. `esx_f_getcwd()` returns the LAUNCHER's
+ * directory, measured under real NextZXOS (issue #6) — launch it with
+ * `.nexload /probedir/x.nex` from a shell sitting at the root and it answers
+ * `C:/`, not `/probedir/`. A getcwd-based version would therefore be broken
+ * for the invocation doc/MFSELECT.md recommends while appearing to work from
+ * the Browser, which is worse than a fixed path. esxdos also has no
+ * handle-to-path call. The real fix, if it is ever worth it, is a dot command,
+ * which receives a command tail.
+ *
  * Files it expects beside itself in /mfselect/:
  *
  *   dezogif.rom  dezogif.sum   our Multiface ROM and its checksum, both put

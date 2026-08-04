@@ -23,6 +23,17 @@ itself must stay sjasmplus.
 
 ## Installing it on the card
 
+> ### It must go in `/mfselect/`. Not anywhere else.
+>
+> The directory is **hardcoded** and mfselect cannot find its files anywhere else. Install it in
+> `/tools/`, `/apps/`, or beside your own project, and it will start, fail to find
+> `dezogif.rom`, and be useless. There is no error you can act on, because from the program's
+> point of view the files simply are not there.
+>
+> This is a real limitation, not an oversight, and it was investigated and closed as
+> [#6](https://github.com/jorgegv/dezogif_ng/issues/6) — see *Why the path is hardcoded* below
+> before trying to fix it.
+
 Copy three files into a new `/mfselect/` directory on the SD card:
 
 | From | To |
@@ -150,6 +161,43 @@ booted, so the first `RST $08` hangs — this cost an hour to diagnose the first
 `--load-delay`. `test/run-mfselect.sh` therefore boots NextZXOS, types `.nexload` one keypress at a
 time (`/` is `sym+v`), and asserts on file contents extracted from the SD image with mtools rather
 than on pixels.
+
+## Why the path is hardcoded
+
+Because there is no way for the program to discover where it lives, and this was measured rather
+than assumed — [#6](https://github.com/jorgegv/dezogif_ng/issues/6).
+
+The obvious mechanism is `esx_f_getcwd()`, which z88dk provides for this target. It returns the
+**launcher's** working directory, not the program's:
+
+| Launch | `esx_f_getcwd()` |
+|---|---|
+| `.nexload /probedir/cwdprobe.nex`, typed at the Command Line (which starts at `C:/`) | `C:/` |
+| Browser, having navigated into `/PROBEDIR` | `C:/PROBEDIR/` |
+
+The first row is the one that settles it: the launcher was at the root, the program was in
+`/probedir`, and the answer came back as the root. A second, independent readout — creating a file
+with a *relative* name and seeing where it landed — agreed in both cases.
+
+So a `getcwd`-based mfselect would resolve its files against `C:/` under the invocation this very
+document recommends, find nothing, and be **broken for the documented launch method** while
+appearing to work from the Browser. That is worse than a hardcoded path, because it fails
+differently depending on how it was started.
+
+There is also no way for a NEX to recover its own path: esxdos has no handle→path call
+(`esx_f_fstat` returns drive, attributes, date and size — no name). Whether NextZXOS records the
+loaded NEX's path anywhere is unknown rather than disproven.
+
+**If you want to fix this properly**, the honest answer is a dot command rather than a NEX — dot
+commands receive a command tail, so the directory could simply be an argument. That is a rewrite
+against the 8K divMMC window, and it needs to be worth doing on its own merits.
+
+Two details for anyone who revisits it: `esx_f_getcwd()` returns a drive-prefixed, trailing-slash,
+**uppercase** path (`C:/PROBEDIR/`), so joining must not double the slash and comparisons must be
+case-insensitive because of FAT short names. And whether `cd` at the Command Line works well
+enough to make "run it from its own directory" a usable convention is **unverified** — three
+headless attempts failed to submit the typed line, which is a bench-mechanics problem and not a
+finding about NextZXOS.
 
 ## Open questions
 

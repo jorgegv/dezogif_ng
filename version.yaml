@@ -8,7 +8,9 @@
 #
 # Bump it with `make bump` — never by editing this file by hand, because the
 # Makefile is what validates the range. The house rule is one bump per merge to
-# main; see CLAUDE.md.
+# main THAT CHANGES A ROM; a merge touching only docs or tests leaves every ROM
+# byte identical, and bumping there would assert a difference that does not
+# exist. See CLAUDE.md for the mechanical check.
 #
 # It is NOT part of identity. mfselect matches the "DeZoGiFnG_" prefix and the
 # variant field, never this number: matching a per-build value is precisely the

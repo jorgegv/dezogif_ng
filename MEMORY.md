@@ -81,7 +81,24 @@ its shape is the user's:
     DeZoGiFnG_UART_0001        DeZoGiFnG_WIFI_0001
 
 prefix + transport variant + a four-hex-digit build number from a new
-`version.yaml`, bumped by `make bump`, one bump per merge to `main`.
+`version.yaml`, bumped by `make bump`, one bump per merge to `main` **that
+changes a ROM**.
+
+**That qualifier was added the same day, after the rule met its first
+counter-example** (user, 2026-08-04). The original wording was "one bump per
+merge", full stop, and the very next merge was documentation. Measured rather
+than argued: building both sides with `BUILD_TIME` and `build_number` pinned
+gave a **byte-identical ROM**. Bumping there would have minted a new identity
+for a ROM that had not changed — asserting a difference that does not exist,
+which is precisely the opposite of what the number is for.
+
+The check is mechanical, not a judgement call —
+`git diff --name-only main..<branch> -- src/ Makefile`, empty means
+no bump — and deliberately conservative: a touched `Makefile` may leave
+the ROM identical, and bumping anyway costs nothing, whereas failing to bump
+when a ROM *did* change leaves two different ROMs claiming to be the same
+build. With two variants (#5) the rule is *any* of them; they share sources, so
+one check covers both.
 
 **The two questions that were being conflated.** *Identity* — is this ours,
 and which variant — is now the magic. *Integrity* — did these bytes land

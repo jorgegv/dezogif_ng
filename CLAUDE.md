@@ -102,10 +102,11 @@ field, and **never the build number**, which changes and is only ever displayed.
 The build number lives in **`version.yaml`** and is bumped with **`make bump`**, never by hand —
 the target is what validates the 0-65535 range the four hex digits can hold. `version.yaml` is a
 prerequisite of the assembly rule, so a bump really does reach the next build; without that it
-would rewrite the file, change nothing, and ship the old number silently. **House rule: one
-bump per merge to `main`**, done by the manager as part of the merge (step 4 below). It is
-deliberately not derived from `BUILD_TIME` or the git hash: `make check-reproducible` must keep
-passing, so identity must not change on every build.
+would rewrite the file, change nothing, and ship the old number silently. **House rule: one bump
+per merge to `main` that changes a ROM** — docs-only and test-only merges leave every ROM byte
+identical and must not bump. Done by the manager as part of the merge, with the mechanical check
+in step 4 below. It is deliberately not derived from `BUILD_TIME` or the git hash:
+`make check-reproducible` must keep passing, so identity must not change on every build.
 
 ## Testing
 
@@ -239,9 +240,26 @@ project as the demonstrated consumer** — never speculatively. See the plan §8
    `git merge --ff-only` is the house form: a conflict means rebase or resolve deliberately,
    rather than silently minting a merge commit. (This used to be justified by "`main`'s history
    is linear", which was never true — `857a1df` is a merge commit. The rule stands on its own.)
-   **Then `make bump`** and commit `version.yaml`, so every merged state has its own build number
-   in the ROM's identity block. One bump per merge, not per commit — the number answers "which
-   build is on my card", and a user only ever has a merged one.
+   **Then `make bump` and commit `version.yaml` — but only if the merge changed a ROM.** Check
+   mechanically rather than by judgement, before the merge:
+
+   ```sh
+   git diff --name-only main..<branch> -- src/ Makefile   # empty => no bump
+   ```
+
+   Anything listed there can reach a ROM, so bump. Nothing listed means no ROM byte moved and a
+   bump would mint a **new identity for an unchanged ROM** — asserting a difference that does not
+   exist, which is the opposite of what the number is for. When two variants exist (#5), the rule
+   is *any* of them: they build from the same sources, so the same check covers both.
+
+   The check is deliberately conservative. A touched `Makefile` may well leave the ROM identical;
+   bumping anyway costs nothing, whereas *not* bumping when a ROM did change is the failure that
+   matters — it leaves two different ROMs claiming to be the same build. If you want certainty
+   rather than a conservative answer, build both sides with `BUILD_TIME` **and** `build_number`
+   pinned and compare the bytes.
+
+   One bump per merge, not per commit: the number answers "which build is on my card", and a user
+   only ever has a merged one.
 5. Never push to origin — local commits and merges stay local until the user says otherwise.
    **Merging and pushing are separate permissions**: a merged `main` sits local until the user asks
    for a push, every time.

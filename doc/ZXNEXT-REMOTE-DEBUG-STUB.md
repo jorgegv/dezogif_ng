@@ -654,9 +654,11 @@ core-version check and the error area are mode-independent and stay. See MEMORY.
 **Status 2026-08-04 — the byte-stream half is DONE in the emulator; the UI half is not.**
 `src/transport_esp.asm` exists, `make TRANSPORT=wifi` builds it, and `make test-dzrp-stub` runs the
 DZRP conformance suite against it inside jnext: the stub brings the ESP up, listens on 11000, and
-answers **7 of 8** checks correctly (the eighth, C2, is a pre-existing `cmd_init` behaviour shared
-with the serial build — see `doc/DZRP-TESTING.md`). The UART build is byte-identical to the one
-before the change, so the interface did not leak.
+answers **all 9** checks correctly. Eight of them were green when the transport landed; the ninth,
+C2, was a pre-existing `cmd_init` behaviour shared with the serial build, fixed separately as issue
+#7 (which also added C9 — see `doc/DZRP-TESTING.md`). The UART build was byte-identical to the one
+before the transport change, so the interface did not leak; issue #7 then changed both ROMs
+deliberately, being common code.
 
 Still open in M1, and none of it is subtle: **the connect string** (WiFi mode still draws
 upstream's baud line and joy-port selector, and no `AT+CIFSR` is sent because nothing yet parses

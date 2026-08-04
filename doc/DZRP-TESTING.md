@@ -54,28 +54,32 @@ against our own stub then means the stub, not the harness.
 Result on 2026-08-04, CSpect 3.1.0.0 / DeZogPlugin v2.3.0.20958 / DZRP 2.0.0 — **6 passed, 0
 failed, 2 unsupported of 8**.
 
-## Result against our own stub (2026-08-04, first ever)
+## Result against our own stub
 
-`make test-dzrp-stub`, WiFi ROM under jnext 0.99.118 — **W1 and W2 pass, and 7 passed, 1 failed, 0
-unsupported of 8**. C1, C3, C4, C5, C6, C7 and C8 all green: version negotiation, the absent
-preamble, loopback round-trips exact at 0/1/255/256/1024/2047/2048/2049/4096 bytes, sequence echo
-across five commands, a 37-byte register block, and a 64-byte memory write/read round trip.
+**2026-08-04, issue #7 fixed — `make test-dzrp-stub`: W1 and W2 pass, and 9 passed, 0 failed, 0
+unsupported of 9.** Version negotiation, the absent preamble, both length checks, loopback
+round-trips exact at 0/1/255/256/1024/2047/2048/2049/4096 bytes, sequence echo across five
+commands, a 37-byte register block, and a 64-byte memory write/read round trip.
 
-**C2 is red, and it is not a transport defect.** `cmd_init` reads the remote's program name from
-the stream **until a NUL**, ignoring the frame's length field entirely (`commands.asm`,
-`cmd_init.inner`), so a frame whose length is wrong but whose payload is well formed is consumed
-and answered. C2 exists to catch exactly that. Three things make it clear this is pre-existing
-rather than new:
+**C2 was red until then, and it was never a transport defect.** `cmd_init` read the remote's
+program name from the stream **until a NUL**, ignoring the frame's length field entirely, so a
+frame whose length disagreed with its payload was consumed and answered — and the stream stayed
+desynchronised for the rest of the session. Three things showed it was pre-existing rather than
+introduced by the WiFi work: `src/commands.asm` was untouched by it, the UART ROM was
+byte-for-byte identical to the one `main` shipped, and the frame-reading path (`cmd_loop`,
+`receive_bytes`, `cmd_init`) is common code shared by both builds. It was [issue
+#7](https://github.com/jorgegv/dezogif_ng/issues/7), and fixing it changed the serial ROM's bytes,
+which is why it took its own branch and its own build-number bump.
 
-- `src/commands.asm` is untouched by the WiFi work;
-- the UART ROM is byte-for-byte identical to the one `main` already ships;
-- the frame-reading path (`cmd_loop`, `receive_bytes`, `cmd_init`) is common code shared by both
-  builds.
+`cmd_init.inner` now consumes exactly the payload the frame declared, like every other handler in
+that file. **C9 is the other half of the same fix**, and it exists because C2 cannot reach it: C2
+over-declares the length and requires silence, which proves the remote reads *at least* as far as
+it was promised. C9 sends an honest length whose payload carries four bytes past the name's NUL,
+then a second ordinary `CMD_INIT` behind it — a remote that frames on the NUL leaves those four
+bytes to become the next command's header, and the second command comes back wrong or not at all.
 
-The practical consequence is narrow but real: a length that disagrees with the payload
-**desynchronises the stream silently** instead of being rejected. DeZog never sends one. Fixing it
-changes the serial ROM's bytes, so it belongs on its own branch with its own build-number bump,
-not here.
+**The first result against our own stub, for the record (2026-08-04):** W1 and W2 pass, 7 passed,
+1 failed, 0 unsupported of 8 — the failure being C2, above.
 
 **Not ZEsarUX.** ZEsarUX speaks ZRCP, its own protocol, reached by DeZog's `zrcp` remote type. It
 is not a DZRP endpoint and cannot serve as a reference.
@@ -88,13 +92,14 @@ running it, so the shell kills itself — this cost two aborted commands before 
 | | |
 |---|---|
 | C1 | `CMD_INIT` negotiates a version |
-| C2 | the length conventions are as specified — see below |
+| C2 | the length conventions are as specified — an over-declared length must not be answered |
 | C3 | the frame preamble, reported and optionally asserted |
 | C4 | `CMD_LOOPBACK` round-trips 32 bytes unchanged |
 | C5 | `CMD_LOOPBACK` is exact at 0, 1, 255, 256, 1024, **2047, 2048, 2049** and 4096 bytes |
 | C6 | sequence numbers echo back across consecutive commands |
 | C7 | `CMD_GET_REGISTERS` returns a register block DeZog can index |
 | C8 | memory write/read round-trip |
+| C9 | `CMD_INIT` consumes exactly the declared payload, so the next command is still in sync |
 
 **C5's sizes straddle a transport boundary, and that is the point of three of them.** jnext frames
 inbound TCP into `+IPD` chunks of at most **2048** bytes

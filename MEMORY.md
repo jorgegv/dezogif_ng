@@ -47,6 +47,78 @@ is what settles it.
 defect — the peripheral really is at 115200 — but the screen lies, in exactly
 the place somebody would look first when the ESP misbehaves. It makes the
 connect-string UI a correctness fix, not only a nicety.
+---
+
+## 2026-08-04 — the frame's length decides where a command ends, not its content
+
+**Decided, issue #7.** `cmd_init.inner` consumes exactly the number of payload
+bytes the frame declared. It used to read three version bytes by count and then
+the remote's program name **until a NUL**, ignoring the length field entirely,
+so a `CMD_INIT` whose length disagreed with its payload left the stream
+desynchronised — silently, and for the rest of the session.
+
+**The rule, stated once so it does not have to be re-derived per command.** The
+length field is framing; the NUL is content. Content may tell a handler how to
+*interpret* what it read, and must never decide how much leaves the stream.
+Every other handler in `commands.asm` already worked that way —
+`cmd_loopback`, `cmd_write_mem`, `cmd_restore_mem`, `cmd_write_bank`,
+`cmd_exec_asm` all take their count from `receive_buffer.length` — so this was
+the one place that did not, not a new policy.
+
+**The bytes are read and dropped, and that is deliberate.** The response is
+built from our own `DZRP_VERSION` and `PROGRAM_NAME`, so nothing above ever
+looked at the remote's version or name; upstream stored the three version bytes
+and no code has ever read them. Storing a client-chosen count into the 102-byte
+payload buffer would need a bound check that buys nothing. Net effect on the
+image: **one byte smaller** (`main_end` 0xF1B6 → 0xF1B5).
+
+**Every hostile boundary the issue named falls out of that one rule, with no
+special case for any of them** — which is the argument for the rule rather than
+for a validator: a name filling the frame with no NUL (only the declared bytes
+are taken; what follows is the client's next frame by definition); a length
+below 3 (fewer than three bytes are read, so there is no over-read waiting for
+version bytes nobody promised); a length of 0 (nothing is read); a length longer
+than what was sent (the read blocks, and the transport's own RX timeout resets
+the call stack, drains and reports — the recovery every other over-declared
+command already gets).
+
+**Rejected: rejecting the frame with an error.** DZRP has no framing-error
+response, so "reject" could only mean an error code in a *response* — which is
+itself a frame, sent onto a stream whose position we would be admitting we do
+not know. Consuming the declared count is the only answer that keeps the two
+ends agreeing about where the next command starts. Also rejected: keeping the
+version bytes with a bounded copy (a `min()` and a second loop for data nothing
+reads); validating that the name is NUL-terminated inside the frame (bytes for a
+case DeZog never produces, and the length already makes it harmless).
+
+**THIS CHANGED THE SERIAL ROM'S BYTES, ON PURPOSE, AND IT IS THE FIRST CHANGE
+HERE THAT SHOULD.** `src/commands.asm` is common code, so the UART byte-identity
+gate — this project's standing proof that a refactor changed no behaviour — is
+*expected* to differ, and a merge that preserved it would have meant the fix did
+not reach the serial build. With `BUILD_TIME=1700000000` and `BUILD_NUMBER=3`
+pinned: UART `13217f12…` → `dc21bcbb…`, WiFi `d144ccb2…` → `62dbedb0…`. The
+diff was checked against the symbol tables rather than eyeballed: 412 labels
+before and after, none added or removed, everything below `cmd_init.inner`
+identical, `cmd_init.read_loop` −5 and every label after `cmd_init` −1.
+
+**C9 exists because C2 can only see half of this**, and the half it cannot see
+is the one that desynchronises a *well-formed* session. C2 over-declares the
+length and requires silence, so it proves the remote reads **at least** as far
+as it was promised; it would stay green for a fix that read too little. C9 sends
+an honest length whose payload carries four bytes past the name's NUL and then a
+second ordinary `CMD_INIT` behind it: a remote that frames on the NUL leaves
+those four bytes to be read as the next command's header. **Shown failing
+first**, against the pre-fix WiFi ROM: C9 red with `timed out after 0 of 1
+bytes` — the stub had answered the padded frame and then never answered
+anything again. Post-fix, `make test-dzrp-stub` is **9 passed, 0 failed, 0
+unsupported of 9**, with W1 and W2 still green.
+
+**The issue's own acceptance criteria contradict each other**, and this is the
+reading taken: it asks for 8 passed *and* for a new check that a well-formed
+`CMD_INIT` still works. Those cannot both be true. C1 already sends a
+well-formed `CMD_INIT`, so the literal request would have been the "strictly
+weaker duplicate" a reviewer rejected from C2 once already; C9 is the same
+intent in the only form that can fail for a reason C1 cannot.
 
 ---
 
@@ -547,7 +619,8 @@ can be exactly `(255,0,0)`. Pre-fix: **824**. Post-fix: **0**.
   that disagrees with the payload desynchronises silently. `commands.asm` is
   untouched and the UART ROM is byte-identical to `main`'s, so this is what the
   serial build has always done. Fixing it changes the serial ROM and belongs on
-  its own branch.
+  its own branch. **CLOSED — issue #7, on its own branch as predicted; see the
+  entry at the top of this file.**
 - **Nothing has run on hardware.** jnext models baud as timing only and its
   module is permanently associated (no `AT+CWJAP=` at all), so the 115200
   pinning, the ESP-AT echo default and every timeout constant are reasoned, not

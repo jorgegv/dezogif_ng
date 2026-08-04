@@ -208,13 +208,15 @@ strongest:
    the transport's reassembly across frames is covered rather than assumed. A second run adds
    **W2**: an unprompted `NTF_PAUSE` aimed at a client that has gone must leave the stub quiet
    (no error on its screen) and still serving, instead of parking on a TX timeout.
-   **Result 2026-08-04: W1 and W2 pass, 7 passed / 1 failed of 8.** The one
-   red is **C2**, and it is pre-existing rather than transport work: `cmd_init` reads the remote's
-   program name until a NUL and ignores the frame's length field, so a length that disagrees with
-   the payload desynchronises silently instead of being rejected. `src/commands.asm` is untouched
-   and the UART ROM is byte-identical to `main`'s, so that behaviour is what the serial build has
-   always had. Fixing it changes the serial ROM and therefore needs its own branch. See
-   `doc/DZRP-TESTING.md`. Like `test-esp`, not part of `make test`: it binds a host TCP port.
+   **Result 2026-08-04: W1 and W2 pass, 9 passed / 0 failed of 9.** **C2** was the standing red
+   until issue #7 landed: `cmd_init` read the remote's program name until a NUL and ignored the
+   frame's length field, so a length that disagreed with the payload desynchronised silently
+   instead of being rejected — pre-existing behaviour of the *serial* build, in common code the
+   WiFi work never touched. It now consumes exactly the declared payload, and **C9** covers the
+   half C2 cannot see: an honest length whose payload runs past the name's NUL, with a second
+   command behind it that must still be answered in sync. That fix changed both ROMs' bytes, by
+   design, and it is the one merge to date that legitimately broke the UART byte-identity gate.
+   See `doc/DZRP-TESTING.md`. Like `test-esp`, not part of `make test`: it binds a host TCP port.
    **It says nothing about hardware.**
 5. **`build/ut.nex`** — the upstream Z80 unit tests under `src/unit_tests/`. These are
    **DeZog-driven** (`"unitTests": true` + zsim) and therefore need VS Code; they are a manual

@@ -276,25 +276,22 @@ def h1_listener(host, port, timeout, results):
 # should not spend an evening debugging their WiFi over a defect that reproduces
 # identically on a machine that has none.
 #
-# THIS IS A LABEL, NOT A SUPPRESSION. The check still fails, the bench still
-# exits non-zero, and `--require INIT,LOOPBACK` is untouched. MEMORY.md is
-# explicit that C2 must not be "fixed" by weakening it, and weakening it is
-# exactly what a suppression would be. When #7 lands, this table empties and the
-# bench goes green on its own.
-# IT MATCHES THE FAILURE, NOT JUST THE CHECK NUMBER. C2 (chk_length_convention)
-# has more than one way to fail: the documented one, where the remote answers a
-# command whose length counted seq+cmd too, and a desync where it answers
-# something unexpected entirely. Only the first is issue #7. Keyed on the check
-# number alone, a hardware-only desync would be waved through as "already fails
-# in the emulator" — which is the one thing this table must never do.
-KNOWN_RED = {
-    "C2": {
-        "signature": "length counted seq+cmd too",
-        "why": "issue #7 — cmd_init reads the program name until a NUL and ignores the "
-               "frame's length field. src/commands.asm is common to both builds and is "
-               "untouched by the WiFi work, so the serial ROM has always done this",
-    },
-}
+# THIS IS A LABEL, NOT A SUPPRESSION. A listed check still fails, the bench
+# still exits non-zero, and `--require INIT,LOOPBACK` is untouched. MEMORY.md is
+# explicit that a red check must not be "fixed" by weakening it, and weakening
+# it is exactly what a suppression would be.
+#
+# AN ENTRY MATCHES THE FAILURE, NOT JUST THE CHECK NUMBER. A check has more than
+# one way to go red — the documented one and a desync that merely lands on the
+# same line — so an entry carries the text it expects to see. Keyed on the check
+# number alone, a hardware-only failure would be waved through as "already fails
+# in the emulator", which is the one thing this table must never do.
+#
+# IT IS EMPTY, AND THAT IS A RESULT. Its one entry was C2 — issue #7, cmd_init
+# reading the program name until a NUL and ignoring the frame's length field.
+# That landed, C2 went green on its own, and the entry went with it, exactly as
+# the comment here said it would. The mechanism stays for the next one.
+KNOWN_RED = {}
 
 
 def classify(fail_lines):

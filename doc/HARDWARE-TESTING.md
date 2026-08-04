@@ -129,16 +129,18 @@ every check is green, and it is worth recording alongside the numbers.
 
 ### H2 may be red for a reason that is not the hardware's fault
 
-`C2` already fails against our own stub in the emulator — it is [issue
-#7](https://github.com/jorgegv/dezogif_ng/issues/7), `cmd_init` ignoring the frame's length field,
-in `src/commands.asm`, which is common to both builds and untouched by the WiFi work. The serial
-ROM has always done it.
+The bench carries a table of checks already known to fail against our own stub **in the emulator**,
+so that nobody at a bench-top spends an evening debugging their WiFi over a defect that reproduces
+on a machine with no WiFi in it. It **labels** those rather than suppressing them: the check still
+fails and the exit code is still non-zero, but the summary says in as many words that the run found
+nothing wrong with the hardware. Never "fix" a listed red by weakening the check.
 
-The bench **labels** that rather than suppressing it: the check still fails and the exit code is
-still non-zero, but the summary says in as many words that the run found nothing wrong with the
-hardware. Do not "fix" a red C2 by weakening the check. When #7 lands it goes green on its own.
+**The table is empty today**, and that is a result rather than an omission: its one entry was `C2`,
+[issue #7](https://github.com/jorgegv/dezogif_ng/issues/7) — `cmd_init` ignoring the frame's length
+field in `src/commands.asm`, which is common to both builds and which the serial ROM had always
+done. It landed, so C2 goes green on its own and the entry went with it.
 
-A failure that is **not** in that table is new on this remote, and is the part worth investigating.
+So every failure here is now new on this remote, and is the part worth investigating.
 
 ## Step 5 — report
 

@@ -331,6 +331,13 @@ fi
 # an upgraded card looks like, and answers Y to the capture prompt as M4 does.
 # The magic string in the ROM does not change with the build, so identity
 # survives and the guard must still hold.
+#
+# It installs the WIFI ROM deliberately, and that is not arbitrary. It used to
+# install the UART one, and a control that broke the guard for UART alone then
+# turned M6 red as well as M7 — a check failing for a reason outside its own
+# subject, which this project's ERRORS.md calls a defect in the check. M6's
+# subject is checksum skew and M7's is the UART guard; they must not be able to
+# fail together.
 img5=$OUT/sd-mfselect-5.img
 stale_uart=$OUT/mfselect-stale-uart.sum
 stale_wifi=$OUT/mfselect-stale-wifi.sum
@@ -340,7 +347,7 @@ printf '%04X\n' $(( (0x$uart_sum ^ 0xFFFF) & 0xFFFF )) > "$stale_uart"
 printf '%04X\n' $(( (0x$wifi_sum ^ 0xFFFF) & 0xFFFF )) > "$stale_wifi"
 log "   M6 ships stale sums ($(cat "$stale_uart")/$(cat "$stale_wifi")) against our ROMs ($uart_sum/$wifi_sum)"
 
-prepare_image "$img5" "$ROM_UART" "$stale_uart" "$stale_wifi"
+prepare_image "$img5" "$ROM_WIFI" "$stale_uart" "$stale_wifi"
 run_to_menu "$img5" "$shots/mfselect-skew.png"
 
 skew=$OUT/mfselect-skew-original.rom

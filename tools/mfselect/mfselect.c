@@ -105,7 +105,7 @@
  * and this program used to answer the first with the second, which was a
  * silent data-loss bug: BUILD_TIME is stamped into every ROM, so the CRC
  * changes on every build. After any upgrade the installed ROM no longer
- * matched the dezogif.sum beside it, the first-run guard below stopped
+ * matched the .sum beside it, the first-run guard below stopped
  * recognising our own ROM, and the capture it exists to refuse went ahead —
  * saving the debug stub as the user's `original.rom` and leaving no copy of
  * the stock one. The CRC's remaining job, verifying that a copy landed

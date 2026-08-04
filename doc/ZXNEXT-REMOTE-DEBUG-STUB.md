@@ -555,8 +555,24 @@ Each milestone ends in something observable. Do not start the next until the pre
 ### M0 — Transport spike (no debugger at all)
 Two independent proofs, on real hardware, before any porting work:
 
-- **a)** A ~50-line Z80 program that brings up `AT+CIPSTART` + `AT+CIPMODE=1` and echoes bytes to
-  a `nc -l` on the PC. Quickest possible proof that the physical WiFi path works.
+- **a) ~~A ~50-line Z80 program that brings up `AT+CIPSTART` + `AT+CIPMODE=1` and echoes bytes to
+  a `nc -l` on the PC.~~ DROPPED (user, 2026-08-04)** — not deferred, not parked as work to
+  schedule later. Three reasons, and any one of them is sufficient:
+
+  1. **It spikes a transport this document already rejected.** `AT+CIPSTART` makes the Next a TCP
+     *client*, and §4.2 settles that the Next must be a **server**, because DeZog always dials out
+     and never listens. A client-mode Next needs a relay on the PC that nobody is going to write.
+  2. **Its only real value was already collected, by (b).** It existed to answer "is the ESP path
+     alive at all?" cheaply, separately from "is my `+IPD` parser right?". (b) answered the first
+     question directly on its way to the second, so (a) can now only re-prove something known.
+  3. **It cannot be run here anyway.** It needs `AT+CIPMODE`, which jnext does not implement and
+     deliberately will not — server mode forbids passthrough, so the chosen design cannot use it
+     (§8.2). Running (a) would mean going straight to hardware to test a design we are not
+     building.
+
+  **If server mode ever fails on real hardware**, the fallback is §4.2's, and this is where the
+  spike for it would be written. That is a contingency in the transport section, not an
+  outstanding milestone, and M0 is **complete without it**.
 - **b)** The same, but `AT+CIPMUX=1` + `AT+CIPSERVER=1,<port>` with `+IPD` parsing, and `nc` on
   the PC connecting *to the Next*. This is the shape the real thing uses (§4.2), so it is the
   one that must ultimately pass.
@@ -599,12 +615,14 @@ hardware first is acceptable here.
 
 **That ordering was overtaken by events, and (b) went first.** §8.2's gap closed
 ([jnext#210](https://github.com/jorgegv/jnext/issues/210), in 0.99.118) before either spike was
-written, so (b) became runnable headless — and (a) is a *client*-mode spike for a transport §4.2
-already rejected, whose value was only ever that it was the quickest thing to try. Once (b) could
-run automatically and repeatably, spending hardware time on the shape the design does not use
-would have been the wrong order. **(a) is therefore not done and is no longer on the critical
-path**; it survives only as the fallback in §4.2, and if that fallback is ever needed, this is
-where the spike for it belongs.
+written, so (b) became runnable headless and repeatable, which is what made doing it first
+strictly better than doing the cheap-but-wrong-shape one first. (a) was dropped outright rather
+than resequenced — see the bullet above for why.
+
+**M0 is therefore COMPLETE**: (b) and (c) are done and are permanent bench checks, and (a) is not
+outstanding work. What M0 has *not* established is anything about real hardware — both (b) and (c)
+ran in jnext, and the original wording of this section ("on real hardware") is not satisfied by
+either. That gap belongs to M1, which cannot be signed off on an emulator alone.
 
 ### M1 — Fork, add the second transport, feature parity
 Fork dezogif. Put the joy-port serial path behind a transport interface, then add beside it an ESP

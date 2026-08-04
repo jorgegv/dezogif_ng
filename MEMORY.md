@@ -27,13 +27,28 @@ the first in this repository that are. Every other layer judges pixels or
 files, and ERRORS.md already records a pixel check that could not tell success
 from noise.
 
-**M0(a) is dropped from the critical path, deliberately.** It is a *client*-mode
-spike (`AT+CIPSTART` + `AT+CIPMODE=1`) for a transport §4.2 rejected, and its
-whole value was being the quickest thing to try on hardware. Once (b) ran
-automatically, spending a hardware session on the shape the design does not use
-was the wrong order. It survives only as §4.2's fallback. **Not rejected on
-merit — deferred**, and if the fallback is ever needed it is the first thing to
-write.
+**M0(a) is DROPPED — decided by the user, 2026-08-04.** An earlier version of
+this entry called it "deferred, not rejected on merit". The user's call is that
+it is scratched definitively, and the justification is that it was never work
+worth scheduling in the first place:
+
+1. It spikes a **client**-mode transport (`AT+CIPSTART` + `AT+CIPMODE=1`), and
+   §4.2 settles that the Next must be a **server** because DeZog always dials
+   out. A client-mode Next needs a PC-side relay nobody intends to write.
+2. Its only value — answering "is the ESP path alive at all?" cheaply and
+   separately from "is my `+IPD` parser right?" — was collected by (b) on its
+   way past.
+3. It cannot run here regardless: it needs `AT+CIPMODE`, which jnext does not
+   implement and deliberately will not, because server mode forbids
+   passthrough.
+
+So **M0 is complete**, and (a) is not outstanding work. If server mode ever
+fails on real hardware, §4.2's fallback is where that contingency lives — a
+paragraph in the transport section, not a milestone anyone is tracking.
+
+**What M0 did NOT establish is hardware**, and dropping (a) does not change
+that either way: (b) and (c) both ran in jnext, so the section's original "on
+real hardware" wording is unsatisfied by either of them. That gap is M1's.
 
 **What the bench established, by breaking it on purpose rather than by
 argument.** With the `+IPD` connection id hardcoded to `0` — the value the
@@ -238,9 +253,13 @@ permission nobody granted. An unexplained run of merges in the log invites
 exactly that; so does a standing grant that quietly grows to cover pushing.
 Both are now written down with their edges.
 
-**House form.** `main`'s history is linear — no merge commits before today —
-so `git merge --ff-only` is the default, and a conflict means rebase or resolve
-deliberately rather than silently minting a merge commit.
+**House form.** `git merge --ff-only` is the default, and a conflict means
+rebase or resolve deliberately rather than silently minting a merge commit.
+
+(This entry originally justified that with "`main`'s history is linear — no
+merge commits before today". That was already untrue when written: `857a1df`
+is a merge commit. The rule stands on its own; the false premise is removed
+rather than the conclusion.)
 
 ---
 

@@ -5,6 +5,44 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-04 — Merging to `main` is standing-authorized; pushing still is not
+
+**Decided (user), 2026-08-04.** The manager session may merge to `main` without
+asking each time, on four conditions, all of which must hold:
+
+1. the issue or task is **finished**;
+2. the branch is **ready**;
+3. it has been **independently reviewed** by an agent that did not write it,
+   with a binary APPROVE;
+4. it has been **validated** at the highest testing layer that applies.
+
+Short of all four, ask.
+
+**What this does not change, and the distinction is the point of writing it
+down.**
+
+- **Pushing is still per-request, every time.** The entry below records that a
+  push was authorized on 2026-08-04 and that it was not standing; this grant
+  does not quietly extend it. A merged `main` sits local until the user asks
+  for a push. Two permissions, granted separately, still separate.
+- **Spawned agents still never write to `main`**, and
+  `DEZOGIF_ALLOW_MAIN_WRITE=1` is not theirs to set. The grant is to the
+  manager doing the merge, which is already how §Merging step 4 assigns it.
+- It is not permission to edit `main` directly. Step 1 — dedicated branch and
+  worktree, never edit `main` — is untouched.
+
+**Why record it rather than just act on it.** The failure mode this project
+already warns about is a future session reading history and inferring a
+permission nobody granted. An unexplained run of merges in the log invites
+exactly that; so does a standing grant that quietly grows to cover pushing.
+Both are now written down with their edges.
+
+**House form.** `main`'s history is linear — no merge commits before today —
+so `git merge --ff-only` is the default, and a conflict means rebase or resolve
+deliberately rather than silently minting a merge commit.
+
+---
+
 ## 2026-08-04 — mfselect is z88dk C, and its first run is guarded
 
 **Decided (user).** `mfselect` — the on-Next switcher between the stock

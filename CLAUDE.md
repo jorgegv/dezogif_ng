@@ -148,8 +148,16 @@ project as the demonstrated consumer** — never speculatively. See the plan §8
 - Do not include Co-Authored-by headers in commit messages
 - Keep commit messages terse but insightful
 - **Agents must NOT write to the `main` branch, ever.** Only on their own branches and worktrees.
-  A `PreToolUse` hook enforces this; the override is `DEZOGIF_ALLOW_MAIN_WRITE=1`, and it is for
-  the user's explicit authorization only.
+  A `PreToolUse` hook enforces this; the override is `DEZOGIF_ALLOW_MAIN_WRITE=1`. This is
+  unchanged for **spawned agents**: they never touch `main`, whatever they think they have been
+  told.
+- **Merging to `main` is standing-authorized for the manager session** (user, 2026-08-04), and
+  only when all four hold: the issue or task is **finished**; the branch is **ready**; it has been
+  **independently reviewed** with an APPROVE; and it has been **validated** at the highest testing
+  layer that applies (§Testing). Short of all four, ask. This authorizes the *merge* — it is not a
+  licence to edit `main` directly, which step 1 below still forbids.
+- **It does NOT authorize pushing.** See the next rule; the two were granted separately and remain
+  separate.
 - **NEVER push to origin without explicit user authorization.** This applies to the manager AND
   every spawned agent. `git push`, `git push -u`, `git push --force` and `gh pr create` are all
   forbidden unless the user explicitly says "push" or "open a PR". Enforced by a hook; the
@@ -173,8 +181,12 @@ project as the demonstrated consumer** — never speculatively. See the plan §8
 2. Builds clean, unit tests pass, and the change is exercised at the highest layer that applies
    (§Testing).
 3. Independent code review by an agent that did not write the change, in its own worktree.
-4. Merge on APPROVE, one branch at a time. The manager does the merge, not the author.
+4. Merge on APPROVE, one branch at a time. The manager does the merge, not the author. No further
+   permission is needed once steps 1-3 genuinely hold — see the standing authorization above — and
+   `main`'s history is linear, so `git merge --ff-only` is the house form.
 5. Never push to origin — local commits and merges stay local until the user says otherwise.
+   **Merging and pushing are separate permissions**: a merged `main` sits local until the user asks
+   for a push, every time.
 
 ## ChangeLog
 

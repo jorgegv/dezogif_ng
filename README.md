@@ -47,7 +47,7 @@ lists everything available:
 ~~~
 make all        # the ROM, the program and the unit tests
 make mf-rom     # build/enNextMf.rom, the deployable artefact
-make mfselect   # build/mfselect.nex, the on-Next ROM switcher (see Deployment)
+make mfselect   # the on-Next ROM switcher and both ROMs it installs (see Deployment)
 ~~~
 
 Build output goes to `build/`.
@@ -71,11 +71,12 @@ check-reproducible` verifies that a pinned `BUILD_TIME` yields a byte-identical 
 make test-mfselect
 ~~~
 
-runs mfselect's own bench: three headless jnext runs, five checks, asserting on the files pulled
-back off the SD image rather than on pixels — that the stock ROM is captured byte-identically,
-that the on-Next and host checksums agree, that installing works, that mfselect refuses to mistake
-this project's ROM for the original, and that a backup left short by an interrupted capture is
-detected and taken again rather than trusted. It is not part of `make test`.
+runs mfselect's own bench: six headless jnext runs, nine checks, asserting mostly on the files
+pulled back off the SD image rather than on pixels — that the stock ROM is captured
+byte-identically, that the on-Next and host checksums agree, that each of our two ROMs installs,
+that mfselect refuses to mistake *either* of them for the original, and that a backup left short by
+an interrupted capture is detected and taken again rather than trusted. It is not part of
+`make test`.
 
 The Z80 unit tests under `src/unit_tests/` are DeZog-driven and need VS Code; they are a manual
 layer.
@@ -93,19 +94,24 @@ There are two ways to do that swap.
 ## Recommended: mfselect, on the Next itself
 
 `mfselect` is a small NextZXOS utility that switches the installed Multiface ROM between the stock
-one and this project's, with the card still in the machine. It captures the stock ROM the first
-time it runs, so the backup is made for you rather than being something you must remember.
+one and **either** of this project's two builds, with the card still in the machine. It captures
+the stock ROM the first time it runs, so the backup is made for you rather than being something you
+must remember.
 
-Install it once, by copying three files into a new `/mfselect/` directory on the card:
+Install it once, by copying five files — everything `make mfselect` produces — into a new
+`/mfselect/` directory on the card:
 
 | From | To |
 |---|---|
-| `build/mfselect.nex` | `/mfselect/mfselect.nex` |
-| `build/enNextMf.rom` | `/mfselect/dezogif.rom` |
-| `build/dezogif.sum`  | `/mfselect/dezogif.sum` |
+| `build/mfselect.nex`      | `/mfselect/mfselect.nex` |
+| `build/enNextMf-wifi.rom` | `/mfselect/dezowifi.rom` |
+| `build/dezowifi.sum`      | `/mfselect/dezowifi.sum` |
+| `build/enNextMf.rom`      | `/mfselect/dezouart.rom` |
+| `build/dezouart.sum`      | `/mfselect/dezouart.sum` |
 
-Copy the `.rom` and the `.sum` **from the same build** — `BUILD_TIME` is stamped into the ROM, so
-each build has a different checksum, and a mismatched pair is refused.
+Copy each `.rom` with its own `.sum`, **from the same build** — `BUILD_TIME` is stamped into the
+ROM, so each build has a different checksum, and a mismatched pair is refused. One `make mfselect`
+builds both variants with the same `BUILD_TIME`, so the five files above are always a coherent set.
 
 Then, from the NextZXOS command line:
 
@@ -117,25 +123,31 @@ Up/Down to move, ENTER to choose:
 
 ~~~
  mfselect            dezogif_ng
- Installed: official MF ROM
+ Installed: dezogif_ng WiFi 0003
 
  Select ROM to install:
   Official Multiface NMI ROM
-  dezogif_ng DZRP NMI ROM
+  dezogif_ng WiFi (ESP-01)
+  dezogif_ng UART (joy port)
   Exit without changes
 
  Up/Down to move   ENTER to run
 ~~~
 
-Either choice is copied over the official path and **verified by reading it back**. Then
+**Both of our builds are offered**, because a debuggee that uses the ESP itself cannot be debugged
+over WiFi and the serial ROM is the answer for it. `Installed:` names which one is on the card, and
+its build number, read from a magic string inside the ROM rather than from a checksum — so it stays
+correct after the stub is rebuilt.
+
+Whichever is chosen is copied over the official path and **verified by reading it back**. Then
 **power-cycle the machine** — switch it off and on. The Multiface ROM is read at power-on, so
 nothing changes until then.
 
 On its very first run mfselect offers to save the currently installed ROM as the original. It
-refuses to do that if what is installed is already this project's ROM, because saving the debug
-stub as "the original" would lose the stock Multiface ROM with no copy left on the card. If you
-have already installed the stub by hand, restore the stock ROM before running mfselect, or its
-backup will simply never be made.
+refuses to do that if what is installed is already one of this project's ROMs — either of them —
+because saving the debug stub as "the original" would lose the stock Multiface ROM with no copy
+left on the card. If you have already installed the stub by hand, restore the stock ROM before
+running mfselect, or its backup will simply never be made.
 
 Full detail, including the checksum scheme: [doc/MFSELECT.md](doc/MFSELECT.md).
 

@@ -1,17 +1,38 @@
 # mfselect — switching the Multiface ROM from the Next itself
 
 `mfselect` is a NextZXOS utility that swaps `/machines/next/enNextMf.rom` between the stock
-Multiface ROM and dezogif_ng's, with the SD card still in the machine. It removes the only
-physical step in the debugging workflow (plan Appendix B.1 step A3: card out, into a PC, back up,
-copy over) — and, more usefully, removes it in the *reverse* direction, for when the stub
-misbehaves and you want the stock Multiface back immediately.
+Multiface ROM and **either** of dezogif_ng's two builds, with the SD card still in the machine. It
+removes the only physical step in the debugging workflow (plan Appendix B.1 step A3: card out,
+into a PC, back up, copy over) — and, more usefully, removes it in the *reverse* direction, for
+when the stub misbehaves and you want the stock Multiface back immediately.
 
-Filed as [issue #1](https://github.com/jorgegv/dezogif_ng/issues/1).
+Filed as [issue #1](https://github.com/jorgegv/dezogif_ng/issues/1); the second of our ROMs was
+added by [issue #5](https://github.com/jorgegv/dezogif_ng/issues/5).
+
+## The three ROMs it offers
+
+| Menu entry | File on the card | What it is |
+|---|---|---|
+| Official Multiface NMI ROM | `original.rom` | the stock ROM, captured on first run |
+| dezogif_ng WiFi (ESP-01) | `dezowifi.rom` | our stub, DZRP over TCP through the ESP-01 |
+| dezogif_ng UART (joy port) | `dezouart.rom` | our stub, upstream's joy-port serial link |
+
+**Both of ours are offered on purpose, and the UART build is not a legacy leftover.** One ESP,
+one user of it: a debuggee that owns the ESP itself cannot be debugged over WiFi, and the plan's
+risk table says outright that this is *the reason the UART build is kept*. Keeping it buildable
+but not installable would push a user with a joy-port cable back to swapping files on a card in a
+PC, which is the whole thing this program exists to avoid.
 
 ## Building
 
-    make mfselect            # build/mfselect.nex + build/dezogif.sum
-    make test-mfselect       # the headless bench, 5 checks
+    make mfselect            # build/mfselect.nex + BOTH ROMs + both .sum files
+    make test-mfselect       # the headless bench, 6 runs, 9 checks
+
+`make mfselect` builds both variants whatever `TRANSPORT` it is invoked with, by recursing into
+itself once per variant — the two ROMs otherwise have deliberately separate output paths so that
+`make TRANSPORT=wifi` cannot leave a WiFi ROM where a UART one is expected. Building a card's
+worth of files must not be a two-command ritual with a chance of shipping one variant and the
+other's checksum.
 
 It is deliberately **not** part of `make all` or `make test`: `make all` builds the ROM
 deliverable, and mfselect is separate tooling.
@@ -27,31 +48,43 @@ itself must stay sjasmplus.
 >
 > The directory is **hardcoded** and mfselect cannot find its files anywhere else. Install it in
 > `/tools/`, `/apps/`, or beside your own project, and it will start, fail to find
-> `dezogif.rom`, and be useless. There is no error you can act on, because from the program's
+> `dezowifi.rom`, and be useless. There is no error you can act on, because from the program's
 > point of view the files simply are not there.
 >
 > This is a real limitation, not an oversight, and it was investigated and closed as
 > [#6](https://github.com/jorgegv/dezogif_ng/issues/6) — see *Why the path is hardcoded* below
 > before trying to fix it.
 
-Copy three files into a new `/mfselect/` directory on the SD card:
+Copy five files into a new `/mfselect/` directory on the SD card — everything `make mfselect`
+produces:
 
 | From | To |
 |---|---|
-| `build/mfselect.nex` | `/mfselect/mfselect.nex` |
-| `build/enNextMf.rom` | `/mfselect/dezogif.rom` |
-| `build/dezogif.sum`  | `/mfselect/dezogif.sum` |
+| `build/mfselect.nex`      | `/mfselect/mfselect.nex` |
+| `build/enNextMf-wifi.rom` | `/mfselect/dezowifi.rom` |
+| `build/dezowifi.sum`      | `/mfselect/dezowifi.sum` |
+| `build/enNextMf.rom`      | `/mfselect/dezouart.rom` |
+| `build/dezouart.sum`      | `/mfselect/dezouart.sum` |
 
-**Copy the `.rom` and the `.sum` from the same build.** `BUILD_TIME` is stamped into the ROM, so
-every build produces a different image and a different checksum; a mismatched pair makes mfselect
-refuse to install, which is the correct behaviour but a confusing way to discover the mistake.
+The names are **8.3-safe** because the card is FAT; that constraint already rejected
+`enNextMf.orig.rom` once (MEMORY.md), so the destination names do not simply mirror the build's.
+
+**Copy each `.rom` with its own `.sum`, from the same build.** `BUILD_TIME` is stamped into the
+ROM, so every build produces a different image and a different checksum; a mismatched pair makes
+mfselect refuse to install, which is the correct behaviour but a confusing way to discover the
+mistake. `make mfselect` hands both sub-builds the same `BUILD_TIME`, so the pair it produces is
+coherent.
 
 **A mismatched pair no longer endangers your backup, though**, and it used to. mfselect identifies
-our ROM by a magic string inside it (`DeZoGiFnG_UART_0001`), not by its checksum, so identity
+our ROMs by a magic string inside them (`DeZoGiFnG_WIFI_0003`), not by their checksum, so identity
 survives a rebuild — see *Identity vs integrity* below.
 
-The fourth and fifth files — `original.rom` and `original.sum` — are written by mfselect itself on
-its first run.
+Copying only one of the two variants is allowed and does no harm: the menu entry for the missing
+one reports that it cannot read the file and installs nothing. There is no reason to do it, since
+one command builds both.
+
+The sixth and seventh files — `original.rom` and `original.sum` — are written by mfselect itself
+on its first run.
 
 ## Running it
 
@@ -62,9 +95,21 @@ line:
 
 Up/Down move the selection, ENTER runs it, exactly as the NextZXOS browser behaves.
 
-Selecting either ROM copies it over the official path, verifies the copy by reading it back, and
-then tells you to **power-cycle** the machine. The Multiface ROM is read at power-on, so nothing
-changes until then.
+    Installed: dezogif_ng WiFi 0003
+
+    Select ROM to install:
+      Official Multiface NMI ROM
+      dezogif_ng WiFi (ESP-01)
+      dezogif_ng UART (joy port)
+      Exit without changes
+
+Selecting any of the three ROMs copies it over the official path, verifies the copy by reading it
+back, and then tells you to **power-cycle** the machine. The Multiface ROM is read at power-on, so
+nothing changes until then.
+
+The `Installed:` line names what is there now, including which of our two transports it is, and
+the build number beside it. That is what the ROM identity block is for — no checksum is computed
+to answer it, so it still reads correctly after the stub has been rebuilt.
 
 ## The first run, and why it asks
 
@@ -79,19 +124,30 @@ stub as the stock Multiface ROM and leave no copy of the real one anywhere on th
 
 So:
 
-- If the installed ROM **carries our magic string**, mfselect **refuses** and says why.
+- If the installed ROM **carries our magic string**, mfselect **refuses** and says why. That is the
+  prefix, so **either** of our variants is refused — the guard asks "is this ours", never "is this
+  the one I expected".
 - Otherwise it shows the checksum and **asks** before capturing, because "not ours" is not proof of
   "stock" — it could be upstream dezogif's ROM, or any other third-party Multiface ROM.
 
-Bench check M4 exists specifically for this: it runs mfselect on a card where our ROM is already
-installed with no backup present, answers Y anyway, and requires that no `original.rom` appears.
+Bench checks M4 and M7 exist specifically for this: they run mfselect on a card where one of our
+ROMs is already installed with no backup present, answer Y anyway, and require that no
+`original.rom` appears. **M7 is the WiFi/UART pair of M4, not a duplicate of it.** A guard that
+recognised only the variant it was written against would destroy the stock ROM for exactly the
+users who chose the other transport, and nothing else on this bench would notice.
 
 **M6 is the one that matters**, and M4 could never have caught what it catches. This guard used to
-compare checksums, so it only recognised our ROM while `dezogif.sum` came from the *same build* —
-and `BUILD_TIME` changes the checksum on every build, so the guard fell silent the moment anyone
-upgraded the stub, and captured our ROM as their `original.rom`. M6 ships a deliberately stale
-`.sum`, which is what an upgraded card looks like, and requires the guard to hold anyway. Verified
-by reverting the guard to its old form: M4 still passed, M6 failed with the backup destroyed.
+compare checksums, so it only recognised our ROM while the `.sum` beside it came from the *same
+build* — and `BUILD_TIME` changes the checksum on every build, so the guard fell silent the moment
+anyone upgraded the stub, and captured our ROM as their `original.rom`. M6 ships deliberately stale
+`.sum` files, which is what an upgraded card looks like, and requires the guard to hold anyway.
+Verified by reverting the guard to its old form: M4 still passed, M6 failed with the backup
+destroyed.
+
+M6 installs the **WiFi** ROM and M7 the **UART** one, which keeps them independent: an earlier
+arrangement had both on UART, and a control that broke the guard for that variant alone turned M6
+red as well as M7 — a check failing for a reason outside its own subject, which is the defect
+ERRORS.md describes rather than a second finding.
 
 ### Identity vs integrity
 
@@ -106,6 +162,19 @@ The magic is `DeZoGiFnG_` + variant (`UART`/`WIFI`) + `_` + a four-hex-digit bui
 `version.yaml`. **Match the prefix and the variant; never the build number** — it changes, and
 matching it would reintroduce exactly the per-build fragility the block removes. mfselect shows it
 beside the ROM name so you can say which build is on the card without computing anything.
+
+The two fields answer two different questions, and mfselect uses each for one of them:
+
+- the **prefix** answers *is this ours* — and that alone drives the first-run guard, so both
+  variants are protected by one comparison;
+- the **variant field** answers *which of ours*, and drives only the `Installed:` line.
+
+An unrecognised variant reads as **ours but unnamed** (`dezogif_ng ROM`), never as one of the two.
+Guessing would print a false statement about the card, which is the class of thing this block
+exists to stop; and because the guard keys off the prefix, a future third transport is protected
+by an mfselect that predates it. Bench check M9 asserts the naming half: with the UART ROM
+installed and with the WiFi ROM installed, the status row must differ in exactly the four columns
+of the transport name and nowhere else.
 
 **Existence of `original.rom` is not proof of a backup**, and assuming it was cost a REJECT in
 review. Opening a file with `CREAT_TRUNC` creates the directory entry before the first byte is
@@ -138,8 +207,10 @@ There are two independent implementations — `tools/romsum.py` on the host and 
 Bench check M2 compares them: it takes the `original.sum` that mfselect computed on the Next and
 requires it to equal what `romsum.py` computes on the host for the same bytes.
 
-`dezogif.sum` is produced by the **build**, not computed on the card at install time. A checksum
-computed from an already-corrupt file would simply bless the corruption.
+`dezowifi.sum` and `dezouart.sum` are produced by the **build**, not computed on the card at
+install time. A checksum computed from an already-corrupt file would simply bless the corruption.
+Each ROM has its own, and `install()` reads the one that belongs to the ROM it is installing —
+there is no shared "our checksum" any more, and there was never a reason for one.
 
 ## Things worth knowing before changing it
 

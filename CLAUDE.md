@@ -88,7 +88,14 @@ go to `build/`.
 make mf-rom                    build/enNextMf.rom       UART  (default)
 make TRANSPORT=wifi mf-rom     build/enNextMf-wifi.rom  WiFi
 make mf-rom-wifi               the same, spelled shorter
+make mfselect                  BOTH, + build/dezouart.sum, build/dezowifi.sum, mfselect.nex
 ```
+
+**`make mfselect` is the one target that builds both**, whatever `TRANSPORT` it is invoked with,
+by recursing once per variant with a single shared `BUILD_TIME`. That is not a convenience: since
+#5 mfselect installs either ROM from the machine, so shipping a card with only the variant that
+happened to be selected leaves a menu entry pointing at a file that is not there. Everything else
+here builds exactly one variant, deliberately.
 
 The names differ on purpose: a shared path would let `make TRANSPORT=wifi` leave a WiFi ROM where
 `make test` reads one, and make would then find nothing newer than its output and test the wrong
@@ -167,9 +174,15 @@ strongest:
      screenshot.
    Screen comparison is a **percentage of differing pixels** (`test/screen-diff.py`), not a byte
    compare: NextZXOS idling changes 0.01% of the screen and that once produced a false PASS.
-4. **`make test-mfselect`** — the mfselect bench, 3 headless runs, 5 checks, asserting on files
+4. **`make test-mfselect`** — the mfselect bench, 6 headless runs, 9 checks, asserting on files
    pulled back off the SD image rather than on pixels. Deliberately **not** part of `make test`:
-   mfselect is separate tooling and is not in `make all` either. See `doc/MFSELECT.md`.
+   mfselect is separate tooling and is not in `make all` either. Since #5 it covers **both** of our
+   ROMs: each installs (M3, M8) and the first-run guard refuses **each** (M4, M7) — a guard that
+   recognised only one variant would destroy the stock ROM for whoever chose the other, and no
+   file-based check sees that. **M9 is the bench's one pixel assertion** and is not a percentage:
+   with each variant installed in turn, the status row must differ in exactly the four columns of
+   the transport name (`test/cell-diff.py` reports differing character cells of one row; a
+   percentage cannot separate four characters from noise). See `doc/MFSELECT.md`.
 4b. **`make test-esp`** — the M0(b) ESP server bench: one headless jnext run with
    `test/esp_server.asm` injected, and a TCP client (`test/esp-echo-client.py`) connecting to the
    port the *guest* opened through the emulated ESP-01. Four checks, and they assert on **bytes

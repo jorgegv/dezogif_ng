@@ -5,6 +5,86 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-04 — mfselect offers three ROMs; the card carries both of ours
+
+**Decided, issue #5.** mfselect's menu is now four entries — the stock
+Multiface ROM, our **WiFi** build, our **UART** build, Exit — and both of our
+ROMs live on the card as `dezowifi.rom`/`.sum` and `dezouart.rom`/`.sum`,
+8.3-safe, replacing the single `dezogif.rom`/`.sum` pair.
+
+**The UART build is not a legacy leftover**, which is the whole justification:
+one ESP, one user of it, so a debuggee that owns the ESP cannot be debugged
+over WiFi and the serial ROM is the plan's stated answer to that (§10,
+"this is the reason the UART build is kept"). Buildable-but-not-installable
+sent exactly those users back to swapping files on a card in a PC, which is
+what mfselect exists to remove.
+
+**`make mfselect` builds BOTH, in one command.** It recurses once per variant
+with a single captured `BUILD_TIME`, so the five files a card needs are always
+a coherent set. Every other target here builds exactly one variant on purpose —
+the two ROM paths are deliberately separate so `make TRANSPORT=wifi` cannot
+leave a WiFi ROM where `make test` reads one — and mfselect is the one consumer
+that genuinely needs both regardless of how it was invoked. A two-command
+ritual would have shipped one ROM with the other's checksum eventually.
+
+**Nothing had to be invented to tell the two apart**: issue #4's magic string
+already answered it, and `installed_name()` already returned "dezogif_ng UART"
+/ "dezogif_ng WiFi". What was missing was a second ROM to install. That is the
+payoff #4 was written for, and it is worth noting that the *guard* keys off the
+**prefix** alone, so it protects both variants — and will protect a third
+transport written by someone who never touches mfselect.
+
+**Three bench checks, and each was seen to fail before it was believed.**
+
+- **M7** — the first-run guard refuses our **UART** ROM as well as our WiFi one.
+  Not M4 with a different file: a guard that recognised only the variant it was
+  written against would destroy the stock ROM for exactly the users who chose
+  the other transport. Control: guard changed to `id == ID_WIFI`; **M4 passed,
+  M7 failed with the UART ROM captured as `original.rom`.**
+- **M8** — the fourth menu entry reaches the file it names, two Downs from the
+  top. Control: the UART entry pointed at the WiFi pair — the copy-paste bug —
+  and **M3 passed while M8 failed**, naming the wrong CRC.
+- **M9** — mfselect *distinguishes* them on screen, which no file on the card
+  can show. Control: `installed_name()` made to return one string for both, and
+  **M9 failed with an empty differing-column set while everything else stayed
+  green.**
+
+**M9 is the bench's first pixel assertion, and deliberately not a percentage.**
+Two status lines differing in four characters differ in ~0.05% of the screen,
+which no threshold separates from noise — the exact failure ERRORS.md records
+for T4. `test/cell-diff.py` reports the differing 8x8 **character cells** of one
+row instead, so the check names the columns allowed to differ: 23-26, derived
+from `print_at(1, ROW_STATUS, "Installed: ")` and the name at column 12. It
+fails on an empty set (identical lines), on a wider one (a different string, or
+a row never drawn), and on a build-number column moving.
+
+**M6 was moved onto the WiFi ROM at the same time**, and that is not cosmetic.
+It had installed the UART ROM, so the guard control above turned M6 red too —
+a check failing for a reason outside its own subject, which ERRORS.md names as
+a defect in the check rather than a finding. M6's subject is checksum skew;
+M7's is the UART guard; they should not be able to fail together.
+
+**Two compile-time asserts** guard the menu, because the failure modes are
+silent. `menu_fits_above_messages` — the menu must still end above `ROW_MSG`,
+or a fifth entry paints over the first line of every message. 
+`exit_is_the_last_menu_entry` — `main()`'s dispatch ends in an `else` that
+installs the UART ROM, so an entry added *after* Exit would be selectable,
+unnamed, and would quietly install something the user did not choose. Both were
+verified to fire by compiling with `MENU_ITEMS` at 5 and 6; an earlier assert
+comparing `sizeof(menu_text)` against `MENU_ITEMS` was **removed after being
+shown useless** — the array's bound is `MENU_ITEMS`, so the two can never
+disagree.
+
+**Rejected.** Keeping `dezogif.rom` for one variant and adding a second name
+only for the other (asymmetric, and it makes "which one is this" a question
+about the filename rather than the ROM); naming them `enNextMf-wifi.rom` on the
+card (not 8.3-safe, the constraint that already rejected `enNextMf.orig.rom`);
+identifying the installed variant by checksum (that conflation was the
+data-loss bug of #4 — see ERRORS.md); a `make mfselect-wifi` / `make
+mfselect-uart` pair (it is one deployable directory, not two).
+
+---
+
 ## 2026-08-04 — WiFi is a prerequisite; the stub holds no credentials
 
 **Decided (user).** In WiFi mode the stub assumes the Next is **already

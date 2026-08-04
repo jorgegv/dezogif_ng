@@ -684,7 +684,7 @@ Named DeZog remote type; contribute the transport abstraction back to dezogif if
 | Risk | Detail | Mitigation / status |
 |---|---|---|
 | **AltROM constraint** | The debuggee may not use any ROM other than the one the stub patched into AltROM | Inherited from dezogif; document loudly. No known fix |
-| **ESP contention** | One ESP. A program that uses WiFi cannot be debugged over WiFi. NextZXOS/NextSync also reconfigure it | Detect and report rather than hang — and **this is the reason the UART build is kept**: for a debuggee that owns the ESP, the serial ROM is the answer, not a workaround |
+| **ESP contention** | One ESP. A program that uses WiFi cannot be debugged over WiFi. NextZXOS/NextSync also reconfigure it | Detect and report rather than hang — and **this is the reason the UART build is kept**: for a debuggee that owns the ESP, the serial ROM is the answer, not a workaround. Since issue #5 that answer is reachable **from the machine**: mfselect carries both ROMs on the card and switches between them in three keystrokes, so choosing the serial build costs a power-cycle rather than a PC session |
 | **State transparency** | Several NextREGs are write-only; a full snapshot is impossible on hardware | Permanent ceiling vs an emulator. Accept and document |
 | **No watchpoints / coverage / true reverse debugging** | Would require tracing every instruction | Ruled out by dezogif's design doc; DeZog lite history remains |
 | **`nmi66h` filters the Copper NMI** | Inherited `mf_rom.asm` reads NR `0x02`, masks `00011100b` and returns unless zero — button causes only. The Copper `MOVE $02,$08` sets exactly that bit (`nmi_gen_nr_mf` covers CPU and Copper, `zxnext.vhd:3832`; latched at `:3843-3848`), so **M2's break mechanism is filtered out by the code M1 inherits**. Demonstrated: bench T4 | M2 must modify the cause check to accept a software cause, clear the latch on the way out, and invert bench T4 in the same change. Not optional, and not discovered late — it is the first thing M2 touches |
@@ -831,16 +831,23 @@ happens.
 | # | Where | Operation |
 |---|---|---|
 | A1 | PC | Install VS Code + the DeZog extension |
-| A2 | PC | Build (or download) the stub's `enNextMf.rom` |
-| A3 | PC | SD card into the PC; back up `machines/next/enNextMf.rom`; copy the stub's over it |
-| A4 | Next | SD card back in. Confirm core ≥ 03.01.10 and Multiface enabled in the machine config |
+| A2 | PC | `make mfselect` — it builds **both** stub ROMs (`build/enNextMf-wifi.rom`, `build/enNextMf.rom`), their `.sum` sidecars and `build/mfselect.nex` |
+| A3 | PC | SD card into the PC; back up `machines/next/enNextMf.rom`; copy the five files above into a new `/mfselect/` directory as [MFSELECT.md](MFSELECT.md) tabulates. **Do not copy a stub over the official path by hand** — leave the stock ROM there and let mfselect capture it, or its first-run guard will refuse and you will have no backup |
+| A3b | Next | Boot NextZXOS, `.nexload /mfselect/mfselect.nex`, let it capture the original, then pick **dezogif_ng WiFi (ESP-01)** and power-cycle. Switching to the UART build later, or back to the stock ROM, is the same three keystrokes and never needs a PC again |
+| A4 | Next | Confirm core ≥ 03.01.10 and Multiface enabled in the machine config |
 | **A5** | **Next** | **Get the Next onto WiFi**, with `/apps/wifi/setup/wifi2.bas`, and confirm it reports an IP address. **The stub never does this and holds no credentials** — see [WIFI-SETUP.md](WIFI-SETUP.md), which also covers what breaks it later. Once per machine — the ESP stores its own credentials, reported on hardware 2026-08-04 |
 | A6 | PC | Give the Next a **static DHCP reservation** on the router — then its IP never moves and `launch.json` is written once |
 | A7 | PC | Write `launch.json` (§B.5) |
 
-Two acts on the Next, both once ever — and A5 is the one people will forget, because a debugger
+Three acts on the Next, all once ever — and A5 is the one people will forget, because a debugger
 that cannot reach the network looks like a broken debugger rather than a machine that was never put
 on WiFi.
+
+**A3 no longer means "copy the stub over the official path", and the change matters.** With
+mfselect on the card the swap happens on the Next, both ways, and the card carries both variants —
+so a debuggee that owns the ESP (the contention row in §10) is a menu entry away rather than a PC
+session away. Doing the hand-copy anyway is what trips mfselect's first-run guard: it refuses to
+save *our* ROM as your original, correctly, and then you have no backup at all.
 
 ### B.2 Every power-on
 

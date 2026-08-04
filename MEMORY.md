@@ -53,7 +53,7 @@ some other value into it would be reserving one again. Bench check W2, which
 exists because a stale id used to make the M1 button silently stop working after
 the first disconnect, still passes.
 
-**Cost:** 6 bytes in the WiFi ROM (`main_end` 0xF506 → 0xF50C, 2452 still free).
+**Cost:** 6 bytes in the WiFi ROM (`main_end` 0xF505 → 0xF50B, 2453 still free).
 The UART ROM is byte-identical — `transport_esp.asm` is in the WiFi build only,
 and that asymmetry is the evidence that nothing shared was touched.
 

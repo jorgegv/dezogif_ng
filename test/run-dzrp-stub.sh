@@ -345,7 +345,7 @@ else
     else
         red=$(bright_red "$shot2")
         if [ "$red" -gt 0 ]; then
-            fail "W2 the stub reported a transport error after the orphaned notification ($red bright-red pixels in $shot2 — it is 'Last Error: TX Timeout'); esp_conn_id was not released when the peer went"
+            fail "W2 the stub reported a transport error after the orphaned notification ($red bright-red pixels in $shot2 — it is 'Last Error: TX Timeout'); esp_conn_valid was not cleared when the peer went"
         else
             pass "W2 an unprompted notification to a departed client ($refused AT+CIPSEND refused) leaves the stub quiet — no error on screen — and still serving"
         fi

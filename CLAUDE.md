@@ -62,10 +62,15 @@ to work.
 - **The VHDL is the authority for hardware behaviour.** UART/ESP pin routing, NMI generation,
   Multiface paging, MMU slots, Copper. When behaviour is ambiguous, read the VHDL — not the wiki,
   not a forum, not another emulator. Use the `vhdl` skill or the `vhdl-oracle` agent.
-- **DeZog's division of labour is a contract.** Instruction-length calculation, storage of the
-  original opcode under a breakpoint, the temporary breakpoints used to step off a breakpoint, and
-  breakpoint-condition evaluation all live in **DeZog**. Do not move any of them into the stub —
-  the client already does them and will fight you.
+- **DeZog's division of labour is a contract.** Instruction-length calculation, **deciding** where
+  the temporary breakpoints used to step off a breakpoint belong, and breakpoint-condition
+  evaluation all live in **DeZog**. Do not move any of them into the stub — the client already
+  does them and will fight you.
+  This rule used to say "storage of the original opcode under a breakpoint" as well, and that was
+  wrong: `TMP_BREAKPOINT`/`BREAKPOINT` (`src/breakpoints.asm:29-40`) store the byte the `RST 0`
+  replaced, necessarily, because the stub is what patches memory and so the only thing that can
+  un-patch it. **Substitution bookkeeping is the stub's; the decisions are DeZog's.** See plan
+  §4.4.
 - **DZRP has no history/trace/replay command.** Reverse debugging is entirely PC-side and stores
   registers and stack only. Never plan around a remote-side history feature.
 - **A stub that assembles is not a stub that runs.** Any change to the transport, the NMI path or

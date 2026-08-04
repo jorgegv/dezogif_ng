@@ -292,9 +292,17 @@ Inherited from dezogif, and **the division of labour must be preserved** because
 it:
 
 - Breakpoint = the opcode at the address replaced by a one-byte `RST 0`.
-- Stepping off a breakpoint you are standing on is solved by DeZog, not the stub: it computes
-  the instruction length and the branch target and plants 1-2 **temporary** breakpoints on every
-  continue. The stub keeps no tables, no opcode store, no state machine.
+- Stepping off a breakpoint you are standing on is solved by DeZog, not the stub: it *decides*
+  where the 1-2 **temporary** breakpoints go, computing the instruction length and the branch
+  target, and names their addresses in `CMD_CONTINUE`'s payload.
+- **The stub does keep the substituted opcode, and an earlier version of this line denied it.**
+  `TMP_BREAKPOINT` and `BREAKPOINT` in `src/breakpoints.asm:29-40` each store the byte that the
+  `RST 0` replaced, because the stub is the party that patches memory and therefore the only one
+  that can un-patch it — `clear_tmp_breakpoints` puts the byte back. That is *substitution
+  bookkeeping*, and it is legitimately the stub's. What stays exclusively DeZog's is the
+  **decisions**: instruction length, where a temporary breakpoint belongs, and condition
+  evaluation. Keep that boundary; the older "no tables, no opcode store, no state machine"
+  wording named the wrong one and is contradicted by the source it describes.
 - **Conditional** breakpoints are unconditional pauses as far as the stub is concerned; DeZog
   evaluates the condition and silently continues if false.
 - No watchpoints and no code coverage — dezogif's design doc rules both out on hardware as far

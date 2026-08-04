@@ -12,11 +12,16 @@ files on an SD image, and the Z80 unit tests need VS Code. The deliverable of
 this project is a protocol implementation, and the protocol had no test.
 
 WHAT IT DELIBERATELY DOES NOT TEST. DeZog owns instruction-length calculation,
-the original opcode stored under a breakpoint, the temporary breakpoints used
-to step off one, and breakpoint-condition evaluation. Asserting any of those
-against the remote would encode the wrong contract, and push whoever tried to
-make it pass into building the very thing that fights DeZog at runtime. This
-suite behaves the way DeZog behaves.
+the DECISION of where the temporary breakpoints used to step off one belong,
+and breakpoint-condition evaluation. Asserting any of those against the remote
+would encode the wrong contract, and push whoever tried to make it pass into
+building the very thing that fights DeZog at runtime. This suite behaves the
+way DeZog behaves.
+
+It does NOT mean the remote keeps no state: the stub necessarily stores the
+opcode an RST 0 replaced, because it is the party that patches memory and so
+the only one that can un-patch it. Substitution bookkeeping is the remote's;
+the decisions are DeZog's.
 
 A PARTIAL REMOTE IS LEGITIMATE. DZRP has 29 commands and remotes implement
 different subsets — CSpect's DeZog plugin, for one, does not implement
@@ -348,10 +353,11 @@ def chk_memory(d):
 #
 # plus the NTF_PAUSE itself and the register block read back afterwards.
 #
-# WHAT IS DELIBERATELY NOT ASSERTED. DeZog owns instruction lengths, the
-# original opcode under a breakpoint, and condition evaluation. This suite
-# plants its own temporary breakpoint and expects the remote to keep no
-# tables — the same division of labour the stub is built to.
+# WHAT IS DELIBERATELY NOT ASSERTED. DeZog owns instruction lengths, the choice
+# of where a temporary breakpoint goes, and condition evaluation. This suite
+# therefore names the address itself, in CMD_CONTINUE's payload, exactly as the
+# client does. It does NOT expect the remote to be stateless: un-patching an
+# RST 0 requires the remote to have kept the byte it replaced.
 # ==========================================================================
 
 # All of these sit inside 0x8000-0x9FFF, which CMD_INIT maps to bank 4 (see

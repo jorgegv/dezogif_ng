@@ -213,8 +213,10 @@ project as the demonstrated consumer** — never speculatively. See the plan §8
    (§Testing).
 3. Independent code review by an agent that did not write the change, in its own worktree.
 4. Merge on APPROVE, one branch at a time. The manager does the merge, not the author. No further
-   permission is needed once steps 1-3 genuinely hold — see the standing authorization above — and
-   `main`'s history is linear, so `git merge --ff-only` is the house form.
+   permission is needed once steps 1-3 genuinely hold — see the standing authorization above.
+   `git merge --ff-only` is the house form: a conflict means rebase or resolve deliberately,
+   rather than silently minting a merge commit. (This used to be justified by "`main`'s history
+   is linear", which was never true — `857a1df` is a merge commit. The rule stands on its own.)
 5. Never push to origin — local commits and merges stay local until the user says otherwise.
    **Merging and pushing are separate permissions**: a merged `main` sits local until the user asks
    for a push, every time.

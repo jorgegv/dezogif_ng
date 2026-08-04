@@ -42,10 +42,14 @@
 ;    nothing, and look exactly like a DZRP bug. Whether real firmware numbers
 ;    the same way is UNVERIFIED, which is the other reason it is read.
 ;
-;    esp_conn_id == 0 therefore means "no client has ever been seen", and
-;    transport_flush discards rather than trying to send to nobody. That is what
-;    keeps a button NMI with no debugger attached quiet instead of parking on a
-;    TX timeout.
+;    esp_conn_id == 0 therefore means "there is nobody to send to", and
+;    transport_flush discards rather than trying. It starts at 0, an inbound
+;    `+IPD` sets it, and an `AT+CIPSEND` answered ERROR — which is how the
+;    module says the peer has gone — puts it back to 0. **All three matter.**
+;    Without the last one the id of a closed connection survived for the rest of
+;    the power-on session, and every later unprompted NTF_PAUSE (the M1 button,
+;    or a leftover RST 0 through breakpoints.asm) parked on a TX timeout and was
+;    discarded. See .no_client in esp_flush_chunk, and bench check W2.
 ;
 ; 4. THE JOY PORT IS NEVER TAKEN. UART0's RX is on the ESP-01 pin whenever
 ;    NR 0x0B's joy IO mode is off (zxnext.vhd:3340, :3536), which is the
@@ -191,7 +195,7 @@ esp_cmd_cipserver:  defb "AT+CIPSERVER=1,"
 
 esp_str_ok:         defb "OK",13,10,0
 esp_str_ipd:        defb "+IPD,",0
-esp_str_prompt:     defb "> ",0         ; the trailing space is part of it
+esp_str_error:      defb "ERROR",0
 esp_str_send_ok:    defb "SEND OK",0
 esp_str_cipsend:    defb "AT+CIPSEND=",0
 
@@ -422,6 +426,65 @@ esp_wait_string:
 
 
 ;===========================================================================
+; Waits for AT+CIPSEND's answer, which is one of two things.
+;
+; TWO PATTERNS IN ONE PASS, and the second one is what stops a dead connection
+; from becoming a wedged debugger. `AT+CIPSEND` on a cid that is not open is
+; answered ERROR (jnext esp_at.cpp, begin_send), and that is not a module
+; failure — it is the module saying the peer has gone. Waiting only for '>'
+; would turn it into a TX timeout, which resets the call stack, discards the
+; message and reports an error the user cannot act on.
+;
+; Matching is naive with a restart that re-tests the mismatching byte, as in
+; esp_wait_string. '>' is tested first and separately because it is a single
+; character; nothing the module sends between the command and its answer
+; contains one (`<id>,CONNECT`, `<id>,CLOSED`, `SEND OK` and `+IPD` headers are
+; the whole vocabulary).
+;
+; Returns:
+;   NC              the '>' prompt: send the payload
+;   CY and A = 0    ERROR: this connection is not usable
+;   CY and A = 1    silence: the module is not answering at all
+; Changes:
+;   AF, BC, DE, HL
+;===========================================================================
+esp_wait_prompt:
+    ld hl,esp_str_error
+.next:
+    call esp_try_read_raw
+    jr c,.silent
+    cp '>'
+    jr z,.prompt
+    cp (hl)
+    jr nz,.mismatch
+    inc hl
+    ld a,(hl)
+    or a
+    jr nz,.next
+    ; The whole of "ERROR" matched.
+    xor a
+    scf
+    ret
+
+.mismatch:
+    ; Back to the start of the pattern, then re-test THIS byte against it.
+    ld hl,esp_str_error
+    cp (hl)
+    jr nz,.next
+    inc hl
+    jr .next
+
+.prompt:
+    or a                    ; A is '>', so this only clears the carry
+    ret
+
+.silent:
+    ld a,1
+    scf
+    ret
+
+
+;===========================================================================
 ; Reads an unsigned decimal number terminated by a given byte.
 ; Parameter:
 ;  C = the terminator.
@@ -553,6 +616,13 @@ esp_sync_ipd:
     ret
 
 .bad:
+    ; A header this routine cannot parse is abandoned WHERE IT STANDS: the rest
+    ; of it stays in the stream and the next scan will step over it looking for
+    ; "+IPD,", which costs one timeout before things line up again. Left as is
+    ; rather than resynchronised, because the only ways to get here are an id
+    ; that does not fit a byte (ESP-AT ids are 0..4) or a non-digit inside the
+    ; header — neither of which any module produces. It is the safety net for a
+    ; corrupt stream, not a case with a caller.
     scf
     ret
 
@@ -703,6 +773,17 @@ transport_wait_rx:
 ; the module is saying something but nothing is synchronised yet, this
 ; synchronises — bounded, and silently, because "the client connected but has
 ; not asked for anything" is not an error.
+;
+; THE COST IS LATENCY, AND IT DIVERGES FROM THE SERIAL TRANSPORT. Upstream's is
+; an O(1) status-bit read that always returns at once. This one returns at once
+; too when the wire is quiet or a payload is already owed, but an unsolicited
+; line — `<id>,CONNECT` is the common one — makes it scan for a header that is
+; not there and give up only on the RX timeout, ~100 ms at 28 MHz. So main_loop
+; can stall for that long, once per such line. It is bounded, it costs nothing
+; while idle, and the alternative (an incremental parser driven a byte at a time
+; across calls) buys latency nobody has asked for yet. Worth knowing before
+; anything is built on "this poll returns immediately", which is a statement
+; about the SERIAL build.
 ; Returns:
 ;   NZ = a payload byte is available
 ;   Z = nothing
@@ -886,13 +967,17 @@ esp_flush_chunk:
     ld hl,esp_cmd_buffer
     call esp_send_string
 
-    ; The module answers "\r\nOK\r\n> " and only then takes the payload. Wait
-    ; for the PROMPT, not for the OK: a refusal answers ERROR, which contains
-    ; no '>' either, so this one wait covers accepted and refused alike.
-    ld hl,esp_str_prompt
-    call esp_wait_string
-    jr c,.timeout
+    ; The module answers "\r\nOK\r\n> " and only then takes the payload — or it
+    ; answers ERROR, which here means the connection is gone rather than the
+    ; module being broken. The two are told apart, because treating the first
+    ; as the second wedges the debugger; see esp_wait_prompt and .no_client.
+    call esp_wait_prompt
+    jr nc,.have_prompt
+    or a
+    jr nz,.timeout          ; A = 1: the module said nothing at all
+    jr .no_client           ; A = 0: ERROR
 
+.have_prompt:
     ld a,(esp_tx_len)
     ld b,a
     ld hl,esp_tx_buffer
@@ -917,6 +1002,28 @@ esp_flush_chunk:
     ld (esp_tx_len),a
     nop ; LOGPOINT esp_flush_chunk: ERROR=TIMEOUT
     jp tx_timeout   ; ASSERTION
+
+.no_client:
+    ; THE PEER HAS GONE, and forgetting the id is the whole point. Without this
+    ; esp_conn_id kept the id of a connection that had closed for the rest of
+    ; the power-on session, so every later unprompted send — an NTF_PAUSE from
+    ; the M1 button, or from a leftover RST 0 — was aimed at a dead cid, waited
+    ; for a '>' that could not come, and diverted to drain_main, which threw the
+    ; notification away and painted "TX Timeout" on a machine with nothing wrong
+    ; with it. Setting it back to 0 puts us in the state before any client was
+    ; ever seen, where transport_flush discards without asking (see there), so
+    ; the NEXT such send costs nothing at all.
+    ;
+    ; The message itself is still lost, and that is correct: there is nobody to
+    ; receive it. What is NOT covered is a client that has reconnected but not
+    ; yet sent anything — esp_conn_id is only refreshed by an inbound +IPD, so
+    ; an unprompted notification in that window still goes nowhere. Closing that
+    ; means tracking `<id>,CONNECT` as well, which belongs with M3's reconnect
+    ; work rather than here.
+    xor a
+    ld (esp_conn_id),a
+    ld (esp_tx_len),a
+    ret
 
 
 ;===========================================================================

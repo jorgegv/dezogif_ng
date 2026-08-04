@@ -2,10 +2,9 @@
 #
 # The DZRP conformance suite, pointed at OUR OWN STUB.
 #
-# Invoked by `make test-dzrp-stub`. One headless jnext run with the WiFi ROM
-# installed as the Multiface ROM, an emulated M1 button press to bring the
-# debugger up, and then test/dzrp/conformance.py talking DZRP over TCP to the
-# emulated ESP-01.
+# Invoked by `make test-dzrp-stub`. Two headless jnext runs with the WiFi ROM
+# installed as the Multiface ROM and an emulated M1 button press to bring the
+# debugger up, with a TCP client talking to the emulated ESP-01.
 #
 # WHY THIS IS THE STRONGEST CHECK IN THE REPOSITORY. Everything else judges a
 # proxy: `make test` compares pixels, `make test-mfselect` compares files on an
@@ -14,25 +13,35 @@
 # Until it existed, the protocol — which is the entire deliverable — had never
 # been exercised against our own code by anything.
 #
-# WHAT IT COVERS, and the chain is long because every link has to hold before
-# the first byte of DZRP can move:
+# WHAT IT COVERS:
 #
-#   W1  the stub took the NMI, relocated MAIN, brought UART0 up at 115200,
-#       and got AT+CIPMUX=1 / AT+CIPSERVER=1,11000 accepted — proven by the
-#       port appearing, which nothing else in this repository has ever shown
-#   W2..  whatever the conformance suite then reports (see doc/DZRP-TESTING.md)
+#   run 1
+#     W1   the stub took the NMI, relocated MAIN, brought UART0 up at 115200,
+#          and got AT+CIPMUX=1 / AT+CIPSERVER=1,11000 accepted — proven by the
+#          port appearing, which nothing else in this repository has ever shown
+#     C1.. whatever the conformance suite then reports; its loopback sweep now
+#          runs past jnext's 2048-byte `+IPD` split, so the transport's
+#          reassembly across frames is covered (see doc/DZRP-TESTING.md)
+#
+#   run 2
+#     W2   an UNPROMPTED notification aimed at a client that has gone leaves the
+#          stub quiet and still serving, instead of parking on a TX timeout.
+#          Its own run because it deliberately crashes the debuggee and because
+#          its verdict is read off the stub's screen, which the suite repaints.
 #
 # WHAT IT DOES NOT COVER. Real hardware, where the ESP has to be associated
-# first and answers at whatever baud it was last left at (doc/WIFI-SETUP.md);
-# and the resume path is only exercised as far as the suite goes — no check
-# here sends CMD_CONTINUE to a running debuggee.
+# first and answers at whatever baud it was last left at (doc/WIFI-SETUP.md).
+# Nothing here resumes a debuggee that was ever properly loaded — W2's
+# CMD_CONTINUE resumes zeroed registers on purpose, which is a crash, not a
+# demonstration that the return-to-debuggee path works.
 #
 # Environment (all set by the Makefile, all overridable):
-#   JNEXT        path to the jnext binary
-#   SD_IMAGE     reference SD card image; NEVER written, only copied
-#   OUT          build directory
-#   ROM          our WiFi-mode enNextMf.rom
-#   DZRP_ARGS    extra arguments for conformance.py
+#   JNEXT         path to the jnext binary
+#   SD_IMAGE      reference SD card image; NEVER written, only copied
+#   OUT           build directory
+#   ROM           our WiFi-mode enNextMf.rom
+#   DZRP_ARGS     extra arguments for conformance.py
+#   DZRP_TIMEOUT  per-command timeout for conformance.py
 
 set -euo pipefail
 
@@ -61,7 +70,7 @@ EXIT_FRAMES=200000
 # the suite's ~25 s, while one at 1000 lands every time. It may therefore catch
 # cmd_init's repaint of the UI in progress; it is a diagnostic, not an
 # assertion, and the assertions are all on bytes.
-SHOT_FRAMES=1000
+SHOT_FRAMES=1100
 
 # Wall-clock guards.
 RUN_TIMEOUT=600
@@ -69,6 +78,12 @@ LISTEN_TIMEOUT=60
 
 MF_ROM_PATH='::/machines/next/enNextMf.rom'
 CONFORMANCE=$(dirname "$0")/dzrp/conformance.py
+ORPHAN=$(dirname "$0")/dzrp/orphan-notify.py
+
+# Longer than the suite's own 5 s default. The loopback sweep now goes to 4096
+# bytes, which is ~8 KB over a 115200 link plus seventeen AT+CIPSEND round
+# trips, and the emulator does not run that at wall-clock speed.
+DZRP_TIMEOUT=${DZRP_TIMEOUT:-25}
 
 log()  { printf '%s\n' "$*"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -79,6 +94,8 @@ die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [ -f "$SD_IMAGE" ]   || die "SD card image not found: $SD_IMAGE"
 [ -f "$ROM" ]        || die "WiFi ROM not built: $ROM (run 'make mf-rom-wifi')"
 [ -f "$CONFORMANCE" ]|| die "conformance suite not found: $CONFORMANCE"
+[ -f "$ORPHAN" ]     || die "W2 fixture not found: $ORPHAN"
+python3 -c 'import PIL' 2>/dev/null || die "python3 Pillow is required for W2's screen check"
 command -v mcopy >/dev/null || die "mtools (mcopy) is required to install the ROM into the SD image"
 
 # The ROM must really be the WiFi one. Installing the UART build here would
@@ -121,8 +138,10 @@ mkdir -p "$OUT" "$OUT/screenshots"
 # empty first so `set -u` cannot abort the handler before it reaches the rm.
 
 sd=$OUT/sd-dzrp.img
-shot=$OUT/screenshots/dzrp-stub.png
 jlog=$OUT/dzrp-stub.log
+jlog2=$OUT/dzrp-stub-w2.log
+shot=$OUT/screenshots/dzrp-stub.png
+shot2=$OUT/screenshots/dzrp-stub-w2.png
 
 jnext_pid=""
 cleanup() {
@@ -142,75 +161,162 @@ trap 'exit 143' TERM
 cp --reflink=auto -f "$SD_IMAGE" "$sd"
 mcopy -o -i "$sd@@$part_off" "$ROM" "$MF_ROM_PATH"
 
-log "== booting a Next with our WiFi ROM installed, then pressing M1 at frame $BOOT_FRAMES"
+failures=0
+pass() { printf 'PASS  %s\n' "$*"; }
+fail() { printf 'FAIL  %s\n' "$*"; failures=$((failures + 1)); }
 
-rm -f "$shot"
-timeout "$RUN_TIMEOUT" "$JNEXT" \
-    --headless --machine next \
-    --sdcard "$sd" \
-    --rtc "2026-01-01 12:00:00" \
-    --esp --esp-listen-address 127.0.0.1 \
-    --delayed-nmi-frames "$BOOT_FRAMES" nmi \
-    --delayed-screenshot "$shot" --delayed-screenshot-frames "$SHOT_FRAMES" \
-    --delayed-automatic-exit-frames "$EXIT_FRAMES" \
-    >"$jlog" 2>&1 &
-jnext_pid=$!
-
-# --- W1: the stub is listening ---------------------------------------------
-#
-# This is an assertion, not a convenience wait. The port can only appear after
-# the NMI was taken, MAIN was relocated into a RAM bank, UART0 was brought up
-# at 115200 and the module accepted AT+CIPMUX=1 and AT+CIPSERVER=1,<port> — a
-# chain in which every step gates the next.
-
-log "== waiting for the stub to listen on 127.0.0.1:$PORT (up to ${LISTEN_TIMEOUT}s)"
-listening=0
-for _ in $(seq $((LISTEN_TIMEOUT * 4))); do
-    if ! kill -0 "$jnext_pid" 2>/dev/null; then
-        break
+# stop_stub — end the emulator run and reap it.
+stop_stub() {
+    if [ -n "$jnext_pid" ] && kill -0 "$jnext_pid" 2>/dev/null; then
+        kill "$jnext_pid" 2>/dev/null || true
+        wait "$jnext_pid" 2>/dev/null || true
     fi
-    if python3 -c "
+    jnext_pid=""
+}
+
+# start_stub <logfile> <screenshot> — boot a Next with our WiFi ROM, press M1,
+# and wait for the stub's own listener to appear. That wait is an ASSERTION, not
+# a convenience: the port can only exist once the NMI was taken, MAIN was
+# relocated into a RAM bank, UART0 came up at 115200, and AT+CIPMUX=1 and
+# AT+CIPSERVER=1,<port> were both accepted — a chain in which every step gates
+# the next. Returns non-zero if it never appears.
+start_stub() {
+    local logfile=$1 shotfile=$2
+    rm -f "$shotfile"
+    timeout "$RUN_TIMEOUT" "$JNEXT" \
+        --headless --machine next \
+        --sdcard "$sd" \
+        --rtc "2026-01-01 12:00:00" \
+        --log-level "warn,esp01=debug" \
+        --esp --esp-listen-address 127.0.0.1 \
+        --delayed-nmi-frames "$BOOT_FRAMES" nmi \
+        --delayed-screenshot "$shotfile" --delayed-screenshot-frames "$SHOT_FRAMES" \
+        --delayed-automatic-exit-frames "$EXIT_FRAMES" \
+        >"$logfile" 2>&1 &
+    jnext_pid=$!
+
+    local i
+    for i in $(seq $((LISTEN_TIMEOUT * 4))); do
+        kill -0 "$jnext_pid" 2>/dev/null || return 1
+        if python3 -c "
 import socket, sys
 s = socket.socket()
 s.settimeout(0.2)
 sys.exit(0 if s.connect_ex(('127.0.0.1', $PORT)) == 0 else 1)
 " 2>/dev/null; then
-        listening=1
-        break
-    fi
-    sleep 0.25
-done
+            return 0
+        fi
+        sleep 0.25
+    done
+    return 1
+}
 
-if [ "$listening" -ne 1 ]; then
+# bright_red <png> — how many pixels are EXACTLY bright red.
+#
+# The stub's UI is the only thing that puts bright red on the screen: ui.asm
+# colours the bottom nine rows RED+BRIGHT and prints "Last Error: ..." there,
+# and nothing else on that screen is red at all. Measured on a real capture,
+# jnext renders non-bright components as 182 and bright ones as 255, and the
+# border can only ever be non-bright — `out (BORDER),a` carries no bright bit —
+# so a red border cannot be mistaken for an error line. Zero means the stub is
+# reporting no fault.
+bright_red() {
+    python3 -c "
+from PIL import Image
+raw = Image.open('$1').convert('RGB').tobytes()
+print(sum(1 for i in range(0, len(raw), 3)
+          if raw[i] == 255 and raw[i+1] == 0 and raw[i+2] == 0))
+"
+}
+
+# ===========================================================================
+# Run 1 — W1 and the conformance suite
+# ===========================================================================
+
+log "== run 1: booting a Next with our WiFi ROM installed, M1 at frame $BOOT_FRAMES"
+
+if ! start_stub "$jlog" "$shot"; then
     log ""
-    log "FAIL  W1 the stub never listened on 127.0.0.1:$PORT"
+    fail "W1 the stub never listened on 127.0.0.1:$PORT"
     log "Diagnosis:"
     log "  jnext log:   $jlog"
     log "  screenshot:  $shot  (the stub's own UI reports the last error it saw)"
     grep -iE 'esp01|at <-|at ->|error' "$jlog" | tail -30 | sed 's/^/  | /' || true
     exit 1
 fi
-log "PASS  W1 the stub brought the ESP up and is listening on 127.0.0.1:$PORT"
+pass "W1 the stub brought the ESP up and is listening on 127.0.0.1:$PORT"
 log ""
 
-# --- W2..: the protocol ----------------------------------------------------
-#
-# --expect-preamble none is an assertion this branch owes: the 0xA5 byte is
+# --expect-preamble none is an assertion this transport owes: the 0xA5 byte is
 # required over serial and must be ABSENT over a socket, because DeZog's
 # CSpectRemote — the client this transport is spoken to by — does not strip it.
 # Reporting it instead of asserting it would leave the one thing MEMORY.md
 # singles out about WiFi mode untested.
 set +e
-python3 "$CONFORMANCE" --remote "tcp:127.0.0.1:$PORT" --expect-preamble none $DZRP_ARGS
+python3 "$CONFORMANCE" --remote "tcp:127.0.0.1:$PORT" --expect-preamble none \
+    --timeout "$DZRP_TIMEOUT" $DZRP_ARGS
 suite_rc=$?
 set -e
+[ "$suite_rc" -eq 0 ] || failures=$((failures + 1))
+
+stop_stub
+
+# ===========================================================================
+# Run 2 — W2: an unprompted notification with the client gone
+#
+# Its own emulator run, for two reasons: it deliberately crashes the debuggee
+# (see test/dzrp/orphan-notify.py), and its verdict is read off the stub's
+# SCREEN, which the conformance suite would have repainted.
+# ===========================================================================
 
 log ""
-if [ "$suite_rc" -ne 0 ]; then
-    log "Diagnosis:"
-    log "  jnext log:   $jlog"
-    log "  screenshot:  $shot"
-    grep -iE 'esp01' "$jlog" | tail -30 | sed 's/^/  | /' || true
+log "== run 2: an unprompted notification aimed at a client that has gone"
+
+if ! start_stub "$jlog2" "$shot2"; then
+    fail "W2 the stub never listened on 127.0.0.1:$PORT for the second run"
+else
+    set +e
+    python3 "$ORPHAN"
+    orphan_rc=$?
+    set -e
+
+    # Wait for the capture the verdict is read from. The frame budget is early
+    # on purpose — see SHOT_FRAMES.
+    for _ in $(seq 120); do
+        [ -s "$shot2" ] && break
+        kill -0 "$jnext_pid" 2>/dev/null || break
+        sleep 0.5
+    done
+    stop_stub
+
+    # The precondition, asserted rather than assumed: the stub really did try to
+    # send to a connection the module had already closed. Without this line the
+    # rest of W2 would pass without having tested anything.
+    refused=$(grep -c "which is not open — answering ERROR" "$jlog2" || true)
+
+    if [ "$refused" -lt 1 ]; then
+        fail "W2 the precondition never happened — no AT+CIPSEND was refused in $jlog2, so nothing was tested"
+    elif [ "$orphan_rc" -ne 0 ]; then
+        fail "W2 the stub did not serve a client after the orphaned notification (see $jlog2)"
+    elif [ ! -s "$shot2" ]; then
+        fail "W2 no screenshot was written ($shot2), so the error area could not be checked"
+    else
+        red=$(bright_red "$shot2")
+        if [ "$red" -gt 0 ]; then
+            fail "W2 the stub reported a transport error after the orphaned notification ($red bright-red pixels in $shot2 — it is 'Last Error: TX Timeout'); esp_conn_id was not released when the peer went"
+        else
+            pass "W2 an unprompted notification to a departed client ($refused AT+CIPSEND refused) leaves the stub quiet — no error on screen — and still serving"
+        fi
+    fi
 fi
 
-exit "$suite_rc"
+# ===========================================================================
+
+log ""
+if [ "$failures" -ne 0 ]; then
+    log "Diagnosis:"
+    log "  jnext logs:   $jlog  $jlog2"
+    log "  screenshots:  $shot  $shot2"
+fi
+
+exit "$((failures > 0 ? 1 : 0))"

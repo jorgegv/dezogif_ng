@@ -177,6 +177,50 @@ that three times in one file.
 
 ---
 
+## A boundary the test data never reached, and a resource never released
+
+Two findings from one review of the ESP transport. Different bugs, the same
+blind spot: **the evidence only ever visited the easy half of the state space.**
+
+**1. Every payload arrived in one piece, so reassembly was never run.** jnext
+frames inbound TCP into `+IPD` chunks of at most 2048 bytes
+(`esp01/include/esp01/esp_at.h:448`). The conformance sweep's largest loopback
+was 1024. So the code that stitches a command back together across several
+headers — the most novel code in the change — was executed by nothing, and the
+suite was green. It happened to be correct (2000/2048/2049/3000/4096/8192 all
+round-tripped when someone finally tried them), which is worse rather than
+better: a green suite that cannot reach the interesting case will stay green
+through the change that breaks it.
+
+**Fix.** Sizes that straddle the boundary — 2047, 2048, 2049 — plus 4096 for
+more than one split. **Lesson: when a layer below you has a magic number, put
+test data on both sides of it.** The number was in a header file the whole time.
+
+**2. `esp_conn_id` was set and never cleared.** Replies are addressed to the
+connection the last `+IPD` came from. Nothing reset that when the peer went, so
+after any disconnect the id of a dead connection persisted for the rest of the
+session, and every *unprompted* notification — the M1 button, or a leftover
+`RST 0` — was aimed at it. `AT+CIPSEND` on a closed cid answers `ERROR`; the
+code waited only for `>`, so it timed out, reset the call stack via
+`drain_main`, discarded the notification, and reported **"Last Error: TX
+Timeout"** on a machine with nothing wrong with it.
+
+Every test passed, because every test was a client that connected, spoke, and
+whose *responses* therefore always had a live id to go to. Nothing exercised
+"the stub speaks first, and to nobody".
+
+**Fix.** Treat the module's `ERROR` as what it is — the peer has gone — clear
+the id, drop the message, and return quietly. Chosen over parsing
+`<id>,CLOSED` because `ERROR` covers every reason a connection stops working at
+one point in the code, rather than the one case a parser was written for.
+
+**Lesson: for any handle taken from a peer, write down where it is released
+before writing where it is used.** And for the test: the failing case is the one
+where *nothing external is driving* — those are the states a
+request/response test suite can never enter, and they need a check of their own.
+
+---
+
 ## Enumerating a control flow's exits by reading the ones you expected
 
 **Symptom.** With the ESP transport, `CMD_LOOPBACK` produced no reply — and then

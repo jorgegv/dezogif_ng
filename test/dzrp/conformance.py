@@ -178,15 +178,35 @@ def chk_loopback(d):
     return PASS, "32 bytes round-tripped unchanged"
 
 
+# Sizes for the loopback boundary sweep, and every one of them is there for a
+# reason:
+#
+#   0, 1        empty and minimal
+#   255, 256    a byte counter's boundary
+#   1024        comfortably past any small internal buffer
+#   2047..2049  THE TRANSPORT CHUNK BOUNDARY. jnext splits inbound TCP into
+#               `+IPD` frames of at most MAX_IPD_CHUNK = 2048 bytes
+#               (esp01/include/esp01/esp_at.h:448), so anything larger arrives
+#               as SEVERAL headers and the remote has to reassemble across them.
+#               Real traffic crosses this routinely — DeZog pushes 8-16 KB per
+#               CMD_WRITE_BANK when it loads a .nex — and the first version of
+#               this list stopped at 1024, so every payload in the WiFi
+#               transport's evidence had arrived in a single frame and its
+#               reassembly path was untested.
+#   4096        more than two frames, so a remote that handles exactly one split
+#               is not mistaken for one that handles any number.
+LOOPBACK_SIZES = (0, 1, 255, 256, 1024, 2047, 2048, 2049, 4096)
+
+
 def chk_loopback_sizes(d):
-    """Boundaries, including empty and past any plausible internal buffer."""
+    """Boundaries, including empty, the transport's frame split, and past it."""
     talk(d, dzrp.CMD_INIT, dzrp.init_payload())
-    for n in (0, 1, 255, 256, 1024):
+    for n in LOOPBACK_SIZES:
         payload = bytes((i * 7 + n) & 0xFF for i in range(n))
         got = talk(d, dzrp.CMD_LOOPBACK, payload)
         if got != payload:
             return FAIL, "%d bytes came back as %d and differ" % (n, len(got))
-    return PASS, "exact at 0, 1, 255, 256 and 1024 bytes"
+    return PASS, "exact at " + ", ".join(str(n) for n in LOOPBACK_SIZES) + " bytes"
 
 
 def chk_sequence(d):

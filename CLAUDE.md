@@ -159,7 +159,9 @@ strongest:
      **Scope limit, do not over-read it: T6 never resumes.** No DZRP client attaches, so
      the stub idles in `main_loop`, whose `transport_byte_available` poll returns immediately and
      whose `jp nz,cmd_loop` therefore never fires — `cmd_loop` and its blocking `transport_wait_rx`
-     are never reached. The frame limit ends the run. The
+     are never reached. ("Returns immediately" is a statement about the **serial** build, which T6
+     runs. The ESP transport's poll can spend up to ~100 ms synchronising when the module puts an
+     unsolicited line on the wire — see `transport_esp.asm`.) The frame limit ends the run. The
      exit path, `backup.asm` and the **return-to-debuggee half of stackless NMI** are therefore
      untested — only the entry side is. Closing that needs issue #2's protocol suite, not another
      screenshot.
@@ -186,7 +188,11 @@ strongest:
    echoed by a fixture that is not the debugger. **W1** is the wait for the stub's own
    `AT+CIPSERVER` listener to appear, which can only happen after the NMI was taken, `MAIN` was
    relocated, UART0 came up at 115200 and `AT+CIPMUX=1` / `AT+CIPSERVER=1,11000` were accepted.
-   Then the suite's own checks. **Result 2026-08-04: W1 pass, 7 passed / 1 failed of 8.** The one
+   Then the suite's own checks — whose loopback sweep runs past jnext's 2048-byte `+IPD` split, so
+   the transport's reassembly across frames is covered rather than assumed. A second run adds
+   **W2**: an unprompted `NTF_PAUSE` aimed at a client that has gone must leave the stub quiet
+   (no error on its screen) and still serving, instead of parking on a TX timeout.
+   **Result 2026-08-04: W1 and W2 pass, 7 passed / 1 failed of 8.** The one
    red is **C2**, and it is pre-existing rather than transport work: `cmd_init` reads the remote's
    program name until a NUL and ignores the frame's length field, so a length that disagrees with
    the payload desynchronises silently instead of being rejected. `src/commands.asm` is untouched

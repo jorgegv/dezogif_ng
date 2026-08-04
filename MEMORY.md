@@ -305,6 +305,57 @@ sequence mismatch on the *following* check, i.e. the symptom appeared one check
 away from the cause. Found by reading jnext's `esp01=trace` log against the
 source, not by reasoning about it.
 
+**Two things the independent review rejected, both real, both fixed and both
+now defended by a test.**
+
+1. **The `+IPD` reassembly path had no committed test.** jnext splits inbound
+   TCP at `MAX_IPD_CHUNK = 2048` (`esp_at.h:448`), and the loopback sweep
+   stopped at 1024 — so *every* payload in the transport's evidence had arrived
+   in a single frame, and the most novel code in the diff was never executed by
+   anything. The reviewer ran 2000/2048/2049/3000/4096/8192 by hand and all six
+   round-tripped, so the code was right; what was missing was the standing
+   check. The sweep now runs 2047/2048/2049/4096, straddling the boundary
+   rather than jumping over it. Real traffic crosses this constantly —
+   `CMD_WRITE_BANK` pushes 8-16 KB per bank when DeZog loads a `.nex`.
+
+2. **`esp_conn_id` was never cleared, which broke the NMI-button fallback.** It
+   was set by an inbound `+IPD` and nothing ever reset it, so after a client
+   disconnected the id of a closed connection survived for the rest of the
+   power-on session. Every later *unprompted* `NTF_PAUSE` — the M1 button, or a
+   leftover `RST 0` through `breakpoints.asm` — was addressed to it, got
+   `ERROR` from `AT+CIPSEND`, waited for a `>` that could not come, and diverted
+   to `drain_main`, which discarded the notification and painted **"Last Error:
+   TX Timeout"** on a machine with nothing wrong with it. Plan §4.3 calls the
+   button "always available"; it silently stopped being so after the first
+   disconnect.
+
+   **Fixed by reading `AT+CIPSEND`'s refusal rather than by parsing
+   `<id>,CLOSED`**, and the choice matters: `ERROR` covers *every* reason a cid
+   stops being usable — closed by the peer, closed by the module, never opened —
+   at one point in the code, where a `CLOSED` parser only covers the one case it
+   was written for and adds a second pattern to the RX hot path. So
+   `esp_wait_prompt` now matches `'>'` **or** `"ERROR"`, and on `ERROR` the id
+   goes back to 0, which is the "nobody to send to" state `transport_flush`
+   already discards in.
+
+   **The residual is stated rather than fixed:** a client that has reconnected
+   but not yet sent anything is invisible, because only an inbound `+IPD`
+   refreshes the id, so an unprompted notification in that window still goes
+   nowhere. Closing it needs `<id>,CONNECT` tracking, which belongs with M3's
+   reconnect work.
+
+**The test for (2) was shown failing first, which is the only reason it is
+worth anything.** Bench check **W2**: a client sends `CMD_CONTINUE` and closes
+in the same breath; with nothing loaded the debuggee resumes at PC=0 and runs
+into a stray `RST 0` (measured: address 0x6417, break reason 2), so the stub
+sends an `NTF_PAUSE` to a connection that has gone — no button press and no
+timing luck required. W2 asserts the *precondition* from jnext's own log (an
+`AT+CIPSEND` really was refused), that the stub still serves a new client, and
+that its screen reports no error, counted as **bright-red pixels** — jnext
+renders non-bright components as 182 and bright as 255, and `out (BORDER),a`
+carries no bright bit, so the error text is the only thing on that screen that
+can be exactly `(255,0,0)`. Pre-fix: **824**. Post-fix: **0**.
+
 **What is NOT done, and none of it is hidden.**
 
 - **`AT+CIFSR` is not sent and no address is shown.** Reporting an address means
@@ -313,8 +364,15 @@ source, not by reasoning about it.
   baud line and joy-port selector, both meaningless there.
 - **A re-init while already listening reports an error.** Symbol Shift + NMI
   runs `transport_init` again and `AT+CIPSERVER=1,<port>` answers ERROR when a
-  server is up. The link keeps working; the screen lies. Clearing it needs a
-  wait that accepts OK *or* ERROR, which nothing else here needs.
+  server is up. The link keeps working; the screen lies. `esp_wait_prompt` now
+  shows how to fix it — the same two-pattern shape applied to `esp_command_ok` —
+  so this is a small follow-up rather than an open question.
+- **`transport_byte_available` can stall `main_loop` for ~100 ms** when the
+  module puts an unsolicited line on the wire (`<id>,CONNECT` is the common
+  one): it scans for a header that is not there and gives up on the RX timeout.
+  Upstream's is an O(1) status read. Bounded, free while idle, and worth knowing
+  before anything is built on "that poll returns immediately", which is a
+  statement about the serial build.
 - **Bring-up failure shows as "RX Timeout"**, because adding an error code
   means adding a string and a table entry to `data_const.asm` — common code
   whose bytes the UART gate protects. `transport_activate` carries the flag past

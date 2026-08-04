@@ -21,6 +21,16 @@ appear on `127.0.0.1:11000` (that wait is check **W1**, and nothing else in this
 ever shown the ESP being brought up by the stub rather than by a fixture), and then runs the
 suite against it.
 
+It then does a **second** emulator run for check **W2**, which is about the transport rather than
+the protocol: a client connects, sends `CMD_CONTINUE` and closes in the same breath, the debuggee
+runs into a stray `RST 0`, and the stub tries to send an `NTF_PAUSE` to a connection that is
+already gone. W2 asserts three things — that the module really did refuse the `AT+CIPSEND`
+(read from jnext's own log, so a run where the situation did not arise fails instead of passing
+vacuously), that the stub still serves a new client afterwards, and that **its screen reports no
+error**, counted as bright-red pixels. Before the fix that count was 824: `Last Error: TX Timeout`.
+Its own run because it deliberately crashes the debuggee and because the suite would repaint the
+screen its verdict is read from.
+
 Extra arguments go through `DZRP_ARGS`:
 
     make test-dzrp REMOTE=tcp:127.0.0.1:11000 \
@@ -46,10 +56,10 @@ failed, 2 unsupported of 8**.
 
 ## Result against our own stub (2026-08-04, first ever)
 
-`make test-dzrp-stub`, WiFi ROM under jnext 0.99.118 — **W1 pass, then 7 passed, 1 failed, 0
+`make test-dzrp-stub`, WiFi ROM under jnext 0.99.118 — **W1 and W2 pass, and 7 passed, 1 failed, 0
 unsupported of 8**. C1, C3, C4, C5, C6, C7 and C8 all green: version negotiation, the absent
-preamble, loopback round-trips exact at 0/1/255/256/1024 bytes, sequence echo across five
-commands, a 37-byte register block, and a 64-byte memory write/read round trip.
+preamble, loopback round-trips exact at 0/1/255/256/1024/2047/2048/2049/4096 bytes, sequence echo
+across five commands, a 37-byte register block, and a 64-byte memory write/read round trip.
 
 **C2 is red, and it is not a transport defect.** `cmd_init` reads the remote's program name from
 the stream **until a NUL**, ignoring the frame's length field entirely (`commands.asm`,
@@ -81,10 +91,20 @@ running it, so the shell kills itself — this cost two aborted commands before 
 | C2 | the length conventions are as specified — see below |
 | C3 | the frame preamble, reported and optionally asserted |
 | C4 | `CMD_LOOPBACK` round-trips 32 bytes unchanged |
-| C5 | `CMD_LOOPBACK` is exact at 0, 1, 255, 256 and 1024 bytes |
+| C5 | `CMD_LOOPBACK` is exact at 0, 1, 255, 256, 1024, **2047, 2048, 2049** and 4096 bytes |
 | C6 | sequence numbers echo back across consecutive commands |
 | C7 | `CMD_GET_REGISTERS` returns a register block DeZog can index |
 | C8 | memory write/read round-trip |
+
+**C5's sizes straddle a transport boundary, and that is the point of three of them.** jnext frames
+inbound TCP into `+IPD` chunks of at most **2048** bytes
+(`src/esp01/include/esp01/esp_at.h:448`), so anything larger reaches the remote as *several*
+headers and has to be reassembled. The first version of this sweep stopped at 1024, which meant
+every payload in the WiFi transport's evidence had arrived in a single frame and the reassembly
+path — the most novel code in that transport — was never executed by a committed test. Real
+traffic crosses it constantly: DeZog pushes 8-16 KB per `CMD_WRITE_BANK` when it loads a `.nex`.
+2047/2048/2049 pin the boundary itself and 4096 forces more than one split, so a remote that
+handles exactly one is not mistaken for one that handles any number.
 
 **A partial remote is legitimate.** DZRP has 29 commands and remotes implement different subsets —
 CSpect's plugin does not implement `CMD_LOOPBACK` at all, and closes the connection when it sees

@@ -5,6 +5,57 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-04 — WiFi mode's UI is a connect string, not a selector
+
+**Decided (user).** In WiFi mode the stub's screen shows a line of the shape:
+
+    dezogif_ng remote debugger active. Connect at: 192.168.1.23:10000
+
+**Why this closes something.** Extracting the transport interface left one
+thing still leaking above it, and it was UI rather than protocol: the joy-port
+selector (`uart_joyport_selection` in `data.asm`, `read_key_joyport` in
+`ui.asm`, the 1/2/N key handling in `main.asm`) and the baud-rate display
+(`BAUDRATE`, and the strings in `data_const.asm`). Those are meaningful in UART
+mode and meaningless in WiFi mode, so the question was never "how do we hide
+them" but "what replaces them". This answers it.
+
+**What follows, for whoever implements it.**
+
+- The two modes need *different* UI, not a shared one with blanks. UART mode
+  keeps upstream's selector unchanged; WiFi mode draws a connect string. That
+  makes `show_ui` a third thing the assembly-time switch selects, alongside the
+  byte stream and the lifecycle — the transport interface grows a UI half.
+- The IP is **not** known at assembly time. It comes from the ESP at run time
+  (`AT+CIFSR`), so the string is composed, not a constant, and the ESP bring-up
+  has to happen before the UI can be drawn — which orders M1's WiFi work:
+  bring-up first, then UI, not the reverse.
+- The port is ours to choose and belongs with the other build-time settings.
+  DeZog's `cspect` remote defaults to 11000; the example above says 10000
+  (ZEsarUX's). Pick one deliberately and write it in both the ROM and the
+  `launch.json` example in Appendix B, because a mismatch there fails as a
+  silent connection refusal.
+
+**Not decided here.** Exact wording, layout, and what the screen shows while
+the ESP is still coming up or has failed — that last one matters more than it
+sounds, since a stub that cannot reach the network must say so on screen
+rather than appear idle (plan §M3).
+
+---
+
+## 2026-08-04 — Pushing is authorised per request, and 2026-08-04's was not standing
+
+**Recorded so it is not over-read later.** The user authorised a push on
+2026-08-04, covering the five commits pending at that moment (through
+`9ccaa93`). That was permission for that push, not a standing grant.
+
+CLAUDE.md's rule is unchanged and still absolute: **never push without
+explicit authorisation**, every time. A future session finding pushes in the
+history must not infer that pushing is now routine. The same applies to
+`DEZOGIF_ALLOW_MAIN_WRITE=1` — every merge to `main` in this history was
+individually authorised.
+
+---
+
 ## 2026-08-03 — The transport interface: subroutines, plus one macro
 
 **Decided.** The seam M1 needs is `src/transport.asm`, which includes an

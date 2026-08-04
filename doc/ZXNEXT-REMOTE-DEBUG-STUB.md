@@ -549,6 +549,12 @@ assembly time. Keep break-on-NMI-button. Success, and both halves are required:
 - **UART mode** — still byte-for-byte equivalent in behaviour to upstream dezogif. This is the
   cheap proof that the interface did not leak, and it is not optional.
 
+The transport interface also has a **UI half**, settled 2026-08-04: UART mode keeps upstream's
+joy-port selector, WiFi mode draws a connect string —
+`dezogif_ng remote debugger active. Connect at: <ip>:<port>` — composed at run time, because the
+address comes from the ESP (`AT+CIFSR`) and is not known at assembly time. That orders the WiFi
+work: bring-up first, then UI. See MEMORY.md.
+
 ### M2 — Asynchronous break
 Add the Copper-driven periodic NMI poll (§4.3). Success: `CMD_PAUSE` from DeZog stops a freely
 running program, and breakpoints can be set without pressing anything.

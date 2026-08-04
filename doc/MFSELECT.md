@@ -26,7 +26,7 @@ PC, which is the whole thing this program exists to avoid.
 ## Building
 
     make mfselect            # build/mfselect.nex + BOTH ROMs + both .sum files
-    make test-mfselect       # the headless bench, 6 runs, 9 checks
+    make test-mfselect       # the headless bench, 6 runs, 10 checks
 
 `make mfselect` builds both variants whatever `TRANSPORT` it is invoked with, by recursing into
 itself once per variant — the two ROMs otherwise have deliberately separate output paths so that
@@ -174,9 +174,36 @@ The two fields answer two different questions, and mfselect uses each for one of
 An unrecognised variant reads as **ours but unnamed** (`dezogif_ng ROM`), never as one of the two.
 Guessing would print a false statement about the card, which is the class of thing this block
 exists to stop; and because the guard keys off the prefix, a future third transport is protected
-by an mfselect that predates it. Bench check M9 asserts the naming half: with the UART ROM
-installed and with the WiFi ROM installed, the status row must differ in exactly the four columns
-of the transport name and nowhere else.
+by an mfselect that predates it.
+
+### Checking the label, not just the difference
+
+Bench check **M9** asserts the naming half, and getting it right took two attempts — the first
+version was rejected in review and the reason is worth keeping.
+
+That version compared the two runs *against each other*: install the WiFi ROM, install the UART
+ROM, and require the status rows to differ in exactly the four columns of the transport name. It
+passes on a correct build. **It also passes when the two labels are swapped** — each variant
+reporting the other's name still differs in exactly those columns. The reviewer swapped the return
+strings in `installed_name()`, rebuilt, and the bench stayed green at 9/9. Two runs disagreeing is
+not either of them being right, and nothing else on this bench reads the screen: M3 and M8 assert
+on the bytes of a file, which say nothing about what was displayed about them.
+
+**M9 now judges each screenshot on its own, against ground truth already inside it.** The menu
+draws `dezogif_ng WiFi (ESP-01)` and `dezogif_ng UART (joy port)` whatever is installed, in the
+same ROM font and the same attribute as the status row — so every screenshot contains a correct
+rendering of *both* labels. The status row's transport field must match the **right** menu entry
+and differ from the other. A swap cannot satisfy that, and neither can a single label used for
+both. No OCR and no committed reference bitmap: the picture checks itself.
+
+Every column involved falls out of one fact — all these strings begin with the 11 characters
+`dezogif_ng ` — so the transport field is 11 cells into each: status row 2, columns 23-26; menu
+rows 6 and 7, columns 13-16.
+
+**M10** keeps the cross-run half, which is still worth something on its own: nothing *else* on that
+row may differ between the two runs. M9 reads four cells; M10 covers the other twenty-eight, so a
+name of a different length — which would shift the build number after it — cannot hide behind a
+correct transport field.
 
 **Existence of `original.rom` is not proof of a backup**, and assuming it was cost a REJECT in
 review. Opening a file with `CREAT_TRUNC` creates the directory entry before the first byte is

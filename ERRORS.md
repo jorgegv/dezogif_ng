@@ -5,6 +5,48 @@ attempting similar logic.
 
 ---
 
+## "These two differ" is not "this one is right"
+
+**Symptom.** A green check that could not fail on the bug it was written for.
+The mfselect bench's M9 was added to prove the program names the installed
+transport correctly on screen (issue #5). It compared the WiFi-installed run's
+status row against the UART-installed run's and required them to differ in
+exactly the four columns of the transport name. It passed. An independent
+reviewer then **swapped** the two strings in `installed_name()` — every ROM
+labelled as the other variant — rebuilt, and the bench passed **9/9, M9
+included**.
+
+**Cause.** The check knew nothing about *either* row on its own. Two labels
+exchanged differ in exactly the columns it demanded, so the assertion was
+satisfied by the bug. No other check covered it: the file-based ones (M3, M8)
+assert on the bytes of the installed ROM, which say nothing about what the
+screen claims about them.
+
+**And the control that was run did not reveal it, which is the transferable
+part.** The author's control made `installed_name()` return **one** string for
+both variants, and M9 duly went red. That is the *degenerate* break — the labels
+collapsing — and passing it says nothing about the *adversarial* one, the labels
+crossing. Two directions, and only one was probed.
+
+**Fix.** Ground truth per screenshot, needing no OCR and no committed reference
+bitmap: mfselect's menu renders `dezogif_ng WiFi (ESP-01)` and
+`dezogif_ng UART (joy port)` whatever is installed, in the same ROM font and the
+same attribute as the status row, so **both** correct labels are already in
+every picture. M9 now requires each run's status field to match the *right* menu
+entry and to differ from the other, judged inside one image. Verified against
+both breaks: swap → M9 red; one-label-for-both → M9 red; restored → green.
+`test/cell-diff.py` grew a `cells` mode for it, and the old cross-run assertion
+survives as M10, which still earns its place by covering the other 28 columns.
+
+**Lesson.** When a check compares two observations, ask what it establishes
+about *either one alone*. If the answer is "nothing", it is a **consistency**
+check and not a **correctness** check, whatever its name says — and it will stay
+green through any bug that keeps the two consistently wrong. Related, and this
+file already carries both: "the screen changed" is not "the stub took over", and
+a guard tested only in its easy case is a guard whose hard case is untested.
+
+---
+
 ## A checksum answers "which build", never "whose ROM"
 
 **Symptom.** None visible, again — and again it was the *guard* that failed

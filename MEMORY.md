@@ -44,19 +44,59 @@ transport written by someone who never touches mfselect.
 - **M8** — the fourth menu entry reaches the file it names, two Downs from the
   top. Control: the UART entry pointed at the WiFi pair — the copy-paste bug —
   and **M3 passed while M8 failed**, naming the wrong CRC.
-- **M9** — mfselect *distinguishes* them on screen, which no file on the card
-  can show. Control: `installed_name()` made to return one string for both, and
-  **M9 failed with an empty differing-column set while everything else stayed
-  green.**
+- **M9** — mfselect names the installed variant **correctly** on screen, which
+  no file on the card can show. **This one was got wrong first, rejected in
+  review, and rebuilt; see below.**
+- **M10** — and nothing else on that row differs between the two runs.
 
-**M9 is the bench's first pixel assertion, and deliberately not a percentage.**
-Two status lines differing in four characters differ in ~0.05% of the screen,
-which no threshold separates from noise — the exact failure ERRORS.md records
-for T4. `test/cell-diff.py` reports the differing 8x8 **character cells** of one
-row instead, so the check names the columns allowed to differ: 23-26, derived
-from `print_at(1, ROW_STATUS, "Installed: ")` and the name at column 12. It
-fails on an empty set (identical lines), on a wider one (a different string, or
-a row never drawn), and on a build-number column moving.
+**M9's first version was REJECTED, and the correction is the useful part of
+this entry.** It compared the two runs *against each other*: WiFi installed vs
+UART installed, and the status rows had to differ in exactly the four columns of
+the transport name. The control I ran was `installed_name()` returning **one**
+string for both variants, which failed it with an empty differing-column set —
+and I reported that as evidence the check discriminated. It does not. The
+reviewer **swapped** the two return strings, so each variant reported the
+other's name, rebuilt, and the bench passed **9/9 with M9 green**: two labels
+exchanged still differ in exactly those columns.
+
+The degenerate control probed only the case where the labels **collapse**, and
+passing that says nothing about the case where they **cross**. Nothing else on
+the bench covers it either — M3 and M8 assert on the bytes of the installed
+file, which say nothing about what the screen claims about them.
+
+**The fix is ground truth internal to each screenshot, and it needed no new
+asset.** mfselect's menu renders `dezogif_ng WiFi (ESP-01)` and
+`dezogif_ng UART (joy port)` whatever is installed, in the same ROM font and
+under the same attribute as the status row — so both correct labels are already
+in every picture. M9 now requires each run's status field to **match the right
+menu entry and differ from the other**, judged inside one image. A swap cannot
+satisfy that; nor can one label used twice, so the new check subsumes the old
+control instead of trading one break for another. Both were re-run: **swap → M9
+red, M10 green; one-label → M9 and M10 both red; restored → 10/10.**
+
+Every column falls out of one fact — all these strings begin with the 11
+characters `dezogif_ng ` — so the transport field is 11 cells in: status row 2
+columns 23-26, menu rows 6 and 7 columns 13-16. Pixel comparison means the
+attributes must match too, and they do: the status row and the *unselected* menu
+rows are both `ATTR_BODY`, and the selected row in these runs is row 5.
+
+**M10 keeps what M9 gave up.** M9 reads four cells; M10 covers the other
+twenty-eight, so a name of a different length — shifting the build number after
+it — cannot hide behind a correct transport field.
+
+**Neither is a percentage, deliberately.** Two status lines differing in four
+characters differ in ~0.05% of the screen, which no threshold separates from
+noise: the exact failure ERRORS.md records for T4.
+
+**The lesson, and it is a new shade of one this project keeps paying for.**
+ERRORS.md already says a fix never tested by *removing* it is a correlation, and
+that "the screen changed" is not "the stub took over". This is the third shape:
+**a control that breaks a thing in the easiest direction proves only that
+direction.** Collapsing two labels into one is the degenerate break; exchanging
+them is the adversarial one, and only the second distinguishes "these differ"
+from "this one is right". When a check compares two observations, ask what it
+knows about *either* of them on its own — and if the answer is nothing, it is a
+consistency check, not a correctness check.
 
 **M6 was moved onto the WiFi ROM at the same time**, and that is not cosmetic.
 It had installed the UART ROM, so the guard control above turned M6 red too —

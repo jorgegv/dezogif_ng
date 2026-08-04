@@ -71,12 +71,12 @@ check-reproducible` verifies that a pinned `BUILD_TIME` yields a byte-identical 
 make test-mfselect
 ~~~
 
-runs mfselect's own bench: six headless jnext runs, nine checks, asserting mostly on the files
+runs mfselect's own bench: six headless jnext runs, ten checks, asserting mostly on the files
 pulled back off the SD image rather than on pixels — that the stock ROM is captured
 byte-identically, that the on-Next and host checksums agree, that each of our two ROMs installs,
-that mfselect refuses to mistake *either* of them for the original, and that a backup left short by
-an interrupted capture is detected and taken again rather than trusted. It is not part of
-`make test`.
+that mfselect refuses to mistake *either* of them for the original, that the ROM it says is
+installed is the one that is, and that a backup left short by an interrupted capture is detected
+and taken again rather than trusted. It is not part of `make test`.
 
 The Z80 unit tests under `src/unit_tests/` are DeZog-driven and need VS Code; they are a manual
 layer.

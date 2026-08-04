@@ -174,15 +174,18 @@ strongest:
      screenshot.
    Screen comparison is a **percentage of differing pixels** (`test/screen-diff.py`), not a byte
    compare: NextZXOS idling changes 0.01% of the screen and that once produced a false PASS.
-4. **`make test-mfselect`** — the mfselect bench, 6 headless runs, 9 checks, asserting on files
+4. **`make test-mfselect`** — the mfselect bench, 6 headless runs, 10 checks, asserting on files
    pulled back off the SD image rather than on pixels. Deliberately **not** part of `make test`:
    mfselect is separate tooling and is not in `make all` either. Since #5 it covers **both** of our
    ROMs: each installs (M3, M8) and the first-run guard refuses **each** (M4, M7) — a guard that
    recognised only one variant would destroy the stock ROM for whoever chose the other, and no
-   file-based check sees that. **M9 is the bench's one pixel assertion** and is not a percentage:
-   with each variant installed in turn, the status row must differ in exactly the four columns of
-   the transport name (`test/cell-diff.py` reports differing character cells of one row; a
-   percentage cannot separate four characters from noise). See `doc/MFSELECT.md`.
+   file-based check sees that. **M9 and M10 are the bench's only pixel assertions** and neither is
+   a percentage, which could not separate four characters from noise. **M9 asks whether the label
+   is right, not merely whether the two runs disagree** — the status row's transport field must
+   match the *menu's own rendering* of that same label, in the same screenshot, and differ from the
+   other entry. The distinction is not academic: an earlier M9 compared the two runs against each
+   other, and two labels **swapped** passed it. M10 keeps the cross-run half — nothing else on that
+   row may differ. Both use `test/cell-diff.py`. See `doc/MFSELECT.md`.
 4b. **`make test-esp`** — the M0(b) ESP server bench: one headless jnext run with
    `test/esp_server.asm` injected, and a TCP client (`test/esp-echo-client.py`) connecting to the
    port the *guest* opened through the emulated ESP-01. Four checks, and they assert on **bytes

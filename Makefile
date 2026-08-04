@@ -226,6 +226,26 @@ test-dzrp:
 	  exit 2; }
 	python3 $(TEST)/dzrp/conformance.py --remote "$(REMOTE)" $(DZRP_ARGS)
 
+# The only bench here that needs a ZX Spectrum Next. It is not part of `make
+# test` and never can be: `make test` promises no external dependencies, and
+# this one depends on a machine, a network, and a person to press the NMI
+# button. doc/HARDWARE-TESTING.md carries the procedure and the on-screen
+# observations the PC cannot make.
+#
+# NOTE the description line must be the LAST `# ` line before the target — the
+# help rule keeps the last one it sees, so a rationale block goes ABOVE it.
+#
+# Run the hardware bench against a real Next over WiFi (NEXT_IP=<ip>)
+test-hardware:
+	@test -n "$(NEXT_IP)" || { \
+	  echo "usage: make test-hardware NEXT_IP=<ip>   (the Next's address, port 11000)"; \
+	  echo "  the stub does not show its IP yet — the connect-string UI is M1's last item."; \
+	  echo "  Get it from wifi2.bas on the Next, or from the router's lease table."; \
+	  echo "  Read doc/HARDWARE-TESTING.md first: most of what hardware can tell us is"; \
+	  echo "  an observation on the Next's screen, not something a socket can reach."; \
+	  exit 2; }
+	python3 $(TEST)/hardware-check.py --host "$(NEXT_IP)" $(HW_ARGS)
+
 # Increment the ROM build number in version.yaml (one bump per merge to main)
 bump:
 	@cur=$$(awk '/^build_number:/ { print $$2 }' $(VERSION_FILE)); \

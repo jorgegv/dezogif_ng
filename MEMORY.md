@@ -57,6 +57,42 @@ apply); a compiled-in checksum constant; 8.3-unsafe names like
 
 ---
 
+## 2026-08-04 — jnext's ESP server: inbound connection ids start at 1, not 0
+
+**Recorded from the jnext implementer**, relayed by the user 2026-08-04, about
+the server mode delivered by [jnext#210]. Not a decision of ours — a constraint
+we have to build against, written down before it is needed.
+
+**The fact.** Inbound connection ids start at **1**. Slot 0's transport is the
+only object that can serve an outbound `AT+CIPSTART`, so handing slot 0 to a
+peer would cost the guest its outbound capability. That leaves **four** inbound
+slots rather than ESP-AT's five, and the numbering is visible to anything
+reading `<id>,CONNECT`.
+
+**Why this is not cosmetic.** M1's WiFi transport parses `+IPD,<id>,<len>:` and
+prefixes every reply with `AT+CIPSEND=<id>,<len>`. A parser written from the
+Espressif documentation would naturally expect the first inbound connection to
+be id 0 — and against jnext it will never see one. The dangerous version is
+worse than the obvious one: a stub that *assumes* 0 and hardcodes it will send
+its replies to the outbound slot, producing no error, no data, and a debug
+session that looks like a DZRP bug. Plan §10 already lists `+IPD` framing as
+the risk that "looks like a protocol bug"; this is its specific shape.
+
+**What to do.** Take the id from the `+IPD` header and echo that value back on
+`AT+CIPSEND`. Never assume, never hardcode. M0(b)'s spike exists precisely to
+isolate the parser, so that is where this gets proven.
+
+**Deliberately not claimed.** Whether real ESP-AT firmware also starts inbound
+ids at 1. The explanation given is a consequence of reserving slot 0 for
+outbound, which is a **jnext design choice**, so hardware may well number
+differently. Do not promote this to a hardware fact without measuring it — the
+same mistake ERRORS.md records for the UART/ESP mux, where a plausible
+derivation was exactly backwards.
+
+[jnext#210]: https://github.com/jorgegv/jnext/issues/210
+
+---
+
 ## 2026-08-04 — WiFi mode's UI is a connect string, not a selector
 
 **Decided (user).** In WiFi mode the stub's screen shows a line of the shape:

@@ -106,12 +106,15 @@ the debugger's side: "WiFi is not set up" and "the stub's transport is broken".
 **Once per machine, not once per session.** The ESP-01 stores credentials in its own flash and
 reconnects by itself at power-on.
 
-**Confirmed on real hardware, 2026-08-04.** A Next that has been through the wizard comes up
+**Reported on real hardware, 2026-08-04.** A Next that has been through the wizard comes up
 already associated on subsequent power-ons — the module is associated and ready before anything
 else runs, exactly as jnext models it. Set WiFi up once and forget it.
 
-Everything else on this page about the debugger is still emulator-only; this particular claim is
-not.
+That is a first-hand report of one machine rather than something we measured and can re-run, which
+is a weaker thing than the rest of this page's "verified" claims (those are greps, source reads and
+emulator runs anyone can repeat). It is still the best evidence available — no emulator can produce
+it — and the design rests on it, so it is worth saying exactly what it is. If your Next behaves
+differently, that is worth reporting.
 
 ---
 
@@ -196,6 +199,6 @@ This project's rule is that a derived claim is a hypothesis. So, explicitly:
 | Its menu options, and that v1 vs v2 differ on `CIPDNS_CUR?`/`CIPDNS?` | **verified** — menu read off a real run, not from the program's strings |
 | `.UART` / `.ESPBAUD` / `.ESPUPDATE` exist and what they are for | **verified** — read from the image |
 | The wizard runs under jnext with `--esp`, and which half of it works | **verified** — measured, jnext 0.99.118 |
-| The ESP persists credentials and auto-reconnects | **verified on hardware** 2026-08-04 — the one claim here that is |
+| The ESP persists credentials and auto-reconnects | **reported on hardware** — user, one machine, 2026-08-04. First-hand, and the only claim here with any hardware behind it; not independently reproducible by us |
 | The ESP-01 answers at 115200 until told otherwise | **inferred**, not measured — the plan's Appendix A carries the same claim at the same strength |
 | The stub's WiFi bring-up works on real hardware | **untested.** Nothing in this project has ever run on a real Next |

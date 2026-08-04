@@ -63,12 +63,19 @@ wizard's commands against jnext's dispatch table said it would die at startup
 on the unimplemented `AT+CWMODE=1`. It does not — unknown commands answer
 `ERROR` and the wizard shrugs them off. Running it is what showed that.
 
-**NOW MEASURED, and it was the last open assumption here.** The user confirmed
-on real hardware (2026-08-04) that their Next **comes up already associated**:
-once WiFi is set up, the ESP is associated and ready from then on, exactly as
-jnext models it. So the setup story really is **once per machine**, not once
-per boot, and the "verify, do not configure" design rests on a measured fact
+**NOW EVIDENCED ON HARDWARE, which is not quite the same as measured.** The
+user reports (2026-08-04) that their Next **comes up already associated**: once
+WiFi is set up, the ESP is associated and ready from then on, exactly as jnext
+models it. So the setup story is **once per machine**, not once per boot, and
+the "verify, do not configure" design rests on first-hand hardware evidence
 rather than on ESP-AT documentation.
+
+**Calibrated deliberately**, after a reviewer pointed out that the first draft
+tagged this "verified on hardware" and gave it the same rung as claims anyone
+can re-run with a grep or an emulator run. It is one machine, one reporter, no
+captured artefact. That is the strongest evidence obtainable — no emulator can
+produce it — and it is still weaker than a re-runnable check. The ladder now
+has a rung for it: **reported on hardware**.
 
 Note this does *not* re-promote the discarded third reason above. That reason
 is now true, but the decision never needed it and the lesson stands: it was
@@ -94,7 +101,7 @@ changes a ROM**.
 **That qualifier was added the same day, after the rule met its first
 counter-example** (user, 2026-08-04). The original wording was "one bump per
 merge", full stop, and the very next merge was documentation. Measured rather
-than argued: building both sides with `BUILD_TIME` and `build_number` pinned
+than argued: building both sides with `BUILD_TIME` and `BUILD_NUMBER` pinned
 gave a **byte-identical ROM**. Bumping there would have minted a new identity
 for a ROM that had not changed — asserting a difference that does not exist,
 which is precisely the opposite of what the number is for.

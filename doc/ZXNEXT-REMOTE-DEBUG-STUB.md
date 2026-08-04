@@ -745,7 +745,19 @@ design assumption without measuring it — see ERRORS.md on what deriving instea
 
 ## Appendix A — Verification status of claims in this document
 
-Facts checked directly against a primary source during the analysis:
+Facts checked directly against a primary source during the analysis.
+
+**Status tiers**, in descending order of what they entitle you to assume:
+
+- **verified** — checked against a primary source (VHDL, a spec, a source read) or produced by a
+  check anyone can re-run. The strongest, and the only tier you may build on without saying so.
+- **reported on hardware** — first-hand evidence from a real Next, but a single machine, a single
+  reporter, and no captured artefact we can re-run. Stronger than any emulator result for
+  hardware questions, weaker than anything above. Added 2026-08-04 because the ladder had no rung
+  for it and a claim was briefly filed one tier too high.
+- **inferred** — derived from documentation or reasoning, not observed here. Treat as a hypothesis;
+  ERRORS.md exists largely because these keep turning out backwards.
+- **estimate** — arithmetic or general knowledge, not measured.
 
 | Claim | Source | Status |
 |---|---|---|
@@ -772,7 +784,7 @@ Facts checked directly against a primary source during the analysis:
 | **The ESP can be brought up as a TCP server from Z80 and echo over a socket** | `make test-esp` E1-E4, jnext 0.99.118 | **verified** — M0(b) |
 | **The `+IPD` connection id must be read, not assumed** | same bench, broken deliberately: id hardcoded to `0` fails E2-E4, to `1` fails only E4 | **verified** |
 | jnext's inbound connection ids start at 1, not 0 | `esp_at.h` simplification 8a; observed as `accepted as cid 1` / `cid 2` | **verified for jnext** — hardware numbering remains **unverified** |
-| **A configured Next comes up already associated**, so the stub never needs to join a network | user's hardware, 2026-08-04 | **verified on hardware** — the first claim in this project that is |
+| **A configured Next comes up already associated**, so the stub never needs to join a network | user's own machine, reported 2026-08-04 | **reported on hardware** — a rung the verified/inferred ladder lacked. First-hand and load-bearing, but one machine, one reporter, no captured artefact, and nothing we can re-run |
 | Real ESP-AT firmware answers at 115200 until told otherwise | Espressif AT instruction set; jnext models baud as timing only | **inferred** — untested |
 | ESP TCP throughput in the tens of KB/s | general knowledge | **estimate** |
 | NMI poll costs ~100-200 T-states/frame | arithmetic, not measured | **estimate** |
@@ -801,7 +813,7 @@ happens.
 | A2 | PC | Build (or download) the stub's `enNextMf.rom` |
 | A3 | PC | SD card into the PC; back up `machines/next/enNextMf.rom`; copy the stub's over it |
 | A4 | Next | SD card back in. Confirm core ≥ 03.01.10 and Multiface enabled in the machine config |
-| **A5** | **Next** | **Get the Next onto WiFi**, with `/apps/wifi/setup/wifi2.bas`, and confirm it reports an IP address. **The stub never does this and holds no credentials** — see [WIFI-SETUP.md](WIFI-SETUP.md), which also covers what breaks it later. Once per machine — the ESP stores its own credentials, confirmed on hardware 2026-08-04 |
+| **A5** | **Next** | **Get the Next onto WiFi**, with `/apps/wifi/setup/wifi2.bas`, and confirm it reports an IP address. **The stub never does this and holds no credentials** — see [WIFI-SETUP.md](WIFI-SETUP.md), which also covers what breaks it later. Once per machine — the ESP stores its own credentials, reported on hardware 2026-08-04 |
 | A6 | PC | Give the Next a **static DHCP reservation** on the router — then its IP never moves and `launch.json` is written once |
 | A7 | PC | Write `launch.json` (§B.5) |
 

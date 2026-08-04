@@ -255,7 +255,7 @@ project as the demonstrated consumer** — never speculatively. See the plan §8
    The check is deliberately conservative. A touched `Makefile` may well leave the ROM identical;
    bumping anyway costs nothing, whereas *not* bumping when a ROM did change is the failure that
    matters — it leaves two different ROMs claiming to be the same build. If you want certainty
-   rather than a conservative answer, build both sides with `BUILD_TIME` **and** `build_number`
+   rather than a conservative answer, build both sides with `BUILD_TIME` **and** `BUILD_NUMBER`
    pinned and compare the bytes.
 
    One bump per merge, not per commit: the number answers "which build is on my card", and a user

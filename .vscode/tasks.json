@@ -28,11 +28,11 @@
             }
         },
         {
-            "label": "make unit_tests",
+            "label": "make unit-tests",
             "type": "shell",
             "command": "make",
             "args": [
-                "unit_tests"
+                "unit-tests"
             ],
             "problemMatcher": {
                 "owner": "sjasmplus",

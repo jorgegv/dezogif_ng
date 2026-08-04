@@ -71,10 +71,11 @@ check-reproducible` verifies that a pinned `BUILD_TIME` yields a byte-identical 
 make test-mfselect
 ~~~
 
-runs mfselect's own bench: three headless jnext runs asserting on the files pulled back off the SD
-image rather than on pixels — that the stock ROM is captured byte-identically, that the on-Next
-and host checksums agree, that installing works, and that mfselect refuses to mistake this
-project's ROM for the original. It is not part of `make test`.
+runs mfselect's own bench: three headless jnext runs, five checks, asserting on the files pulled
+back off the SD image rather than on pixels — that the stock ROM is captured byte-identically,
+that the on-Next and host checksums agree, that installing works, that mfselect refuses to mistake
+this project's ROM for the original, and that a backup left short by an interrupted capture is
+detected and taken again rather than trusted. It is not part of `make test`.
 
 The Z80 unit tests under `src/unit_tests/` are DeZog-driven and need VS Code; they are a manual
 layer.
@@ -119,9 +120,9 @@ Up/Down to move, ENTER to choose:
  Installed: official MF ROM
 
  Select ROM to install:
-   Official Multiface NMI ROM
-   dezogif_ng DZRP NMI ROM
-   Exit without changes
+  Official Multiface NMI ROM
+  dezogif_ng DZRP NMI ROM
+  Exit without changes
 
  Up/Down to move   ENTER to run
 ~~~

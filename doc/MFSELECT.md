@@ -11,7 +11,7 @@ Filed as [issue #1](https://github.com/jorgegv/dezogif_ng/issues/1).
 ## Building
 
     make mfselect            # build/mfselect.nex + build/dezogif.sum
-    make test-mfselect       # the headless bench, 4 checks
+    make test-mfselect       # the headless bench, 5 checks
 
 It is deliberately **not** part of `make all` or `make test`: `make all` builds the ROM
 deliverable, and mfselect is separate tooling.

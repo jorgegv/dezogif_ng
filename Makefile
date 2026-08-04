@@ -218,8 +218,12 @@ ASMFLAGS = --inc=$(SRC) --lstlab --fullpath \
 # build, and `test-mfselect` depends on it, so folding it away would make that
 # bench rebuild the Z80 unit tests for nothing.
 #
-# Build everything: the program, the unit tests, mfselect, BOTH ROMs and their .sums
-all: main unit-tests mfselect
+# `ut-headless` is here for the same reason `unit-tests` is: both are unit-test
+# images, neither is a deliverable, and building one of the pair is exactly the
+# fraction-of-everything trap the paragraph above is about.
+#
+# Build everything: the program, both unit-test images, mfselect, BOTH ROMs and their .sums
+all: main unit-tests ut-headless mfselect
 
 # Build the debugger program (build/main.bin + build/mf_nmi.bin)
 main: $(MAIN_BIN) $(MF_NMI_BIN)

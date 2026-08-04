@@ -180,15 +180,16 @@ mf-rom-sum: $(ROM) $(ROM_SUM)
 # is not on the card. The recursion is what lets one target produce two ROMs
 # that the rest of this Makefile deliberately keeps apart.
 #
-# (The bare '#' above ends the block for the help scanner, which takes the last
-# '# ' line before a target as its description.)
-
-# Build the mfselect switcher and EVERYTHING it deploys: both ROMs + both .sums
-#
 # BUILD_TIME is captured once and handed to both sub-makes, so the pair that
 # ships together carries the same stamp. Without that the two `date +%s` calls
 # can straddle a second and produce two ROMs a user would reasonably read as
 # coming from different builds.
+#
+# The bare '#' below ends this block for the help scanner, which takes the LAST
+# '# ' line before a target as its description — so the one-liner goes last.
+#
+
+# Build the mfselect switcher and EVERYTHING it deploys: both ROMs + both .sums
 mfselect: $(MFSELECT_NEX)
 	@t=$(BUILD_TIME); \
 	 $(MAKE) --no-print-directory TRANSPORT=uart BUILD_TIME=$$t mf-rom-sum; \

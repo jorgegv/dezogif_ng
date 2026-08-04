@@ -35,6 +35,23 @@ scratchpad path points into `/tmp` and must be overridden.
 is lost: the diagnostics it leaves are the screenshot and the jnext log, and
 the image is a byte-for-byte copy of a file still sitting where it was.
 
+**The first version of that fix did not work, and only measuring found it.**
+Deleting the image at the end of the happy path leaves it behind on every other
+path, so the trap now does it — and the trap has to be armed **before the
+copy**, not next to the emulator pid it also has to kill. The copy is the
+slowest step and therefore the likeliest one to be interrupted: killing the
+script during it left a 777 MB partial image with no handler in scope.
+`jnext_pid` is declared empty beforehand and the handler tolerates that,
+because under `set -u` an unset variable inside a trap aborts the handler
+*before* it reaches the `rm` — a leak fix that leaks.
+
+**Two attempts to test that interrupt path both tested the wrong process**,
+once by the reviewer and once here, which is why the hole survived a round.
+`cmd && ./script &` backgrounds the **whole `&&` chain**: `$!` is a wrapper
+subshell, so the signal never reaches the script and its trap never runs. The
+run then completes normally and looks like a pass. Launch the script alone,
+take `$!`, and signal that.
+
 **Still outstanding, deliberately untouched:** `run-headless.sh` leaves
 `sd-stock.img` *and* `sd-ours.img` per run, and `run-mfselect.sh` its own —
 same mechanism, and `make clean` is the only thing that reclaims them. They

@@ -115,6 +115,31 @@ sd=$OUT/sd-esp.img
 shot=$OUT/screenshots/esp-server.png
 jlog=$OUT/esp-server.log
 mkdir -p "$(dirname "$shot")"
+
+# THE TRAP IS ARMED BEFORE THE COPY, and that ordering is the whole point.
+#
+# Arming it after the emulator launches — the obvious place, next to the pid it
+# has to kill — leaves the copy itself unprotected, and the copy is the slowest
+# thing here and therefore the likeliest moment to be interrupted. Killing the
+# script during it was measured to leave a 777 MB partial image behind with no
+# handler to remove it.
+#
+# So `jnext_pid` is declared empty first and cleanup tolerates that: under
+# `set -u` an unset variable inside the trap would abort the handler before it
+# reached the `rm`, turning a leak fix into a leak.
+#
+# Kill by PID, never by pattern: a pkill pattern matches this script's own
+# command line and takes the bench down with the emulator.
+jnext_pid=""
+cleanup() {
+    if [ -n "$jnext_pid" ] && kill -0 "$jnext_pid" 2>/dev/null; then
+        kill "$jnext_pid" 2>/dev/null || true
+        wait "$jnext_pid" 2>/dev/null || true
+    fi
+    rm -f "$sd"
+}
+trap cleanup EXIT INT TERM
+
 cp --reflink=auto -f "$SD_IMAGE" "$sd"
 
 log "== running the ESP server bench (1 headless jnext run + a TCP client, ~15s)"
@@ -131,29 +156,15 @@ timeout "$RUN_TIMEOUT" "$JNEXT" \
     >"$jlog" 2>&1 &
 jnext_pid=$!
 
-# Kill by PID, never by pattern: a pkill pattern matches this script's own
-# command line and takes the bench down with the emulator.
-cleanup() {
-    if kill -0 "$jnext_pid" 2>/dev/null; then
-        kill "$jnext_pid" 2>/dev/null || true
-        wait "$jnext_pid" 2>/dev/null || true
-    fi
-}
-trap cleanup EXIT
-
 log ""
 set +e
 python3 "$CLIENT"
 client_rc=$?
 set -e
 
-# Let the run finish on its own so the screenshot is written; the trap is the
-# backstop if it does not.
+# Let the run finish on its own so the screenshot is written. The EXIT trap
+# stays armed: it is what removes the working image, on every path out of here.
 wait "$jnext_pid" 2>/dev/null || true
-trap - EXIT
-
-# The working image has done its job — see the note where it is created.
-rm -f "$sd"
 
 # --- verdict ---------------------------------------------------------------
 

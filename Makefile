@@ -360,8 +360,8 @@ test-dzrp:
 test-hardware:
 	@test -n "$(NEXT_IP)" || { \
 	  echo "usage: make test-hardware NEXT_IP=<ip>   (the Next's address, port 11000)"; \
-	  echo "  the stub does not show its IP yet — the connect-string UI is M1's last item."; \
-	  echo "  Get it from wifi2.bas on the Next, or from the router's lease table."; \
+	  echo "  Press the NMI button and read the address off the Next's own screen:"; \
+	  echo "  'Connect at <ip>:11000'. wifi2.bas and the router are the second opinions."; \
 	  echo "  Read doc/HARDWARE-TESTING.md first: most of what hardware can tell us is"; \
 	  echo "  an observation on the Next's screen, not something a socket can reach."; \
 	  exit 2; }

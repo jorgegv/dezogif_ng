@@ -16,10 +16,11 @@ PC-initiated break in WiFi mode. The serial transport will be kept, not replaced
 **M1 is built; M2 is not.** The tree builds **two** ROMs — `make` gives the serial one, byte for
 byte upstream's behaviour, and `make TRANSPORT=wifi` gives one that brings the ESP-01 up as a TCP
 server and speaks DZRP through it (`src/transport_esp.asm`). A DZRP client talks to the WiFi build
-under jnext and gets correct answers: `make test-dzrp-stub`. What is **not** built yet is the
-connect-string UI (WiFi mode still draws upstream's baud line and joy-port selector), M2's
-asynchronous break, and anything at all on real hardware — **nothing in this project has ever run
-on a Next.**
+under jnext and gets correct answers: `make test-dzrp-stub`. The two ROMs now also **draw different
+screens**: WiFi mode reports the ESP's own baud rate and the address to connect to
+(`AT+CIFSR` → `Connect at <ip>:11000`) where UART mode keeps upstream's cable baud rate and
+joy-port selector. What is **not** built yet is M2's asynchronous break, and anything at all on
+real hardware — **nothing in this project has ever run on a Next.**
 
 It is deployed by replacing `machines/next/enNextMf.rom` on the Next's SD card — the stub *is* the
 Multiface ROM. The PC-side client is **DeZog** in VS Code, speaking **DZRP**.

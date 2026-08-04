@@ -651,7 +651,14 @@ work: bring-up first, then UI. **Port 11000**, DeZog's `cspect` default, so Appe
 `launch.json` and the ROM agree. It replaces the baud line and the joy-port selector only; the
 core-version check and the error area are mode-independent and stay. See MEMORY.md.
 
-**Status 2026-08-04 — the byte-stream half is DONE in the emulator; the UI half is not.**
+*As built (2026-08-05) that string is two lines — `Remote debugger active.` then
+`Connect at <ip>:11000` — because the screen is 32 columns and the sketch above is 64. The colon
+after "at" went with it: `Connect at ` is eleven columns, and the longest possible tail
+(`255.255.255.255:11000`) is twenty-one, so the line ends exactly at column 32 with no room for a
+thirty-third character. MEMORY.md left wording and layout undecided, which is the latitude used
+here.*
+
+**Status 2026-08-05 — BOTH halves are done in the emulator.**
 `src/transport_esp.asm` exists, `make TRANSPORT=wifi` builds it, and `make test-dzrp-stub` runs the
 DZRP conformance suite against it inside jnext: the stub brings the ESP up, listens on 11000, and
 answers **all 9** checks correctly. Eight of them were green when the transport landed; the ninth,
@@ -660,12 +667,20 @@ C2, was a pre-existing `cmd_init` behaviour shared with the serial build, fixed 
 before the transport change, so the interface did not leak; issue #7 then changed both ROMs
 deliberately, being common code.
 
-Still open in M1, and none of it is subtle: **the connect string** (WiFi mode still draws
-upstream's baud line and joy-port selector, and no `AT+CIFSR` is sent because nothing yet parses
-an address); **DeZog itself has never been pointed at it** — the evidence is the conformance
+The **UI half** landed 2026-08-05, and it was a correctness fix rather than a cosmetic one: the
+WiFi ROM had been rendering `BAUDRATE` — the joy-port cable's 921600 — while its own prescaler
+table was built from `ESP_BAUDRATE` (115200), so it stated a rate the hardware was not using, in
+the first place anyone looks when the ESP misbehaves. It also drew a joy-port selector for a port
+that build never touches, and, sharing every byte of its screen with the serial build, gave a real
+machine no way to say which ROM was installed. It now sends `AT+CIFSR`, parses the station address
+and draws `Connect at <ip>:11000`, with a two-line plain-language message in the same place when
+there is no address or the AT chain did not complete. The UART ROM's bytes did not move.
+
+Still open in M1: **DeZog itself has never been pointed at it** — the evidence is the conformance
 suite, not a debugging session, so stepping and breakpoints over WiFi are untried; and **nothing
 has run on hardware**, where jnext's two known fictions bite — it models baud as timing only and
-its module is permanently associated.
+its module is permanently associated, so the address the UI draws is always jnext's own
+`192.168.1.50`. **The mechanism is tested; the value has never been read off a real machine.**
 
 ### M2 — Asynchronous break
 Add the Copper-driven periodic NMI poll (§4.3). Success: `CMD_PAUSE` from DeZog stops a freely

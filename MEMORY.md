@@ -5,6 +5,104 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-05 — WiFi mode draws its own screen, and the old one was wrong
+
+**Built, and the trigger was the 2026-08-04 hardware run recorded below.** The user
+pressed NMI on a real Next with the **WiFi** ROM installed and got a screen
+about UART baud rates and joystick ports. M1's last open item is closed:
+`show_ui` is now the third thing the assembly-time switch selects, after the
+byte stream and the lifecycle.
+
+**This was a correctness fix, not cosmetics, and that is the part worth
+keeping.** `data_const.asm` rendered `BAUDRATE` — the joy-port cable's 921600 —
+unconditionally, while `transport_esp.asm` builds its prescaler table from
+`ESP_BAUDRATE` (115200). So the WiFi ROM **stated a rate its own hardware was
+not running at**, in the first place anyone looks when the ESP misbehaves. It
+also drew a selector for a port that build never touches, and — because the two
+builds shared every byte of that screen — a machine could not tell you which
+ROM was installed. That ambiguity cost real time on the hardware run.
+
+**What it draws now**, replacing exactly the two things MEMORY.md 2026-08-04
+listed and nothing else:
+
+    ZX Next WiFi DeZog Interface        <- "WiFi" where UART says "UART"
+    v2.2.1 (DZRP v2.0.0)
+    Core: 03.02.03                      <- unchanged, and CHECKED not shown
+    ESP Baudrate: 115200                <- was "ESP UART Baudrate: 921600"
+    Video timing: 0
+
+    Remote debugger active.             <- was "Using Joy 2 (right)"
+    Connect at 192.168.1.50:11000
+
+    Keys:                               <- three lines shorter: no 1/2/3
+    R = Reset
+    B = Border on
+
+**Two lines, not MEMORY.md's one, and the colon is gone.** The decided sketch
+was `dezogif_ng remote debugger active. Connect at: <ip>:11000` — 64 characters
+on a 32-column screen. `Connect at ` is eleven columns and the longest possible
+tail, `255.255.255.255:11000`, is twenty-one: the line ends **exactly** at
+column 32, with no room for a thirty-third character. That entry left wording
+and layout explicitly undecided, which is the latitude taken.
+
+**`AT+CIFSR` is asked once, during bring-up, not from `show_ui`.** `show_ui` is
+re-entered on every redraw — the "B" key, `CMD_CLOSE`, an error report — so an
+AT round trip per redraw would be paid for an answer that cannot have changed
+while we hold the module. It is also the **last** step of `transport_init`, on
+purpose: it is the only one whose failure still leaves a working listener.
+
+**Three states, and a failure replaces the whole block rather than half of
+it.** `esp_link_state` is `OK` / `NO_ADDRESS` / `FAILED`, and all three
+alternatives are two lines, so nothing can leave `Connect at` standing over a
+blank — the half-built line is precisely the failure this had to not produce.
+`NO_ADDRESS` also raises `ERROR_NO_WIFI_ADDRESS` into the red error area, so
+the fault is in both the place that explains it and the place users are trained
+to look.
+
+**`0.x.x.x` is rejected as an address.** An unassociated module reports
+`0.0.0.0`; the whole of `0.0.0.0/8` is "this network" and can never be a host
+address, so two characters settle it without a string compare. Drawing
+`Connect at 0.0.0.0:11000` would have been the connect string with nothing
+behind it that doc/WIFI-SETUP.md promises not to show.
+
+**`FAILED` deliberately does not distinguish silence from a refused command.**
+Telling them apart requires the module to have said something, which in the
+silent case it has not; and from the screen's point of view they are one
+situation with one first move ("check it is fitted and enabled"). So the text
+says setup failed, not that the module is absent.
+
+**`ESP_BAUDRATE` and `ESP_SERVER_PORT` moved to `constants.asm`.** Not tidying:
+`data_const.asm` holds the on-screen text and is included **before**
+`transport.asm`, so a `STRINGIFY` there cannot see a value defined inside the
+transport implementation. Putting them beside `BAUDRATE` also puts the two
+rates next to each other, which is where the confusion they caused belongs.
+
+**The gate held.** With `BUILD_TIME` and the build number pinned the UART ROM
+hashes `13217f12…`, identical to `main`'s, across a change that touched
+`main.asm`, `ui.asm`, `data_const.asm` and `constants.asm` — four files of
+common code. The mechanism is `IF ROM_VARIANT == …` in the UI files rather than
+a macro: `data_const.asm` is assembled before the transport, so a macro from
+the implementation is not available to it, and one mechanism used everywhere
+beats two. The rule those files are NOT bound by is the one naming
+`commands.asm`, `message.asm` and `breakpoints.asm`; the UI is exactly what
+MEMORY.md 2026-08-04 says *should* differ per mode.
+
+**Rejected.** A shared layout with the mode-specific rows blanked (a screen
+with holes where its content should be reads as a broken debugger); factoring
+the common lines into one prologue with two tails (thirty bytes of text, against
+putting the UART byte-identity gate at risk); querying `AT+CIFSR` from
+`show_ui`; a distinct error code for bring-up failure (`RX Timeout` is what it
+is, and the status block now says which step in words).
+
+**Not verified, and it is the same gap as everything else here.** The address
+has **never been read off real hardware**. jnext's module is permanently
+associated and always answers `192.168.1.50`, so what the bench proves is the
+*mechanism* — `AT+CIFSR` sent, `+CIFSR:STAIP,"…"` parsed, the line composed and
+drawn — and never the *value*. `doc/HARDWARE-TESTING.md` observation S4 is
+where that gets closed.
+
+---
+
 ## 2026-08-05 — No ESP connection id is reserved: validity is state, the id is data
 
 **Decided (user), after the bug below was found on real hardware.** The rule is

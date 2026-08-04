@@ -49,10 +49,22 @@ must print `DeZoGiFnG_WIFI_nnnn`. That string is at a fixed offset which is a pe
 
 ## Step 2 — find the Next's IP address
 
-**The stub does not show it yet.** The connect-string UI is M1's last open item: WiFi mode still
-draws upstream's baud line and joy-port selector, and no `AT+CIFSR` is sent, so there is nothing on
-screen to read. Until that lands, get the address from `wifi2.bas` on the Next, or from the
-router's lease table.
+**The stub shows it.** Bring it up (step 3) and read the address off the Next's own screen:
+
+```
+Remote debugger active.
+Connect at 192.168.1.42:11000
+```
+
+That is exactly what goes in `launch.json`. If instead it says `No WiFi address` or
+`ESP-01 setup failed`, the fault is upstream of the debugger and step 3's observations say what to
+do about it — do not go looking for the address elsewhere and carry on, because the stub is telling
+you a client will not be able to reach it either.
+
+`wifi2.bas` on the Next and the router's lease table remain the second opinions, and are worth one
+cross-check the first time: **the address on that screen has never been read from real hardware.**
+Under jnext the module always answers `192.168.1.50`, so what the emulator proves is the mechanism,
+not the value.
 
 A **static DHCP reservation** on the router is worth the two minutes: the address then never moves.
 
@@ -67,10 +79,11 @@ of it:
 |---|---|---|
 | **S1** | Does the stub's UI appear at all? | The first hardware evidence that Multiface paging, the relocation of `MAIN` into a RAM bank at slot 7, and `show_ui` work on silicon. In the emulator this is bench T6 |
 | **S2** | What does `Core:` read? | The stub compares it against 03.01.10 and raises `ERROR_CORE_VERSION_NOT_SUPPORTED` below that |
-| **S3** | Is the **error area** (bottom 9 rows, red on black) clear? | `RX Timeout` there means ESP bring-up failed. That is the message bring-up failure currently produces — it is not a distinct error code, deliberately, because adding one would change common code the UART byte-identity gate protects |
-| **S4** | Does the machine return to a usable NextZXOS? | The ESP holds the listening socket, so the listener should survive normal use of the machine |
+| **S3** | Is the **error area** (bottom 9 rows, red on black) clear? | `RX Timeout` there means the AT chain failed — that is still the message, because bring-up failure has no error code of its own. `No WiFi address` means the chain worked and the module has no address to give out |
+| **S4** | What do rows 6 and 7 say? | The status block, and the one thing on this screen composed at run time. `Connect at <ip>:11000` is the success case; `No WiFi address...` and `ESP-01 setup failed...` are the two failures, each in words rather than a code. **This has never been read on hardware** — under jnext the module is permanently associated and always answers `192.168.1.50` |
+| **S5** | Does the machine return to a usable NextZXOS? | The ESP holds the listening socket, so the listener should survive normal use of the machine |
 
-**Photograph the screen.** It is the only artefact of S1-S4 and it costs nothing.
+**Photograph the screen.** It is the only artefact of S1-S5 and it costs nothing.
 
 ## Step 4 — run the bench from the PC
 

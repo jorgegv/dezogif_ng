@@ -116,6 +116,17 @@ Settling it needs the ids observed on the Next side, which this bench has no cha
 The first version of this page claimed H3 would move that row to `verified`, in two separate
 places. It would not have, and the review caught it.
 
+### `[NOT CLEAN: n connect retries]` is a finding, not noise
+
+Getting connected is allowed one retry, because the stub's own RX budget is about 100 ms
+(`ESP_RX_WAIT`) against a WiFi round trip nobody has measured, so a single jitter spike makes the
+*stub* reset and drop an exchange. That is a transient worth riding out.
+
+**It is not worth hiding.** A transport that needed a retry is not the same machine as one that
+answered first time, and everything downstream of the retry succeeds — so without this note an
+intermittent link reads as spotless. If you see it, the run is evidence of flakiness even where
+every check is green, and it is worth recording alongside the numbers.
+
 ### H2 may be red for a reason that is not the hardware's fault
 
 `C2` already fails against our own stub in the emulator — it is [issue

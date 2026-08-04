@@ -98,8 +98,29 @@ CONFORMANCE = os.path.join(HERE, "dzrp", "conformance.py")
 PASS, FAIL, SKIP, MEASURED = "PASS", "FAIL", "SKIP", "MEAS"
 
 
-def connect(host, port, timeout, attempts=20):
+def connect(host, port, timeout, socket_attempts=20, protocol_attempts=2, budget=None):
     """Open a DZRP conversation, retrying briefly, and send CMD_INIT.
+
+    Returns (conversation, retries). THE RETRY COUNT IS PART OF THE RESULT, not
+    an internal detail: a transport that needed three goes to answer is not the
+    same machine as one that answered first time, and this bench exists to
+    report what hardware actually does rather than to flatter it. Callers put
+    the number in their own detail line, so a retry-smoothed PASS cannot read
+    as a clean one. The same logic as H4/H5 being MEASURED rather than PASS.
+
+    THE TWO BUDGETS ARE SEPARATE BECAUSE THE TWO FAILURES COST DIFFERENT
+    AMOUNTS. A refused TCP connect fails in microseconds, so twenty of them are
+    free and worth having. A protocol stall costs the FULL timeout — 15 seconds
+    by default — so twenty of those is five minutes. The first version of this
+    function reused one budget for both, and the measured result was a
+    persistent fault taking 6m25s to report where it had previously taken 15s:
+    a 25x regression in exactly the dimension that matters when somebody is
+    sitting in front of a real Next waiting to be told what is wrong. Two
+    protocol attempts ride out a single jitter spike, which is the transient
+    this is for, and report a genuine fault in about thirty seconds.
+
+    `budget` is a wall-clock backstop over the whole thing, so no combination
+    of slow failures can run away regardless of the counts.
 
     Two details here are copied from conformance.py rather than invented, so
     that the two benches agree about what talking to a remote involves:
@@ -130,27 +151,57 @@ def connect(host, port, timeout, attempts=20):
     the exchange, which is a transient this must ride out rather than report as
     a dead machine. Found in review, by measurement rather than by reading.
     """
-    last = None
-    for _ in range(attempts):
+    if budget is None:
+        budget = max(40.0, timeout * 3.0)
+    deadline = time.monotonic() + budget
+    socket_left, protocol_left = socket_attempts, protocol_attempts
+    retries, last = 0, None
+
+    while True:
         d = None
         try:
             d = dzrp.Dzrp(dzrp.TcpTransport(host, port, timeout),
                           start_byte=None, base_timeout=timeout)
             d.command(dzrp.CMD_INIT, dzrp.init_payload())
-            return d
-        except (OSError, dzrp.DzrpError) as e:
-            last = e
-            # Close before retrying. The module serves four inbound connections
-            # at most, so leaking one per attempt would exhaust them long
-            # before the attempts ran out, and turn a transient into a wedge.
-            if d is not None:
-                try:
-                    d.close()
-                except Exception:
-                    pass
-            time.sleep(0.25)
-    raise OSError("could not connect to %s:%d after %d attempts — %s" % (
-        host, port, attempts, last))
+            return d, retries
+        except OSError as e:
+            last, socket_left = e, socket_left - 1
+            remaining = socket_left
+        except dzrp.DzrpError as e:
+            last, protocol_left = e, protocol_left - 1
+            remaining = protocol_left
+
+        # Close before retrying. The module serves four inbound connections at
+        # most, so leaking one per attempt would exhaust them long before the
+        # attempts ran out, and turn a transient into a wedge.
+        if d is not None:
+            try:
+                d.close()
+            except Exception:
+                pass
+
+        retries += 1
+        if remaining <= 0:
+            raise OSError("gave up on %s:%d after %d attempts — %s" % (
+                host, port, retries, last))
+        if time.monotonic() >= deadline:
+            raise OSError("gave up on %s:%d after %d attempts and %.0fs — %s" % (
+                host, port, retries, budget, last))
+        time.sleep(0.25)
+
+
+def retry_note(retries):
+    """The clause a check appends when getting connected was not clean.
+
+    Empty when it was, so a clean run reads exactly as before. Non-empty is
+    deliberately conspicuous: an intermittent transport that eventually answers
+    is a finding about the hardware, and it is the finding this bench would
+    otherwise be least able to see, because everything downstream succeeds.
+    """
+    if not retries:
+        return ""
+    return "  [NOT CLEAN: %d connect retr%s needed]" % (
+        retries, "y" if retries == 1 else "ies")
 
 
 class Results:
@@ -315,11 +366,13 @@ def h3_connection_id(host, port, timeout, results):
     `esp_conn_id` first — and that is a property of our own buffering, not a
     hardware fact. See doc/HARDWARE-TESTING.md.
     """
-    conns = []
+    conns, retries = [], 0
     try:
         try:
             for _ in range(2):
-                conns.append(connect(host, port, timeout))
+                d, r = connect(host, port, timeout)
+                conns.append(d)
+                retries += r
         except (OSError, dzrp.DzrpError) as e:
             results.add("H3", FAIL, "could not open two simultaneous connections: %s. On "
                                     "hardware this may also mean the module accepted fewer "
@@ -342,7 +395,8 @@ def h3_connection_id(host, port, timeout, results):
                 return
 
         results.add("H3", PASS, "two simultaneous connections each got their own payload "
-                                "back — the +IPD id is read from the header, not assumed")
+                                "back — the +IPD id is read from the header, not assumed"
+                                + retry_note(retries))
     finally:
         for d in conns:
             try:
@@ -365,7 +419,7 @@ def h4_latency(host, port, timeout, results, samples):
     comfortable, and DeZog spends one round trip per single step.
     """
     try:
-        d = connect(host, port, timeout)
+        d, retries = connect(host, port, timeout)
     except (OSError, dzrp.DzrpError) as e:
         results.add("H4", SKIP, "could not connect: %s" % e)
         return
@@ -386,8 +440,9 @@ def h4_latency(host, port, timeout, results, samples):
             times.append((time.monotonic() - started) * 1000.0)
 
         results.add("H4", MEASURED, "round trip over %d samples: min %.1f ms, median %.1f ms, "
-                                    "max %.1f ms" % (len(times), min(times),
-                                                     statistics.median(times), max(times)))
+                                    "max %.1f ms%s" % (len(times), min(times),
+                                                       statistics.median(times), max(times),
+                                                       retry_note(retries)))
     finally:
         d.close()
 
@@ -408,7 +463,7 @@ def h5_throughput(host, port, timeout, results, nbytes):
     """
     timeout = max(timeout, 60.0)
     try:
-        d = connect(host, port, timeout)
+        d, retries = connect(host, port, timeout)
     except (OSError, dzrp.DzrpError) as e:
         results.add("H5", SKIP, "could not connect: %s" % e)
         return
@@ -432,10 +487,11 @@ def h5_throughput(host, port, timeout, results, nbytes):
             return
 
         results.add("H5", MEASURED, "%d bytes round-tripped in %.2f s — %.1f KB/s round trip, "
-                                    "%.1f KB/s one way" % (
+                                    "%.1f KB/s one way%s" % (
                                         nbytes, elapsed,
                                         (nbytes * 2) / elapsed / 1024.0,
-                                        nbytes / elapsed / 1024.0))
+                                        nbytes / elapsed / 1024.0,
+                                        retry_note(retries)))
     finally:
         d.close()
 

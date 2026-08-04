@@ -235,6 +235,20 @@ strongest:
    test that wedged. Not part of `make test`, for consistency with every other bench here rather
    than for the usual reason: this one has no external dependency and binds no port. See
    `doc/UNIT-TESTS.md`. **It says nothing about hardware.**
+4e. **`make test-ip-boundary`** — the `AT+CIFSR` address-length boundary, 2 headless jnext runs,
+   and the only bench here that **moves a build-time constant to reach its subject**. jnext's
+   module answers with `192.168.1.50` and that is a `static constexpr` with no option behind it,
+   so the shipped `ESP_IP_MAX` of 15 is unreachable by any run: a bound that no input can ever
+   touch has no test, however many benches are green. So `ESP_IP_MAX` is `IFNDEF`-guarded and
+   `IP_MAX=` builds probe ROMs under their own names — one at 12, where jnext's own answer *is*
+   the maximum-length case (**B1**, must be accepted), one at 11, where it is one too long
+   (**B2**, must be refused). Same Z80 code, same emulator, same real reply; one constant
+   different. **B1 is the discriminating half** — B2 passes against the broken parser too, and is
+   there so a "fix" that stopped bounding anything cannot pass. Verdict is bright-red pixels on
+   the stub's own screen, as in W2. It exists because that boundary shipped broken and every
+   other layer stayed green: see ERRORS.md. **The maximum-length line is still never RENDERED** —
+   no bound setting makes jnext produce a 15-character address — so the 32-column fit is held by
+   an assembler `ASSERT` instead. **It says nothing about hardware.**
 5. **`build/ut.nex`** — the same tests, **DeZog-driven** (`"unitTests": true` + zsim + the
    `customCode` plugin) in VS Code. Still a manual layer, and still the only way to exercise the
    36 that 4d must skip. `make unit-tests` assembles it; nothing here runs it.

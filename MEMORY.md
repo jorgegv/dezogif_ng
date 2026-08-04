@@ -94,12 +94,40 @@ putting the UART byte-identity gate at risk); querying `AT+CIFSR` from
 `show_ui`; a distinct error code for bring-up failure (`RX Timeout` is what it
 is, and the status block now says which step in words).
 
+**A LENGTH BOUND IS A THING NO BENCH HERE COULD REACH, and the first version
+got it wrong.** The copy out of `AT+CIFSR` bounded DJNZ **passes** rather than
+characters **stored**, so an address of exactly `ESP_IP_MAX` characters spent
+its last pass on its last character and the closing quote was never read: the
+address was refused as too long and the screen said `No WiFi address` on a
+working machine. `192.168.100.136` — the user's own Next — is fifteen
+characters, so this was ordinary, not a contrived maximum. Caught by the
+independent reviewer, not by the author and not by any test.
+
+**Why no test could have caught it, and what was done about that.** jnext
+answers `AT+CIFSR` with `192.168.1.50`: a `static constexpr` with no option
+behind it, twelve characters, which never reaches a bound of fifteen. The
+boundary was **unreachable by construction**. So the decision — and it is the
+reusable one — is to **move the bound instead of the input**: `ESP_IP_MAX` is
+`IFNDEF`-guarded, the Makefile's `IP_MAX` overrides it into its own ROM name,
+and `make test-ip-boundary` builds one ROM where jnext's own answer is exactly
+at the bound and one where it is one over. Real Z80, real emulator, real
+`AT+CIFSR` reply; one constant different. **Rejected: a host-side model of the
+loop** — it would have tested a transcription of the code rather than the code,
+and ERRORS.md already carries an entry about exactly that substitution.
+
+Three sums previously done in comments are now assembler `ASSERT`s, each
+watched to fail when violated. See [[ERRORS.md]], where this is filed as the
+third occurrence of one shape.
+
 **Not verified, and it is the same gap as everything else here.** The address
 has **never been read off real hardware**. jnext's module is permanently
 associated and always answers `192.168.1.50`, so what the bench proves is the
 *mechanism* — `AT+CIFSR` sent, `+CIFSR:STAIP,"…"` parsed, the line composed and
 drawn — and never the *value*. `doc/HARDWARE-TESTING.md` observation S4 is
-where that gets closed.
+where that gets closed. The **maximum-length line has also never been
+rendered**: no bound setting makes jnext produce a 15-character address, so the
+32-column worst case is held by a compile-time `ASSERT` rather than by a
+picture.
 
 ---
 

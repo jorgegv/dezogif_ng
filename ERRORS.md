@@ -5,6 +5,76 @@ attempting similar logic.
 
 ---
 
+## A bound the emulator can never reach is a bound with no test
+
+**Symptom.** None here, and that is the whole entry. `esp_query_address` copied
+the address out of `AT+CIFSR`'s answer with
+
+```asm
+    ld b,ESP_IP_MAX             ; 15
+.char:
+    call esp_try_read_raw
+    cp 34                       ; the closing quote ends the address
+    jr z,.end_of_address
+    ld (de),a
+    inc de
+    djnz .char
+    ret                         ; too long: refuse
+```
+
+`DJNZ` bounds the number of **passes**, so a 15-character address spends the
+15th pass on its 15th character and falls out of the loop **before the pass
+that would have read the closing quote**. An address of exactly `ESP_IP_MAX`
+characters was refused as too long, and the screen told the user to go and set
+up WiFi on a machine that was working perfectly.
+
+Not an edge case: the user's own Next is `192.168.100.136`. Any address with
+all four octets in 100-255 is fifteen characters.
+
+**Cause of the DEFECT**, one line: the bound counted passes when the thing that
+must be bounded is **stores**. B now counts characters stored and the bound is
+tested before storing, so the quote stays readable at every length up to the
+maximum. The empty-address test was the same mistake in miniature —
+`cp ESP_IP_MAX` against a pass count — and went with it.
+
+**Cause of the MISS, which is the transferable part.** jnext's emulated module
+answers `AT+CIFSR` with `192.168.1.50`, and that is a `static constexpr STA_IP`
+in `esp01/include/esp01/esp_at.h` with **no command-line option behind it**.
+Twelve characters never reach a bound of fifteen. So the boundary was not
+"undertested" — it was **unreachable by construction**, and every bench in this
+repository was green through the bug, exactly as it would have been through any
+other defect at that bound.
+
+**Fix for the miss: move the BOUND, not the input.** `ESP_IP_MAX` is
+`IFNDEF`-guarded and the Makefile's `IP_MAX` overrides it, giving each probe
+ROM its own name. `test/run-ip-boundary.sh` then builds one at 12 — where
+jnext's own answer *is* the maximum-length case — and one at 11, where it is
+one too long. Same Z80 code, same emulator, same real `AT+CIFSR` reply over the
+same real UART; one build-time constant differs. Shown failing first: against
+the old loop the accepting case reports 1044 bright-red pixels of `No WiFi
+address`.
+
+A host-side simulation of the loop was the alternative and was rejected: it
+would have tested a **transcription** of the routine rather than the routine,
+and this file already carries an entry about a mechanism that was reasoned
+rather than executed.
+
+**Three sums that had been done in comments are now `ASSERT`s** — the buffer
+holds the longest address plus the port, the drawn line fits 32 columns, the
+status table has an entry per state. Each was checked to fail when violated,
+because an assertion nobody has watched fire is a comment with a keyword in
+front of it.
+
+**Lesson, and it is the THIRD time this file has recorded this shape** — after
+the `+IPD` reassembly that no payload was ever large enough to trigger, and the
+connection id that no test ever let go stale. **When a bound is a constant, ask
+what in the test environment could ever produce a value at it.** If nothing
+can, no amount of testing will reach it, and the answer is to make the constant
+movable rather than to test harder. The number was in a header file the whole
+time — again.
+
+---
+
 ## A sentinel value that a real peer can legitimately send
 
 **Symptom.** On a real ZX Spectrum Next: the stub came up, the TCP listener

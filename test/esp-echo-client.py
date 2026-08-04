@@ -99,17 +99,20 @@ def main():
           f"(sent {payload!r}, got {got!r})")
 
     # A COMPLETELY empty reply means the guest is not answering at all, and
-    # every check below then fails for a reason that is not its own: each one
-    # waits out ECHO_TIMEOUT, and the emulator run — which is bounded in FRAMES,
-    # not in wall clock — ends underneath the client long before they finish. E4a
-    # then reports "connection refused", which is true and tells you nothing.
+    # every check below then fails for a reason that is not its own. The
+    # emulator run is bounded in FRAMES, not in wall clock, so jnext exits
+    # while the guest is still silent; this read ends on EOF as the socket is
+    # torn down, and E4a's connection is refused because nothing is listening
+    # any more. True, and it tells you nothing about the id.
     #
-    # This was not theory. It is what the id-hardcoded-to-0 control actually
-    # produced, and the first reading of that run attributed E4a's refusal to
-    # the guest parking in its failure loop. That was wrong: the ESP listener
-    # lives in the emulator, not in the guest, so a wedged guest does not refuse
-    # anything — the run had simply exited. Reporting the cascade as independent
-    # evidence is the mistake ERRORS.md already names in another form.
+    # This was not theory — it is what the id-hardcoded-to-0 control produces.
+    # Two WRONG mechanisms were confidently asserted before this one was
+    # measured: first that the guest, parked in its failure loop, refused the
+    # second connection (it cannot — the listener is emulator-side), then that
+    # each check waited out ECHO_TIMEOUT (they do not — the whole failing run
+    # takes ~9s, where two 20s timeouts alone would need 40). Reporting the
+    # cascade as independent evidence is the mistake ERRORS.md names in
+    # another form.
     silent = not got
     if silent:
         print("  (the guest answered nothing at all — the checks below cannot be "

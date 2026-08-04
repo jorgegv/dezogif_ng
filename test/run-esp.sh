@@ -100,6 +100,17 @@ mkdir -p "$OUT"
 #
 # The reference image is never written: a reflink copy costs nothing where the
 # filesystem supports it.
+#
+# AND IS A FULL GIGABYTE WHERE IT DOES NOT, which is why this one is deleted
+# again at the end. `--reflink=auto` falls back to a real copy silently, and on
+# tmpfs it always does — so a bench run from a scratchpad directory leaves a
+# gigabyte behind with no warning. That is not hypothetical: ~22 GB of exactly
+# these copies, abandoned by earlier bench runs in agent scratchpads, filled
+# the /tmp quota on 2026-08-04 and took the shell down mid-session.
+#
+# Nothing is lost by removing it. The diagnostics this bench leaves are the
+# screenshot and the jnext log; the image is a byte-for-byte copy of a
+# reference file that is still sitting where it always was.
 sd=$OUT/sd-esp.img
 shot=$OUT/screenshots/esp-server.png
 jlog=$OUT/esp-server.log
@@ -140,6 +151,9 @@ set -e
 # backstop if it does not.
 wait "$jnext_pid" 2>/dev/null || true
 trap - EXIT
+
+# The working image has done its job — see the note where it is created.
+rm -f "$sd"
 
 # --- verdict ---------------------------------------------------------------
 

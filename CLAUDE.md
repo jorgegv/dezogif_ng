@@ -189,6 +189,14 @@ project as the demonstrated consumer** — never speculatively. See the plan §8
   (`DEZOGIF_ALLOW_AMEND=1` to override).
 - **Git worktrees live OUTSIDE the repository directory**, at
   `~/tmp/worktrees/dezogif_ng/<name>`. Never inside the repo, not even gitignored.
+- **Scratchpads and temporary files NEVER go under `/tmp`** — put them in
+  `$HOME/tmp/scratchpads/`. On this machine `/tmp` is a **tmpfs**, so everything written
+  there consumes **RAM**, and the harness's own default scratchpad path points into it.
+  Use `$HOME/tmp/scratchpads/` regardless of what that default says. This is not
+  housekeeping: on 2026-08-04 ~22 GB of leaked 1 GB SD-card images under `/tmp` exhausted the
+  quota and took the shell down mid-session, with every command — `true` included — returning
+  exit code 1. See ERRORS.md. Anything gigabyte-scale (SD images, emulator captures) must live
+  on `/home`, which is real disk.
 - For git commands against another directory, always `git -C /abs/path <cmd>` rather than
   `cd /abs/path && git <cmd>`.
 - **When a feature or fix is developed, ALWAYS schedule an independent agent for code review.**

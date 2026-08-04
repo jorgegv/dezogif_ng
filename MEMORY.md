@@ -47,11 +47,18 @@ assumed rather than read, and it earns its place.
 The id-`0` control also failed E3 and E4, and the obvious story — the guest had
 parked in its failure loop, so it refused the second connection — is false. The
 ESP listener lives in the **emulator**, not in the guest, so a wedged guest
-refuses nothing. What actually happened is that each silent check waits out its
-own timeout while the jnext run is bounded in **frames**, so the emulator
-exited underneath the client. The failures after E2 were an artefact of the
-harness, not evidence. The client now says so when the guest answers nothing at
-all, rather than presenting a cascade as three independent findings.
+refuses nothing. What actually happened is that the jnext run is bounded in
+**frames**, not in wall clock, so the process exits while the guest is still
+silent — the client's pending read then ends on **EOF** as the socket is torn
+down, and the next connection is refused because nothing is listening any more.
+The failures after E2 were an artefact of the harness, not evidence.
+
+Note the timeouts do *not* elapse, and the first correction to this paragraph
+said they did: the whole failing run takes ~9 s, where two 20 s timeouts alone
+would need 40. Measuring it is what showed that; reasoning about it produced
+the wrong mechanism **twice in a row**, once in each direction. The client now
+labels a silent guest instead of presenting the cascade as three independent
+findings.
 
 **Two divergences the emulator cannot show, written down before they bite.**
 

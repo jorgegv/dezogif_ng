@@ -5,6 +5,101 @@ attempting similar logic.
 
 ---
 
+## `cp --reflink=auto` is a gigabyte when `auto` says no
+
+**Symptom.** Mid-session, every shell command started returning exit code 1 —
+including `true`. It read as a broken tool, and two independent agents lost
+time to it before anyone read the stderr, which said what was wrong all along:
+
+```
+/bin/bash: line 1: pwd: write error: Disk quota exceeded
+```
+
+**Cause, and there are two of them stacked.**
+
+1. The benches copy the 1 GB reference SD image into `build/` before each run,
+   deliberately, so the reference is never written. `--reflink=auto` makes that
+   free — **on a filesystem with reflink support**. It falls back to a real,
+   full copy *silently*, and `tmpfs` always takes the fallback.
+2. **The scratchpad was under `/tmp`, which on this machine is a tmpfs.** So
+   every leaked gigabyte was a gigabyte of **RAM**, not of disk. About **22 GB**
+   of abandoned `sd-*.img` had accumulated there, mostly under the pre-rename
+   `dezogif-esp` path, and it filled the quota.
+
+The second is the root cause and the more general one: **nothing belongs under
+`/tmp` on this machine.** Scratchpads go to `$HOME/tmp/scratchpads/`, which is
+real disk — see CLAUDE.md, beside the worktree rule. The harness's own default
+scratchpad path points into `/tmp` and must be overridden.
+
+**Fix.** `test/run-esp.sh` deletes its working image when the run ends. Nothing
+is lost: the diagnostics it leaves are the screenshot and the jnext log, and
+the image is a byte-for-byte copy of a file still sitting where it was.
+
+**Still outstanding, deliberately untouched:** `run-headless.sh` leaves
+`sd-stock.img` *and* `sd-ours.img` per run, and `run-mfselect.sh` its own —
+same mechanism, and `make clean` is the only thing that reclaims them. They
+were the bulk of the 22 GB. Not changed here because they are outside this
+change's scope, but they are the next occurrence waiting to happen.
+
+**Lesson.** An `auto` flag that degrades silently is a landmine on a
+filesystem you did not anticipate — and a quota failure disguises itself as a
+tool failure, because the tooling reports the exit code and swallows the
+stderr. When something impossible happens (`true` returning 1), read the
+stderr before believing the impossible thing.
+
+---
+
+## Three tries to explain one failing test run, because nobody measured it
+
+**Symptom.** Not a build failure — a *diagnosis* failure, which is why it is
+here: the code was right all along and the explanation of a deliberately broken
+control run was wrong twice before it was right.
+
+The run: `make test-esp` with the `+IPD` connection id hardcoded to `0`, a
+negative control for M0(b). Observed result — E2 fails with an empty reply,
+E3 fails, and E4a fails with `Connection refused`.
+
+**The two wrong mechanisms, in order.**
+
+1. *"The guest parked in its failure loop, so it refused the second
+   connection."* Impossible. The listening socket belongs to the **emulator**,
+   not to the guest: jnext's ESP accepts TCP on the host side and only then
+   hands `+IPD` to the Z80. A wedged guest CPU cannot make the OS refuse a
+   `SYN`. Asserted by the independent reviewer, and it sounded entirely
+   reasonable.
+2. *"Each check waits out its 20-second socket timeout, and the frame-bounded
+   emulator run ends underneath the client."* The second half is right and the
+   first half is not. The whole failing run takes **~9 s**; two 20 s timeouts
+   alone would need 40. Asserted while correcting (1), by the author.
+
+**What is actually true**, from the run's own log and a stopwatch. jnext's
+`--delayed-automatic-exit-frames` is a **frame** budget, so the process exits
+on its own schedule regardless of what the guest is doing — about 4 s after
+accepting the connection. The client's blocked `recv` then returns **EOF**, not
+a timeout, because the process died and the socket was torn down; the next
+`connect` is refused because nothing is listening any more.
+
+**Fix.** Two things, and the second is the general one:
+
+- The client detects a completely silent guest and says the checks below it
+  cannot be read as independent evidence, instead of printing three failures
+  that look like three findings.
+- **A test that can fail for a reason outside its own subject has to say so.**
+  Three of the four checks in that run were reporting the harness, not the
+  fixture.
+
+**Lesson, and it is the third variant of one this file already carries.**
+ERRORS.md already says "a fix that is never tested by *removing* it is a
+correlation" and "do not paraphrase a paraphrase". This is the same disease in
+a third organ: an *explanation* asserted instead of measured. Both wrong
+mechanisms were plausible, internally consistent, and offered confidently — and
+the thing that settled it was one timed run and four lines of log. The tell is
+the same every time: if the account of *why* something failed was reasoned
+rather than observed, it is a hypothesis, and this project has now paid for
+that three times in one file.
+
+---
+
 ## "The backup file exists" is not "a backup exists"
 
 **Symptom.** None visible — which is the point. Found by the independent

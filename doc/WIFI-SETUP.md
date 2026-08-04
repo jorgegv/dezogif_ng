@@ -106,11 +106,12 @@ the debugger's side: "WiFi is not set up" and "the stub's transport is broken".
 **Once per machine, not once per session.** The ESP-01 stores credentials in its own flash and
 reconnects by itself at power-on.
 
-> **Not verified by this project.** That is standard ESP-AT behaviour (`AT+CWJAP_DEF` persists,
-> `AT+CWAUTOCONN` defaults to on) but we have not measured it on a real Next, and jnext cannot
-> answer it — its emulated module is permanently associated and implements only the *query* form
-> `AT+CWJAP?`, never the setting form. If your Next turns out to need re-association after a power
-> cycle, that is worth telling us: it changes the setup story from "once" to "every boot".
+**Confirmed on real hardware, 2026-08-04.** A Next that has been through the wizard comes up
+already associated on subsequent power-ons — the module is associated and ready before anything
+else runs, exactly as jnext models it. Set WiFi up once and forget it.
+
+Everything else on this page about the debugger is still emulator-only; this particular claim is
+not.
 
 ---
 
@@ -195,6 +196,6 @@ This project's rule is that a derived claim is a hypothesis. So, explicitly:
 | Its menu options, and that v1 vs v2 differ on `CIPDNS_CUR?`/`CIPDNS?` | **verified** — menu read off a real run, not from the program's strings |
 | `.UART` / `.ESPBAUD` / `.ESPUPDATE` exist and what they are for | **verified** — read from the image |
 | The wizard runs under jnext with `--esp`, and which half of it works | **verified** — measured, jnext 0.99.118 |
-| The ESP persists credentials and auto-reconnects | **inferred**, not measured — see §5 |
+| The ESP persists credentials and auto-reconnects | **verified on hardware** 2026-08-04 — the one claim here that is |
 | The ESP-01 answers at 115200 until told otherwise | **inferred**, not measured — the plan's Appendix A carries the same claim at the same strength |
 | The stub's WiFi bring-up works on real hardware | **untested.** Nothing in this project has ever run on a real Next |

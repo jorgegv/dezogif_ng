@@ -63,10 +63,17 @@ wizard's commands against jnext's dispatch table said it would die at startup
 on the unimplemented `AT+CWMODE=1`. It does not — unknown commands answer
 `ERROR` and the wizard shrugs them off. Running it is what showed that.
 
-**Still inferred, not measured:** that the ESP persists credentials across a
-power cycle. It is standard ESP-AT behaviour, jnext cannot answer it, and if a
-real Next needs re-association at every boot the setup story changes from
-"once per machine" to "every boot". First thing to check on hardware.
+**NOW MEASURED, and it was the last open assumption here.** The user confirmed
+on real hardware (2026-08-04) that their Next **comes up already associated**:
+once WiFi is set up, the ESP is associated and ready from then on, exactly as
+jnext models it. So the setup story really is **once per machine**, not once
+per boot, and the "verify, do not configure" design rests on a measured fact
+rather than on ESP-AT documentation.
+
+Note this does *not* re-promote the discarded third reason above. That reason
+is now true, but the decision never needed it and the lesson stands: it was
+counted as sufficient while unmeasured, and that was the error — not the claim
+itself.
 
 [doc/WIFI-SETUP.md]: doc/WIFI-SETUP.md
 

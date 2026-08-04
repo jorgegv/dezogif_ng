@@ -21,6 +21,22 @@ no network at all.
 The address it shows is the one to put in your `launch.json` (Appendix B.5 of the
 [project plan](ZXNEXT-REMOTE-DEBUG-STUB.md)).
 
+![The WiFi build's screen](images/wifi-ui.png)
+
+*Captured headless under jnext, so the address is the emulated module's — a real Next reports its
+own. Rows 6 and 7 are the only part of that screen composed at run time; everything above them is
+static, and `Core:` is checked against 03.01.10 rather than merely displayed.*
+
+**With no address, those two rows say so instead**, and the red error area names it as well:
+
+    No WiFi address. Set the Next          ESP-01 setup failed. Check it
+    up first: run wifi2.bas                is fitted and enabled.
+
+The left is "the module answered but has nothing to give out" — this page's subject. The right is
+"the AT chain did not complete", which is a fault below WiFi: the module is absent, disabled, or
+not answering at 115200. `0.0.0.0` counts as no address, because an unassociated module reports
+exactly that and a connect string with `0.0.0.0` in it is worse than none.
+
 ---
 
 ## 2. Why it works this way

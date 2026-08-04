@@ -118,9 +118,11 @@ the official path. That capture is guarded, and the guard is the reason this pro
 two file copies:
 
 **The naive rule destroys the stock ROM for exactly the people most likely to run this first.**
-Anyone who has already installed dezogif_ng by hand — which is what Appendix B.1 step A3 tells them
-to do — has *our* ROM at the official path. Capturing that as "the original" would label the debug
-stub as the stock Multiface ROM and leave no copy of the real one anywhere on the card.
+Anyone who has already installed dezogif_ng by hand — which is what the plan's Appendix B.1 used to
+tell them to do, and what anyone who found this project before mfselect existed will have done —
+has *our* ROM at the official path. Capturing that as "the original" would label the debug stub as
+the stock Multiface ROM and leave no copy of the real one anywhere on the card. (A3 now says the
+opposite: leave the stock ROM where it is and let mfselect capture it.)
 
 So:
 

@@ -84,10 +84,11 @@ layer.
 
 # Deployment
 
-The stub **is** the Multiface ROM: `build/enNextMf.rom` replaces
-`machines/next/enNextMf.rom` on the Next's SD card. **The card already has one, and it is the
-stock Multiface ROM — you must keep a copy of it.** Without one you cannot get the normal
-Multiface back, and you will want it back every time the stub misbehaves.
+The stub **is** the Multiface ROM: one of `build/enNextMf.rom` (UART) or
+`build/enNextMf-wifi.rom` (WiFi) replaces `machines/next/enNextMf.rom` on the Next's SD card.
+**The card already has one, and it is the stock Multiface ROM — you must keep a copy of it.**
+Without one you cannot get the normal Multiface back, and you will want it back every time the stub
+misbehaves.
 
 There are two ways to do that swap.
 
@@ -153,8 +154,9 @@ Full detail, including the checksum scheme: [doc/MFSELECT.md](doc/MFSELECT.md).
 
 ## By hand
 
-Put the card in a PC, back up `machines/next/enNextMf.rom` somewhere safe, and copy
-`build/enNextMf.rom` over it.
+Put the card in a PC, back up `machines/next/enNextMf.rom` somewhere safe, and copy the variant you
+want over it — `build/enNextMf-wifi.rom` for WiFi, `build/enNextMf.rom` for the joy-port serial
+link. Changing your mind later means doing it again; mfselect exists so that it does not.
 
 ## Using the stub
 

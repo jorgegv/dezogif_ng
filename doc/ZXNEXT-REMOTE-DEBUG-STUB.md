@@ -551,9 +551,11 @@ assembly time. Keep break-on-NMI-button. Success, and both halves are required:
 
 The transport interface also has a **UI half**, settled 2026-08-04: UART mode keeps upstream's
 joy-port selector, WiFi mode draws a connect string —
-`dezogif_ng remote debugger active. Connect at: <ip>:<port>` — composed at run time, because the
+`dezogif_ng remote debugger active. Connect at: <ip>:11000` — composed at run time, because the
 address comes from the ESP (`AT+CIFSR`) and is not known at assembly time. That orders the WiFi
-work: bring-up first, then UI. See MEMORY.md.
+work: bring-up first, then UI. **Port 11000**, DeZog's `cspect` default, so Appendix B's
+`launch.json` and the ROM agree. It replaces the baud line and the joy-port selector only; the
+core-version check and the error area are mode-independent and stay. See MEMORY.md.
 
 ### M2 — Asynchronous break
 Add the Copper-driven periodic NMI poll (§4.3). Success: `CMD_PAUSE` from DeZog stops a freely

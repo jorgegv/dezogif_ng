@@ -35,10 +35,32 @@ them" but "what replaces them". This answers it.
   `launch.json` example in Appendix B, because a mismatch there fails as a
   silent connection refusal.
 
-**Not decided here.** Exact wording, layout, and what the screen shows while
-the ESP is still coming up or has failed — that last one matters more than it
-sounds, since a stub that cannot reach the network must say so on screen
-rather than appear idle (plan §M3).
+**Port: 11000** (decided 2026-08-04). DeZog's `cspect` remote default, so a
+`launch.json` that omits `port` still works. Must match Appendix B's example.
+
+**What actually changes on that screen, read from `ui.asm` / `data_const.asm`
+rather than assumed.** The connect string replaces exactly two things:
+
+- `ESP UART Baudrate: 921600` → the connect string
+- the joy-port selector — the `1 = Joy 1` / `2 = Joy 2` / `3 = No joystick
+  port` key list and the "Using Joy 2 (right)" status line
+
+Everything else on `show_ui` is mode-independent and stays: the title (minus
+"UART"), the program and DZRP versions, `Video timing:`, `R = Reset`,
+`B = Border`, and two that are load-bearing —
+
+- **`Core: xx.xx.xx`.** Not decoration. `show_ui` compares it against 03.01.10
+  and raises `ERROR_CORE_VERSION_NOT_SUPPORTED` below that. Stackless NMI needs
+  it, and that is just as true over WiFi.
+- **The red-on-black error area** (bottom 9 rows). It matters *more* in WiFi
+  mode, because the connect string can only be drawn after the ESP has
+  associated and answered `AT+CIFSR`. Before that there is no IP; if bring-up
+  fails there never will be. The screen has to be able to say so rather than
+  sit blank — plan §M3's "clear failure reporting on the Next's screen when
+  the transport cannot come up", on the same real estate.
+
+**Not decided here.** Exact wording and layout, and what the screen shows
+during the window between "stub is up" and "ESP has an IP".
 
 ---
 

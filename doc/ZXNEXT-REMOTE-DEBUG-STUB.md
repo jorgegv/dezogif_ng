@@ -570,10 +570,12 @@ Two independent proofs, on real hardware, before any porting work:
 
   **E4 is the one that pays for itself**, and it was verified by breaking the fixture on purpose
   rather than by argument. With the id hardcoded to `0` — the value the Espressif documentation
-  leads you to expect — E2, E3 and E4 all fail with *empty* replies, which is precisely the
-  "no error, no data" signature MEMORY.md warns looks like a DZRP bug. With it hardcoded to `1`,
-  E2 and E3 **pass** and only E4 fails. So the id must be read from the header, and only E4
-  proves it was.
+  leads you to expect — E2 gets an *empty* reply, which is precisely the "no error, no data"
+  signature MEMORY.md warns looks like a DZRP bug. With it hardcoded to `1`, E2 and E3 **pass**
+  and only E4 fails. So the id must be read from the header, and only E4 proves it was.
+  (That control also failed E3 and E4, but for a harness reason rather than an independent one —
+  see MEMORY.md. The client now labels a silent guest instead of reporting the cascade as three
+  findings.)
 
   What this does **not** cover: real hardware. jnext has no `AT+CWJAP=` at all, only the query
   form, so the emulated module is permanently associated and the fixture never has to join a

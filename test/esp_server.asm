@@ -440,10 +440,16 @@ wait_for_ipd:
     ld hl,str_ipd
     call wait_for_string_blocking
 
-    ; <id>, terminated by the comma
+    ; <id>, terminated by the comma. Refuse anything that does not fit a byte
+    ; rather than truncating it: this is a value read off the wire, and a
+    ; silent narrowing here would send the echo to a different connection than
+    ; the one that asked for it — the exact class of bug E4 exists to catch.
     ld c,','
     call read_decimal
     ret c
+    ld a,h
+    or a
+    jr nz,.too_long
     ld a,l
     ld (ipd_id),a
 
@@ -500,15 +506,14 @@ read_decimal:
     sub '0'
     cp 10
     jr nc,.bad
-    ; HL = HL*10 + A
-    push af
+    ; HL = HL*10 + A. Nothing between here and the final add touches A, so the
+    ; digit survives in it without being saved.
     add hl,hl               ; x2
     ld d,h
     ld e,l
     add hl,hl               ; x4
     add hl,hl               ; x8
     add hl,de               ; x10
-    pop af
     ld d,0
     ld e,a
     add hl,de

@@ -37,11 +37,21 @@ write.
 
 **What the bench established, by breaking it on purpose rather than by
 argument.** With the `+IPD` connection id hardcoded to `0` — the value the
-Espressif documentation leads you to expect — E2, E3 and E4 fail with *empty*
-replies: no error, no data, exactly the signature the jnext-inbound-id entry
-below predicts. With it hardcoded to `1`, the first three checks **pass** and
-only E4 fails. So E4 (a second simultaneous connection) is the only check that
-catches an id that is assumed rather than read, and it earns its place.
+Espressif documentation leads you to expect — **E2 gets an empty reply**: no
+error, no data, exactly the signature the jnext-inbound-id entry below
+predicts. With it hardcoded to `1`, E2 and E3 **pass** and only E4 fails. So E4
+(a second simultaneous connection) is the only check that catches an id that is
+assumed rather than read, and it earns its place.
+
+**One correction from that run, because the first reading of it was wrong.**
+The id-`0` control also failed E3 and E4, and the obvious story — the guest had
+parked in its failure loop, so it refused the second connection — is false. The
+ESP listener lives in the **emulator**, not in the guest, so a wedged guest
+refuses nothing. What actually happened is that each silent check waits out its
+own timeout while the jnext run is bounded in **frames**, so the emulator
+exited underneath the client. The failures after E2 were an artefact of the
+harness, not evidence. The client now says so when the guest answers nothing at
+all, rather than presenting a cascade as three independent findings.
 
 **Two divergences the emulator cannot show, written down before they bite.**
 

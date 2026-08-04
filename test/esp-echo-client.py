@@ -98,6 +98,23 @@ def main():
           f"E2 a payload echoes back byte-identically on the first connection "
           f"(sent {payload!r}, got {got!r})")
 
+    # A COMPLETELY empty reply means the guest is not answering at all, and
+    # every check below then fails for a reason that is not its own: each one
+    # waits out ECHO_TIMEOUT, and the emulator run — which is bounded in FRAMES,
+    # not in wall clock — ends underneath the client long before they finish. E4a
+    # then reports "connection refused", which is true and tells you nothing.
+    #
+    # This was not theory. It is what the id-hardcoded-to-0 control actually
+    # produced, and the first reading of that run attributed E4a's refusal to
+    # the guest parking in its failure loop. That was wrong: the ESP listener
+    # lives in the emulator, not in the guest, so a wedged guest does not refuse
+    # anything — the run had simply exited. Reporting the cascade as independent
+    # evidence is the mistake ERRORS.md already names in another form.
+    silent = not got
+    if silent:
+        print("  (the guest answered nothing at all — the checks below cannot be "
+              "read as independent evidence; fix E2 first)")
+
     # E3 -- the loop re-arms.
     #
     # A parser that consumed one byte too many or too few would survive E2 and
@@ -124,7 +141,8 @@ def main():
         second = socket.create_connection((HOST, PORT), timeout=10)
         second.settimeout(ECHO_TIMEOUT)
     except OSError as exc:
-        print(f"  (second connection refused: {exc})")
+        note = " — but see above: the guest was already silent" if silent else ""
+        print(f"  (second connection refused: {exc}{note})")
     if check(second is not None, "E4a a second simultaneous connection is accepted"):
         payload = b"second"
         got = echo(second, payload)

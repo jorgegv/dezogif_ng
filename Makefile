@@ -4,7 +4,7 @@
 # immediately above it. Target names print in bold red.
 
 .DEFAULT_GOAL := help
-.PHONY: help all main unit-tests mf-rom mfselect test test-mfselect test-dzrp check-reproducible clean
+.PHONY: help all main unit-tests mf-rom mfselect test test-mfselect test-esp test-dzrp check-reproducible clean
 
 # Show this help
 help:

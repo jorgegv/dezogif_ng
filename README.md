@@ -45,15 +45,16 @@ The assembler is [sjasmplus](https://github.com/z00m128/sjasmplus). Running `mak
 lists everything available:
 
 ~~~
-make all        # the ROM, the program and the unit tests
-make mf-rom     # build/enNextMf.rom, the deployable artefact
-make mfselect   # the on-Next ROM switcher and both ROMs it installs (see Deployment)
+make all        # everything: both ROMs, both .sums, mfselect, the program, the unit tests
+make mf-rom     # build/enNextMf.rom on its own, the deployable artefact
+make mfselect   # just the on-Next ROM switcher and what it installs (see Deployment)
 ~~~
 
-Build output goes to `build/`.
+Build output goes to `build/`, and **`make all` really does build all of it** — both transport
+variants, their checksum sidecars, and `build/deploy/` ready to copy to the card.
 
 `mfselect` is the one component built with [z88dk](https://github.com/z88dk/z88dk) rather than
-sjasmplus. It is not part of `make all`.
+sjasmplus.
 
 
 # Testing
@@ -99,20 +100,27 @@ one and **either** of this project's two builds, with the card still in the mach
 the stock ROM the first time it runs, so the backup is made for you rather than being something you
 must remember.
 
-Install it once, by copying five files — everything `make mfselect` produces — into a new
-`/mfselect/` directory on the card:
+Install it once. `make mfselect` (or `make all`) leaves everything it needs in **`build/deploy/`**,
+under the exact names the card expects — copy that directory's *contents* into a new `/mfselect/`
+directory on the card:
 
-| From | To |
-|---|---|
-| `build/mfselect.nex`      | `/mfselect/mfselect.nex` |
-| `build/enNextMf-wifi.rom` | `/mfselect/dezowifi.rom` |
-| `build/dezowifi.sum`      | `/mfselect/dezowifi.sum` |
-| `build/enNextMf.rom`      | `/mfselect/dezouart.rom` |
-| `build/dezouart.sum`      | `/mfselect/dezouart.sum` |
+~~~
+build/deploy/  →  /mfselect/
+    mfselect.nex
+    dezowifi.rom
+    dezowifi.sum
+    dezouart.rom
+    dezouart.sum
+~~~
 
-Copy each `.rom` with its own `.sum`, **from the same build** — `BUILD_TIME` is stamped into the
-ROM, so each build has a different checksum, and a mismatched pair is refused. One `make mfselect`
-builds both variants with the same `BUILD_TIME`, so the five files above are always a coherent set.
+**Nothing needs renaming.** The ROMs are built as `enNextMf.rom` and `enNextMf-wifi.rom`, because
+that is the name the Next's firmware loads at boot — but mfselect looks for them beside itself as
+`dezouart.rom` and `dezowifi.rom`. `build/deploy/` exists so that the same bytes wearing two
+different names is the build's problem rather than yours.
+
+One build produces all five with the same `BUILD_TIME`, which is what makes them a coherent set:
+the stamp goes into each ROM, so every build has a different checksum and a `.rom` paired with a
+`.sum` from another build is refused.
 
 Then, from the NextZXOS command line:
 
@@ -122,18 +130,10 @@ Then, from the NextZXOS command line:
 
 Up/Down to move, ENTER to choose:
 
-~~~
- mfselect            dezogif_ng
- Installed: dezogif_ng WiFi 0003
+![mfselect's menu on a ZX Spectrum Next](doc/images/mfselect-menu.png)
 
- Select ROM to install:
-  Official Multiface NMI ROM
-  dezogif_ng WiFi (ESP-01)
-  dezogif_ng UART (joy port)
-  Exit without changes
-
- Up/Down to move   ENTER to run
-~~~
+*A real screenshot, taken by `make test-mfselect` from a headless jnext run — not a mock-up, so it
+cannot drift from what the program actually draws.*
 
 **Both of our builds are offered**, because a debuggee that uses the ESP itself cannot be debugged
 over WiFi and the serial ROM is the answer for it. `Installed:` names which one is on the card, and

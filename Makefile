@@ -10,14 +10,26 @@
 
 # Show this help
 help:
+	@# The column width is DERIVED from the longest target name, not a constant.
+	@# It used to be a hardcoded %-20s, and `check-reproducible-wifi` is 22
+	@# characters, so that one row overflowed and pushed its description out of
+	@# line. Widening the constant would only move the problem to whoever adds
+	@# the next longer name, so this collects the rows first and formats them in
+	@# END, once the width is known.
 	@if [ -t 1 ] && [ -z "$$NO_COLOR" ]; then c='\033[1;31m'; r='\033[0m'; else c=; r=; fi; \
-	awk -v c="$$c" -v r="$$r" 'BEGIN { FS = ":" } \
+	awk -v c="$$c" -v r="$$r" 'BEGIN { FS = ":"; n = 0; w = 0 } \
 		/^# / { desc = substr($$0, 3); next } \
 		/^[a-zA-Z0-9][a-zA-Z0-9_.-]*:($$|[^=])/ { \
-			if (desc != "") { printf "  %s%-20s%s %s\n", c, $$1, r, desc; desc = "" } \
+			if (desc != "") { \
+				name[n] = $$1; text[n] = desc; \
+				if (length($$1) > w) w = length($$1); \
+				n++; desc = "" \
+			} \
 			next \
 		} \
-		{ desc = "" }' $(MAKEFILE_LIST)
+		{ desc = "" } \
+		END { for (i = 0; i < n; i++) \
+			printf "  %s%-*s%s %s\n", c, w, name[i], r, text[i] }' $(MAKEFILE_LIST)
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +148,25 @@ ROM_WIFI     = $(OUT)/enNextMf-wifi.rom
 SUM_UART     = $(OUT)/dezouart.sum
 SUM_WIFI     = $(OUT)/dezowifi.sum
 
+# What gets copied to the card, under the names the card needs.
+#
+# The ROMs cannot simply be BUILT under these names: `enNextMf.rom` is the name
+# the Next's firmware loads at boot, and it is what the by-hand deployment path
+# and `make test` both install, while `dezouart.rom` is the name mfselect looks
+# for beside itself in /mfselect/. The same bytes wear a different name
+# depending on which of the two jobs they are doing.
+#
+# So the deploy directory exists to stop that being the USER's problem. It used
+# to be: the README listed five files of which two had to be renamed in flight,
+# which is precisely the step at which somebody pairs dezowifi.sum with the
+# UART ROM and gets a refusal they have to debug. Copy the directory, do not
+# transcribe a table.
+#
+# The names here are not this Makefile's invention and must not drift from
+# their source: they are the WIFI_ROM/WIFI_SUM/UART_ROM/UART_SUM #defines in
+# tools/mfselect/mfselect.c, which is the program that opens them.
+DEPLOY       = $(OUT)/deploy
+
 # The pair for whichever variant this invocation selected. Equal to SUM_UART
 # with TRANSPORT=uart and to SUM_WIFI with TRANSPORT=wifi, so one rule text
 # builds both — once per recursive invocation.
@@ -156,8 +187,21 @@ ASMFLAGS = --inc=$(SRC) --lstlab --fullpath \
 # Targets
 # ---------------------------------------------------------------------------
 
-# Build the ROM, the main program and the unit tests
-all: main unit-tests mf-rom
+# `all` means ALL, and it did not used to. It built the program, the unit tests
+# and ONE ROM — the variant of whichever TRANSPORT the invocation carried —
+# while the WiFi ROM, both checksum sidecars and mfselect itself were somewhere
+# else entirely. A target named `all` that produces a fraction of the
+# deliverables is a trap for anyone who reasonably expects to find everything in
+# build/ afterwards.
+#
+# It now depends on `mfselect`, which is the target that builds BOTH ROMs, both
+# .sums and the deploy directory. `mfselect` is deliberately kept rather than
+# folded in here: it is the narrow "just the switcher and what it installs"
+# build, and `test-mfselect` depends on it, so folding it away would make that
+# bench rebuild the Z80 unit tests for nothing.
+#
+# Build everything: the program, the unit tests, mfselect, BOTH ROMs and their .sums
+all: main unit-tests mfselect
 
 # Build the debugger program (build/main.bin + build/mf_nmi.bin)
 main: $(MAIN_BIN) $(MF_NMI_BIN)
@@ -195,6 +239,24 @@ mfselect: $(MFSELECT_NEX)
 	@t=$(BUILD_TIME); \
 	 $(MAKE) --no-print-directory TRANSPORT=uart BUILD_TIME=$$t mf-rom-sum; \
 	 $(MAKE) --no-print-directory TRANSPORT=wifi BUILD_TIME=$$t mf-rom-sum
+	@mkdir -p $(DEPLOY)
+	@# Named individually rather than `rm -rf $(DEPLOY)`: a recursive delete of
+	@# a path built from variables is one typo away from deleting something
+	@# else, and there is nothing here it buys.
+	@rm -f $(DEPLOY)/mfselect.nex $(DEPLOY)/dezowifi.rom $(DEPLOY)/dezowifi.sum \
+	       $(DEPLOY)/dezouart.rom $(DEPLOY)/dezouart.sum
+	@cp -f $(MFSELECT_NEX) $(DEPLOY)/mfselect.nex
+	@cp -f $(ROM_WIFI)     $(DEPLOY)/dezowifi.rom
+	@cp -f $(SUM_WIFI)     $(DEPLOY)/dezowifi.sum
+	@cp -f $(ROM_UART)     $(DEPLOY)/dezouart.rom
+	@cp -f $(SUM_UART)     $(DEPLOY)/dezouart.sum
+	@echo
+	@echo "$(DEPLOY)/ is ready — copy its CONTENTS into /mfselect/ on the card:"
+	@echo
+	@ls -1 $(DEPLOY) | sed 's|^|    /mfselect/|'
+	@echo
+	@echo "  Nothing to rename. Each .rom and its .sum come from this one build,"
+	@echo "  which is what makes them a coherent set."
 
 # Run the local headless test suite in jnext (no VS Code, no hardware)
 test: $(ROM) $(TRIGGER_BIN) $(COPPER_BIN)

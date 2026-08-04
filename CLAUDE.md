@@ -109,6 +109,11 @@ strongest:
      alive** rather than proving it correctly ignores something. It exercises Multiface paging,
      the relocation of `MAIN` into a RAM bank at slot 7, `show_ui`, and the core-version check,
      in one run. Needs jnext ≥ 0.99.118 for `--delayed-nmi`; the bench checks for it and says so.
+     **Scope limit, do not over-read it: T6 never resumes.** No DZRP client attaches, so
+     `cmd_loop` blocks on its first `transport_wait_rx` until the frame limit ends the run. The
+     exit path, `backup.asm` and the **return-to-debuggee half of stackless NMI** are therefore
+     untested — only the entry side is. Closing that needs issue #2's protocol suite, not another
+     screenshot.
    Screen comparison is a **percentage of differing pixels** (`test/screen-diff.py`), not a byte
    compare: NextZXOS idling changes 0.01% of the screen and that once produced a false PASS.
 4. **`make test-mfselect`** — the mfselect bench, 3 headless runs, 5 checks, asserting on files

@@ -243,15 +243,33 @@ fi
 # needs). If T6 goes red, one of those broke, and nothing else in the bench
 # would have noticed.
 #
-# WHAT IT DOES NOT COVER. --delayed-nmi presses the button ONCE. The stub
-# disables the M1 button while it runs and re-arms it on the way out, so a
-# second press after a resume is a different question and this says nothing
-# about it. Do not read a green T6 as "the NMI path is sound".
+# WHAT IT DOES NOT COVER, and this is larger than it looks. T6 NEVER RESUMES.
+# No DZRP client attaches, so message.asm's cmd_loop blocks on its first
+# transport_wait_rx and stays there until --delayed-automatic-exit-frames kills
+# the run. Nothing after "the debugger came up" executes: not the exit path,
+# not backup.asm's restoration, and not the return-to-debuggee half of
+# stackless NMI — which is the half plan §3.4 says actually matters, because
+# without it entering the debugger corrupts the program being debugged. What
+# T6 does exercise of stackless NMI is the ENTRY side only.
+# So: a green T6 means the stub comes up. It does not mean the NMI path is
+# sound, and a second press after a resume is not "the next question" — the
+# first resume has not happened either.
+#
+# It is also a DIFFERENCE measure, which does not know what it is looking at:
+# a crash or a garbage screen would also differ from the boot screen by ~90%
+# (the lesson in ERRORS.md). The second condition below removes the most
+# likely wrong-thing-answered case — that our ROM was not installed and the
+# stock Multiface monitor took the NMI — by requiring the result NOT to look
+# like T3's stock-monitor screen. A crashed machine would still pass, so
+# button-ours.png is the artefact to look at when anything here surprises you.
 button_pct=$(diff_pct "$SHOTS/boot-ours.png" "$SHOTS/button-ours.png")
-if took_over "$button_pct"; then
-    pass "T6 our stub takes over on a real M1 button NMI ($button_pct% repainted) — the stub is alive"
-else
+vs_stock_pct=$(diff_pct "$SHOTS/nmi-stock.png" "$SHOTS/button-ours.png")
+if ! took_over "$button_pct"; then
     fail "T6 our stub did NOT take over on an M1 button NMI (only $button_pct% changed; see $SHOTS/button-ours.png) — nmi66h, the relocation or show_ui is broken"
+elif ! took_over "$vs_stock_pct"; then
+    fail "T6 something took over, but it looks like the STOCK Multiface monitor (only $vs_stock_pct% differs from $SHOTS/nmi-stock.png) — is our ROM really installed on the working image?"
+else
+    pass "T6 our stub takes over on a real M1 button NMI ($button_pct% repainted, $vs_stock_pct% unlike the stock monitor) — the stub is alive"
 fi
 
 log ""

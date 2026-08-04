@@ -462,19 +462,38 @@ that the stub *runs*; every prior check proved a negative. In one run it exercis
 paging, the relocation of `MAIN` into a RAM bank at slot 7, `show_ui`, and the core-version check
 passing (the reference image reports core 03.02.03, above the 03.01.10 that stackless NMI needs).
 
-It also effectively settles §8.3's validation experiment: jnext's Multiface paging, AltROM and
-stackless-NMI implementations are good enough to bring a real stub up.
+It also settles §8.3's validation experiment for the entry path: jnext's Multiface paging and the
+**entry side** of stackless NMI are good enough to bring a real stub up. Not AltROM, and not the
+return side — see the scope limit below.
 
 **T6 did not replace T4, and an earlier draft here said it would.** They send different causes to
 the same check in `nmi66h` — T6 one it accepts, T4 one it rejects. Both are kept, so T4 remains
 the regression check M2 must invert deliberately when it teaches `nmi66h` to accept a software
 cause.
 
-**What T6 does not cover.** `--delayed-nmi` presses the button once. The stub disables the M1
-button while it runs and re-arms on exit, so whether a *second* NMI after a resume works is a
-different question that nothing yet asks.
+**What T6 does not cover, and it is more than "the second press".** **T6 never resumes.** No DZRP
+client attaches, so `message.asm`'s `cmd_loop` blocks on its first `transport_wait_rx` and stays
+there until the frame limit kills the run. Nothing beyond "the debugger came up" executes: not the
+exit path, not `backup.asm`'s restoration, and not the **return-to-debuggee half of stackless
+NMI** — the half §3.4 identifies as the one that matters, since without it entering the debugger
+corrupts the debuggee. Of stackless NMI, only the **entry side** is verified.
 
-### 8.3 A validation experiment worth doing first
+Closing that gap needs a DZRP client to send `CMD_CONTINUE` and a check that the debuggee really
+resumes — which is [issue #2](https://github.com/jorgegv/dezogif_ng/issues/2), the protocol
+conformance suite, not another screenshot check.
+
+T6 is also a pixel-difference measure, so it cannot distinguish a takeover from a crash. It does
+now exclude one wrong answer automatically by requiring the result to look *unlike* the stock
+Multiface monitor, which catches "our ROM was never installed".
+
+### 8.3 A validation experiment worth doing first — largely answered, see §8.2
+
+**Status (2026-08-04): answered for the entry path, by T6 rather than by this experiment.** Our own
+build comes up under jnext on a real button NMI, which is the same evidence this section was after
+and makes running a third-party binary unnecessary for that purpose. Still *not* answered: AltROM,
+and the return-to-debuggee half of stackless NMI, because T6 never resumes. The original text
+follows.
+
 
 Drop **dezogif's existing** `enNextMf.rom` onto a jnext SD image and press the emulated NMI
 button. If it comes up, that is third-party validation of jnext's Multiface paging, AltROM and
@@ -666,7 +685,7 @@ Facts checked directly against a primary source during the analysis:
 | …but every MF NMI source is gated by NR `0x06` bit 3 (default 0) | `zxnext.vhd:2090`, `:5166` | **verified** — corrects an earlier "ungated" claim |
 | A software MF NMI enters the stock Multiface ROM under jnext | `make test` T3, 91% repaint | **verified** |
 | **Our stub takes over on a real M1 button NMI and paints its UI** | `make test` T6, 90.28% repaint, jnext 0.99.118 `--delayed-nmi` | **verified** — the first evidence the stub runs at all |
-| jnext's Multiface paging, AltROM and stackless NMI are good enough to run a real stub | same T6 run; retires §8.3's proposed experiment | **verified** |
+| jnext's Multiface paging and the **entry side** of stackless NMI are good enough to run a real stub | same T6 run; answers §8.3's experiment for the entry path only | **verified, scoped** — the return-to-debuggee half and AltROM are NOT covered: T6 never resumes |
 | dezogif declines a software MF NMI: `nmi66h` serves button causes only | `mf_rom.asm` `nmi66h`, `zxnext.vhd:3843-3848`; `make test` T4 | **verified** |
 | I/O trap on `0x2FFD`/`0x3FFD` generates MF NMI | `zxnext.vhd:3835` | **verified** |
 | Prescaler formula and width | `ports.txt` (`0x143B`), `uart.h` | **verified** |

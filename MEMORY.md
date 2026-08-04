@@ -33,10 +33,26 @@ regression check M2 is required to invert when it teaches `nmi66h` to accept a
 software cause — the check would have vanished on the day the button arrived,
 and nobody would have noticed until M2 broke something silently.
 
-**What T6 does not cover, stated so a green tick is not over-read.**
-`--delayed-nmi` presses the button **once**. The stub disables the M1 button
-while it runs and re-arms it on exit, so whether a *second* NMI after a resume
-works is untested. Do not read T6 as "the NMI path is sound".
+**What T6 does not cover — larger than the first draft of this entry admitted,
+and the reviewer had to point it out.** That draft said only that a *second*
+press after a resume was untested, which implies the first resume was covered.
+It is not. **T6 never resumes at all.** No DZRP client attaches, so
+`message.asm`'s `cmd_loop` blocks on its first `transport_wait_rx` and stays
+there until the run is killed by the frame limit. Nothing past "the debugger
+came up" executes: not the exit path, not `backup.asm`'s restoration, and not
+the **return-to-debuggee half of stackless NMI** — the half plan §3.4 says
+actually matters, because without it entering the debugger corrupts the program
+being debugged. Of stackless NMI, T6 exercises the **entry side only**.
+
+So the Appendix A row is scoped to that, and the honest summary is: the stub
+comes up. Not "the NMI path is sound".
+
+**A green T6 still cannot tell a takeover from a crash**, because it is a
+pixel-difference measure and does not know what it is looking at — the lesson
+already in [[ERRORS.md]]. One failure mode is now excluded automatically: T6
+also requires the result to look *unlike* the stock Multiface monitor, which
+catches "our ROM was not actually installed". A crashed machine would still
+pass, so the screenshot remains the artefact to inspect.
 
 **Also fixed while here.** The bench's summary line was hardcoded `5/5` and
 would have kept saying so after a sixth check was added — a small lie in

@@ -93,8 +93,9 @@ That asymmetry is **by design, and documented upstream**. `doc/legacy/Design.md:
 
 The reason is the paragraph above it: a game that takes the joy port leaves the Next transmitting
 endless zeroes, and the preamble is how DeZog resynchronises. DeZog implements exactly that split
-— `ZxNextSerialRemote` scans for and strips byte 165, `CSpectRemote` does not (verified against the installed DeZog 3.7.4, `out/extension.js`), and `make
-test-dzrp` against CSpect confirms the socket side emits none.
+— `ZxNextSerialRemote` scans for and strips byte 165, `CSpectRemote` does not
+(verified against the installed DeZog 3.7.4, `out/extension.js`), and `make test-dzrp`
+against CSpect confirms the socket side emits none.
 
 **So the byte is required in UART mode and must be absent in WiFi mode.** It is a property the
 transport contributes, not a defect to delete. Removing it in both modes would break

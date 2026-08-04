@@ -96,31 +96,50 @@ def chk_init(d):
     return PASS, "DZRP %s, machine %d, %r" % (ver, machine, name)
 
 
+# A check whose PASS is silence must wait LONGER than a normal command, not
+# less. Every other check here treats a timeout as failure, which is the safe
+# direction: too short only ever produces a loud false FAIL. This one inverts
+# that, so too short produces a SILENT false PASS — a green line asserting
+# something never established. Hence a multiple of the caller's own --timeout
+# rather than a hardcoded number no caller can raise for a slow link.
+SILENCE_FACTOR = 2.0
+
+
 def chk_length_convention(d):
     """Prove the command length convention by violating it.
 
-    An earlier version of this check just sent a well-formed CMD_INIT and
-    declared victory, which asserted nothing chk_init did not already assert —
-    the reviewer called it a strictly weaker duplicate, correctly.
+    An earlier version just sent a well-formed CMD_INIT and declared victory,
+    which asserted nothing chk_init did not already assert — a reviewer called
+    it a strictly weaker duplicate, correctly.
 
     So it now sends CMD_INIT with the WRONG length: payload + 2, the symmetric
-    reading. A remote that counts the payload only will be left waiting for two
-    bytes that never arrive, and must NOT produce a valid response. If it
-    answers anyway, our understanding of the convention is wrong in a way that
-    matters, and saying so is more useful than a green tick.
+    reading. A remote that counts the payload only is left waiting for two
+    bytes that never arrive, and must not produce a valid response.
+
+    Silence and refusal are reported as DIFFERENT observations, because they
+    are: one means the remote is still waiting mid-frame, the other that it
+    rejected the frame outright. Collapsing both into one message would
+    overclaim what was seen.
     """
     payload = dzrp.init_payload()
     frame, seq = d.build_command(dzrp.CMD_INIT, payload, length=len(payload) + 2)
+    wait = d.base_timeout * SILENCE_FACTOR
     d.send_raw(frame)
-    d.t.set_timeout(2.0)                 # deliberately short: we expect silence
+    d.t.set_timeout(wait)
     try:
         got_seq, _ = d._read_frame()
-    except dzrp.DzrpError:
-        return PASS, "an over-long length is not accepted (command length = payload only)"
+    except dzrp.Timeout:
+        return PASS, ("silent for %.0fs after an over-long length — the remote is still "
+                      "waiting for bytes it was promised" % wait)
+    except dzrp.DzrpError as e:
+        return PASS, "remote refused an over-long length outright (%s)" % e
     if got_seq == seq:
         return FAIL, ("the remote answered a command whose length counted seq+cmd too, "
                       "so the convention is not payload-only as documented")
-    return PASS, "no valid response to an over-long length"
+    # Something arrived that was neither our response nor silence. Say what it
+    # was rather than quietly counting it as proof.
+    return FAIL, ("expected silence, got a frame with seq %d — cannot conclude anything "
+                  "about the length convention from this" % got_seq)
 
 
 def chk_preamble(d, expect):
@@ -264,7 +283,7 @@ def main():
             print("ERROR: cannot reach %s after 5s of retries" % args.remote,
                   file=sys.stderr)
             return 2
-        d = dzrp.Dzrp(transport, start_byte=sb)
+        d = dzrp.Dzrp(transport, start_byte=sb, base_timeout=args.timeout)
         try:
             if fn is None:                       # the preamble check needs a flag
                 status, detail = chk_preamble(d, args.expect_preamble)

@@ -194,9 +194,12 @@ class Dzrp:
                 "auto" — decide on the first frame received, and record it
     """
 
-    def __init__(self, transport, start_byte="auto"):
+    def __init__(self, transport, start_byte="auto", base_timeout=5.0):
         self.t = transport
         self.start_byte = start_byte
+        # What the caller considers a reasonable wait. A check whose PASS is
+        # SILENCE must wait longer than this, never less.
+        self.base_timeout = base_timeout
         self.observed_start_byte = None
         self.seq = 0
         self.notifications = []

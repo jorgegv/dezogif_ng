@@ -80,16 +80,23 @@
 ;    until told otherwise (doc/WIFI-SETUP.md; inferred, not measured on
 ;    hardware). Raising it is M3's baud negotiation and has to start here.
 ;
+; 6. IT DRAWS ITS OWN SCREEN. show_ui is the third thing the assembly-time
+;    switch selects, after the byte stream and the lifecycle, and the reason is
+;    the same one that made a shared transport impossible: a joy-port selector
+;    and a cable baud rate are meaningless here, and the address a client has to
+;    dial is meaningless in UART mode. Until this existed the WiFi ROM drew
+;    upstream's screen — a baud rate the hardware was NOT running at, and a
+;    selector for a port it never touches — and the two builds were
+;    indistinguishable on a real machine. See esp_query_address and
+;    esp_show_status, and MEMORY.md 2026-08-04.
+;
 ;---------------------------------------------------------------------------
 ; What this file does NOT do, deliberately
 ;---------------------------------------------------------------------------
 ;
 ; * It never configures WiFi. No AT+CWJAP, no SSID, no passphrase — see
 ;   doc/WIFI-SETUP.md for the three independent reasons. The Next must already
-;   be associated.
-; * It does not ask for the address (AT+CIFSR). That belongs with the
-;   connect-string UI, which is a separate change: reporting an address means
-;   parsing it and drawing it, and neither exists yet.
+;   be associated. It only ever ASKS (AT+CIFSR) and reports what it is told.
 ; * A RE-INIT WHILE ALREADY LISTENING REPORTS AN ERROR. Symbol Shift + NMI runs
 ;   transport_init again, and `AT+CIPSERVER=1,<port>` answers ERROR when a
 ;   server is already up (jnext esp_at.cpp:648). The link keeps working — the
@@ -152,13 +159,8 @@ UART_RX_FIFO_EMPTY: equ 0   ; 0=empty, 1=not empty
 UART_RX_FIFO_OVERFLOW:  equ 2   ; 1=overflowed  ; (clears on read)
 UART_TX_FULL:       equ 1   ; 1=Tx buffer is full
 
-; The ESP-01's power-on baud rate. See point 5 in the header.
-ESP_BAUDRATE:   equ 115200
-
-; DeZog's `cspect` remote defaults to this port, so a launch.json that omits
-; `port` still works. MEMORY.md 2026-08-04 pins it; Appendix B's example and
-; test/esp_server.asm must agree.
-ESP_SERVER_PORT:    equ 11000
+; ESP_BAUDRATE and ESP_SERVER_PORT are in constants.asm, beside BAUDRATE — the
+; UI has to name both and is assembled before this file. See there.
 
 ; Bytes buffered before a chunk is pushed out. Under 256 so the length fits a
 ; byte and the send loop can use DJNZ; well under jnext's 2048-byte
@@ -183,6 +185,22 @@ ESP_INIT_PASSES:    equ 20
 ; loop is ~24 T-states, so 10000 is ~8.5 ms at 28 MHz — two orders of magnitude
 ; of headroom over a single byte time, and still bounded.
 ESP_TX_WAIT:    equ 10000
+
+; The longest dotted quad, "255.255.255.255". Bounds the copy out of AT+CIFSR's
+; answer, so a stream that never produces the closing quote cannot run off the
+; end of the buffer.
+ESP_IP_MAX:     equ 15
+
+; What the UI has to say about the link. Decided once, during bring-up, because
+; show_ui is re-entered on every redraw and an AT round trip per redraw would
+; buy nothing — the address cannot change while we hold the module.
+ESP_LINK_OK:            equ 0   ; associated, listening, and the address is known
+ESP_LINK_NO_ADDRESS:    equ 1   ; the module answered, but has no usable address
+ESP_LINK_FAILED:        equ 2   ; the AT chain did not complete
+; ESP_LINK_FAILED covers every way the chain can stop — silence, or a command
+; refused — because from the screen's point of view they are one situation and
+; have one first move. Splitting them would need the module to have said
+; something to tell them apart, which in the silent case it has not.
 
 
 ;===========================================================================
@@ -210,12 +228,26 @@ esp_cmd_cipmux:     defb "AT+CIPMUX=1",13,10,0
 esp_cmd_cipserver:  defb "AT+CIPSERVER=1,"
     STRINGIFY ESP_SERVER_PORT
     defb 13,10,0
+esp_cmd_cifsr:      defb "AT+CIFSR",13,10,0
 
 esp_str_ok:         defb "OK",13,10,0
 esp_str_ipd:        defb "+IPD,",0
 esp_str_error:      defb "ERROR",0
 esp_str_send_ok:    defb "SEND OK",0
 esp_str_cipsend:    defb "AT+CIPSEND=",0
+
+; The anchor in AT+CIFSR's answer, opening quote included. ESP-AT reports one
+; `+CIFSR:<what>,"<value>"` line per interface — the access point's address and
+; MAC as well as the station's — so the station address is matched BY NAME
+; rather than by taking the first quoted string it sees. (jnext emits only
+; STAIP and STAMAC, which is the subset that would have let a looser match pass
+; here and fail on hardware.)
+esp_str_staip:      defb "+CIFSR:STAIP,",34,0
+
+; Appended to the address to make the line a user can copy into launch.json.
+esp_str_port:       defb ":"
+    STRINGIFY ESP_SERVER_PORT
+    defb 0
 
 
 ;===========================================================================
@@ -249,6 +281,54 @@ esp_rx_pass:        defb 1
 ; Set if the AT chain failed, so transport_activate can put it back into
 ; last_error after drain_main has cleared it. See transport_activate.
 esp_init_error:     defb 0
+
+; Which of the three status blocks below show_ui draws. NO_MODULE is the state
+; before transport_init has run, so a UI drawn without a bring-up says "the
+; module did not answer" rather than claiming an address it never asked for.
+esp_link_state:     defb ESP_LINK_FAILED
+
+;---------------------------------------------------------------------------
+; The UI half of the transport interface (MEMORY.md 2026-08-04).
+;
+; Two lines at rows 6 and 7 — exactly where UART mode draws its joy-port
+; selection, and the only part of this screen composed at run time. Composed,
+; because the address comes from the ESP and is not known at assembly time.
+;
+; All three alternatives are TWO lines, so a failure replaces the whole block
+; rather than leaving "Connect at" standing over a blank. The half-built line
+; is the failure this must not produce.
+;---------------------------------------------------------------------------
+esp_text_connect:
+    defb AT, 0, 6*8
+    defb "Remote debugger active."
+    defb AT, 0, 7*8
+    ; 11 columns, so the longest possible tail — 15 for the address, 6 for
+    ; ":11000" — ends exactly at column 32. There is no room for the colon
+    ; MEMORY.md's sketch put after "at", and that is why it is not there.
+    defb "Connect at "
+esp_connect_address:
+    ; "<address>:<port>" + NUL, written by esp_query_address. 22 bytes are
+    ; reachable (15 + 6 + 1); the slack is for a shorter port never costing a
+    ; rebuild of this arithmetic.
+    defs 24, 0
+
+esp_text_no_address:
+    defb AT, 0, 6*8
+    defb "No WiFi address. Set the Next"
+    defb AT, 0, 7*8
+    defb "up first: run wifi2.bas", 0
+
+esp_text_failed:
+    defb AT, 0, 6*8
+    defb "ESP-01 setup failed. Check it"
+    defb AT, 0, 7*8
+    defb "is fitted and enabled.", 0
+
+; Indexed by esp_link_state.
+esp_status_text_table:
+    defw esp_text_connect
+    defw esp_text_no_address
+    defw esp_text_failed
 
 esp_tx_len:         defb 0
 esp_tx_byte:        defb 0
@@ -1092,29 +1172,142 @@ transport_init:
 
     ld hl,esp_cmd_ate0
     call esp_command_ok
-    jr c,.failed
+    jr c,.no_bringup
     ld hl,esp_cmd_at
     call esp_command_ok
-    jr c,.failed
+    jr c,.no_bringup
 
     ; Multiplexed mode. REQUIRED BEFORE CIPSERVER — AT+CIPSERVER=1 answers
     ; ERROR without it, and AT+CIPMUX=1 in turn forbids AT+CIPMODE=1, which is
     ; why there is no transparent byte pipe to fall back on.
     ld hl,esp_cmd_cipmux
     call esp_command_ok
-    jr c,.failed
+    jr c,.no_bringup
 
     ld hl,esp_cmd_cipserver
     call esp_command_ok
-    jr c,.failed
+    jr c,.no_bringup
+
+    ; The address, for the UI. Asked for HERE rather than from show_ui because
+    ; show_ui is re-entered on every redraw — the "B" key, CMD_CLOSE, an error
+    ; report — and an AT round trip per redraw would be paid for an answer that
+    ; cannot have changed. It is also the last step on purpose: it is the only
+    ; one whose failure still leaves a working listener.
+    call esp_query_address
+    ld a,(esp_link_state)
+    or a
+    jr nz,.no_address
 
     xor a
-.failed:
-    ; A = 0 on success, or the RX timeout error from esp_command_ok's caller.
+    jr .done
+
+.no_address:
+    ; The listener is up and nobody can be told where to find it, which the user
+    ; has to act on — so it goes in the error area as well as the status block.
+    ; See doc/WIFI-SETUP.md.
+    ld a,ERROR_NO_WIFI_ADDRESS
+    jr .done
+
+.no_bringup:
+    ; A carries esp_command_ok's error and must survive to .done, so the state
+    ; is written through HL rather than through A.
+    ld hl,esp_link_state
+    ld (hl),ESP_LINK_FAILED
+.done:
     ld (esp_init_error),a
     ld a,1
     ld (esp_rx_retries),a
     ret
+
+
+;===========================================================================
+; Asks the module for the station's address and composes the connect line.
+;
+; AT+CIFSR answers with one `+CIFSR:<what>,"<value>"` line per interface and
+; then OK. Only STAIP is wanted, and it is matched by name — see esp_str_staip.
+;
+; A failure here is NOT a bring-up failure: the listener is already up, and the
+; only thing lost is being able to tell the user where it is. So this never
+; jumps to the timeout handler; it returns with esp_link_state saying so.
+; Returns:
+;  esp_link_state = ESP_LINK_OK and esp_connect_address composed, or
+;  ESP_LINK_NO_ADDRESS.
+; Changes:
+;  AF, BC, DE, HL
+;===========================================================================
+esp_query_address:
+    ld a,ESP_LINK_NO_ADDRESS
+    ld (esp_link_state),a
+
+    ld hl,esp_cmd_cifsr
+    call esp_send_string
+    ld hl,esp_str_staip
+    call esp_wait_string
+    ret c
+
+    ; Copy the address up to the closing quote, bounded by ESP_IP_MAX.
+    ld de,esp_connect_address
+    ld b,ESP_IP_MAX
+.char:
+    push bc, de
+    call esp_try_read_raw
+    pop de, bc
+    ret c
+    cp 34                       ; the closing quote
+    jr z,.end_of_address
+    ld (de),a
+    inc de
+    djnz .char
+    ret                         ; longer than any address can be: refuse it
+
+.end_of_address:
+    ; B still holds what it was set to if the very first byte was the quote,
+    ; i.e. the module reported an empty address.
+    ld a,b
+    cp ESP_IP_MAX
+    ret z
+
+    ; An unassociated module reports 0.0.0.0. The whole of 0.0.0.0/8 is "this
+    ; network" and can never be a host address, so the first two characters
+    ; settle it without a string compare.
+    ld hl,esp_connect_address
+    ld a,(hl)
+    cp '0'
+    jr nz,.usable
+    inc hl
+    ld a,(hl)
+    cp '.'
+    ret z
+
+.usable:
+    ; DE is just past the last character of the address.
+    ld hl,esp_str_port
+    call esp_copy_string
+    xor a
+    ld (de),a
+    ld (esp_link_state),a       ; A is 0 = ESP_LINK_OK
+
+    ; Swallow the rest of the answer — the STAMAC line and the OK — so a later
+    ; scan does not have to step over it. A timeout here is not a failure: the
+    ; address is already in hand, and main_bank_entry falls into drain_main,
+    ; which discards anything still on the wire.
+    ld hl,esp_str_ok
+    jp esp_wait_string
+
+
+;===========================================================================
+; Draws WiFi mode's status block, where UART mode draws its joy-port selection.
+; Called from show_ui; see the data above.
+; Changes:
+;  AF, BC, DE, HL
+;===========================================================================
+esp_show_status:
+    ld hl,esp_status_text_table
+    ld a,(esp_link_state)
+    add a                       ; *2
+    add hl,a
+    ld de,(hl)
+    jp text.ula.print_string
 
 
 ;===========================================================================

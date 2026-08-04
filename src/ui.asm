@@ -20,6 +20,12 @@ ERROR_WRITE_MAIN_BANK:	    equ 5
 ERROR_CORE_VERSION_NOT_SUPPORTED:  equ 6
 ERROR_CMD_NOT_SUPPORTED:    equ 7
 
+ IF ROM_VARIANT == ROM_VARIANT_WIFI
+; WiFi mode only: the module answered, the listener is up, and it has no
+; address to hand out. Raised by transport_init; see transport_esp.asm.
+ERROR_NO_WIFI_ADDRESS:      equ 8
+ ENDIF
+
 
 ;===========================================================================
 ; Checks key "R".
@@ -66,8 +72,13 @@ check_key_border:
     ret
 
 
+ IF ROM_VARIANT == ROM_VARIANT_UART
 ;===========================================================================
 ; Reads the joyport from the keyboard.
+;
+; UART MODE ONLY. WiFi mode never touches the joy ports (transport_esp.asm,
+; point 4), so there is nothing for 1/2/3 to select and no line on the screen
+; for them to change.
 ; Returns:
 ;  E: 0x00=00b => "3": no joystick port used
 ;     0x01=01b => "1": joyport 1
@@ -95,6 +106,7 @@ read_key_joyport:
 
 .cont:
     ; Flow through wait_on_key_release
+ ENDIF
 
 
 ;===========================================================================
@@ -192,6 +204,15 @@ show_ui:
     ld de,text_one_char
     call text.ula.print_string
 
+    ; The transport's own status block, at rows 6 and 7. This is the UI half of
+    ; the assembly-time switch (MEMORY.md 2026-08-04): it is the one part of
+    ; this screen whose content is a property of the transport, so the two
+    ; modes fill it with different things rather than sharing a line that would
+    ; be false in one of them.
+ IF ROM_VARIANT == ROM_VARIANT_WIFI
+    ; The connect address, or why there is not one.
+    call esp_show_status
+ ELSE
     ; Show right selected joy port option
     ld hl,SELECTED_TEXT_TABLE
     ld a,(uart_joyport_selection)
@@ -199,6 +220,7 @@ show_ui:
     add hl,a
     ld de,(hl)
     call text.ula.print_string
+ ENDIF
 
     ; Show border option
     ld de,BORDER_ON_TEXT

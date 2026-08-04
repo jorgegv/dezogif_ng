@@ -79,8 +79,10 @@ main_bank_entry:
     call text.init
 
     ; The main program has been copied into MAIN_BANK
+ IF ROM_VARIANT == ROM_VARIANT_UART
     ld a,2  ; Joy 2 selected
     ld (uart_joyport_selection),a
+ ENDIF
 
     ; Enable flashing border
     call transport_flashing_border.enable
@@ -179,6 +181,9 @@ main_loop:
     call check_key_reset
     call check_key_border
     jp z,main   ; Jump if "B" pressed
+ IF ROM_VARIANT == ROM_VARIANT_UART
+    ; The joy-port selector. UART mode only — WiFi mode never takes a joy port,
+    ; so there is nothing for 1/2/3 to select. See ui.asm's read_key_joyport.
     call read_key_joyport
     inc e
     jr z,.no_keyboard
@@ -188,6 +193,7 @@ main_loop:
     ld a,e
     ld (uart_joyport_selection),a
     jp main
+ ENDIF
 
 .no_keyboard:
     pop de, bc

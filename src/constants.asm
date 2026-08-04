@@ -91,7 +91,9 @@ ROM_VARIANT:        equ ROM_VARIANT_UART
 
 
 
-; UART baudrate
+; UART baudrate — UART MODE ONLY. This is the joy-port cable's rate, where both
+; ends are ours to choose. It is NOT what WiFi mode runs the peripheral at; see
+; ESP_BAUDRATE below, and do not let the two be shown by the same UI again.
 ;BAUDRATE:   equ 2000000
 ;BAUDRATE:   equ 1958400
 ;BAUDRATE:   equ 1228800
@@ -99,6 +101,29 @@ BAUDRATE:   equ 921600
 ;BAUDRATE:   equ 614400
 ;BAUDRATE:   equ 460800
 ;BAUDRATE:   equ 230400
+
+
+;===========================================================================
+; WiFi mode's two build-time settings.
+;
+; THEY LIVE HERE RATHER THAN IN transport_esp.asm BECAUSE THE UI NAMES THEM.
+; data_const.asm holds the on-screen text and is included BEFORE
+; transport.asm, so a STRINGIFY there cannot see a value defined inside the
+; transport implementation. Putting them beside BAUDRATE also puts the two
+; rates next to each other, which is where the confusion they caused belongs.
+;===========================================================================
+
+; The ESP-01's power-on baud rate. The module answers at this until told
+; otherwise (doc/WIFI-SETUP.md) — inferred from the ESP-AT documentation, not
+; measured on hardware. Raising it is M3's baud negotiation and has to start
+; here.
+ESP_BAUDRATE:   equ 115200
+
+; The TCP port WiFi mode listens on. DeZog's `cspect` remote defaults to this,
+; so a launch.json that omits `port` still works. MEMORY.md 2026-08-04 pins it;
+; Appendix B's example, test/run-dzrp-stub.sh and the address the UI draws must
+; all agree, because a mismatch fails as a silent connection refusal.
+ESP_SERVER_PORT:    equ 11000
 
 
 ; Program states

@@ -5,6 +5,58 @@ attempting similar logic.
 
 ---
 
+## A sentinel value that a real peer can legitimately send
+
+**Symptom.** On a real ZX Spectrum Next: the stub came up, the TCP listener
+appeared (hardware bench H1 passed, 295 ms), the client connected, and DZRP
+commands were consumed and executed — and **every single reply vanished**. No
+error on the Next's screen, no bytes on the socket, every check timing out with
+`timed out after 0 of 1 bytes`. The WiFi debugger was unusable.
+
+**Cause.** `transport_flush` used `esp_conn_id == 0` to mean "there is nobody to
+send to". **Real ESP-AT firmware assigns link id 0 to the first inbound
+connection**, so the one thing a working client is guaranteed to look like was
+indistinguishable from no client at all.
+
+**The warning was already written down, in this repository, and was overridden
+by the code anyway.** MEMORY.md's entry on jnext's ESP server says inbound ids
+start at 1 because jnext reserves slot 0 for the guest's outbound
+`AT+CIPSTART`, and then says explicitly: that is a **jnext design choice**, do
+not promote it to a hardware fact without measuring it. The `+IPD` parser obeyed
+— it reads the id and never assumes one. The *sentinel* did not, and nobody
+noticed that picking 0 as "impossible" was the same assumption in a second
+place.
+
+**Fix.** Not a different magic value. `esp_conn_valid` now carries "is there a
+client" and `esp_conn_id` carries only what arrived. `0xFF` was proposed first
+and rejected by the user on the right grounds: **the defect was reserving a
+value at all**, and reserving a different one just moves the collision somewhere
+it does not happen to hurt yet.
+
+**Why no test caught it and no test ever will.** jnext never issues id 0, so
+`make test-dzrp-stub` was green before the fix and is green after it. Every
+layer of this project's CI is an emulator, and this is a class of bug the
+emulator is structurally blind to — not because the bench is weak, but because
+the emulator's own numbering is what hid it.
+
+**What did work, and it is the transferable part.** Forcing the parsed id to 0
+in a throwaway tree makes jnext reproduce the hardware symptom exactly:
+`main`'s code framed 18 inbound commands and issued **zero** `AT+CIPSEND`; the
+fixed code framed 16 and issued **8**, as `AT+CIPSEND=0,25`. So when the
+emulator cannot reach a state, **inject the state** — a negative control in a
+tree you throw away is available even when a committed test is not. It also
+executed `esp_put_decimal` with 0 for the first time ever, a path every previous
+run had skipped because jnext's ids are 1 and 2.
+
+**Lesson.** A sentinel is a claim that some value can never arrive from outside.
+Write that claim down where the value enters, and check it against the *peer's*
+specification rather than against the one implementation you can run. "The
+emulator never sends it" is not "it cannot arrive" — and when your only test
+harness is the thing whose behaviour you assumed, agreement between them is not
+evidence.
+
+---
+
 ## "These two differ" is not "this one is right"
 
 **Symptom.** A green check that could not fail on the bug it was written for.

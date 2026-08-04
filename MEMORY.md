@@ -5,6 +5,86 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-05 — No ESP connection id is reserved: validity is state, the id is data
+
+**Decided (user), after the bug below was found on real hardware.** The rule is
+now absolute and it is stronger than the fix that was first proposed: **no value
+of an ESP connection id is special.** Not 0, not 0xFF, not 1. The id is opaque —
+read it from the `+IPD` header, echo it back on `AT+CIPSEND`, and encode nothing
+anywhere about its range, its first value or how the module allocates it.
+"Is there a client" is tracked separately, in `esp_conn_valid`.
+
+**What went wrong, and it is the exact failure MEMORY.md had already warned
+about.** The entry below ("jnext's ESP server: inbound connection ids start at
+1, not 0") recorded that jnext reserves slot 0 for the guest's own outbound
+`AT+CIPSTART`, and said in as many words that this is a **jnext design choice**
+which "must not be promoted to a hardware fact without measuring it". It was
+promoted anyway — not in the parser, which correctly reads the id, but in
+`transport_flush`, which used `esp_conn_id == 0` as the marker for "there is
+nobody to send to".
+
+**Real ESP-AT firmware assigns link id 0 to the first inbound connection.**
+Measured on the user's Next, 2026-08-04 night: the listener came up (hardware
+bench H1 passed, 295 ms), the client connected, commands were consumed and
+executed — and **every reply was silently discarded**, because a perfectly valid
+id read as "no client". No error, no data; every DZRP check timed out with
+`timed out after 0 of 1 bytes`. The WiFi debugger was completely unusable on
+real hardware.
+
+**Rejected: `0xFF` as the sentinel instead.** It was the obvious minimal fix —
+ESP-AT ids are 0-4, so 0xFF cannot collide, and it costs no extra state. The
+user rejected it, and the reasoning is the part worth keeping: **the defect was
+the reservation itself, not the value chosen.** Swapping one reserved value for
+another repeats the mistake in a place that merely happens not to hurt today,
+and leaves the next reader believing a reserved id is a legitimate design. Two
+variables cost 6 bytes and remove the class of bug rather than one instance of
+it.
+
+**Also rejected: keeping them in one byte** by any encoding (id+1, a high bit).
+Every such scheme is a reservation wearing a disguise, and the collision comes
+back the moment the module's numbering changes again.
+
+**The shape of the fix.** `esp_conn_id` holds whatever the header said and means
+nothing else; `esp_conn_valid` is non-zero when there is somewhere to send.
+`esp_sync_ipd` writes both, together, and is the only place that sets either.
+`.no_client` — the path taken when `AT+CIPSEND` answers `ERROR`, i.e. the peer
+has gone — **clears the flag and leaves the dead id alone**, because writing
+some other value into it would be reserving one again. Bench check W2, which
+exists because a stale id used to make the M1 button silently stop working after
+the first disconnect, still passes.
+
+**Cost:** 6 bytes in the WiFi ROM (`main_end` 0xF506 → 0xF50C, 2452 still free).
+The UART ROM is byte-identical — `transport_esp.asm` is in the WiFi build only,
+and that asymmetry is the evidence that nothing shared was touched.
+
+**THE EMULATOR CANNOT CONFIRM THIS FIX, and that is a permanent property of it,
+not a gap to close.** jnext never hands out id 0, so `make test-dzrp-stub` is
+green *before and after*. There is no red-to-green transition to point at, and
+anyone who adds a check claiming otherwise has misunderstood what the bench can
+see.
+
+**What the emulator CAN show is the mechanism, and it was measured rather than
+argued** — by forcing the parsed id to 0 in a throwaway tree, i.e. simulating
+hardware numbering under jnext, one variable at a time:
+
+| tree | commands arrived (`+IPD` framed) | `AT+CIPSEND` issued |
+|---|---|---|
+| `main`'s code + forced id 0 | 18 | **0** — every reply dropped at `transport_flush` |
+| fixed code + forced id 0 | 16 | **8**, as `AT+CIPSEND=0,25` |
+
+So the hardware symptom reproduces exactly under jnext once the id is forced,
+and the fix demonstrably carries a zero id through to the wire. jnext then
+refuses cid 0 (it is jnext's outbound slot), which is why the DZRP checks still
+fail in that control and why it can never be a committed test. It also proves
+`esp_put_decimal` emits `"0"` correctly — a path no bench had ever executed,
+since every id jnext issues is 1 or 2.
+
+**Confirmation is a hardware run**, and only that: `make test-hardware
+NEXT_IP=<ip>`, expecting H1 to pass as before and the DZRP checks that timed out
+to go green.
+
+---
+
 ## 2026-08-04 — FIRST RUN ON REAL HARDWARE: the stub comes up on a Next
 
 **Measured, not decided.** A real ZX Spectrum Next, our WiFi ROM installed by

@@ -113,6 +113,19 @@ frames with the id already stripped. So MEMORY.md's open question — whether re
 numbers inbound connections from 1 the way jnext does — **survives a green run of this bench**.
 Settling it needs the ids observed on the Next side, which this bench has no channel for.
 
+**That question is now SETTLED, and not by this bench: real firmware numbers from 0.** The first
+hardware run answered it by failing. H1 passed, the client connected, commands were executed, and
+every reply was discarded — because `transport_flush` used `esp_conn_id == 0` as its "no client"
+marker and the module had assigned the client id **0**. See ERRORS.md. The fix reserves no id at
+all: validity moved to its own flag (`esp_conn_valid`) and the id became opaque data.
+
+Two things follow for reading this bench. First, the paragraph above is still right about what H3
+*can see* — the numbering was learned from a total failure, not from a green run, and a green run
+would still not reveal it. Second, **no emulator check covers this**, in either direction: jnext
+never issues id 0, so `make test-dzrp-stub` was green while the bug made hardware unusable, and it
+is green now. On this specific question the hardware bench is not the strongest evidence, it is the
+*only* evidence.
+
 The first version of this page claimed H3 would move that row to `verified`, in two separate
 places. It would not have, and the review caught it.
 

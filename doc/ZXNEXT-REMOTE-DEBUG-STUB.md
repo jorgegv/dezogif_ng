@@ -615,6 +615,7 @@ Named DeZog remote type; contribute the transport abstraction back to dezogif if
 | **Hardware flow control** | May not be populated on all board revisions | Verify before relying on high baud |
 | **DeZog remote-type assumptions** | `cspect` remote may branch above the wire | Verify at M1 with `CMD_LOOPBACK` |
 | **ESP mode exclusivity** | Server mode forbids passthrough (`CIPSERVER`→`CIPMUX=1`→`CIPMODE=0`), so the raw byte pipe is unavailable in the chosen design | Designed around in §4.2; costs Z80 code and latency, buys connection lifecycle |
+| **`0xA5` preamble leaks a serial assumption into `message.asm`** | The stub emits `MESSAGE_START_BYTE` before every response and notification, as a resync marker for a joy port that idles with zeroes. DZRP has no preamble and CSpect emits none (measured, `make test-dzrp`), so a WiFi build reusing this code emits a stray byte DeZog's `cspect` remote will not parse. It sits in one of the three files CLAUDE.md says must not know their transport | M1 must resolve it; options and the reason not to pick one yet are in MEMORY.md. Caught by the conformance suite, not by the transport extraction that declared those files clean |
 | **`+IPD` framing bugs** | The multiplexed `+IPD,<id>,<len>:` form is easy to get subtly wrong, and a corrupt parser looks like a protocol bug | M0(b) exists specifically to isolate this. NXtel's `src/esp.asm` is a working reference |
 
 ---

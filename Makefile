@@ -4,7 +4,7 @@
 # immediately above it. Target names print in bold red.
 
 .DEFAULT_GOAL := help
-.PHONY: help all main unit-tests mf-rom mfselect test test-mfselect check-reproducible clean
+.PHONY: help all main unit-tests mf-rom mfselect test test-mfselect test-dzrp check-reproducible clean
 
 # Show this help
 help:
@@ -112,6 +112,14 @@ test: $(ROM) $(TRIGGER_BIN) $(COPPER_BIN)
 test-mfselect: $(MFSELECT_NEX) $(DEZOGIF_SUM) $(ROM)
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" NEX="$(MFSELECT_NEX)" \
 	 ROM="$(ROM)" SUM="$(DEZOGIF_SUM)" ROMSUM="$(ROMSUM)" $(TEST)/run-mfselect.sh
+
+# Run the DZRP conformance suite against a remote (REMOTE=tcp:<host>:<port>)
+test-dzrp:
+	@test -n "$(REMOTE)" || { \
+	  echo "usage: make test-dzrp REMOTE=tcp:<host>:<port>   (or serial:<dev>:<baud>)"; \
+	  echo "  to validate the suite itself, point it at CSpect + its DeZog plugin"; \
+	  exit 2; }
+	python3 $(TEST)/dzrp/conformance.py --remote "$(REMOTE)" $(DZRP_ARGS)
 
 # Check the ROM builds byte-identically twice with BUILD_TIME pinned
 check-reproducible:

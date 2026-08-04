@@ -87,8 +87,9 @@
 ;    dial is meaningless in UART mode. Until this existed the WiFi ROM drew
 ;    upstream's screen — a baud rate the hardware was NOT running at, and a
 ;    selector for a port it never touches — and the two builds were
-;    indistinguishable on a real machine. See esp_query_address and
-;    esp_show_status, and MEMORY.md 2026-08-04.
+;    indistinguishable on a real machine — which is the same hardware session
+;    point 3 cost a night to. See esp_query_address and esp_show_status, and
+;    MEMORY.md 2026-08-05.
 ;
 ;---------------------------------------------------------------------------
 ; What this file does NOT do, deliberately

@@ -205,7 +205,7 @@ show_ui:
     call text.ula.print_string
 
     ; The transport's own status block, at rows 6 and 7. This is the UI half of
-    ; the assembly-time switch (MEMORY.md 2026-08-04): it is the one part of
+    ; the assembly-time switch (MEMORY.md 2026-08-05): it is the one part of
     ; this screen whose content is a property of the transport, so the two
     ; modes fill it with different things rather than sharing a line that would
     ; be false in one of them.

@@ -180,9 +180,11 @@ strongest:
      are never reached. ("Returns immediately" is a statement about the **serial** build, which T6
      runs. The ESP transport's poll can spend up to ~100 ms synchronising when the module puts an
      unsolicited line on the wire — see `transport_esp.asm`.) The frame limit ends the run. The
-     exit path, `backup.asm` and the **return-to-debuggee half of stackless NMI** are therefore
-     untested — only the entry side is. Closing that needs issue #2's protocol suite, not another
-     screenshot.
+     exit path, `backup.asm` and the AltROM are therefore untested **by T6** — only the entry side
+     is. Closing that took issue #2's protocol suite rather than another screenshot, and it is now
+     closed: `make test-dzrp-stub`'s C9/C10 resume a debuggee and it runs (§4c). What is still
+     untested anywhere is the **stackless-NMI return address** — C9 sets `PC` itself, so
+     `save_nmi_return_address` never runs — and the M1 button breaking a *running* debuggee.
    Screen comparison is a **percentage of differing pixels** (`test/screen-diff.py`), not a byte
    compare: NextZXOS idling changes 0.01% of the screen and that once produced a false PASS.
 4. **`make test-mfselect`** — the mfselect bench, 6 headless runs, 10 checks, asserting on files
@@ -218,8 +220,10 @@ strongest:
    Then the suite's own checks — whose loopback sweep runs past jnext's 2048-byte `+IPD` split, so
    the transport's reassembly across frames is covered rather than assumed. A second run adds
    **W2**: an unprompted `NTF_PAUSE` aimed at a client that has gone must leave the stub quiet
-   (no error on its screen) and still serving, instead of parking on a TX timeout.
-   **Result 2026-08-04: W1 and W2 pass, 9 passed / 0 failed of 9.** **C2** was the standing red
+   (no error on its screen) and still serving, instead of parking on a TX timeout. A third run is
+   **W3**, the negative control for C10 (below): the same run with only the `CMD_CONTINUE`
+   withheld, which C10 must go red on.
+   **C2** was the standing red
    until issue #7 landed: `cmd_init` read the remote's program name until a NUL and ignored the
    frame's length field, so a length that disagreed with the payload desynchronised silently
    instead of being rejected — pre-existing behaviour of the *serial* build, in common code the
@@ -227,6 +231,18 @@ strongest:
    half C2 cannot see: an honest length whose payload runs past the name's NUL, with a second
    command behind it that must still be answered in sync. That fix changed both ROMs' bytes, by
    design, and it is the one merge to date that legitimately broke the UART byte-identity gate.
+   **C10-C12 are where the stub is shown to RESUME a debuggee**, which nothing before them
+   had ever shown anywhere — the exit path, `backup.asm`'s restoration and the AltROM patch were
+   code no test executed. C10 loads a fixture, sets `PC`/`SP`/`BC`/`IX`, continues onto a temporary
+   breakpoint and reads the `NTF_PAUSE`; C11 adds that the registers reached the running program
+   and came back as it left them. **Still not covered**: the stackless-NMI *return address*
+   (C10 sets `PC` itself, so `save_nmi_return_address` is never involved) and the M1 button
+   breaking a *running* debuggee — both need a second NMI timed against live traffic.
+   **C12 is a standing red, and it is pre-existing**: `CMD_PAUSE` is mapped to
+   `cmd_not_supported`, which stores an error and jumps to `drain_main`, so the stub sends **no
+   response at all** where the spec requires one and a client would wait forever. Same shape as C2
+   was — common code the WiFi work never touched — so fixing it changes the serial ROM and needs
+   its own branch.
    See `doc/DZRP-TESTING.md`. Like `test-esp`, not part of `make test`: it binds a host TCP port.
    **It says nothing about hardware.**
 4d. **`make test-unit`** — the Z80 unit tests under `src/unit_tests/`, headless (issue #3). One

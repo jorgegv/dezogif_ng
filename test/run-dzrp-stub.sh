@@ -30,10 +30,10 @@
 #          its verdict is read off the stub's screen, which the suite repaints.
 #
 #   run 3
-#     W3   THE NEGATIVE CONTROL FOR C9, and it is here for the same reason T3 is
-#          here for T4: without it, "C9 passed" is not evidence that C9 can
+#     W3   THE NEGATIVE CONTROL FOR C10, and it is here for the same reason T3
+#          is here for T4: without it, "C10 passed" is not evidence that C10 can
 #          fail. The identical setup runs with the CMD_CONTINUE alone removed
-#          (--no-continue), and C9 must go RED. If it stays green, C9 is
+#          (--no-continue), and C10 must go RED. If it stays green, C10 is
 #          measuring something other than the resume — a green check that
 #          cannot reach its own failing case is the mistake ERRORS.md already
 #          records twice.
@@ -41,7 +41,7 @@
 # WHAT IT DOES NOT COVER. Real hardware, where the ESP has to be associated
 # first and answers at whatever baud it was last left at (doc/WIFI-SETUP.md).
 # W2's CMD_CONTINUE is NOT evidence about the return path: it resumes zeroed
-# registers on purpose, which is a crash. C9/C10 in run 1 are where the resume
+# registers on purpose, which is a crash. C10/C11 in run 1 are where the resume
 # is actually tested, against a debuggee this suite loads itself.
 #
 # Environment (all set by the Makefile, all overridable):
@@ -128,7 +128,7 @@ DZRP_TIMEOUT=${DZRP_TIMEOUT:-25}
 
 # W3's control waits only for a notification that must never come, so it does
 # not need the sweep's headroom. Shorter is safe here in a way it is not
-# elsewhere: the control's verdict is "C9 went red", and C9 goes red on the
+# elsewhere: the control's verdict is "C10 went red", and C10 goes red on the
 # missing notification whatever the wait was.
 CONTROL_TIMEOUT=${CONTROL_TIMEOUT:-10}
 
@@ -374,11 +374,11 @@ else
 fi
 
 # ===========================================================================
-# Run 3 — W3: the negative control for C9
+# Run 3 — W3: the negative control for C10
 #
-# C9 asserts that the debuggee ran. This run asserts that C9 NOTICES when it
+# C10 asserts that the debuggee ran. This run asserts that C10 NOTICES when it
 # did not: the identical fixture is loaded and the registers are set exactly as
-# before, and only the CMD_CONTINUE is withheld. C9 must go red.
+# before, and only the CMD_CONTINUE is withheld. C10 must go red.
 #
 # Its own emulator run because the control needs a stub that has not already
 # been resumed, and a shorter --timeout because the only thing it waits for is
@@ -393,18 +393,27 @@ if ! start_stub "$jlog3" "$shot3"; then
 else
     set +e
     control_out=$(python3 "$CONFORMANCE" --remote "tcp:127.0.0.1:$PORT" \
-        --expect-preamble none --only C9 --no-continue --timeout "$CONTROL_TIMEOUT" 2>&1)
+        --expect-preamble none --only C10 --no-continue --timeout "$CONTROL_TIMEOUT" 2>&1)
     control_rc=$?
     set -e
     stop_stub
     printf '%s\n' "$control_out" | sed 's/^/  | /'
 
-    if [ "$control_rc" -eq 0 ]; then
-        fail "W3 the control run PASSED with no CMD_CONTINUE sent — C9 is not measuring the resume"
-    elif ! printf '%s' "$control_out" | grep -q '^FAIL  C9'; then
-        fail "W3 the control run failed, but not at C9 — it did not reach the check it is controlling"
+    # Same contamination check as W2, and it matters MORE here: this run's
+    # expected verdict is a FAILURE, so a stub belonging to somebody else could
+    # only make it redder, but a stub of ours reached by somebody else's client
+    # could have been sent the CMD_CONTINUE this control withholds. The control
+    # makes one connection and start_stub's port probe makes one more.
+    w3_connects=$(grep -c "accepted as cid" "$jlog3" || true)
+
+    if [ "$w3_connects" -gt 6 ]; then
+        fail "W3 CONTAMINATED — $w3_connects connections in $jlog3 where this control makes 2. Another bench run reached our stub, so the control proves nothing. Re-run with no other jnext alive (pgrep jnext)."
+    elif [ "$control_rc" -eq 0 ]; then
+        fail "W3 the control run PASSED with no CMD_CONTINUE sent — C10 is not measuring the resume"
+    elif ! printf '%s' "$control_out" | grep -q '^FAIL  C10 '; then
+        fail "W3 the control run failed, but not at C10 — it did not reach the check it is controlling"
     else
-        pass "W3 with the CMD_CONTINUE withheld C9 goes red, so C9's green result is about the resume"
+        pass "W3 with the CMD_CONTINUE withheld C10 goes red, so C10's green result is about the resume"
     fi
 fi
 

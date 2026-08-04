@@ -498,17 +498,35 @@ Closing that gap needs a DZRP client to send `CMD_CONTINUE` and a check that the
 resumes — which is [issue #2](https://github.com/jorgegv/dezogif_ng/issues/2), the protocol
 conformance suite, not another screenshot check.
 
+**CLOSED, 2026-08-05, by that suite's C10 and C11** (`make test-dzrp-stub`; see
+[DZRP-TESTING.md](DZRP-TESTING.md)). A fixture is loaded with `CMD_WRITE_MEM`, the debuggee's
+`PC`/`SP`/`BC`/`IX` are set, and `CMD_CONTINUE` carries a temporary breakpoint: **the debuggee
+runs, writes its marker, stops on the breakpoint, and the `NTF_PAUSE` names that address.** The
+exit path, `backup.asm`'s restoration and — because the breakpoint is an `RST 0` that could only
+have reached the debugger through `copy_altrom`'s patched code — the **AltROM** are all executed.
+
+**One thread of the paragraph above is NOT closed, and the distinction is narrow enough to be
+easy to lose.** C10 sets `PC` itself, so `backup.pc` never comes from `save_nmi_return_address`,
+which is where the stackless-NMI return address is read back out of NR `0xC2`/`0xC3`. That routine
+runs only on an M1 press taken while `prgm_state` is `PRGM_RUNNING` — a *second* NMI, landing
+after a `CMD_CONTINUE`. `--delayed-nmi` counts emulated frames while a DZRP client counts wall
+clock, and the emulator's frame rate collapses under that traffic, so scheduling one is a race
+rather than a check, and none is written. What C10 does establish is the half that any such press
+would depend on: `restore_registers` really hands the machine back, and the program really runs.
+
 T6 is also a pixel-difference measure, so it cannot distinguish a takeover from a crash. It does
 now exclude one wrong answer automatically by requiring the result to look *unlike* the stock
 Multiface monitor, which catches "our ROM was never installed".
 
 ### 8.3 A validation experiment worth doing first — largely answered, see §8.2
 
-**Status (2026-08-04): answered for the entry path, by T6 rather than by this experiment.** Our own
-build comes up under jnext on a real button NMI, which is the same evidence this section was after
-and makes running a third-party binary unnecessary for that purpose. Still *not* answered: AltROM,
-and the return-to-debuggee half of stackless NMI, because T6 never resumes. The original text
-follows.
+**Status (2026-08-04): answered, in two steps, neither of them this experiment.** T6 answered the
+entry path — our own build comes up under jnext on a real button NMI, which is the evidence this
+section was after and makes running a third-party binary unnecessary. `make test-dzrp-stub`'s
+**C10/C11 then answered AltROM and the resume**: the debuggee runs again after `CMD_CONTINUE` and
+its `RST 0` breakpoint reaches the debugger, which requires the patched Alt ROM. The one strand
+left is the stackless-NMI **return address** (NR `0xC2`/`0xC3` → `save_nmi_return_address`), which
+needs an M1 press against a *running* debuggee; see the end of §8.2. The original text follows.
 
 
 Drop **dezogif's existing** `enNextMf.rom` onto a jnext SD image and press the emulated NMI
@@ -661,11 +679,17 @@ here.*
 **Status 2026-08-05 — BOTH halves are done in the emulator.**
 `src/transport_esp.asm` exists, `make TRANSPORT=wifi` builds it, and `make test-dzrp-stub` runs the
 DZRP conformance suite against it inside jnext: the stub brings the ESP up, listens on 11000, and
-answers **all 9** checks correctly. Eight of them were green when the transport landed; the ninth,
-C2, was a pre-existing `cmd_init` behaviour shared with the serial build, fixed separately as issue
-#7 (which also added C9 — see `doc/DZRP-TESTING.md`). The UART build was byte-identical to the one
+answers every check but one. The first eight were green when the transport landed; C2 was a
+pre-existing `cmd_init` behaviour shared with the serial build, fixed separately as issue #7
+(which also added C9 — see `doc/DZRP-TESTING.md`). The UART build was byte-identical to the one
 before the transport change, so the interface did not leak; issue #7 then changed both ROMs
-deliberately, being common code.
+deliberately, being common code. The standing red is **C12**, `CMD_PAUSE`, which the stub does
+not answer at all — pre-existing in the same sense C2 was, and fixable only on its own branch.
+
+**Including, since 2026-08-05, the resume**: C10/C11 load a fixture over DZRP, `CMD_CONTINUE` it
+onto a temporary breakpoint, and get the `NTF_PAUSE` back with the registers intact. So "registers
+/ memory / breakpoints / stepping behave exactly as dezogif does over serial" is no longer taken
+on trust — a breakpoint really fires and a resumed program really runs, in the emulator.
 
 The **UI half** landed 2026-08-05, and it was a correctness fix rather than a cosmetic one: the
 WiFi ROM had been rendering `BAUDRATE` — the joy-port cable's 921600 — while its own prescaler
@@ -677,10 +701,12 @@ and draws `Connect at <ip>:11000`, with a two-line plain-language message in the
 there is no address or the AT chain did not complete. The UART ROM's bytes did not move.
 
 Still open in M1: **DeZog itself has never been pointed at it** — the evidence is the conformance
-suite, not a debugging session, so stepping and breakpoints over WiFi are untried; and **nothing
-has run on hardware**, where jnext's two known fictions bite — it models baud as timing only and
-its module is permanently associated, so the address the UI draws is always jnext's own
-`192.168.1.50`. **The mechanism is tested; the value has never been read off a real machine.**
+suite, not a debugging session, so stepping and breakpoints over WiFi are untried; and **no DZRP
+session has ever run on hardware**. The stub itself has (it takes the M1 NMI on a real Next and
+paints its UI), but nothing has resumed a debuggee there, so every result above is jnext's, where
+its two known fictions bite — it models baud as timing only and its module is permanently
+associated, so the address the UI draws is always jnext's own `192.168.1.50`. **The mechanism is
+tested; the value has never been read off a real machine.**
 
 ### M2 — Asynchronous break
 Add the Copper-driven periodic NMI poll (§4.3). Success: `CMD_PAUSE` from DeZog stops a freely
@@ -805,7 +831,13 @@ reason attached, is fine.
 | …but every MF NMI source is gated by NR `0x06` bit 3 (default 0) | `zxnext.vhd:2090`, `:5166` | **verified** — corrects an earlier "ungated" claim |
 | A software MF NMI enters the stock Multiface ROM under jnext | `make test` T3, 91% repaint | **verified** |
 | **Our stub takes over on a real M1 button NMI and paints its UI** | `make test` T6, 90.28% repaint, jnext 0.99.118 `--delayed-nmi` | **verified** — the first evidence the stub runs at all |
-| jnext's Multiface paging and the **entry side** of stackless NMI are good enough to run a real stub | same T6 run; answers §8.3's experiment for the entry path only | **verified, scoped** — the return-to-debuggee half and AltROM are NOT covered: T6 never resumes |
+| jnext's Multiface paging and the **entry side** of stackless NMI are good enough to run a real stub | same T6 run; answers §8.3's experiment for the entry path only | **verified, scoped** — T6 itself covers neither AltROM nor the resume; both are covered by C10/C11 below |
+| **The stub RESUMES a debuggee, and the debuggee runs** | `make test-dzrp-stub` C10: fixture loaded over DZRP, `CMD_CONTINUE`, marker written, `NTF_PAUSE` naming the temporary breakpoint at 0x8016 | **verified** — the exit path and `backup.asm`'s restoration, which nothing had ever executed |
+| The debuggee's registers survive the round trip in both directions | same bench, C11: `BC`/`IX` read back out of memory where the *resumed program* stored them; `PC`/`SP`/`AF`/`BC`/`DE`/`HL`/`IX` from `CMD_GET_REGISTERS` afterwards | **verified** |
+| **The AltROM patch works** | same bench, C10: the breakpoint is an `RST 0`, which can only reach the debugger through the code `copy_altrom` installs at 0x0000/0x0066 | **verified for jnext** |
+| C10 detects a stub that answers `CMD_CONTINUE` and does not resume | two controls: bench W3 (`--no-continue`) and a ROM whose `cmd_continue` returns to `cmd_loop` instead of `restore_registers` — C10/C11 red against both | **verified** |
+| The stackless-NMI **return address** (NR `0xC2`/`0xC3` → `save_nmi_return_address`) is correct | — | **unverified** — C10 sets `PC` itself, so the routine never runs; reaching it needs an M1 press against a *running* debuggee, §8.2 |
+| `CMD_PAUSE` gets no response at all from the stub | `make test-dzrp-stub` C12, measured; `commands.asm` maps command 7 to `cmd_not_supported` → `drain_main` | **verified** — a conformance failure the serial build has always had |
 | dezogif declines a software MF NMI: `nmi66h` serves button causes only | `mf_rom.asm` `nmi66h`, `zxnext.vhd:3843-3848`; `make test` T4 | **verified** |
 | I/O trap on `0x2FFD`/`0x3FFD` generates MF NMI | `zxnext.vhd:3835` | **verified** |
 | Prescaler formula and width | `ports.txt` (`0x143B`), `uart.h` | **verified** |

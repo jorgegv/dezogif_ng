@@ -5,6 +5,97 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-05 — The stub resumes a debuggee. Measured, and controlled twice
+
+**Measured, not decided**, and it is the largest claim this project has ever
+been able to make. `make test-dzrp-stub` checks **C10** and **C11** (issue #2's
+remaining half): a fixture is written into the debuggee's memory over DZRP, its
+`PC`/`SP`/`BC`/`IX` are set with `CMD_SET_REGISTER`, `CMD_CONTINUE` carries a
+temporary breakpoint — **and the debuggee runs**, writes its marker, stops on
+the breakpoint, and the `NTF_PAUSE` names that address. Registers come back as
+the program left them.
+
+**Before this, nothing anywhere had ever shown the stub resuming anything.**
+Not in the emulator, and not on the Next it had just run on for the first time
+(the entry below): that press painted a UI and stopped there. So
+`restore_registers`, `exit_code_di`,
+the stack fix-up in `backup.asm` and the AltROM patch were code no test had
+executed — see the T6 scope limit further down, which said exactly that and
+is now partly retired.
+
+**What the evidence is arranged to exclude, because "the debuggee ran" is easy
+to fake.** The fixture's first two instructions store `BC` and `IX` **to
+memory**, so what is read back is what the *running program* held rather than
+what the debugger remembers being told. A byte written only by the instruction
+*after* the breakpoint must stay zero, separating "stopped on it" from "ran
+past it". And the marker area is cleared and read back before the run, because
+a stale byte from an earlier check would let the whole thing pass without the
+debuggee running at all.
+
+**Two negative controls, and the second is the one that matters.**
+
+1. Bench check **W3**: the identical run with only the `CMD_CONTINUE`
+   withheld (`--no-continue`). C10 goes red. That proves the check is not
+   vacuous — the T3-for-T4 shape this project already uses.
+2. A ROM built with `cmd_continue`'s `jp restore_registers` replaced by `ret`,
+   so the stub **answers** `CMD_CONTINUE` and never resumes. C10 *and* C11 go
+   red against it. This is the failure mode that matters, and (1) alone would
+   not have proved it was caught: a stub that acknowledges a resume it did not
+   perform is exactly what a green check must not tolerate. Scratch build, not
+   committed; ERRORS.md's "a fix never tested by removing it is a correlation"
+   applied to a check instead of a fix.
+
+**A consequence worth stating separately: the AltROM is now exercised.** The
+breakpoint is an `RST 0`, and an `RST 0` reaches the debugger only through the
+code `copy_altrom` installs at 0x0000/0x0066 in the Alt ROM. Plan §8.3 listed
+AltROM as one of two things T6 left unanswered.
+
+**The other of those two is NOT closed, and the distinction is narrow enough
+to lose.** C10 sets `PC` itself, so `backup.pc` never comes from
+`save_nmi_return_address` — the routine that reads the stackless-NMI return
+address out of NR `0xC2`/`0xC3`. That runs only on an M1 press taken while
+`prgm_state` is `PRGM_RUNNING`, i.e. a **second** NMI landing after a
+`CMD_CONTINUE`. `--delayed-nmi` counts emulated frames while the client counts
+wall clock, and the emulator's frame rate collapses under DZRP traffic, so
+scheduling one is a race and not a check. **Deliberately not built**, rather
+than built flaky. The M1 button breaking a *running* debuggee is unproven for
+the same reason.
+
+**A second finding, and it is a real conformance failure: `CMD_PAUSE` is not
+answered at all.** Check **C12**. `commands.asm`'s jump table maps command 7 to
+`cmd_not_supported`, which stores an error and jumps to `drain_main`; the frame
+is consumed, the stub repaints, and **nothing is sent**. The specification
+gives `CMD_PAUSE` a Length=1 response with no exemption for a stopped remote,
+so a client waits forever. Measured, then confirmed alive on a second
+connection, so "silent" is not reported as "dead".
+
+Kept in proportion: it is **pre-existing**. The `cmd_jump_table` entry for
+command 7 is upstream's, untouched by the WiFi work and untouched by issue #7's
+`cmd_init` fix; this branch changes no `src/` file at all. And DeZog offers
+Pause only while the program
+runs — which is the state in which the command cannot arrive at all, because
+PC-initiated break is M2 and `nmi66h` serves button causes only. **Fixing it
+changes the serial ROM, so it belongs on its own branch**, exactly as C2 did
+before issue #7. It is
+still worse than CSpect's refusal, which at least closes the connection.
+
+**Rejected: writing a check for `CMD_PAUSE` against a running debuggee.** It
+cannot pass before M2 and is not a test but a placeholder. What C12 asserts
+instead is the part that is answerable today, with its scope written into the
+check's own docstring so nobody reads it as async break.
+
+**Also rejected: reporting C12's silence as UNSUPPORTED.** The suite's
+UNSUPPORTED is for a *deliberate refusal* — CSpect closes the connection —
+which is a legitimate partial remote. Silence is not a refusal; it is a hang.
+Grading it green-adjacent would have hidden the finding.
+
+**Renumbered on rebase.** These landed as C9/C10/C11 and became C10/C11/C12
+when issue #7 merged first and took C9 for its own check. Two meanings for
+one identifier is the kind of thing that survives into a report and misleads
+someone a month later.
+
+---
+
 ## 2026-08-05 — WiFi mode draws its own screen, and the old one was wrong
 
 **Built, and the trigger was the 2026-08-04 hardware run recorded below.** The user

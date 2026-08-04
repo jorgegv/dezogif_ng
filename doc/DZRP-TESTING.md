@@ -31,6 +31,15 @@ error**, counted as bright-red pixels. Before the fix that count was 824: `Last 
 Its own run because it deliberately crashes the debuggee and because the suite would repaint the
 screen its verdict is read from.
 
+**W2's `CMD_CONTINUE` is not evidence that the resume path works, and must never be cited as
+such.** It resumes registers that were never saved — all zero — so the machine crashes on purpose.
+That is a way of provoking an unprompted notification. C10 and C11 are where resuming is tested.
+
+A **third** run is check **W3**, the negative control for C10: the same fixture, the same registers,
+and only the `CMD_CONTINUE` withheld (`--only C10 --no-continue`). C10 must go **red**. Without it,
+"C10 passed" would say nothing about whether C10 can fail — the same reason T3 exists for T4 in
+`make test`.
+
 Extra arguments go through `DZRP_ARGS`:
 
     make test-dzrp REMOTE=tcp:127.0.0.1:11000 \
@@ -41,6 +50,8 @@ Extra arguments go through `DZRP_ARGS`:
 | `--require CMD,…` | absence of these commands is a FAILURE, not UNSUPPORTED |
 | `--expect-preamble report\|a5\|none` | assert the frame preamble instead of only reporting it |
 | `--start-byte auto\|a5\|none` | what the remote prefixes frames with (default: autodetect) |
+| `--only C10,C11` | run only the named checks |
+| `--no-continue` | **negative control**: do everything the execution-control checks do except send `CMD_CONTINUE`. They must then fail |
 
 ## Validating the suite before trusting it
 
@@ -61,7 +72,12 @@ worktree — can serve *different checks of one suite run*. That is not hypothet
 measure C9 here produced three mutually contradictory results, and the tell was C1 reporting
 `dezogif v2.2.1` / DZRP 2.1.0, which is our own stub, in a run aimed at CSpect. `make
 test-dzrp-stub` refuses to start in that situation; `make test-dzrp` cannot, because it has no idea
-what it was pointed at. `ss -ltn | grep 11000` first.
+what it was pointed at. `ss -ltn | grep 11000` first, and `pgrep jnext` too — a stale emulator of
+your own counts, and it is what fooled a reviewer.
+
+**C10-C12 have not been measured against CSpect either**, for the same reason as C9. C10's
+fixture is written for the memory map `cmd_init` leaves on a Next and would need checking before
+any CSpect result meant anything.
 
 ## Result against our own stub
 
@@ -109,6 +125,61 @@ running it, so the shell kills itself — this cost two aborted commands before 
 | C7 | `CMD_GET_REGISTERS` returns a register block DeZog can index |
 | C8 | memory write/read round-trip |
 | C9 | `CMD_INIT` consumes exactly the declared payload, so the next command is still in sync |
+| C10 | **`CMD_CONTINUE` resumes the debuggee and it runs**, stopping on a temporary breakpoint that raises `NTF_PAUSE` |
+| C11 | **the debuggee's state survives the resume**, in both directions — see below |
+| C12 | `CMD_PAUSE` while stopped is answered — see below |
+
+### C10 and C11: the execution-control fixture
+
+A 30-byte program is written to 0x8000 with `CMD_WRITE_MEM`, the debuggee's `PC`/`SP`/`BC`/`IX`
+are set with `CMD_SET_REGISTER`, and `CMD_CONTINUE` carries a **temporary breakpoint** — the
+mechanism DeZog itself uses on every step, and therefore the one this suite is allowed to use.
+The program leaves four independent traces:
+
+- `ld (0x9800),bc` / `ld (0x9802),ix` as its **first two instructions**, so what is read back
+  afterwards is what the *resumed debuggee* held, not what the debugger remembers being told;
+- a progress marker at 0x9804, which can only be there if the debuggee executed;
+- a byte at 0x9805 written **only by the instruction after the breakpoint**, which must stay
+  zero, separating "stopped on it" from "ran past it";
+- registers loaded while running (`HL`=0x1234, `DE`=0x5678, `BC`=0x9ABC, `A`=0x5A), read back
+  with `CMD_GET_REGISTERS`, so the capture on re-entry is checked as well as the restore on the
+  way out.
+
+The marker area is cleared and read back **before** the run: a stale byte from an earlier check
+would otherwise let "the debuggee ran" pass without it running. A failure of that setup is
+reported as `PRECONDITION, not this check's subject`, so a memory fault is never filed as a
+resume fault.
+
+Everything lives in 0x8000-0x9FFF, which `CMD_INIT` maps to bank 4, clear of the ROM and of the
+debugger's own slots 6 and 7.
+
+**Both negative controls were run, and both discriminate.** `--no-continue` (bench check W3, which
+withholds only the `CMD_CONTINUE`) turns C10 red. And so does a deliberately broken ROM whose
+`cmd_continue` **answers** the command and returns to `cmd_loop` instead of jumping to
+`restore_registers`: C10 and C11 both go red against it, which is the failure that matters — a stub
+that acknowledges the resume and does not perform it.
+
+### C12: `CMD_PAUSE`, and what it does NOT test
+
+**It is not a test of PC-initiated break.** Breaking into a *freely running* program is milestone
+M2 and is not built: `mf_rom.asm`'s `nmi66h` serves button NMIs only, which bench check T4 asserts
+deliberately, so while the debuggee runs there is nothing polling the link and no `CMD_PAUSE` can
+be received at all. No check can pass that until M2 changes it, and none is written.
+
+What C12 asks is the narrow protocol question that *is* answerable today: the specification gives
+`CMD_PAUSE` a Length=1 response — the sequence number alone — with no exemption for a remote that
+is already stopped. **Our stub sends nothing.** `commands.asm`'s jump table maps command 7 to
+`cmd_not_supported`, which stores an error and jumps to `drain_main`, so the frame is consumed,
+the stub returns to `main` and repaints, and the client waits forever. Measured, not read off the
+source: the check times out and a second connection confirms the stub is still serving.
+
+Two things keep this in proportion. It is **pre-existing**: the `cmd_jump_table` entry for
+command 7 is upstream's, untouched by the WiFi work and untouched by issue #7's `cmd_init` fix,
+and this change touches no `src/` file at all — so the serial build has always done it. And
+its practical reach is bounded by the paragraph above: DeZog offers Pause only while the program
+is running, which is the state in which the command cannot arrive anyway. It is still a
+conformance failure, and silence is a worse way to refuse a command than CSpect's — closing the
+connection at least tells the client something.
 
 **C5's sizes straddle a transport boundary, and that is the point of three of them.** jnext frames
 inbound TCP into `+IPD` chunks of at most **2048** bytes
@@ -130,7 +201,30 @@ time needs a moment to start listening again.
 **What it deliberately does not test.** DeZog owns instruction-length calculation, the original
 opcode under a breakpoint, the temporary breakpoints used to step off one, and condition
 evaluation. Asserting those against the remote would encode the wrong contract and push whoever
-tried to satisfy it into building the thing that fights DeZog at runtime.
+tried to satisfy it into building the thing that fights DeZog at runtime. C10 plants its own
+temporary breakpoint for exactly that reason: it behaves the way the client behaves.
+
+## What resuming a debuggee still does NOT cover
+
+C10 and C11 close the largest hole this suite had. Three things next to it stay open, and the
+distinction is fine enough to be worth writing down rather than left to be inferred.
+
+1. **The stackless-NMI return *address* is still not exercised.** C10 sets `PC` itself with
+   `CMD_SET_REGISTER`, so `backup.pc` never comes from `save_nmi_return_address`, which is the
+   routine that reads NR `0xC2`/`0xC3`. Reaching it needs an M1 press while `prgm_state` is
+   `PRGM_RUNNING`, i.e. a *second* NMI timed to land after a `CMD_CONTINUE` — jnext's
+   `--delayed-nmi` counts emulated frames while the client counts wall clock, and the emulator's
+   frame rate collapses under DZRP traffic, so that is a race rather than a check. What C10 does
+   prove is the half either way depends on: `restore_registers` really hands a machine back and
+   the program really runs.
+2. **The M1 button has never broken a *running* debuggee.** Same missing press. Plan §4.3 calls
+   the button "always available"; nothing has demonstrated it against a debuggee that was ever
+   properly loaded.
+3. **The resume has never happened on hardware.** The stub itself has now run on a real Next —
+   it takes the M1 NMI and paints its UI (MEMORY.md, 2026-08-04) — but that press stops there.
+   No DZRP client has ever spoken to a Next, so every result on this page is jnext's, and jnext
+   models baud as timing only with a module that is permanently associated. `make test-hardware`
+   is where that gap gets closed, and it has not been.
 
 ## Two things this established that were not obvious
 

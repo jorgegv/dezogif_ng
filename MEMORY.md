@@ -5,6 +5,73 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-04 — WiFi is a prerequisite; the stub holds no credentials
+
+**Decided (user).** In WiFi mode the stub assumes the Next is **already
+associated** and will never put it there. It sends no `AT+CWJAP`, stores no
+SSID and no passphrase, and only *verifies* that it has an address
+(`AT+CIFSR`), reporting clearly on screen when it does not.
+
+The user satisfies the prerequisite once with `/apps/wifi/setup/wifi2.bas`,
+the wizard on the NextZXOS SD card, and the ESP-01 keeps the credentials in
+its own flash. Documented exhaustively in [doc/WIFI-SETUP.md].
+
+**Rejected: storing credentials in the ROM.** The user's first instinct was to
+put them "in the ROM itself", which was a reasonable reading of the constraint
+below, and the user then reversed it. **Two reasons, each sufficient on its
+own:**
+
+1. **A passphrase in a ROM is cleartext on a removable card.**
+   `enNextMf.rom` is a file that gets copied, backed up and mailed to us with
+   bug reports. Every copy would be a credential leak, readable by any program
+   on the machine. Obfuscation would be theatre.
+2. It would need a patch path — a host tool or mfselect — to be usable at all,
+   because otherwise changing network means reassembling the ROM.
+
+A third argument — that it buys nothing, because the module persists its own
+credentials and auto-reconnects — is **deliberately not counted**, because it
+rests on the one thing this entry admits is unverified (see the closing
+paragraph). A draft of this entry listed it as a third *sufficient* reason
+while flagging the same claim as unmeasured thirty lines below, which is the
+contradiction the reviewer caught. **If a reason depends on something we have
+not measured, it is not sufficient**, and the decision does not need it.
+
+**The constraint that made "in the ROM" look necessary, and it is real.** The
+stub **cannot read the SD card**: nothing in `src/` opens a file, and the only
+`rst 8` is inside `MF_BREAK` in `macros.asm`, a macro upstream disabled as
+"did not work for me". Nor could it safely — it is an NMI handler running with
+the debuggee's banks paged arbitrarily and NextZXOS possibly mid-operation, so
+the esxdos API needs guarantees the NMI path cannot make. **So there is no
+config file, and with credentials rejected there is nothing that needs one.**
+
+**Consequence for M1, and it is not small.** Bring-up must *check* association
+and fail loudly rather than hang or draw a connect string with no address
+behind it. That is plan §M3's "clear failure reporting on the Next's screen",
+pulled forward to M1 because without it a Next that was never put on WiFi
+presents as a broken debugger.
+
+**Measured while writing this up** (jnext 0.99.118, `--esp`): `wifi2.bas` runs
+in the emulator and its **read-only half works** — firmware, SSID and IP are
+reported — while its **configuring half does not**, because jnext implements
+`AT+CIPDNS_CUR?` but not `AT+CIPDNS?`, and none of `CWLAP`, `CWJAP=`,
+`CIPSTA=`, `CWDHCP=` or `CIUPDATE`. That is the correct half for us: we only
+ever verify. Credentials can only be set on hardware, which is consistent with
+this being a prerequisite rather than a feature.
+
+**One prediction was wrong and is worth keeping.** A static trace of the
+wizard's commands against jnext's dispatch table said it would die at startup
+on the unimplemented `AT+CWMODE=1`. It does not — unknown commands answer
+`ERROR` and the wizard shrugs them off. Running it is what showed that.
+
+**Still inferred, not measured:** that the ESP persists credentials across a
+power cycle. It is standard ESP-AT behaviour, jnext cannot answer it, and if a
+real Next needs re-association at every boot the setup story changes from
+"once per machine" to "every boot". First thing to check on hardware.
+
+[doc/WIFI-SETUP.md]: doc/WIFI-SETUP.md
+
+---
+
 ## 2026-08-04 — ROM identity is a magic string; the CRC keeps only integrity
 
 **Decided (user), issue #4.** Every `enNextMf.rom` carries a magic string at a

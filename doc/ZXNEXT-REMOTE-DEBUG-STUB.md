@@ -800,13 +800,13 @@ happens.
 | A2 | PC | Build (or download) the stub's `enNextMf.rom` |
 | A3 | PC | SD card into the PC; back up `machines/next/enNextMf.rom`; copy the stub's over it |
 | A4 | Next | SD card back in. Confirm core ≥ 03.01.10 and Multiface enabled in the machine config |
-| **A5** | **Next** | **Get the Next onto WiFi**, with `/apps/wifi/setup/wifi2.bas`, and confirm it reports an IP address. **The stub never does this and holds no credentials** — see [WIFI-SETUP.md](WIFI-SETUP.md), which also covers what breaks it later. Once per machine |
+| **A5** | **Next** | **Get the Next onto WiFi**, with `/apps/wifi/setup/wifi2.bas`, and confirm it reports an IP address. **The stub never does this and holds no credentials** — see [WIFI-SETUP.md](WIFI-SETUP.md), which also covers what breaks it later. Expected to be once per machine — the ESP stores its own credentials, though that is inferred rather than measured |
 | A6 | PC | Give the Next a **static DHCP reservation** on the router — then its IP never moves and `launch.json` is written once |
 | A7 | PC | Write `launch.json` (§B.5) |
 
-Three acts on the Next, all once ever — and A5 is the one people will forget, because a
-debugger that cannot reach the network looks like a broken debugger rather than a machine that was
-never put on WiFi.
+Two acts on the Next, both once ever — and A5 is the one people will forget, because a debugger
+that cannot reach the network looks like a broken debugger rather than a machine that was never put
+on WiFi.
 
 ### B.2 Every power-on
 

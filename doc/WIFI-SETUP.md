@@ -40,7 +40,8 @@ Reading a config file at NMI time is not a small change; it is a different desig
 **And a password in a ROM is cleartext on a removable card.** `enNextMf.rom` is a file that gets
 copied, backed up, and passed around — including to us, when someone reports a bug. Putting a WPA2
 passphrase in it would make every copy a credential leak, readable by any program on the machine.
-Obfuscating it would be theatre. This was considered and **rejected** (see `MEMORY.md`).
+Obfuscating it would be theatre. This was considered and **rejected** — see the 2026-08-04 entry
+in [MEMORY.md](../MEMORY.md).
 
 The ESP-01 keeps its own credentials in its own flash, which is the right place for them.
 
@@ -76,7 +77,7 @@ and offers:
 | 4 | Set automatic IP/DNS |
 | 5 | Scan Networks |
 | 6 | List/Join Networks |
-| 7 | WiFi Firmware update |
+| 7 | Wifi Firmware update |
 | 9 | Refresh |
 | 0 | Quit |
 
@@ -195,4 +196,5 @@ This project's rule is that a derived claim is a hypothesis. So, explicitly:
 | `.UART` / `.ESPBAUD` / `.ESPUPDATE` exist and what they are for | **verified** — read from the image |
 | The wizard runs under jnext with `--esp`, and which half of it works | **verified** — measured, jnext 0.99.118 |
 | The ESP persists credentials and auto-reconnects | **inferred**, not measured — see §5 |
+| The ESP-01 answers at 115200 until told otherwise | **inferred**, not measured — the plan's Appendix A carries the same claim at the same strength |
 | The stub's WiFi bring-up works on real hardware | **untested.** Nothing in this project has ever run on a real Next |

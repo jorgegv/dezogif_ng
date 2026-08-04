@@ -29,11 +29,20 @@
 #          Its own run because it deliberately crashes the debuggee and because
 #          its verdict is read off the stub's screen, which the suite repaints.
 #
+#   run 3
+#     W3   THE NEGATIVE CONTROL FOR C9, and it is here for the same reason T3 is
+#          here for T4: without it, "C9 passed" is not evidence that C9 can
+#          fail. The identical setup runs with the CMD_CONTINUE alone removed
+#          (--no-continue), and C9 must go RED. If it stays green, C9 is
+#          measuring something other than the resume — a green check that
+#          cannot reach its own failing case is the mistake ERRORS.md already
+#          records twice.
+#
 # WHAT IT DOES NOT COVER. Real hardware, where the ESP has to be associated
 # first and answers at whatever baud it was last left at (doc/WIFI-SETUP.md).
-# Nothing here resumes a debuggee that was ever properly loaded — W2's
-# CMD_CONTINUE resumes zeroed registers on purpose, which is a crash, not a
-# demonstration that the return-to-debuggee path works.
+# W2's CMD_CONTINUE is NOT evidence about the return path: it resumes zeroed
+# registers on purpose, which is a crash. C9/C10 in run 1 are where the resume
+# is actually tested, against a debuggee this suite loads itself.
 #
 # Environment (all set by the Makefile, all overridable):
 #   JNEXT         path to the jnext binary
@@ -117,6 +126,12 @@ ORPHAN=$(dirname "$0")/dzrp/orphan-notify.py
 # trips, and the emulator does not run that at wall-clock speed.
 DZRP_TIMEOUT=${DZRP_TIMEOUT:-25}
 
+# W3's control waits only for a notification that must never come, so it does
+# not need the sweep's headroom. Shorter is safe here in a way it is not
+# elsewhere: the control's verdict is "C9 went red", and C9 goes red on the
+# missing notification whatever the wait was.
+CONTROL_TIMEOUT=${CONTROL_TIMEOUT:-10}
+
 log()  { printf '%s\n' "$*"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
@@ -172,8 +187,10 @@ mkdir -p "$OUT" "$OUT/screenshots"
 sd=$OUT/sd-dzrp.img
 jlog=$OUT/dzrp-stub.log
 jlog2=$OUT/dzrp-stub-w2.log
+jlog3=$OUT/dzrp-stub-w3.log
 shot=$OUT/screenshots/dzrp-stub.png
 shot2=$OUT/screenshots/dzrp-stub-w2.png
+shot3=$OUT/screenshots/dzrp-stub-w3.png
 
 jnext_pid=""
 cleanup() {
@@ -284,9 +301,13 @@ log ""
 # CSpectRemote — the client this transport is spoken to by — does not strip it.
 # Reporting it instead of asserting it would leave the one thing MEMORY.md
 # singles out about WiFi mode untested.
+#
+# --require CONTINUE because this stub implements it: were it ever to start
+# refusing the command, the suite's partial-remote allowance would otherwise
+# report that as UNSUPPORTED and pass.
 set +e
 python3 "$CONFORMANCE" --remote "tcp:127.0.0.1:$PORT" --expect-preamble none \
-    --timeout "$DZRP_TIMEOUT" $DZRP_ARGS
+    --require CONTINUE --timeout "$DZRP_TIMEOUT" $DZRP_ARGS
 suite_rc=$?
 set -e
 [ "$suite_rc" -eq 0 ] || failures=$((failures + 1))
@@ -353,12 +374,47 @@ else
 fi
 
 # ===========================================================================
+# Run 3 — W3: the negative control for C9
+#
+# C9 asserts that the debuggee ran. This run asserts that C9 NOTICES when it
+# did not: the identical fixture is loaded and the registers are set exactly as
+# before, and only the CMD_CONTINUE is withheld. C9 must go red.
+#
+# Its own emulator run because the control needs a stub that has not already
+# been resumed, and a shorter --timeout because the only thing it waits for is
+# a notification that must never arrive.
+# ===========================================================================
+
+log ""
+log "== run 3: negative control — the same checks with no CMD_CONTINUE sent"
+
+if ! start_stub "$jlog3" "$shot3"; then
+    fail "W3 the stub never listened on 127.0.0.1:$PORT for the control run"
+else
+    set +e
+    control_out=$(python3 "$CONFORMANCE" --remote "tcp:127.0.0.1:$PORT" \
+        --expect-preamble none --only C9 --no-continue --timeout "$CONTROL_TIMEOUT" 2>&1)
+    control_rc=$?
+    set -e
+    stop_stub
+    printf '%s\n' "$control_out" | sed 's/^/  | /'
+
+    if [ "$control_rc" -eq 0 ]; then
+        fail "W3 the control run PASSED with no CMD_CONTINUE sent — C9 is not measuring the resume"
+    elif ! printf '%s' "$control_out" | grep -q '^FAIL  C9'; then
+        fail "W3 the control run failed, but not at C9 — it did not reach the check it is controlling"
+    else
+        pass "W3 with the CMD_CONTINUE withheld C9 goes red, so C9's green result is about the resume"
+    fi
+fi
+
+# ===========================================================================
 
 log ""
 if [ "$failures" -ne 0 ]; then
     log "Diagnosis:"
-    log "  jnext logs:   $jlog  $jlog2"
-    log "  screenshots:  $shot  $shot2"
+    log "  jnext logs:   $jlog  $jlog2  $jlog3"
+    log "  screenshots:  $shot  $shot2  $shot3"
 fi
 
 exit "$((failures > 0 ? 1 : 0))"

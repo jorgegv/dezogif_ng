@@ -553,7 +553,11 @@ to offer it.
 Each milestone ends in something observable. Do not start the next until the previous is proven.
 
 ### M0 — Transport spike (no debugger at all)
-Two independent proofs, on real hardware, before any porting work:
+Proofs to have before any porting work. **This originally read "two independent proofs, on real
+hardware", and neither half of that survived contact**: (a) is struck below, leaving two live
+items rather than two of three; and (b) and (c) were both proved *in jnext*, headless and
+repeatably, which is better for regression and is not what "on real hardware" asked for. The
+hardware gap is real and is stated where M0 is declared complete.
 
 - **a) ~~A ~50-line Z80 program that brings up `AT+CIPSTART` + `AT+CIPMODE=1` and echoes bytes to
   a `nc -l` on the PC.~~ DROPPED (user, 2026-08-04)** — not deferred, not parked as work to

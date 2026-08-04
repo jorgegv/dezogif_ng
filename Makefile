@@ -4,7 +4,8 @@
 # immediately above it. Target names print in bold red.
 
 .DEFAULT_GOAL := help
-.PHONY: help all main unit-tests mf-rom mf-rom-wifi mf-rom-sum mfselect test test-mfselect \
+.PHONY: help all main unit-tests ut-headless mf-rom mf-rom-wifi mf-rom-sum mfselect test \
+        test-unit test-mfselect \
         test-esp test-dzrp test-dzrp-stub test-hardware bump check-reproducible \
         check-reproducible-wifi clean
 
@@ -112,19 +113,36 @@ TOOLS = tools
 
 MAIN_ASM    = $(SRC)/main.asm
 UT_ASM      = $(SRC)/unit_tests/unit_tests.asm
+UT_HL_ASM   = $(SRC)/unit_tests/headless/ut_headless.asm
 TRIGGER_ASM = $(TEST)/nmi_trigger.asm
 COPPER_ASM  = $(TEST)/copper_nmi.asm
 ESP_ASM     = $(TEST)/esp_server.asm
 MFSELECT_C  = $(TOOLS)/mfselect/mfselect.c
 ROMSUM      = $(TOOLS)/romsum.py
+UT_GEN      = $(TOOLS)/ut-headless-gen.py
 
 ASM_FILES    = $(wildcard $(SRC)/*.asm) $(wildcard $(SRC)/zx/*.inc)
 UT_ASM_FILES = $(wildcard $(SRC)/unit_tests/*.asm) $(wildcard $(SRC)/unit_tests/*.inc) $(ASM_FILES)
+UT_HL_FILES  = $(wildcard $(SRC)/unit_tests/headless/*) $(UT_ASM_FILES) $(UT_GEN)
+
+# The number of test cases under src/unit_tests/, and how many of them cannot
+# run outside DeZog. PINNED HERE AND AGAIN IN test/run-unit-tests.sh, on
+# purpose: the generator fails the BUILD if the sources disagree with these,
+# and the bench fails the RUN if what executed disagrees. A suite that quietly
+# shrinks and still reports "all passed" is a failure this project has already
+# had twice (ERRORS.md), and one pin can only catch half of it.
+#
+# The 36 excluded cases need ports invented by DeZog's zsim customCode plugin
+# (src/simulation/uart.js) and cannot run in any emulator — see doc/UNIT-TESTS.md.
+UT_EXPECTED_TESTS   = 64
+UT_EXPECTED_SKIPPED = 36
 
 MAIN_BIN    = $(OUT)/main$(VARIANT_SUFFIX).bin
 MF_NMI_BIN  = $(OUT)/mf_nmi$(VARIANT_SUFFIX).bin
 ROM         = $(OUT)/enNextMf$(VARIANT_SUFFIX).rom
 UT_BIN      = $(OUT)/ut.nex
+UT_HL_BIN   = $(OUT)/ut-headless.nex
+UT_HL_GEN   = $(OUT)/ut_headless/ut_table.asm
 TRIGGER_BIN = $(OUT)/nmi_trigger.bin
 COPPER_BIN  = $(OUT)/copper_nmi.bin
 ESP_BIN     = $(OUT)/esp_server.bin
@@ -212,8 +230,11 @@ main: $(MAIN_BIN) $(MF_NMI_BIN)
 # to execute — so nothing in test/ or tools/ so much as references ut.nex.
 # Making them runnable headless is issue #3.
 #
-# ASSEMBLE the Z80 unit tests only (build/ut.nex) — running them needs VS Code, see issue #3
+# ASSEMBLE the DeZog-driven Z80 unit tests (build/ut.nex) — running THESE needs VS Code
 unit-tests: $(UT_BIN)
+
+# Assemble the headless unit-test image (build/ut-headless.nex) — `make test-unit` runs it
+ut-headless: $(UT_HL_BIN)
 
 # Build the deployable Multiface ROM (build/enNextMf.rom; TRANSPORT=wifi for the other)
 mf-rom: $(ROM)
@@ -274,6 +295,27 @@ mfselect: $(MFSELECT_NEX)
 test: $(ROM) $(TRIGGER_BIN) $(COPPER_BIN)
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" ROM="$(ROM)" \
 	 TRIGGER_BIN="$(TRIGGER_BIN)" COPPER_BIN="$(COPPER_BIN)" $(TEST)/run-headless.sh
+
+# The Z80 unit tests, at last runnable without VS Code (issue #3). Kept OUT of
+# `make test` deliberately, and not for the usual reason — this one has no
+# external dependency and binds no port, so it could join. It stays separate
+# because `make test` is the screenshot bench and says so at length: every
+# other bench in this Makefile is its own target, and folding these in would
+# blur the one distinction that Makefile comment exists to draw.
+#
+# 28 of the 64 cases run. The other 36 need ports invented by DeZog's zsim
+# customCode plugin and are reported as UT-SKIP rather than hidden — see
+# doc/UNIT-TESTS.md.
+#
+# The bare '#' below ends this block for the help scanner, which takes the LAST
+# '# ' line before a target as its description.
+#
+
+# Run the Z80 unit tests headless in jnext — 5 checks, no VS Code (not part of `make test`)
+test-unit: $(UT_HL_BIN)
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
+	 UT_NEX="$(UT_HL_BIN)" UT_MANIFEST="$(OUT)/ut_headless/ut_manifest.txt" \
+	 $(TEST)/run-unit-tests.sh
 
 # Run the mfselect headless bench (6 jnext runs; not part of `make test`)
 test-mfselect: mfselect
@@ -377,6 +419,28 @@ $(MAIN_BIN) $(MF_NMI_BIN) &: $(ASM_FILES) $(VERSION_FILE) Makefile | $(OUT)
 
 $(UT_BIN): $(UT_ASM_FILES) Makefile | $(OUT)
 	$(SJASMPLUS) $(ASMFLAGS) -DBIN_FILE=\"$(UT_BIN)\" --sld=$(OUT)/ut.sld --lst=$(OUT)/ut.list $(UT_ASM)
+
+# The headless twin. Two steps, because the assertions have to be turned into
+# code before they can be assembled:
+#
+#   1. the generator rewrites the inline `; ASSERTION <cond>` comments in the
+#      upstream test bodies into calls to the macros in ut_headless.inc, and
+#      emits the test table. Nothing under src/unit_tests/ is modified — the
+#      rewritten copies go to $(OUT)/ut_headless/, so `make unit-tests` and
+#      the DeZog path in VS Code are untouched.
+#   2. sjasmplus assembles those, with --inc=$(OUT) so the generated files are
+#      found.
+#
+# ASMFLAGS is reused so the headless image is built against the same sources
+# and defines as everything else; MAIN_BIN/MF_NMI_BIN in it are inert here
+# because this collector has no SAVEBIN.
+$(UT_HL_GEN): $(UT_HL_FILES) Makefile | $(OUT)
+	python3 $(UT_GEN) --src $(SRC)/unit_tests --out $(OUT)/ut_headless \
+	    --expect-tests $(UT_EXPECTED_TESTS) --expect-skipped $(UT_EXPECTED_SKIPPED)
+
+$(UT_HL_BIN): $(UT_HL_GEN) $(UT_HL_FILES) Makefile | $(OUT)
+	$(SJASMPLUS) $(ASMFLAGS) --inc=$(OUT) -DBIN_FILE=\"$(UT_HL_BIN)\" \
+	    --sld=$(OUT)/ut-headless.sld --lst=$(OUT)/ut-headless.list $(UT_HL_ASM)
 
 $(TRIGGER_BIN): $(TRIGGER_ASM) Makefile | $(OUT)
 	$(SJASMPLUS) -DNMI_TRIGGER_BIN=\"$@\" $(TRIGGER_ASM)

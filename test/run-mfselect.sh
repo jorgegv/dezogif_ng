@@ -47,7 +47,7 @@ die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [ -x "$JNEXT" ]    || die "jnext binary not found or not executable: $JNEXT"
 [ -f "$SD_IMAGE" ] || die "SD card image not found: $SD_IMAGE"
 [ -f "$NEX" ]      || die "mfselect not built: $NEX (run 'make mfselect')"
-[ -f "$ROM" ]      || die "ROM not built: $ROM (run 'make mf_rom')"
+[ -f "$ROM" ]      || die "ROM not built: $ROM (run 'make mf-rom')"
 [ -f "$SUM" ]      || die "checksum not built: $SUM (run 'make mfselect')"
 command -v mcopy >/dev/null || die "mtools (mcopy) is required"
 

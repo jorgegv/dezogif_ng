@@ -4,7 +4,7 @@
 # immediately above it. Target names print in bold red.
 
 .DEFAULT_GOAL := help
-.PHONY: help all main unit_tests mf_rom mfselect test test-mfselect check-reproducible clean
+.PHONY: help all main unit-tests mf-rom mfselect test test-mfselect check-reproducible clean
 
 # Show this help
 help:
@@ -89,16 +89,16 @@ ASMFLAGS = --inc=$(SRC) --lstlab --fullpath \
 # ---------------------------------------------------------------------------
 
 # Build the ROM, the main program and the unit tests
-all: main unit_tests mf_rom
+all: main unit-tests mf-rom
 
 # Build the debugger program (build/main.bin + build/mf_nmi.bin)
 main: $(MAIN_BIN) $(MF_NMI_BIN)
 
 # Assemble the Z80 unit tests (build/ut.nex)
-unit_tests: $(UT_BIN)
+unit-tests: $(UT_BIN)
 
 # Build the deployable Multiface ROM (build/enNextMf.rom)
-mf_rom: $(ROM)
+mf-rom: $(ROM)
 
 # Build the mfselect ROM switcher (build/mfselect.nex + build/dezogif.sum)
 mfselect: $(MFSELECT_NEX) $(DEZOGIF_SUM)
@@ -117,10 +117,10 @@ test-mfselect: $(MFSELECT_NEX) $(DEZOGIF_SUM) $(ROM)
 check-reproducible:
 	@set -e; tmp=$$(mktemp -d); trap 'rm -rf $$tmp' EXIT; \
 	$(MAKE) --no-print-directory clean >/dev/null; \
-	$(MAKE) --no-print-directory BUILD_TIME=1700000000 mf_rom >/dev/null; \
+	$(MAKE) --no-print-directory BUILD_TIME=1700000000 mf-rom >/dev/null; \
 	cp $(ROM) $$tmp/a.rom; \
 	$(MAKE) --no-print-directory clean >/dev/null; \
-	$(MAKE) --no-print-directory BUILD_TIME=1700000000 mf_rom >/dev/null; \
+	$(MAKE) --no-print-directory BUILD_TIME=1700000000 mf-rom >/dev/null; \
 	cp $(ROM) $$tmp/b.rom; \
 	if cmp -s $$tmp/a.rom $$tmp/b.rom; then \
 	  echo "PASS  reproducible: two pinned builds are byte-identical"; \

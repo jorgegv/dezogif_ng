@@ -76,7 +76,7 @@ die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 [ -x "$JNEXT" ]      || die "jnext binary not found or not executable: $JNEXT"
 [ -f "$SD_IMAGE" ]   || die "SD card image not found: $SD_IMAGE"
-[ -f "$ROM" ]        || die "ROM not built: $ROM (run 'make mf_rom')"
+[ -f "$ROM" ]        || die "ROM not built: $ROM (run 'make mf-rom')"
 [ -f "$TRIGGER_BIN" ]|| die "NMI fixture not built: $TRIGGER_BIN (run 'make test')"
 [ -f "$COPPER_BIN" ] || die "Copper fixture not built: $COPPER_BIN (run 'make test')"
 command -v mcopy >/dev/null || die "mtools (mcopy) is required to install the ROM into the SD image"

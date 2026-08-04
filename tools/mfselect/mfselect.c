@@ -20,9 +20,20 @@
  *
  * Files it expects beside itself in /mfselect/:
  *
- *   dezogif.rom  dezogif.sum   our Multiface ROM and its checksum, both put
- *                              there when mfselect is installed
+ *   dezowifi.rom dezowifi.sum  our WiFi-mode ROM and its checksum
+ *   dezouart.rom dezouart.sum  our UART-mode ROM and its checksum
  *   original.rom original.sum  the stock ROM, captured on first run
+ *
+ * The first two pairs are put there when mfselect is installed; `make mfselect`
+ * builds both so a user cannot ship one and forget the other. Names are 8.3-safe
+ * because the card is FAT and MEMORY.md already rejected 8.3-unsafe names here.
+ *
+ * BOTH OF OUR VARIANTS ARE OFFERED (issue #5), not just the WiFi one. The UART
+ * build is not a legacy leftover: a debuggee that owns the ESP itself cannot be
+ * debugged over WiFi, and the serial ROM is the documented answer to that. A
+ * variant that can be built but not installed from the machine pushes the user
+ * back to swapping files in a PC, which is the whole thing this program exists
+ * to avoid.
  *
  * IDENTITY AND INTEGRITY ARE DIFFERENT QUESTIONS, answered by different things:
  *
@@ -63,8 +74,10 @@
 #define MF_ROM      "/machines/next/enNextMf.rom"
 #define ORIG_ROM    "/mfselect/original.rom"
 #define ORIG_SUM    "/mfselect/original.sum"
-#define DEZ_ROM     "/mfselect/dezogif.rom"
-#define DEZ_SUM     "/mfselect/dezogif.sum"
+#define WIFI_ROM    "/mfselect/dezowifi.rom"
+#define WIFI_SUM    "/mfselect/dezowifi.sum"
+#define UART_ROM    "/mfselect/dezouart.rom"
+#define UART_SUM    "/mfselect/dezouart.sum"
 
 /* Every ROM this program writes is written to a temporary first, verified,
  * and only then renamed into place. Opening the real path with CREAT_TRUNC
@@ -141,15 +154,29 @@
 #define ATTRS       ((uint8_t *)0x5800)
 #define CHARS_SYSVAR (*(uint8_t **)0x5C36)
 
-/* Screen layout. */
+/* Screen layout. The menu grew a fourth row with issue #5, so ROW_MENU +
+ * MENU_ITEMS now reaches row 8 and leaves exactly one blank row before the
+ * message area. The typedef below is a compile-time assert on that: adding a
+ * fifth entry without moving ROW_MSG would silently paint the menu over the
+ * first line of every message this program prints. */
 #define ROW_TITLE   0
 #define ROW_STATUS  2
 #define ROW_PROMPT  4
 #define ROW_MENU    5
-#define MENU_ITEMS  3
+#define MENU_ITEMS  4
 #define ROW_MSG     10
 #define ROW_MSG_END 21
 #define ROW_FOOT    23
+
+typedef char menu_fits_above_messages[(ROW_MENU + MENU_ITEMS <= ROW_MSG) ? 1 : -1];
+
+/* Menu entries, by index. Named rather than open-coded because the dispatch in
+ * main() and the order of menu_text[] have to agree, and a bare `sel == 2` is
+ * exactly the kind of thing that survives a reorder unchanged. */
+#define MENU_OFFICIAL 0
+#define MENU_WIFI     1
+#define MENU_UART     2
+#define MENU_EXIT     3
 
 /* One shared I/O buffer. 512 bytes rather than the whole 8K so every buffer
  * stays well inside the 0x4000-0xBFE0 window the esxdos API requires. */
@@ -777,11 +804,22 @@ static const char *installed_name(void)
 /* menu                                                               */
 /* ------------------------------------------------------------------ */
 
+/* Printed at column 2, so 30 columns is the limit. The two of ours name their
+ * transport rather than their build: which physical link the debugger speaks
+ * over is the only thing a user chooses between here. */
 static const char *const menu_text[MENU_ITEMS] = {
     "Official Multiface NMI ROM",
-    "dezogif_ng DZRP NMI ROM",
+    "dezogif_ng WiFi (ESP-01)",
+    "dezogif_ng UART (joy port)",
     "Exit without changes",
 };
+
+/* Exit must stay the last entry, and this is not tidiness. main()'s dispatch
+ * ends in an `else` that installs the UART ROM, so an entry added *after*
+ * MENU_EXIT would be selectable, unnamed, and would quietly install something
+ * the user did not choose. An extra string is already a compile error (the
+ * array's bound is MENU_ITEMS); this catches the other direction. */
+typedef char exit_is_the_last_menu_entry[(MENU_EXIT == MENU_ITEMS - 1) ? 1 : -1];
 
 static void draw_chrome(void)
 {
@@ -873,12 +911,14 @@ void main(void)
 
         sel = menu_select(sel);
 
-        if (sel == 2)
+        if (sel == MENU_EXIT)
             break;
-        if (sel == 0)
+        if (sel == MENU_OFFICIAL)
             install(ORIG_ROM, ORIG_SUM, "Installing official MF ROM");
+        else if (sel == MENU_WIFI)
+            install(WIFI_ROM, WIFI_SUM, "Installing dezogif_ng WiFi");
         else
-            install(DEZ_ROM, DEZ_SUM, "Installing dezogif_ng ROM");
+            install(UART_ROM, UART_SUM, "Installing dezogif_ng UART");
 
         wait_key();
     }

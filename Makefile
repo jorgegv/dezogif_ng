@@ -4,8 +4,8 @@
 # immediately above it. Target names print in bold red.
 
 .DEFAULT_GOAL := help
-.PHONY: help all main unit-tests mf-rom mf-rom-wifi mfselect test test-mfselect test-esp \
-        test-dzrp test-dzrp-stub bump check-reproducible check-reproducible-wifi clean
+.PHONY: help all main unit-tests mf-rom mf-rom-wifi mf-rom-sum mfselect test test-mfselect \
+        test-esp test-dzrp test-dzrp-stub bump check-reproducible check-reproducible-wifi clean
 
 # Show this help
 help:
@@ -116,11 +116,29 @@ TRIGGER_BIN = $(OUT)/nmi_trigger.bin
 COPPER_BIN  = $(OUT)/copper_nmi.bin
 ESP_BIN     = $(OUT)/esp_server.bin
 
-# mfselect's deployables: the utility, and the checksum of the ROM it installs.
-# The .sum is a build product on purpose — a checksum computed on the Next from
-# an already-corrupt file would just bless the corruption.
+# mfselect's deployables: the utility, and a checksum for each ROM it can
+# install. The .sum files are build products on purpose — a checksum computed on
+# the Next from an already-corrupt file would just bless the corruption.
+#
+# mfselect offers BOTH variants (issue #5), so it cannot use $(ROM)/$(TRANSPORT):
+# those name whichever variant *this* invocation selected, and mfselect needs
+# both regardless of how it was invoked. Hence the spelled-out pairs below, and
+# the recursive builds in the `mfselect` recipe.
+#
+# The .sum basenames match the names the files take on the card, so a user
+# copying them cannot pair a ROM with the wrong checksum. 8.3-safe, which is
+# why they are not `enNextMf-wifi.sum` (MEMORY.md rejected 8.3-unsafe names for
+# this directory once already).
 MFSELECT_NEX = $(OUT)/mfselect.nex
-DEZOGIF_SUM  = $(OUT)/dezogif.sum
+ROM_UART     = $(OUT)/enNextMf.rom
+ROM_WIFI     = $(OUT)/enNextMf-wifi.rom
+SUM_UART     = $(OUT)/dezouart.sum
+SUM_WIFI     = $(OUT)/dezowifi.sum
+
+# The pair for whichever variant this invocation selected. Equal to SUM_UART
+# with TRANSPORT=uart and to SUM_WIFI with TRANSPORT=wifi, so one rule text
+# builds both — once per recursive invocation.
+ROM_SUM      = $(OUT)/dezo$(TRANSPORT).sum
 
 ROM_SIZE = 8192
 
@@ -153,18 +171,40 @@ mf-rom: $(ROM)
 mf-rom-wifi:
 	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
 
-# Build the mfselect ROM switcher (build/mfselect.nex + build/dezogif.sum)
-mfselect: $(MFSELECT_NEX) $(DEZOGIF_SUM)
+# Build the ROM for the selected TRANSPORT plus its checksum sidecar
+mf-rom-sum: $(ROM) $(ROM_SUM)
+
+# Both variants, in one step and whatever TRANSPORT this invocation carries:
+# mfselect installs either, so shipping it with only the variant that happened
+# to be selected is how a user ends up with a menu entry pointing at a file that
+# is not on the card. The recursion is what lets one target produce two ROMs
+# that the rest of this Makefile deliberately keeps apart.
+#
+# (The bare '#' above ends the block for the help scanner, which takes the last
+# '# ' line before a target as its description.)
+
+# Build the mfselect switcher and EVERYTHING it deploys: both ROMs + both .sums
+#
+# BUILD_TIME is captured once and handed to both sub-makes, so the pair that
+# ships together carries the same stamp. Without that the two `date +%s` calls
+# can straddle a second and produce two ROMs a user would reasonably read as
+# coming from different builds.
+mfselect: $(MFSELECT_NEX)
+	@t=$(BUILD_TIME); \
+	 $(MAKE) --no-print-directory TRANSPORT=uart BUILD_TIME=$$t mf-rom-sum; \
+	 $(MAKE) --no-print-directory TRANSPORT=wifi BUILD_TIME=$$t mf-rom-sum
 
 # Run the local headless test suite in jnext (no VS Code, no hardware)
 test: $(ROM) $(TRIGGER_BIN) $(COPPER_BIN)
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" ROM="$(ROM)" \
 	 TRIGGER_BIN="$(TRIGGER_BIN)" COPPER_BIN="$(COPPER_BIN)" $(TEST)/run-headless.sh
 
-# Run the mfselect headless bench (3 jnext runs; not part of `make test`)
-test-mfselect: $(MFSELECT_NEX) $(DEZOGIF_SUM) $(ROM)
+# Run the mfselect headless bench (6 jnext runs; not part of `make test`)
+test-mfselect: mfselect
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" NEX="$(MFSELECT_NEX)" \
-	 ROM="$(ROM)" SUM="$(DEZOGIF_SUM)" ROMSUM="$(ROMSUM)" $(TEST)/run-mfselect.sh
+	 ROM_UART="$(ROM_UART)" SUM_UART="$(SUM_UART)" \
+	 ROM_WIFI="$(ROM_WIFI)" SUM_WIFI="$(SUM_WIFI)" \
+	 ROMSUM="$(ROMSUM)" CELLDIFF="$(TEST)/cell-diff.py" $(TEST)/run-mfselect.sh
 
 # Run the ESP-01 server bench (M0(b): 1 jnext run + a TCP client; not part of `make test`)
 test-esp: $(ESP_BIN)
@@ -266,7 +306,7 @@ $(ROM): $(MF_NMI_BIN) $(MAIN_BIN)
 $(MFSELECT_NEX): $(MFSELECT_C) Makefile | $(OUT)
 	$(ZCC) $(ZCCFLAGS) $(MFSELECT_C) -o $(OUT)/mfselect
 
-$(DEZOGIF_SUM): $(ROM) $(ROMSUM) | $(OUT)
+$(ROM_SUM): $(ROM) $(ROMSUM) | $(OUT)
 	python3 $(ROMSUM) $(ROM) > $@
 
 $(OUT):

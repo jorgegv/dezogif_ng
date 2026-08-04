@@ -19,10 +19,20 @@
 #       is built on. Shown against the stock MF ROM for the same reason as T3:
 #       our stub declines it, and would decline it whether or not the Copper
 #       worked, so the stub cannot be the thing that demonstrates it.
+#   T6  our stub TAKES OVER on a real M1 button NMI and paints its own screen.
+#       The only check here that proves the stub is alive rather than proving
+#       it correctly ignores something — see the note at T6.
 #
 # T3 is not decoration. Without it a broken fixture would make T4 look like a
 # stub bug (or, worse, a change in T4's screen would look like a pass). If T3
 # fails, the bench is broken and T4's verdict means nothing.
+#
+# T4 AND T6 ARE NOT ALTERNATIVES, and an earlier note here said T6 would
+# "replace" T4. It does not. They test different NMI causes against the same
+# cause check in nmi66h: T6 sends a cause it accepts (the button), T4 a cause
+# it rejects (a software NR 0x02 write). Keeping both is what makes T4 a
+# regression check M2 has to invert deliberately, rather than one that quietly
+# disappears the day the button check arrives.
 #
 # Every run uses identical frame counts so the two screenshots being compared
 # are at the same point in the FLASH attribute cycle; otherwise "the screen
@@ -34,6 +44,7 @@
 #   OUT          build directory
 #   ROM          our enNextMf.rom
 #   TRIGGER_BIN  assembled test/nmi_trigger.asm
+#   COPPER_BIN   assembled test/copper_nmi.asm
 
 set -euo pipefail
 
@@ -80,6 +91,13 @@ die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [ -f "$TRIGGER_BIN" ]|| die "NMI fixture not built: $TRIGGER_BIN (run 'make test')"
 [ -f "$COPPER_BIN" ] || die "Copper fixture not built: $COPPER_BIN (run 'make test')"
 command -v mcopy >/dev/null || die "mtools (mcopy) is required to install the ROM into the SD image"
+
+# T6 needs a headless M1 button press, which arrived in jnext 0.99.118. Checked
+# explicitly because the failure mode otherwise is jnext exiting with "Unknown
+# option" and the run being reported as a jnext crash — which cost real time
+# once already. A stale binary should say so in one line.
+"$JNEXT" --help 2>&1 | grep -q -- '--delayed-nmi' \
+    || die "this jnext has no --delayed-nmi (need >= 0.99.118, found: $("$JNEXT" --help 2>&1 | grep -oE 'jnext [0-9.]+' | head -1)); rebuild it — T6 cannot run without it"
 python3 -c 'import PIL' 2>/dev/null || die "python3 Pillow is required to compare screenshots"
 
 SCREEN_DIFF=$(dirname "$0")/screen-diff.py
@@ -113,9 +131,9 @@ mcopy -o -i "$sd_ours@@$part_off" "$ROM" "$MF_ROM_PATH"
 
 # --- runs ------------------------------------------------------------------
 
-# run <image> <screenshot> [trigger]
+# run <image> <screenshot> [trigger-binary] [nmi-button]
 run() {
-    local image=$1 shot=$2 trigger=${3:-}
+    local image=$1 shot=$2 trigger=${3:-} button=${4:-}
     local -a args=(
         --headless --machine next
         --sdcard "$image"
@@ -128,18 +146,24 @@ run() {
         args+=(--inject "$trigger" --inject-org 8000 --inject-pc 8000
                --inject-delay "$BOOT_FRAMES")
     fi
+    # A real M1 button press, at the same frame the injected fixtures fire, so
+    # every screenshot is taken at the same point in the FLASH cycle.
+    if [ -n "$button" ]; then
+        args+=(--delayed-nmi-frames "$BOOT_FRAMES" "$button")
+    fi
     rm -f "$shot"
     timeout "$RUN_TIMEOUT" "$JNEXT" "${args[@]}" >/dev/null 2>&1 \
         || die "jnext run failed or timed out (image=$image trigger=${trigger:-none})"
     [ -s "$shot" ] || die "no screenshot written: $shot"
 }
 
-log "== running the bench (5 headless runs, ~40s)"
+log "== running the bench (6 headless runs, ~50s)"
 run "$sd_stock" "$SHOTS/boot-stock.png"
 run "$sd_ours"  "$SHOTS/boot-ours.png"
 run "$sd_stock" "$SHOTS/nmi-stock.png" "$TRIGGER_BIN"
 run "$sd_ours"  "$SHOTS/nmi-ours.png"  "$TRIGGER_BIN"
 run "$sd_stock" "$SHOTS/copper-stock.png" "$COPPER_BIN"
+run "$sd_ours"  "$SHOTS/button-ours.png" "" nmi
 
 # --- assertions ------------------------------------------------------------
 
@@ -204,11 +228,40 @@ else
     fail "T5 the Copper did not raise the Multiface NMI (only $copper_pct% changed; see $SHOTS/copper-stock.png)"
 fi
 
-log ""
-if [ "$failures" -eq 0 ]; then
-    verdict="5/5 checks passed"
+# T6 — the stub is ALIVE.
+#
+# Every other check here proves a negative: it assembles, it does not perturb
+# the boot, it correctly ignores a cause it should ignore. This one proves the
+# stub runs. A real M1 button press is a cause nmi66h accepts, so the stub
+# relocates MAIN into a RAM bank, pages itself into slot 7, and paints its own
+# UI over the NextZXOS screen — which is a ~90% repaint, in the same range as
+# the stock Multiface monitor's 91%.
+#
+# It exercises, in one run and for the first time in this project: Multiface
+# paging, the relocation, show_ui, and the core-version check passing (the
+# reference image reports 03.02.03, above the 03.01.10 that stackless NMI
+# needs). If T6 goes red, one of those broke, and nothing else in the bench
+# would have noticed.
+#
+# WHAT IT DOES NOT COVER. --delayed-nmi presses the button ONCE. The stub
+# disables the M1 button while it runs and re-arms it on the way out, so a
+# second press after a resume is a different question and this says nothing
+# about it. Do not read a green T6 as "the NMI path is sound".
+button_pct=$(diff_pct "$SHOTS/boot-ours.png" "$SHOTS/button-ours.png")
+if took_over "$button_pct"; then
+    pass "T6 our stub takes over on a real M1 button NMI ($button_pct% repainted) — the stub is alive"
 else
-    verdict="$failures of 5 checks FAILED"
+    fail "T6 our stub did NOT take over on an M1 button NMI (only $button_pct% changed; see $SHOTS/button-ours.png) — nmi66h, the relocation or show_ui is broken"
+fi
+
+log ""
+# Derived, not hardcoded: the summary said "5/5" for a while after a sixth
+# check was added, which is a small lie in exactly the place a reader trusts.
+checks=6
+if [ "$failures" -eq 0 ]; then
+    verdict="$checks/$checks checks passed"
+else
+    verdict="$failures of $checks checks FAILED"
 fi
 log "$verdict  (screenshots in $SHOTS)"
 

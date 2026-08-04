@@ -5,6 +5,45 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-04 — The stub is alive: first liveness evidence, bench T6
+
+**Measured, not decided.** With jnext 0.99.118's `--delayed-nmi`, a real M1
+button press against our own `enNextMf.rom` makes the stub **take over and
+paint its UI: 90.28% of the screen repainted**, against the stock Multiface
+monitor's 91.41%. Now bench check **T6**.
+
+**Why this matters more than the number.** Every check this bench had proved a
+*negative*: it assembles, it does not perturb the boot, it correctly ignores a
+software NMI. None of them would have failed if the stub had been incapable of
+running at all. T6 exercises, in one run, Multiface paging, the relocation of
+`MAIN` into a RAM bank at slot 7, `show_ui`, and the core-version check passing
+against core 03.02.03.
+
+**It also retires plan §8.3.** That section proposed dropping upstream's
+released ROM onto a jnext SD image as third-party validation of jnext's
+Multiface/AltROM/stackless-NMI implementations, to be done *before* writing new
+Z80 code. Our own build coming up is the same evidence, so the experiment is
+answered rather than pending.
+
+**T6 did not replace T4, and both CLAUDE.md and the plan said it would.** That
+was wrong and is corrected in both. The two send **different causes** to the
+same check in `nmi66h`: T6 a button press, which it accepts; T4 a software
+NR `0x02` write, which it rejects. Deleting T4 would have thrown away the
+regression check M2 is required to invert when it teaches `nmi66h` to accept a
+software cause — the check would have vanished on the day the button arrived,
+and nobody would have noticed until M2 broke something silently.
+
+**What T6 does not cover, stated so a green tick is not over-read.**
+`--delayed-nmi` presses the button **once**. The stub disables the M1 button
+while it runs and re-arms it on exit, so whether a *second* NMI after a resume
+works is untested. Do not read T6 as "the NMI path is sound".
+
+**Also fixed while here.** The bench's summary line was hardcoded `5/5` and
+would have kept saying so after a sixth check was added — a small lie in
+exactly the place a reader trusts. It is derived now.
+
+---
+
 ## 2026-08-04 — Merging to `main` is standing-authorized; pushing still is not
 
 **Decided (user), 2026-08-04.** The manager session may merge to `main` without

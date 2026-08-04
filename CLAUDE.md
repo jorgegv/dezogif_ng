@@ -94,7 +94,7 @@ strongest:
 1. **It assembles** — necessary, proves nothing. Enforced by the in-source `ASSERT`s
    (`main_end` within budget) plus the Makefile's 8192-byte ROM size check.
 2. **`make check-reproducible`** — the same source gives the same ROM.
-3. **`make test`** — five headless jnext runs, judged on screenshots (`test/run-headless.sh`):
+3. **`make test`** — six headless jnext runs, judged on screenshots (`test/run-headless.sh`):
    - T1 the bench boots a Next at all
    - T2 our `enNextMf.rom` does not perturb the NextZXOS boot
    - T3 **control** — the software-NMI fixture really fires the Multiface NMI, shown against the
@@ -104,6 +104,11 @@ strongest:
      raster line, with no CPU involvement. That is M2's break mechanism, and it is now known
      to work headless rather than assumed to. Shown against the stock MF ROM for T3's reason:
      our stub declines it, and would decline it whether or not the Copper worked.
+   - T6 our stub **takes over on a real M1 button NMI** and paints its own screen (~90%
+     repainted, against the stock monitor's 91%). **The only check here that proves the stub is
+     alive** rather than proving it correctly ignores something. It exercises Multiface paging,
+     the relocation of `MAIN` into a RAM bank at slot 7, `show_ui`, and the core-version check,
+     in one run. Needs jnext ≥ 0.99.118 for `--delayed-nmi`; the bench checks for it and says so.
    Screen comparison is a **percentage of differing pixels** (`test/screen-diff.py`), not a byte
    compare: NextZXOS idling changes 0.01% of the screen and that once produced a false PASS.
 4. **`make test-mfselect`** — the mfselect bench, 3 headless runs, 5 checks, asserting on files
@@ -121,12 +126,12 @@ NMIs only. NR `0x02` bit 3 reads back as `nr_02_generate_mf_nmi`, which `zxnext.
 latches on any accepted NR `0x02` bit-3 write and clears only on an explicit write of bit 3 = 0.
 So a software NMI is filtered by design, and the bench asserts that.
 
-**A jnext `--delayed-nmi` option is in development (2026-08-03) and changes this.** A *button*
-NMI is the cause `nmi66h` accepts, so once the bench can fire one headlessly, T4 should become a
-**takeover** assertion — the same ≥25% repaint T3 already demonstrates for the stock Multiface
-ROM — instead of a decline. That is the first check this bench would have that proves the stub is
-alive, rather than proving it correctly ignores something. Do not scaffold for it before the
-option ships; see plan §8.2.
+**jnext's `--delayed-nmi` shipped in 0.99.118, and the bench uses it — as T6, not as a
+replacement for T4.** A *button* NMI is a cause `nmi66h` accepts, so T6 asserts the takeover and
+gets 90.28%. An earlier version of this section said T4 "should become" that assertion; that was
+wrong, and the two are not alternatives. They send **different causes** to the same cause check:
+T6 one it accepts, T4 one it rejects. Keeping both is what leaves M2 a regression check it has to
+invert deliberately, instead of one that vanished the day the button check arrived.
 
 **This is a live constraint on M2, not a testing detail.** The plan's asynchronous break is a
 Copper `MOVE $02,$08`, which sets the same latch through the same signal (`nmi_gen_nr_mf` covers

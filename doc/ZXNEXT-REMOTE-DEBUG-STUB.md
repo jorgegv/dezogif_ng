@@ -449,24 +449,30 @@ demo-driven, not completeness-driven — and `esp_at.h` already anticipates the 
 "full datasheet-level fidelity" as its own v1.1 issue and noting the file is *shaped* so that
 widening is filling in blanks rather than surgery.
 
-**Third gap, already being closed: no headless M1-button NMI.** jnext exposes the Multiface NMI
-only as the F9 host key and the toolbar button, so a headless run cannot press it — which is why
-`test/nmi_trigger.asm` uses the *software* NMI (NR `0x02` bit 3) instead, and why the bench's T4
-can only assert that the stub **declines** a non-button cause (§Testing in CLAUDE.md). A
-`--delayed-nmi` CLI option is in development in jnext as of 2026-08-03, and this project is
-exactly the demonstrated consumer that motivates it.
+**Third gap, now closed: headless M1-button NMI.** jnext used to expose the Multiface NMI only as
+the F9 host key and the toolbar button, so a headless run could not press it — which is why
+`test/nmi_trigger.asm` uses the *software* NMI (NR `0x02` bit 3), and why the bench's T4 asserts
+only that the stub **declines** a non-button cause. `--delayed-nmi` / `--delayed-nmi-frames`
+shipped in **jnext 0.99.118** (GH #209), with this project as the demonstrated consumer.
 
-**What it changes for the bench, when it lands.** A button NMI is the cause `nmi66h` accepts, so
-the bench would for the first time be able to assert the thing that actually matters: that the
-stub takes over and comes up. Concretely — fire the button NMI in place of (or beside) the
-software fixture, and require a takeover, i.e. the same ≥25% repaint that T3 already demonstrates
-for the stock Multiface ROM. That converts T4 from "declines a cause it should decline" into a
-genuine liveness check on the stub, and it is the single largest strengthening available to this
-bench.
+**What it changed, measured 2026-08-04.** The bench gained **T6**: a real M1 button press against
+our ROM, and the stub **takes over and paints its own UI — 90.28% of the screen repainted**,
+against the stock Multiface monitor's 91.41%. That is the first evidence in this project's history
+that the stub *runs*; every prior check proved a negative. In one run it exercises Multiface
+paging, the relocation of `MAIN` into a RAM bank at slot 7, `show_ui`, and the core-version check
+passing (the reference image reports core 03.02.03, above the 03.01.10 that stackless NMI needs).
 
-Deliberately not wired up ahead of time: the option does not exist yet, its flag spelling is not
-final, and scaffolding for an interface that has not shipped is how the scaffolding ends up the
-wrong shape.
+It also effectively settles §8.3's validation experiment: jnext's Multiface paging, AltROM and
+stackless-NMI implementations are good enough to bring a real stub up.
+
+**T6 did not replace T4, and an earlier draft here said it would.** They send different causes to
+the same check in `nmi66h` — T6 one it accepts, T4 one it rejects. Both are kept, so T4 remains
+the regression check M2 must invert deliberately when it teaches `nmi66h` to accept a software
+cause.
+
+**What T6 does not cover.** `--delayed-nmi` presses the button once. The stub disables the M1
+button while it runs and re-arms on exit, so whether a *second* NMI after a resume works is a
+different question that nothing yet asks.
 
 ### 8.3 A validation experiment worth doing first
 
@@ -659,6 +665,8 @@ Facts checked directly against a primary source during the analysis:
 | Copper writes to NR `0x02` generate NMI | `zxnext.vhd:3830-3833` | **verified** |
 | …but every MF NMI source is gated by NR `0x06` bit 3 (default 0) | `zxnext.vhd:2090`, `:5166` | **verified** — corrects an earlier "ungated" claim |
 | A software MF NMI enters the stock Multiface ROM under jnext | `make test` T3, 91% repaint | **verified** |
+| **Our stub takes over on a real M1 button NMI and paints its UI** | `make test` T6, 90.28% repaint, jnext 0.99.118 `--delayed-nmi` | **verified** — the first evidence the stub runs at all |
+| jnext's Multiface paging, AltROM and stackless NMI are good enough to run a real stub | same T6 run; retires §8.3's proposed experiment | **verified** |
 | dezogif declines a software MF NMI: `nmi66h` serves button causes only | `mf_rom.asm` `nmi66h`, `zxnext.vhd:3843-3848`; `make test` T4 | **verified** |
 | I/O trap on `0x2FFD`/`0x3FFD` generates MF NMI | `zxnext.vhd:3835` | **verified** |
 | Prescaler formula and width | `ports.txt` (`0x143B`), `uart.h` | **verified** |

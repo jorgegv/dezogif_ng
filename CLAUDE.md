@@ -100,7 +100,9 @@ DeZoGiFnG_UART_0001      DeZoGiFnG_WIFI_0001
 field, and **never the build number**, which changes and is only ever displayed.
 
 The build number lives in **`version.yaml`** and is bumped with **`make bump`**, never by hand —
-the target is what validates the 0-65535 range the four hex digits can hold. **House rule: one
+the target is what validates the 0-65535 range the four hex digits can hold. `version.yaml` is a
+prerequisite of the assembly rule, so a bump really does reach the next build; without that it
+would rewrite the file, change nothing, and ship the old number silently. **House rule: one
 bump per merge to `main`**, done by the manager as part of the merge (step 4 below). It is
 deliberately not derived from `BUILD_TIME` or the git hash: `make check-reproducible` must keep
 passing, so identity must not change on every build.

@@ -93,7 +93,16 @@
  *
  * The offset is a permanent contract with src/constants.asm — it is the end of
  * a ROM whose size the firmware fixes at 8192, chosen precisely because it
- * cannot drift as the code grows. */
+ * cannot drift as the code grows.
+ *
+ * ONE ROM OF OURS IS NOT RECOGNISED: any build predating this block. It has no
+ * magic, so it reads as ID_NOT_OURS and mfselect will offer to capture it as
+ * the user's "original". Bounded rather than dangerous — the capture path
+ * shows the checksum and asks Y/N, so it takes an explicit answer to lose the
+ * stock ROM, and nothing has been released, so no such ROM exists outside this
+ * repository. If one is ever found in the field the answer is to reinstall a
+ * current build, not to add a checksum fallback here: that would put back the
+ * per-build fragility this block removes. */
 #define MAGIC_OFF       0x1FE0UL
 #define MAGIC_PREFIX    "DeZoGiFnG_"
 #define MAGIC_PREFIX_N  10U

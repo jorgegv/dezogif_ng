@@ -182,7 +182,12 @@ clean:
 
 # One assembler run produces both files, so this is a grouped target (&:).
 # Without the grouping make would run the recipe once per output.
-$(MAIN_BIN) $(MF_NMI_BIN) &: $(ASM_FILES) Makefile | $(OUT)
+# $(VERSION_FILE) is a prerequisite because the build number is assembled INTO
+# the ROM. Without it `make bump` rewrites version.yaml, the next `make` finds
+# no .asm newer than its outputs, does nothing, and ships a ROM whose identity
+# block still carries the OLD number — silently, which is the failure mode this
+# project's rules single out as the worst kind.
+$(MAIN_BIN) $(MF_NMI_BIN) &: $(ASM_FILES) $(VERSION_FILE) Makefile | $(OUT)
 	$(SJASMPLUS) $(ASMFLAGS) --sld=$(OUT)/$(PROJ).sld --lst=$(OUT)/$(PROJ).list $(MAIN_ASM)
 
 $(UT_BIN): $(UT_ASM_FILES) Makefile | $(OUT)

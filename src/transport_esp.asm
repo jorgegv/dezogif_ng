@@ -34,22 +34,40 @@
 ;    notification passes through. `cmd_continue` is the third path out and it
 ;    already called transport_flush (backup.asm's restore_registers).
 ;
-; 3. THE CONNECTION ID IS READ, NEVER ASSUMED. It comes out of the `+IPD`
-;    header and goes straight back onto the `AT+CIPSEND`. MEMORY.md 2026-08-04:
-;    jnext reserves slot 0 for the guest's own outbound AT+CIPSTART, so INBOUND
-;    IDS START AT 1. A parser that hardcoded the 0 the Espressif documentation
-;    leads you to expect would address the outbound slot, get ERROR, send
-;    nothing, and look exactly like a DZRP bug. Whether real firmware numbers
-;    the same way is UNVERIFIED, which is the other reason it is read.
+; 3. THE CONNECTION ID IS OPAQUE, AND NO VALUE OF IT IS RESERVED. It comes out
+;    of the `+IPD` header, goes straight back onto the `AT+CIPSEND`, and nothing
+;    here assumes anything about its range, its first value or how the module
+;    allocates it.
 ;
-;    esp_conn_id == 0 therefore means "there is nobody to send to", and
-;    transport_flush discards rather than trying. It starts at 0, an inbound
-;    `+IPD` sets it, and an `AT+CIPSEND` answered ERROR — which is how the
-;    module says the peer has gone — puts it back to 0. **All three matter.**
-;    Without the last one the id of a closed connection survived for the rest of
-;    the power-on session, and every later unprompted NTF_PAUSE (the M1 button,
-;    or a leftover RST 0 through breakpoints.asm) parked on a TX timeout and was
-;    discarded. See .no_client in esp_flush_chunk, and bench check W2.
+;    THIS COST A NIGHT ON REAL HARDWARE, so it is worth stating what went wrong.
+;    An earlier version of this file used `esp_conn_id == 0` as the marker for
+;    "there is nobody to send to", on the strength of MEMORY.md's note that
+;    jnext reserves slot 0 for the guest's own outbound AT+CIPSTART and numbers
+;    inbound connections from 1. That note also said, in as many words, that
+;    jnext's numbering is a JNEXT DESIGN CHOICE and must not be promoted to a
+;    hardware fact without measuring it. It was measured: **real ESP-AT firmware
+;    assigns link id 0 to the first inbound connection.** So on a real Next the
+;    listener came up, the client connected, commands were parsed and executed —
+;    and every single reply was discarded, because a perfectly valid id read as
+;    "no client". No error, no data; every DZRP check timed out.
+;
+;    The defect was the reservation itself, not the value chosen. So there is no
+;    replacement magic id: "which client" (esp_conn_id) and "is there one"
+;    (esp_conn_valid) are now two variables. The id holds whatever arrived and
+;    means nothing else; the flag is the state. They are written together in
+;    esp_sync_ipd and must stay that way.
+;
+;    The flag starts clear, an inbound `+IPD` sets it, and an `AT+CIPSEND`
+;    answered ERROR — which is how the module says the peer has gone — clears it
+;    again. **All three matter.** Without the last one the id of a closed
+;    connection survived for the rest of the power-on session, and every later
+;    unprompted NTF_PAUSE (the M1 button, or a leftover RST 0 through
+;    breakpoints.asm) parked on a TX timeout and was discarded. See .no_client
+;    in esp_flush_chunk, and bench check W2.
+;
+;    NOTE FOR ANYONE ADDING A TEST: jnext cannot reproduce this bug, because it
+;    never hands out id 0. `make test-dzrp-stub` was green before the fix and is
+;    green after it. Only real hardware can tell.
 ;
 ; 4. THE JOY PORT IS NEVER TAKEN. UART0's RX is on the ESP-01 pin whenever
 ;    NR 0x0B's joy IO mode is off (zxnext.vhd:3340, :3536), which is the
@@ -212,9 +230,17 @@ esp_str_cipsend:    defb "AT+CIPSEND=",0
 ; Payload bytes still owed by the current +IPD chunk.
 esp_rx_remaining:   defw 0
 
-; The connection the last +IPD arrived on, echoed back on AT+CIPSEND.
-; 0 = no client has ever been seen. See point 3 in the header.
+; The connection the last +IPD arrived on, echoed back on AT+CIPSEND. Pure
+; data: every value the module can hand out is an ordinary connection, 0
+; included, and this byte is meaningless unless esp_conn_valid says otherwise.
+; Its initial value is therefore arbitrary and is never read.
 esp_conn_id:        defb 0
+
+; Non-zero when esp_conn_id names a connection worth sending to. Separate from
+; the id ON PURPOSE — folding "no client" into an id value is the bug that made
+; the debugger unusable on real hardware, where the first client gets id 0. See
+; point 3 in the header.
+esp_conn_valid:     defb 0
 
 ; Outer passes of the RX poll; raised for bring-up, one for the rest.
 esp_rx_retries:     defb 1
@@ -585,8 +611,8 @@ esp_put_decimal:
 ; transport_read_byte, which is what keeps this transport's RAM cost a
 ; constant rather than a function of the largest DZRP command.
 ; Returns:
-;  NC and esp_conn_id / esp_rx_remaining set, or CY on timeout / a malformed
-;  header.
+;  NC and esp_conn_id / esp_conn_valid / esp_rx_remaining set, or CY on timeout
+;  / a malformed header.
 ; Changes:
 ;  AF, BC, DE, HL
 ;===========================================================================
@@ -606,6 +632,11 @@ esp_sync_ipd:
     jr nz,.bad
     ld a,l
     ld (esp_conn_id),a
+    ; The id and its validity are set together, and this is the only place that
+    ; sets either. Whatever the header said is a usable connection — 0 is not
+    ; special, and neither is anything else.
+    ld a,1
+    ld (esp_conn_valid),a
 
     ; <len>, terminated by the colon
     ld c,':'
@@ -914,18 +945,20 @@ transport_write_byte:
 ;===========================================================================
 ; Sends everything queued and waits until the module has taken it.
 ;
-; With no client ever seen there is nowhere to send: the buffer is dropped
-; rather than aimed at connection 0, which under jnext is the guest's own
-; outbound slot and is not open. That is what keeps a button NMI with no
-; debugger attached from parking on a TX timeout.
+; With no client there is nowhere to send, so the buffer is dropped rather than
+; aimed at a connection that is not open — which is what keeps a button NMI with
+; no debugger attached from parking on a TX timeout.
+;
+; The question asked here is esp_conn_valid, NOT the value of esp_conn_id: on
+; real hardware the first client is id 0, so no id can answer it.
 ; Changes:
 ;  AF, BC, DE, HL
 ;===========================================================================
 transport_flush:
-    ld a,(esp_conn_id)
+    ld a,(esp_conn_valid)
     or a
     jr nz,.have_client
-    ; Nobody has ever connected: drop it.
+    ; No client: drop it.
     xor a
     ld (esp_tx_len),a
     ret
@@ -939,7 +972,10 @@ transport_flush:
 ; Sends the buffered bytes as one AT+CIPSEND on the connection the last +IPD
 ; arrived on, and clears the buffer.
 ; Must only be called with esp_tx_len != 0: AT+CIPSEND with a length of 0 is
-; answered ERROR (jnext esp_at.cpp, begin_send).
+; answered ERROR (jnext esp_at.cpp, begin_send). And only with esp_conn_valid
+; set — esp_conn_id is read here without being questioned, because every value
+; it can hold is a real connection. transport_flush is the only way in and it
+; checks both; there is no `call esp_flush_chunk` anywhere.
 ; Changes:
 ;  AF, BC, DE, HL
 ;===========================================================================
@@ -1004,15 +1040,20 @@ esp_flush_chunk:
     jp tx_timeout   ; ASSERTION
 
 .no_client:
-    ; THE PEER HAS GONE, and forgetting the id is the whole point. Without this
-    ; esp_conn_id kept the id of a connection that had closed for the rest of
-    ; the power-on session, so every later unprompted send — an NTF_PAUSE from
-    ; the M1 button, or from a leftover RST 0 — was aimed at a dead cid, waited
-    ; for a '>' that could not come, and diverted to drain_main, which threw the
-    ; notification away and painted "TX Timeout" on a machine with nothing wrong
-    ; with it. Setting it back to 0 puts us in the state before any client was
-    ; ever seen, where transport_flush discards without asking (see there), so
-    ; the NEXT such send costs nothing at all.
+    ; THE PEER HAS GONE, and forgetting the connection is the whole point.
+    ; Without this the id of a connection that had closed stayed live for the
+    ; rest of the power-on session, so every later unprompted send — an NTF_PAUSE
+    ; from the M1 button, or from a leftover RST 0 — was aimed at a dead cid,
+    ; waited for a '>' that could not come, and diverted to drain_main, which
+    ; threw the notification away and painted "TX Timeout" on a machine with
+    ; nothing wrong with it.
+    ;
+    ; Clearing the VALIDITY FLAG is what forgetting means here. esp_conn_id is
+    ; left holding the dead id, deliberately: it is data, it is never read while
+    ; the flag is clear, and writing some other value into it would be reserving
+    ; an id again. That puts us back in the state before any client was seen,
+    ; where transport_flush discards without asking (see there), so the NEXT such
+    ; send costs nothing at all.
     ;
     ; The message itself is still lost, and that is correct: there is nobody to
     ; receive it. What is NOT covered is a client that has reconnected but not
@@ -1021,7 +1062,7 @@ esp_flush_chunk:
     ; means tracking `<id>,CONNECT` as well, which belongs with M3's reconnect
     ; work rather than here.
     xor a
-    ld (esp_conn_id),a
+    ld (esp_conn_valid),a
     ld (esp_tx_len),a
     ret
 

@@ -4,7 +4,8 @@
 # immediately above it. Target names print in bold red.
 
 .DEFAULT_GOAL := help
-.PHONY: help all main unit-tests mf-rom mfselect test test-mfselect test-esp test-dzrp bump check-reproducible clean
+.PHONY: help all main unit-tests mf-rom mf-rom-wifi mfselect test test-mfselect test-esp \
+        test-dzrp test-dzrp-stub bump check-reproducible check-reproducible-wifi clean
 
 # Show this help
 help:
@@ -54,6 +55,38 @@ BUILD_NUMBER_HEX = $(shell printf '%04X' $(BUILD_NUMBER))
 
 
 # ---------------------------------------------------------------------------
+# Transport variant — M1's assembly-time switch.
+#
+#   make                     UART mode, upstream's joy-port serial link
+#   make TRANSPORT=wifi ...  WiFi mode, DZRP over TCP through the ESP-01
+#
+# One mode per ROM, by design (MEMORY.md 2026-08-03): a runtime switch would put
+# a branch in the hot path of every transport call and buy nothing a rebuild
+# does not.
+#
+# THE TWO VARIANTS HAVE DIFFERENT OUTPUT NAMES ON PURPOSE. Sharing one path
+# would mean `make TRANSPORT=wifi` leaves a WiFi ROM at the name every other
+# target reads, and the next `make test` would find nothing newer than its
+# output, do nothing, and test the wrong ROM without saying so.
+#
+# The UART names are unsuffixed, so the serial build's paths — and therefore
+# its bytes — are exactly what they were before the switch existed.
+# ---------------------------------------------------------------------------
+
+TRANSPORT ?= uart
+
+ifeq ($(TRANSPORT),uart)
+  VARIANT_SUFFIX =
+  VARIANT_FLAGS  =
+else ifeq ($(TRANSPORT),wifi)
+  VARIANT_SUFFIX = -wifi
+  VARIANT_FLAGS  = -DTRANSPORT_WIFI
+else
+  $(error TRANSPORT must be 'uart' or 'wifi', not '$(TRANSPORT)')
+endif
+
+
+# ---------------------------------------------------------------------------
 # Layout
 # ---------------------------------------------------------------------------
 
@@ -75,9 +108,9 @@ ROMSUM      = $(TOOLS)/romsum.py
 ASM_FILES    = $(wildcard $(SRC)/*.asm) $(wildcard $(SRC)/zx/*.inc)
 UT_ASM_FILES = $(wildcard $(SRC)/unit_tests/*.asm) $(wildcard $(SRC)/unit_tests/*.inc) $(ASM_FILES)
 
-MAIN_BIN    = $(OUT)/main.bin
-MF_NMI_BIN  = $(OUT)/mf_nmi.bin
-ROM         = $(OUT)/enNextMf.rom
+MAIN_BIN    = $(OUT)/main$(VARIANT_SUFFIX).bin
+MF_NMI_BIN  = $(OUT)/mf_nmi$(VARIANT_SUFFIX).bin
+ROM         = $(OUT)/enNextMf$(VARIANT_SUFFIX).rom
 UT_BIN      = $(OUT)/ut.nex
 TRIGGER_BIN = $(OUT)/nmi_trigger.bin
 COPPER_BIN  = $(OUT)/copper_nmi.bin
@@ -96,7 +129,8 @@ ROM_SIZE = 8192
 ASMFLAGS = --inc=$(SRC) --lstlab --fullpath \
            -DMAIN_BIN=\"$(MAIN_BIN)\" -DMF_NMI_BIN=\"$(MF_NMI_BIN)\" \
            -DBUILD_TIME=$(BUILD_TIME) \
-           -DBUILD_NUMBER_HEX=\"$(BUILD_NUMBER_HEX)\"
+           -DBUILD_NUMBER_HEX=\"$(BUILD_NUMBER_HEX)\" \
+           $(VARIANT_FLAGS)
 
 
 # ---------------------------------------------------------------------------
@@ -112,8 +146,12 @@ main: $(MAIN_BIN) $(MF_NMI_BIN)
 # Assemble the Z80 unit tests (build/ut.nex)
 unit-tests: $(UT_BIN)
 
-# Build the deployable Multiface ROM (build/enNextMf.rom)
+# Build the deployable Multiface ROM (build/enNextMf.rom; TRANSPORT=wifi for the other)
 mf-rom: $(ROM)
+
+# Build the WiFi-mode ROM (build/enNextMf-wifi.rom) — shorthand for TRANSPORT=wifi
+mf-rom-wifi:
+	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
 
 # Build the mfselect ROM switcher (build/mfselect.nex + build/dezogif.sum)
 mfselect: $(MFSELECT_NEX) $(DEZOGIF_SUM)
@@ -132,6 +170,12 @@ test-mfselect: $(MFSELECT_NEX) $(DEZOGIF_SUM) $(ROM)
 test-esp: $(ESP_BIN)
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" ESP_BIN="$(ESP_BIN)" \
 	 $(TEST)/run-esp.sh
+
+# Run the DZRP conformance suite against OUR OWN WiFi stub in jnext (1 run + a TCP client)
+test-dzrp-stub:
+	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
+	 ROM="$(OUT)/enNextMf-wifi.rom" DZRP_ARGS="$(DZRP_ARGS)" $(TEST)/run-dzrp-stub.sh
 
 # Run the DZRP conformance suite against a remote (REMOTE=tcp:<host>:<port>)
 test-dzrp:
@@ -160,16 +204,20 @@ bump:
 check-reproducible:
 	@set -e; tmp=$$(mktemp -d); trap 'rm -rf $$tmp' EXIT; \
 	$(MAKE) --no-print-directory clean >/dev/null; \
-	$(MAKE) --no-print-directory BUILD_TIME=1700000000 mf-rom >/dev/null; \
+	$(MAKE) --no-print-directory TRANSPORT=$(TRANSPORT) BUILD_TIME=1700000000 mf-rom >/dev/null; \
 	cp $(ROM) $$tmp/a.rom; \
 	$(MAKE) --no-print-directory clean >/dev/null; \
-	$(MAKE) --no-print-directory BUILD_TIME=1700000000 mf-rom >/dev/null; \
+	$(MAKE) --no-print-directory TRANSPORT=$(TRANSPORT) BUILD_TIME=1700000000 mf-rom >/dev/null; \
 	cp $(ROM) $$tmp/b.rom; \
 	if cmp -s $$tmp/a.rom $$tmp/b.rom; then \
-	  echo "PASS  reproducible: two pinned builds are byte-identical"; \
+	  echo "PASS  reproducible ($(TRANSPORT)): two pinned builds are byte-identical"; \
 	else \
-	  echo "FAIL  reproducible: two pinned builds differ"; exit 1; \
+	  echo "FAIL  reproducible ($(TRANSPORT)): two pinned builds differ"; exit 1; \
 	fi
+
+# Same check for the WiFi ROM
+check-reproducible-wifi:
+	@$(MAKE) --no-print-directory TRANSPORT=wifi check-reproducible
 
 # Remove every build artefact
 clean:
@@ -188,7 +236,8 @@ clean:
 # block still carries the OLD number — silently, which is the failure mode this
 # project's rules single out as the worst kind.
 $(MAIN_BIN) $(MF_NMI_BIN) &: $(ASM_FILES) $(VERSION_FILE) Makefile | $(OUT)
-	$(SJASMPLUS) $(ASMFLAGS) --sld=$(OUT)/$(PROJ).sld --lst=$(OUT)/$(PROJ).list $(MAIN_ASM)
+	$(SJASMPLUS) $(ASMFLAGS) --sld=$(OUT)/$(PROJ)$(VARIANT_SUFFIX).sld \
+	    --lst=$(OUT)/$(PROJ)$(VARIANT_SUFFIX).list $(MAIN_ASM)
 
 $(UT_BIN): $(UT_ASM_FILES) Makefile | $(OUT)
 	$(SJASMPLUS) $(ASMFLAGS) -DBIN_FILE=\"$(UT_BIN)\" --sld=$(OUT)/ut.sld --lst=$(OUT)/ut.list $(UT_ASM)

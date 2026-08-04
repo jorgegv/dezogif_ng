@@ -68,13 +68,26 @@ BUILD_TIME16: equ BUILD_TIME & 0xFFFF
 ROM_MAGIC_ADDR:     equ MAIN_ADDR + 0x1EA0  ; 0xFEA0 = ROM offset 0x1FE0
 ROM_MAGIC_SIZE:     equ 32                  ; reserved; the string is 20 bytes
 
-; Which transport this ROM was assembled against. There is only one build
-; today; the assembly-time switch is M1's, and issue #5 is the consumer that
-; needs to tell two of our ROMs apart — no CRC can, since both change on every
-; build.
+; Which transport this ROM was assembled against, and THE assembly-time switch
+; the whole two-mode design turns on. `transport.asm` includes an
+; implementation according to it and `main.asm` stamps the name into the magic
+; string, so `make TRANSPORT=wifi` produces a ROM that both behaves and
+; identifies itself as the WiFi one. Issue #5 is the consumer that needs to tell
+; two of our ROMs apart — no CRC can, since both change on every build.
+;
+; Driven from the command line as -DTRANSPORT_WIFI (the Makefile's
+; TRANSPORT=wifi). A bare define rather than -DTRANSPORT=<value> because
+; sjasmplus processes -D before the source, so a symbolic value would name a
+; constant that does not exist yet, and a numeric one would put a bare 0 or 1 in
+; the build command where a reader cannot tell which is which.
 ROM_VARIANT_UART:   equ 0
 ROM_VARIANT_WIFI:   equ 1
+
+ IFDEF TRANSPORT_WIFI
+ROM_VARIANT:        equ ROM_VARIANT_WIFI
+ ELSE
 ROM_VARIANT:        equ ROM_VARIANT_UART
+ ENDIF
 
 
 

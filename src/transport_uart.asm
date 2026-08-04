@@ -44,6 +44,38 @@
 
 
 ;===========================================================================
+; TRANSPORT_MESSAGE_START — emitted before every response and notification.
+;
+; The 0xA5 preamble. NOT a defect and not a leak: upstream extended DZRP by
+; this byte for the SERIAL link, and says so (doc/legacy/Design.md:30-31) —
+; "DeZog will wait on this byte before it recognizes messages coming from the
+; Next", because a game that grabs the joy port leaves the Next transmitting
+; endless zeroes. DeZog implements the split itself: ZxNextSerialRemote scans
+; for and strips byte 165, CSpectRemote does not.
+;
+; So it is REQUIRED here and must be ABSENT over a socket, which makes it a
+; property the transport contributes rather than something message.asm should
+; decide. Removing it in both modes would break interoperability with DeZog's
+; real `zxnext` remote.
+;===========================================================================
+    MACRO TRANSPORT_MESSAGE_START
+    ld a,MESSAGE_START_BYTE
+    call transport_write_byte
+    ENDM
+
+
+;===========================================================================
+; TRANSPORT_END_MESSAGE — a complete message has been written.
+;
+; Nothing to do: bytes went out as they were written. A transport that has to
+; announce a frame's length before its bytes needs this, and expands it into
+; the flush that sends the frame.
+;===========================================================================
+    MACRO TRANSPORT_END_MESSAGE
+    ENDM
+
+
+;===========================================================================
 ; Constants
 ;===========================================================================
 

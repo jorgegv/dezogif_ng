@@ -116,6 +116,12 @@ main:
     ; Setup stack
     ld sp,debug_stack.top
 
+    ; CMD_CLOSE writes its response and then jumps straight here, so this is
+    ; the other end of a completed message. Reached from drain_main there is
+    ; nothing to send: the drain discards a half-built one rather than letting
+    ; a fragment go out as the head of the next reply.
+    TRANSPORT_END_MESSAGE
+
     ; Black border
     xor a
     out (BORDER),a
@@ -159,6 +165,14 @@ main_loop:
     ; If so leave loop and enter command loop
     jp nz,cmd_loop
 .continue:
+    ; CMD_LOOPBACK writes its whole response and then jumps HERE
+    ; (commands.asm: `pop af` / `jp main_loop.continue`), bypassing cmd_loop
+    ; entirely — so this is the third and last place a completed message can
+    ; end up. Measured, not assumed: without it the loopback reply sat in the
+    ; buffer until the NEXT command arrived and was then delivered to whichever
+    ; connection asked that one, which the DZRP suite saw as a timeout followed
+    ; by a sequence mismatch.
+    TRANSPORT_END_MESSAGE
 
 .no_uart_byte:
     ; Check keyboard

@@ -9,9 +9,17 @@ this existed, the protocol, which is the entire deliverable, had no test.
 
 ## Running it
 
+    make test-dzrp-stub                                 # OUR OWN WiFi stub, in jnext
     make test-dzrp REMOTE=tcp:192.168.1.42:11000        # a real Next over WiFi
     make test-dzrp REMOTE=tcp:127.0.0.1:11000           # anything listening locally
     make test-dzrp REMOTE=serial:/dev/ttyUSB0:921600    # UART mode (needs pyserial)
+
+`make test-dzrp-stub` is the self-contained one and the reason the rest exists: it builds the
+WiFi ROM, installs it as the Multiface ROM on a copy of the reference SD image, boots a headless
+Next, presses M1 to bring the debugger up, waits for the stub's own `AT+CIPSERVER` listener to
+appear on `127.0.0.1:11000` (that wait is check **W1**, and nothing else in this repository has
+ever shown the ESP being brought up by the stub rather than by a fixture), and then runs the
+suite against it.
 
 Extra arguments go through `DZRP_ARGS`:
 
@@ -35,6 +43,29 @@ against our own stub then means the stub, not the harness.
 
 Result on 2026-08-04, CSpect 3.1.0.0 / DeZogPlugin v2.3.0.20958 / DZRP 2.0.0 — **6 passed, 0
 failed, 2 unsupported of 8**.
+
+## Result against our own stub (2026-08-04, first ever)
+
+`make test-dzrp-stub`, WiFi ROM under jnext 0.99.118 — **W1 pass, then 7 passed, 1 failed, 0
+unsupported of 8**. C1, C3, C4, C5, C6, C7 and C8 all green: version negotiation, the absent
+preamble, loopback round-trips exact at 0/1/255/256/1024 bytes, sequence echo across five
+commands, a 37-byte register block, and a 64-byte memory write/read round trip.
+
+**C2 is red, and it is not a transport defect.** `cmd_init` reads the remote's program name from
+the stream **until a NUL**, ignoring the frame's length field entirely (`commands.asm`,
+`cmd_init.inner`), so a frame whose length is wrong but whose payload is well formed is consumed
+and answered. C2 exists to catch exactly that. Three things make it clear this is pre-existing
+rather than new:
+
+- `src/commands.asm` is untouched by the WiFi work;
+- the UART ROM is byte-for-byte identical to the one `main` already ships;
+- the frame-reading path (`cmd_loop`, `receive_bytes`, `cmd_init`) is common code shared by both
+  builds.
+
+The practical consequence is narrow but real: a length that disagrees with the payload
+**desynchronises the stream silently** instead of being rejected. DeZog never sends one. Fixing it
+changes the serial ROM's bytes, so it belongs on its own branch with its own build-number bump,
+not here.
 
 **Not ZEsarUX.** ZEsarUX speaks ZRCP, its own protocol, reached by DeZog's `zrcp` remote type. It
 is not a DZRP endpoint and cannot serve as a reference.

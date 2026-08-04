@@ -262,6 +262,82 @@ name which step stopped).
 
 ---
 
+## 2026-08-04 — M1's second half: the ESP transport, and the switch
+
+**Built and measured.** `src/transport_esp.asm` implements the whole
+`transport.asm` interface over the ESP-01 in TCP server mode, selected by
+`make TRANSPORT=wifi` (`-DTRANSPORT_WIFI` → `ROM_VARIANT`). The AT chain, the
+`+IPD` parser and the `AT+CIPSEND` framing are ported from `test/esp_server.asm`,
+the M0(b) spike — which is the whole reason that fixture was built first.
+
+**The measurement that matters: `make test-dzrp-stub` — W1 pass, then 7 of 8
+DZRP checks pass.** A headless Next with our WiFi ROM as the Multiface ROM, an
+emulated M1 press, and the conformance suite talking DZRP over a socket to the
+debugger. Loopback is exact at 0, 1, 255, 256 and **1024** bytes, which is the
+multi-chunk path; sequence numbers echo across five commands; registers and a
+memory round trip come back right. Before this the strongest evidence in the
+project was a pixel count.
+
+**Three decisions worth keeping.**
+
+1. **The 0xA5 preamble is a macro, not an `IF`.** `TRANSPORT_MESSAGE_START`
+   expands to upstream's two instructions in UART mode and to nothing in WiFi
+   mode, so `message.asm` cannot tell which it was assembled against — the rule
+   CLAUDE.md states. Asserted rather than assumed: the bench passes
+   `--expect-preamble none`.
+2. **Responses are buffered and framed, because `AT+CIPSERVER` forbids
+   passthrough.** `transport_write_byte` appends; `TRANSPORT_END_MESSAGE`
+   flushes as an `AT+CIPSEND=<id>,<len>`. TCP is a stream, so a long response
+   spanning several CIPSENDs is invisible to the client.
+3. **The connection id is read from `+IPD` and echoed back, never assumed** —
+   the note recorded below about jnext's inbound ids starting at 1, now used
+   rather than only written down.
+
+**The bug that only a real client could have found, and the shape of it is the
+lesson.** `TRANSPORT_END_MESSAGE` was placed at the top of `cmd_loop` and of
+`main`, which looked exhaustive: a response returns to `cmd_loop`, `NTF_PAUSE`
+is followed by `jp cmd_loop`, `CMD_CLOSE` by `jp main`, `CMD_CONTINUE` already
+flushed in `backup.asm`. **`cmd_loopback` reaches none of them** — it ends
+`pop af` / `jp main_loop.continue`, bypassing `cmd_loop` entirely. So its reply
+sat in the buffer until the *next* command arrived and was then delivered to
+whichever connection had asked that one. The suite saw a timeout followed by a
+sequence mismatch on the *following* check, i.e. the symptom appeared one check
+away from the cause. Found by reading jnext's `esp01=trace` log against the
+source, not by reasoning about it.
+
+**What is NOT done, and none of it is hidden.**
+
+- **`AT+CIFSR` is not sent and no address is shown.** Reporting an address means
+  parsing and drawing it, which is the connect-string UI decided on 2026-08-04
+  and deliberately left to its own change. WiFi mode currently draws upstream's
+  baud line and joy-port selector, both meaningless there.
+- **A re-init while already listening reports an error.** Symbol Shift + NMI
+  runs `transport_init` again and `AT+CIPSERVER=1,<port>` answers ERROR when a
+  server is up. The link keeps working; the screen lies. Clearing it needs a
+  wait that accepts OK *or* ERROR, which nothing else here needs.
+- **Bring-up failure shows as "RX Timeout"**, because adding an error code
+  means adding a string and a table entry to `data_const.asm` — common code
+  whose bytes the UART gate protects. `transport_activate` carries the flag past
+  `drain_main`'s reset of `last_error`, which is the only trick involved.
+- **C2 of the DZRP suite is red, and it is pre-existing.** `cmd_init` reads the
+  remote's program name until a NUL and ignores the frame length, so a length
+  that disagrees with the payload desynchronises silently. `commands.asm` is
+  untouched and the UART ROM is byte-identical to `main`'s, so this is what the
+  serial build has always done. Fixing it changes the serial ROM and belongs on
+  its own branch.
+- **Nothing has run on hardware.** jnext models baud as timing only and its
+  module is permanently associated (no `AT+CWJAP=` at all), so the 115200
+  pinning, the ESP-AT echo default and every timeout constant are reasoned, not
+  measured.
+
+**The gate held.** With `BUILD_TIME` and the build number pinned the UART ROM
+hashes `2387fc96…`, identical to `main`'s, across a change that added a
+transport, two framing macros, three macro call sites in common code and a
+Makefile variant split. That is the same standard the interface extraction was
+landed to, and it is worth keeping as the price of admission for M2.
+
+---
+
 ## 2026-08-04 — DZRP's two length conventions, and where 0xA5 really comes from
 
 **Found by the DZRP conformance suite** ([issue #2]) on its first run against a

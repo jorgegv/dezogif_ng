@@ -177,6 +177,39 @@ that three times in one file.
 
 ---
 
+## Enumerating a control flow's exits by reading the ones you expected
+
+**Symptom.** With the ESP transport, `CMD_LOOPBACK` produced no reply — and then
+the *next* DZRP check, on a fresh connection, received that reply with the wrong
+sequence number. Two failures, one cause, one check apart.
+
+**Cause.** Outgoing bytes are buffered and sent as one `AT+CIPSEND`, so
+something has to say "the message is finished". `TRANSPORT_END_MESSAGE` was put
+at the top of `cmd_loop` and of `main`, from a list of exits that looked
+complete: a command's response returns to `cmd_loop`, `NTF_PAUSE` is followed by
+`jp cmd_loop` in both `mf.asm` and `breakpoints.asm`, `CMD_CLOSE` ends
+`jp main`, and `CMD_CONTINUE` already called `transport_flush` in
+`backup.asm`. **`cmd_loopback` does none of those**: it ends `pop af` /
+`jp main_loop.continue` and re-enters the *main* loop, not the command loop. Its
+reply therefore stayed buffered until the next command arrived and was flushed
+to whatever connection that one came from.
+
+**Fix.** A third `TRANSPORT_END_MESSAGE`, at `main_loop.continue`. The rule that
+actually holds is not "every response returns to `cmd_loop`" but **"flush
+wherever the debugger goes idle"**, and there are three such places.
+
+**Lesson, and it is not "read more carefully".** The list of exits was built
+from the handlers that were *read*, and `cmd_loopback` was not one of them —
+`grep -nE "^\s+jp (main|drain_main|restore_registers|main_loop)" src/commands.asm`
+takes one second and answers the question exhaustively. When a change depends on
+"every path through X", enumerate the paths with a tool, not from memory of the
+ones you happened to open. Found from jnext's own `--log-level esp01=trace`
+output, which showed the `AT+CIPSEND` arriving five seconds late and addressed
+to the wrong connection id — the emulator's log named the failure again, as it
+did in the entry below.
+
+---
+
 ## "The backup file exists" is not "a backup exists"
 
 **Symptom.** None visible — which is the point. Found by the independent

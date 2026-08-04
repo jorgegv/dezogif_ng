@@ -13,9 +13,13 @@ The goal is to **add a WiFi transport alongside that serial one and select betwe
 assembly time**, so the ROM can be built in either UART mode or WiFi mode, and to add
 PC-initiated break in WiFi mode. The serial transport will be kept, not replaced.
 
-**None of that exists yet.** Today the tree builds exactly one ROM, behaviourally upstream's
-serial stub; there is no ESP code and no mode switch. What this fork has actually added so far is
-the build system, the headless test bench and the documentation.
+**M1 is built; M2 is not.** The tree builds **two** ROMs — `make` gives the serial one, byte for
+byte upstream's behaviour, and `make TRANSPORT=wifi` gives one that brings the ESP-01 up as a TCP
+server and speaks DZRP through it (`src/transport_esp.asm`). A DZRP client talks to the WiFi build
+under jnext and gets correct answers: `make test-dzrp-stub`. What is **not** built yet is the
+connect-string UI (WiFi mode still draws upstream's baud line and joy-port selector), M2's
+asynchronous break, and anything at all on real hardware — **nothing in this project has ever run
+on a Next.**
 
 It is deployed by replacing `machines/next/enNextMf.rom` on the Next's SD card — the stub *is* the
 Multiface ROM. The PC-side client is **DeZog** in VS Code, speaking **DZRP**.
@@ -77,6 +81,26 @@ to work.
 
 The Makefile is semantic: **bare `make` lists every target with its description.** Build outputs
 go to `build/`.
+
+**Two variants, chosen with `TRANSPORT`:**
+
+```
+make mf-rom                    build/enNextMf.rom       UART  (default)
+make TRANSPORT=wifi mf-rom     build/enNextMf-wifi.rom  WiFi
+make mf-rom-wifi               the same, spelled shorter
+```
+
+The names differ on purpose: a shared path would let `make TRANSPORT=wifi` leave a WiFi ROM where
+`make test` reads one, and make would then find nothing newer than its output and test the wrong
+file without saying so. The switch reaches the sources as `-DTRANSPORT_WIFI` and lands in
+`ROM_VARIANT` (`src/constants.asm`), which selects the implementation in `src/transport.asm` **and**
+the variant field of the magic string below — so a ROM cannot behave as one variant and identify
+as the other.
+
+**The UART build's bytes are a standing gate.** With `BUILD_TIME` and the build number pinned, the
+serial ROM must hash the same before and after any transport change; that is the project's proof
+that a refactor changed no behaviour, and it is how the M1 transport interface was landed in the
+first place (MEMORY.md 2026-08-03). If it differs, find out why — do not explain it away.
 
 The assembler is **sjasmplus** (1.23.1, at `~/src/spectrum/sjasmplus/`). It reaches `PATH` via
 `~/bin/direnv-spectrum.sh`; the Makefile falls back to the absolute path, so a build works
@@ -155,6 +179,21 @@ strongest:
    emulator, and it binds a host TCP port, so it cannot make `make test`'s promise of no external
    dependencies. **It proves nothing about hardware**: jnext has no `AT+CWJAP=` setting form, so
    the emulated module is permanently associated, and it models baud as timing only.
+4c. **`make test-dzrp-stub`** — the DZRP conformance suite against **our own WiFi stub**, and the
+   strongest check here: one headless jnext run with `build/enNextMf-wifi.rom` installed as the
+   Multiface ROM, an emulated M1 button press, and `test/dzrp/conformance.py` speaking DZRP over
+   TCP through the emulated ESP-01. Every other layer judges a proxy — pixels, files, or bytes
+   echoed by a fixture that is not the debugger. **W1** is the wait for the stub's own
+   `AT+CIPSERVER` listener to appear, which can only happen after the NMI was taken, `MAIN` was
+   relocated, UART0 came up at 115200 and `AT+CIPMUX=1` / `AT+CIPSERVER=1,11000` were accepted.
+   Then the suite's own checks. **Result 2026-08-04: W1 pass, 7 passed / 1 failed of 8.** The one
+   red is **C2**, and it is pre-existing rather than transport work: `cmd_init` reads the remote's
+   program name until a NUL and ignores the frame's length field, so a length that disagrees with
+   the payload desynchronises silently instead of being rejected. `src/commands.asm` is untouched
+   and the UART ROM is byte-identical to `main`'s, so that behaviour is what the serial build has
+   always had. Fixing it changes the serial ROM and therefore needs its own branch. See
+   `doc/DZRP-TESTING.md`. Like `test-esp`, not part of `make test`: it binds a host TCP port.
+   **It says nothing about hardware.**
 5. **`build/ut.nex`** — the upstream Z80 unit tests under `src/unit_tests/`. These are
    **DeZog-driven** (`"unitTests": true` + zsim) and therefore need VS Code; they are a manual
    layer and gate nothing. Making them headless would need a driver we do not have.

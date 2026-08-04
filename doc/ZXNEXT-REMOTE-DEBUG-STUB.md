@@ -651,6 +651,20 @@ work: bring-up first, then UI. **Port 11000**, DeZog's `cspect` default, so Appe
 `launch.json` and the ROM agree. It replaces the baud line and the joy-port selector only; the
 core-version check and the error area are mode-independent and stay. See MEMORY.md.
 
+**Status 2026-08-04 — the byte-stream half is DONE in the emulator; the UI half is not.**
+`src/transport_esp.asm` exists, `make TRANSPORT=wifi` builds it, and `make test-dzrp-stub` runs the
+DZRP conformance suite against it inside jnext: the stub brings the ESP up, listens on 11000, and
+answers **7 of 8** checks correctly (the eighth, C2, is a pre-existing `cmd_init` behaviour shared
+with the serial build — see `doc/DZRP-TESTING.md`). The UART build is byte-identical to the one
+before the change, so the interface did not leak.
+
+Still open in M1, and none of it is subtle: **the connect string** (WiFi mode still draws
+upstream's baud line and joy-port selector, and no `AT+CIFSR` is sent because nothing yet parses
+an address); **DeZog itself has never been pointed at it** — the evidence is the conformance
+suite, not a debugging session, so stepping and breakpoints over WiFi are untried; and **nothing
+has run on hardware**, where jnext's two known fictions bite — it models baud as timing only and
+its module is permanently associated.
+
 ### M2 — Asynchronous break
 Add the Copper-driven periodic NMI poll (§4.3). Success: `CMD_PAUSE` from DeZog stops a freely
 running program, and breakpoints can be set without pressing anything.

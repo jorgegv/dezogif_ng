@@ -20,6 +20,12 @@
 ; Each sent message has to start with this byte.
 ; The ZX Next transmit a lot of zeroes if the joy port is not configured.
 ; Therefore this byte is required to recognize when a message starts.
+;
+; WHETHER it is emitted is the transport's decision, not this file's: it is
+; required over the joy-port serial link and must be absent over a socket. The
+; two places below therefore invoke TRANSPORT_MESSAGE_START rather than writing
+; the byte. The constant stays here because it is a property of the protocol
+; extension, and the serial transport's macro is its only user.
 MESSAGE_START_BYTE:	equ 0xA5
 
 
@@ -91,6 +97,10 @@ end		defb	; For the RET
 ;  -, At the end the registers are restored.
 ;===========================================================================
 cmd_loop:
+    ; Whatever was being written is finished: a command's response returns
+    ; here, and so does an NTF_PAUSE, via mf.asm's and breakpoints.asm's
+    ; `jp cmd_loop`. Nothing is pending on the first entry from main_loop.
+    TRANSPORT_END_MESSAGE
     ; Wait on next command
     call transport_wait_rx
     ; Receive length sequence number and command
@@ -275,8 +285,7 @@ send_length_and_seqno:
 ;===========================================================================
 send_4bytes_length_and_seqno:
     ; Write first byte to recognize message
-    ld a,MESSAGE_START_BYTE
-    call transport_write_byte
+    TRANSPORT_MESSAGE_START
     ; First length byte
     ld a,e
     ; Write to the transport
@@ -319,8 +328,7 @@ send_ntf_pause:
     ld a,PRGM_STOPPED
     ld (prgm_state),a
     ; Write first byte to recognize message
-    ld a,MESSAGE_START_BYTE
-    call transport_write_byte
+    TRANSPORT_MESSAGE_START
     ; First length byte
     ld a,7
     call transport_write_byte

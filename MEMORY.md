@@ -5,6 +5,64 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-04 — ROM identity is a magic string; the CRC keeps only integrity
+
+**Decided (user), issue #4.** Every `enNextMf.rom` carries a magic string at a
+fixed offset, and mfselect uses it to answer "is this ours?". The string, and
+its shape is the user's:
+
+    DeZoGiFnG_UART_0001        DeZoGiFnG_WIFI_0001
+
+prefix + transport variant + a four-hex-digit build number from a new
+`version.yaml`, bumped by `make bump`, one bump per merge to `main`.
+
+**The two questions that were being conflated.** *Identity* — is this ours,
+and which variant — is now the magic. *Integrity* — did these bytes land
+intact — stays the CRC in the `.sum` files, which is what it was always good
+for. Nothing about the post-copy verification changed.
+
+**Why this was a bug and not a tidy-up, which the first draft of the issue
+undersold.** `BUILD_TIME` is stamped into every ROM, so the CRC changes on
+*every build*. mfselect's first-run guard — the one that refuses to save
+**our** ROM as the user's `original.rom` — was a checksum comparison against
+`dezogif.sum`. The moment a user upgraded the stub, the installed ROM and the
+`.sum` beside it came from different builds, the comparison failed, the guard
+fell silent, and mfselect captured the debug stub as the stock Multiface ROM
+with no copy of the real one left on the card. Same shape as the `CREAT_TRUNC`
+defect in [[ERRORS.md]]: a guard defeated through a door nobody had checked.
+
+**Proved by reverting it, not by argument.** Bench check **M6** ships a
+deliberately stale `dezogif.sum` against our ROM — what an upgraded card looks
+like — and requires the guard to hold. With the old checksum guard restored,
+**M4 still passed and M6 failed with `original.rom` overwritten by our ROM**.
+So M4 could never have caught this, and M6 earns its place.
+
+**Design points worth keeping.**
+
+- **The offset is a permanent contract**: ROM file offset `0x1FE0`, address
+  `0xFEA0`. It is the *end* of an image whose size the firmware fixes at 8192,
+  chosen because it cannot drift as the code grows. An `ASSERT` in `main.asm`
+  fails the build if the debugger grows into it — which also closes a latent
+  hole, since the existing assert permitted `0xFF00`, past even the end of the
+  region `SAVEBIN` writes.
+- **Match the prefix and the variant, never the build number.** Matching a
+  per-build value is precisely the fragility this removes.
+- **The build number is not derived from `BUILD_TIME` or the git hash**, and
+  that is deliberate: `make check-reproducible` must keep passing, so identity
+  must not change on every build.
+- **An unrecognised variant reports as ours-but-unnamed**, not as UART.
+  Guessing would be a false statement about the ROM on the card, which is the
+  class of thing this block exists to stop.
+
+**Rejected.** A separate variant *byte* alongside a shorter magic (the user
+specified the variant inside the string, and one readable token in a hex dump
+beats two fields); putting the block at the ROM's *start*, where the RST
+vectors live and where any offset would move as code changed; keeping the
+checksum as a second identity check (it cannot be one — it is wrong after
+every build, so it could only ever veto a correct answer).
+
+---
+
 ## 2026-08-04 — M0(b) first, and M0(a) is off the critical path
 
 **Decided, and it reorders the plan.** M1's WiFi half starts with the **M0(b)

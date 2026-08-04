@@ -5,6 +5,47 @@ attempting similar logic.
 
 ---
 
+## A checksum answers "which build", never "whose ROM"
+
+**Symptom.** None visible, again — and again it was the *guard* that failed
+silently rather than the thing being guarded.
+
+mfselect refuses to capture **our** ROM as the user's `original.rom`, because
+anyone who installed dezogif_ng by hand already has our ROM at the official
+path, and saving it as "the original" loses the stock Multiface ROM with no
+copy left anywhere. That guard compared the installed ROM's CRC against the
+`dezogif.sum` shipped beside it.
+
+**Cause.** `BUILD_TIME` is stamped into every ROM, so the CRC changes on
+**every build**. A card only has a matching pair until the stub is next built.
+After any upgrade the comparison failed, the guard did not fire, and mfselect
+captured the debug stub as the stock ROM — exactly the loss it exists to
+prevent.
+
+The mistake is one level up from the code: **identity and integrity were being
+answered by the same value.** A checksum is an excellent answer to "did these
+bytes land intact" and a hopeless one to "is this ours", because it is
+deliberately sensitive to every byte — including the ones that are *supposed*
+to change between releases.
+
+**Fix.** A magic string at a fixed offset (`DeZoGiFnG_UART_0001`), matched on
+its prefix and variant and never on its build number. The CRC keeps the
+integrity job it was always right for.
+
+**What made this findable, and it is the transferable part.** The existing
+bench check M4 tested the guard with a *matching* `.sum` — the easy case, and
+not the one any user is in. Adding M6, which ships a deliberately stale
+`.sum`, then **reverting the fix to see M6 fail**, showed both that the bug was
+real and that M4 could never have caught it: with the old guard restored, M4
+still passed while M6 destroyed the backup.
+
+**Lesson.** When a guard has a test, ask what *state* the test puts the system
+in, not just what it asserts. M4 asserted the right thing about a state users
+are almost never in. A guard tested only in its easy case is a guard whose hard
+case is untested, and the hard case is the one that ships.
+
+---
+
 ## `cp --reflink=auto` is a gigabyte when `auto` says no
 
 **Symptom.** Mid-session, every shell command started returning exit code 1 —

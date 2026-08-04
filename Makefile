@@ -4,7 +4,7 @@
 # immediately above it. Target names print in bold red.
 
 .DEFAULT_GOAL := help
-.PHONY: help all main unit-tests mf-rom mfselect test test-mfselect test-esp test-dzrp check-reproducible clean
+.PHONY: help all main unit-tests mf-rom mfselect test test-mfselect test-esp test-dzrp bump check-reproducible clean
 
 # Show this help
 help:
@@ -39,6 +39,18 @@ ZCCFLAGS   = +zxn -subtype=nex -clib=sdcc_iy -SO3 -compiler=sdcc -create-app
 # Stamped into the ROM (constants.asm: BUILD_TIME16). Pin it to compare two
 # builds byte for byte — see `make check-reproducible`.
 BUILD_TIME ?= $(shell date +%s)
+
+# Build number for the ROM identity block (issue #4), read from version.yaml
+# rather than kept here, so `make bump` has one file to rewrite and the number
+# survives in git as a reviewable one-line diff.
+#
+# Rendered as four uppercase hex digits and emitted into the magic string, e.g.
+# DeZoGiFnG_UART_0001. Unlike BUILD_TIME this does NOT change on every build,
+# which is the whole point: check-reproducible still passes, and a rebuild of
+# the same source gives the same identity.
+VERSION_FILE   = version.yaml
+BUILD_NUMBER  ?= $(shell awk '/^build_number:/ { print $$2 }' $(VERSION_FILE))
+BUILD_NUMBER_HEX = $(shell printf '%04X' $(BUILD_NUMBER))
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +95,8 @@ ROM_SIZE = 8192
 # sources, so the build directory is named in exactly one place.
 ASMFLAGS = --inc=$(SRC) --lstlab --fullpath \
            -DMAIN_BIN=\"$(MAIN_BIN)\" -DMF_NMI_BIN=\"$(MF_NMI_BIN)\" \
-           -DBUILD_TIME=$(BUILD_TIME)
+           -DBUILD_TIME=$(BUILD_TIME) \
+           -DBUILD_NUMBER_HEX=\"$(BUILD_NUMBER_HEX)\"
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +140,21 @@ test-dzrp:
 	  echo "  to validate the suite itself, point it at CSpect + its DeZog plugin"; \
 	  exit 2; }
 	python3 $(TEST)/dzrp/conformance.py --remote "$(REMOTE)" $(DZRP_ARGS)
+
+# Increment the ROM build number in version.yaml (one bump per merge to main)
+bump:
+	@cur=$$(awk '/^build_number:/ { print $$2 }' $(VERSION_FILE)); \
+	case "$$cur" in '' | *[!0-9]*) \
+	  echo "ERROR: build_number in $(VERSION_FILE) is not a number: '$$cur'" >&2; exit 1;; \
+	esac; \
+	next=$$(( cur + 1 )); \
+	if [ "$$next" -gt 65535 ]; then \
+	  echo "ERROR: build_number $$next exceeds 65535; the magic string has four hex digits" >&2; \
+	  exit 1; \
+	fi; \
+	sed -i "s/^build_number:.*/build_number: $$next/" $(VERSION_FILE); \
+	printf 'build_number %s -> %s   (ROM magic becomes DeZoGiFnG_<VARIANT>_%04X)\n' "$$cur" "$$next" "$$next"
+
 
 # Check the ROM builds byte-identically twice with BUILD_TIME pinned
 check-reproducible:

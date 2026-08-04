@@ -85,6 +85,26 @@ without direnv loaded. Override with `make SJASMPLUS=/path/to/sjasmplus`.
 `BUILD_TIME` is stamped into the ROM. Pin it (`make BUILD_TIME=1700000000`) to compare two builds
 byte for byte — `make check-reproducible` does exactly that.
 
+**The ROM carries an identity block**, at a fixed offset that is a permanent contract
+(`src/constants.asm`; ROM file offset `0x1FE0`, address `0xFEA0`):
+
+```
+DeZoGiFnG_UART_0001      DeZoGiFnG_WIFI_0001
+\________/ \__/ \__/
+ identity    |   build number, from version.yaml
+             transport variant
+```
+
+**Identity is the magic; integrity is the CRC**, and conflating them was a data-loss bug — see
+`ERRORS.md`. Anything asking "is this ROM ours?" matches the `DeZoGiFnG_` prefix and the variant
+field, and **never the build number**, which changes and is only ever displayed.
+
+The build number lives in **`version.yaml`** and is bumped with **`make bump`**, never by hand —
+the target is what validates the 0-65535 range the four hex digits can hold. **House rule: one
+bump per merge to `main`**, done by the manager as part of the merge (step 4 below). It is
+deliberately not derived from `BUILD_TIME` or the git hash: `make check-reproducible` must keep
+passing, so identity must not change on every build.
+
 ## Testing
 
 CI for this project is **local, headless and jnext-driven**. No hosted CI (a hardware target can
@@ -217,6 +237,9 @@ project as the demonstrated consumer** — never speculatively. See the plan §8
    `git merge --ff-only` is the house form: a conflict means rebase or resolve deliberately,
    rather than silently minting a merge commit. (This used to be justified by "`main`'s history
    is linear", which was never true — `857a1df` is a merge commit. The rule stands on its own.)
+   **Then `make bump`** and commit `version.yaml`, so every merged state has its own build number
+   in the ROM's identity block. One bump per merge, not per commit — the number answers "which
+   build is on my card", and a user only ever has a merged one.
 5. Never push to origin — local commits and merges stay local until the user says otherwise.
    **Merging and pushing are separate permissions**: a merged `main` sits local until the user asks
    for a push, every time.

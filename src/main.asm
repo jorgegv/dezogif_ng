@@ -210,6 +210,40 @@ main_end:
     ASSERT main_end <= (MAIN_SLOT+1)*0x2000
     ASSERT main_end <= MAIN_ADDR+0x1F00
 
+    ; The identity block must not be overwritten by a debugger that has grown
+    ; into it. This is tighter than the assert above — which permits 0xFF00,
+    ; past even the end of the region SAVEBIN writes (0xFEC0), so code growing
+    ; beyond that would have been silently truncated rather than rejected.
+    ASSERT main_end <= ROM_MAGIC_ADDR
+
+
+;===========================================================================
+; ROM identity block. See constants.asm for what it is for and why it lives
+; at the end of the image. Placed with an explicit ORG because its ADDRESS is
+; the contract — everything else here may move, this may not.
+;===========================================================================
+    ORG ROM_MAGIC_ADDR
+rom_magic:
+    defb "DeZoGiFnG_"                  ; identity: match on THIS, and only this
+ IF ROM_VARIANT == ROM_VARIANT_WIFI
+    defb "WIFI"
+ ELSE
+    defb "UART"
+ ENDIF
+    defb "_"
+    defb BUILD_NUMBER_HEX              ; 4 uppercase hex digits, from version.yaml
+    defb 0                             ; NUL, so a C reader can treat it as a string
+rom_magic_end:
+
+    ; 20 bytes used of 32 reserved. The slack is deliberate: a longer variant
+    ; name or a wider build number must not force the block to move, because
+    ; its address is the contract.
+    ASSERT rom_magic_end - rom_magic <= ROM_MAGIC_SIZE
+
+    ; The block's reserved space ends exactly at the end of the image SAVEBIN
+    ; writes — the last byte of the 8192-byte ROM. If this fires, the image
+    ; layout changed and mfselect's fixed offset is now wrong.
+    ASSERT ROM_MAGIC_ADDR + ROM_MAGIC_SIZE == 0xE000 + MF_ORIGIN_ROM+0x2000-MF.main_prg_copy
 
 
 ;===========================================================================

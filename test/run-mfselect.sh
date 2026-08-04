@@ -39,9 +39,13 @@ MF_PATH='::/machines/next/enNextMf.rom'
 RUN_TIMEOUT=300
 
 failures=0
+checks=0
 log()  { printf '%s\n' "$*"; }
-pass() { printf 'PASS  %s\n' "$*"; }
-fail() { printf 'FAIL  %s\n' "$*"; failures=$((failures + 1)); }
+# Derived, never hardcoded: a count written by hand keeps saying 5/5 after a
+# sixth check is added, which is a lie in the one line a reader trusts. The
+# headless bench was fixed for exactly this and the same rule applies here.
+pass() { printf 'PASS  %s\n' "$*"; checks=$((checks + 1)); }
+fail() { printf 'FAIL  %s\n' "$*"; failures=$((failures + 1)); checks=$((checks + 1)); }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 [ -x "$JNEXT" ]    || die "jnext binary not found or not executable: $JNEXT"
@@ -74,14 +78,19 @@ type_keys() {
     done
 }
 
-# prepare_image <image> <rom-to-install-at-official-path>
+# prepare_image <image> <rom-to-install-at-official-path> [sum-file]
+#
+# The third argument overrides the dezogif.sum shipped beside our ROM. It
+# exists for M6, which needs a .sum that does NOT match the installed ROM —
+# the state every card is in after the stub is rebuilt, since BUILD_TIME
+# changes the checksum on every build.
 prepare_image() {
-    local image=$1 mf_rom=$2
+    local image=$1 mf_rom=$2 sum_file=${3:-$SUM}
     cp --reflink=auto -f "$SD_IMAGE" "$image"
     mmd -i "$image@@$part_off" ::/mfselect
     mcopy -o -i "$image@@$part_off" "$NEX" ::/mfselect/mfselect.nex
     mcopy -o -i "$image@@$part_off" "$ROM" ::/mfselect/dezogif.rom
-    mcopy -o -i "$image@@$part_off" "$SUM" ::/mfselect/dezogif.sum
+    mcopy -o -i "$image@@$part_off" "$sum_file" ::/mfselect/dezogif.sum
     [ -n "$mf_rom" ] && mcopy -o -i "$image@@$part_off" "$mf_rom" "$MF_PATH"
     return 0
 }
@@ -119,7 +128,7 @@ stock=$OUT/mfselect-stock.rom
 get_file "$SD_IMAGE" "$MF_PATH" "$stock" || die "no stock MF ROM on the reference image"
 stock_sum=$(python3 "$ROMSUM" "$stock")
 
-log "== mfselect bench (3 headless runs, ~2min)"
+log "== mfselect bench (4 headless runs, ~3min)"
 log "   stock MF ROM CRC $stock_sum, dezogif_ng ROM CRC $ours_sum"
 [ "$stock_sum" != "$ours_sum" ] \
     || die "stock and dezogif_ng ROMs have the same CRC; the bench cannot tell them apart"
@@ -226,9 +235,50 @@ else
     fail "M5 original.rom vanished entirely"
 fi
 
+# --- run 4: OUR rom installed, but the .sum beside it is from another build --
+#
+# M6 — THE REGRESSION ISSUE #4 EXISTS FOR, and M4 cannot catch it.
+#
+# M4 proves the guard holds when dezogif.sum matches the installed ROM. That is
+# the easy case and it is not the one users are in. BUILD_TIME is stamped into
+# every ROM, so the checksum changes on EVERY build: the moment a user upgrades
+# the stub, the ROM on the card and the .sum beside it come from different
+# builds and no longer agree.
+#
+# The old guard compared those two checksums. On a skew the comparison failed,
+# the guard fell silent, and mfselect captured OUR ROM as the user's
+# original.rom — losing the stock ROM entirely, which is the exact loss the
+# guard was written to prevent, reached through a different door.
+#
+# So this run ships a deliberately WRONG dezogif.sum, which is what an upgraded
+# card looks like, and answers Y to the capture prompt as M4 does. The magic
+# string in the ROM does not change with the build, so identity survives and
+# the guard must still hold.
+img4=$OUT/sd-mfselect-4.img
+stale_sum=$OUT/mfselect-stale.sum
+# A syntactically valid CRC that is not our ROM's. Derived from the real one so
+# it cannot accidentally equal it.
+printf '%04X\n' $(( (0x$ours_sum ^ 0xFFFF) & 0xFFFF )) > "$stale_sum"
+log "   M6 ships a stale dezogif.sum ($(cat "$stale_sum")) against our ROM ($ours_sum)"
+
+prepare_image "$img4" "$ROM" "$stale_sum"
+run_mfselect "$img4" "$shots/mfselect-skew.png" \
+    --delayed-keypress-frames 1500 y \
+    --delayed-keypress-frames 2000 space \
+    --delayed-screenshot-frames 2600 \
+    --delayed-automatic-exit-frames 2700
+
+skew=$OUT/mfselect-skew-original.rom
+rm -f "$skew"
+if get_file "$img4" ::/mfselect/original.rom "$skew"; then
+    fail "M6 GUARD BREACHED ON A VERSION SKEW: our ROM was captured as the original ($(python3 "$ROMSUM" "$skew")) — identity is checksum-dependent again"
+else
+    pass "M6 guard held with a mismatched dezogif.sum: identity comes from the ROM's magic, not its checksum"
+fi
+
 log ""
 if [ "$failures" -eq 0 ]; then
-    log "mfselect bench: 5/5 checks passed"
+    log "mfselect bench: $checks/$checks checks passed"
 else
     log "mfselect bench: $failures check(s) FAILED"
     exit 1

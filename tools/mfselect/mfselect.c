@@ -13,10 +13,17 @@
  *                              there when mfselect is installed
  *   original.rom original.sum  the stock ROM, captured on first run
  *
- * The checksum is CRC-16/CCITT (tools/romsum.py computes the same value on the
- * host, and the bench checks that the two agree). It does three jobs: identify
- * which ROM is installed, detect a truncated or corrupt copy, and guard the
- * first-run capture described below.
+ * IDENTITY AND INTEGRITY ARE DIFFERENT QUESTIONS, answered by different things:
+ *
+ *   identity   "is this ours, and which variant?"  -> the magic string in the
+ *              ROM itself, at a fixed offset (issue #4)
+ *   integrity  "did these bytes land intact?"      -> CRC-16/CCITT, in the
+ *              .sum sidecars (tools/romsum.py computes the same value on the
+ *              host, and the bench checks the two agree)
+ *
+ * This program used to answer both with the checksum, and that was a silent
+ * data-loss bug rather than an inelegance — see the ROM identity block below.
+ * The CRC still detects a truncated or corrupt copy, which is its real job.
  *
  * WHY THE FIRST-RUN CAPTURE IS GUARDED. The obvious rule — "no backup yet, so
  * save whatever is installed as the original" — destroys the stock ROM for
@@ -40,6 +47,7 @@
 #include <arch/zxn/esxdos.h>
 #include <input.h>
 #include <stdint.h>
+#include <string.h>
 
 #define MF_ROM      "/machines/next/enNextMf.rom"
 #define ORIG_ROM    "/mfselect/original.rom"
@@ -61,6 +69,43 @@
  * path is wrong and is refused rather than copied around. */
 #define ROM_SIZE    8192U
 #define CHUNK       512U
+
+/* ---- ROM identity (issue #4) --------------------------------------------
+ *
+ * Every ROM we build carries a magic string at a fixed offset:
+ *
+ *     DeZoGiFnG_UART_0001
+ *     DeZoGiFnG_WIFI_0001
+ *
+ * IDENTITY IS THE MAGIC; INTEGRITY IS THE CRC. Those are different questions
+ * and this program used to answer the first with the second, which was a
+ * silent data-loss bug: BUILD_TIME is stamped into every ROM, so the CRC
+ * changes on every build. After any upgrade the installed ROM no longer
+ * matched the dezogif.sum beside it, the first-run guard below stopped
+ * recognising our own ROM, and the capture it exists to refuse went ahead —
+ * saving the debug stub as the user's `original.rom` and leaving no copy of
+ * the stock one. The CRC's remaining job, verifying that a copy landed
+ * intact, is untouched.
+ *
+ * MATCH THE PREFIX AND THE VARIANT, NEVER THE BUILD NUMBER. The trailing four
+ * hex digits are there to show the user which build they have; treating them
+ * as part of identity would put the per-build fragility straight back.
+ *
+ * The offset is a permanent contract with src/constants.asm — it is the end of
+ * a ROM whose size the firmware fixes at 8192, chosen precisely because it
+ * cannot drift as the code grows. */
+#define MAGIC_OFF       0x1FE0UL
+#define MAGIC_PREFIX    "DeZoGiFnG_"
+#define MAGIC_PREFIX_N  10U
+#define MAGIC_READ      20U     /* prefix + 4 variant + '_' + 4 build + NUL */
+#define BUILD_N         4U      /* hex digits of the build number */
+
+/* Result of rom_identity(). Negative values are failures to read. */
+#define ID_UNREADABLE   (-1)
+#define ID_NOT_OURS     0
+#define ID_UART         1
+#define ID_WIFI         2
+#define ID_OURS_OTHER   3       /* ours, but a variant this build predates */
 
 #define BAD_HANDLE  0xFF
 
@@ -89,6 +134,10 @@
 /* One shared I/O buffer. 512 bytes rather than the whole 8K so every buffer
  * stays well inside the 0x4000-0xBFE0 window the esxdos API requires. */
 static uint8_t buf[CHUNK];
+
+/* Build number of whatever is installed, filled by installed_name() and shown
+ * beside it. Empty when the installed ROM is not ours and so carries none. */
+static char build_str[BUILD_N + 1];
 
 static uint8_t msg_row;
 
@@ -298,6 +347,66 @@ static int8_t rom_crc(const char *path, uint16_t *out)
     return 0;
 }
 
+/* Identify a ROM from its magic block (issue #4).
+ *
+ * Returns ID_UART / ID_WIFI for one of ours, ID_NOT_OURS for anything else
+ * (the stock Multiface ROM included), or ID_UNREADABLE if the file could not
+ * be read at all — a distinction the callers need, because "not ours" is a
+ * fact about the ROM and "unreadable" is a fact about the card.
+ *
+ * If build_out is non-NULL it receives the four build-number digits plus a
+ * NUL. It is only ever displayed.
+ *
+ * Cheap on purpose: one seek and a 20-byte read, no 8K pass. That is what lets
+ * the menu identify the live ROM on every redraw where a CRC could not. */
+static int8_t rom_identity(const char *path, char *build_out)
+{
+    uint8_t h;
+    uint16_t n;
+    uint8_t  i;
+
+    if (build_out)
+        build_out[0] = 0;
+
+    h = esx_f_open(path, ESX_MODE_R | ESX_MODE_OPEN_EXIST);
+    if (h == BAD_HANDLE)
+        return ID_UNREADABLE;
+
+    /* A file shorter than the ROM cannot carry the block at all; seeking past
+     * the end and reading short is caught by the length check below. */
+    esx_f_seek(h, MAGIC_OFF, ESX_SEEK_SET);
+    n = esx_f_read(h, buf, MAGIC_READ);
+    esx_f_close(h);
+
+    if (n < MAGIC_READ)
+        return ID_UNREADABLE;
+
+    for (i = 0; i < MAGIC_PREFIX_N; i++) {
+        if (buf[i] != (uint8_t)MAGIC_PREFIX[i])
+            return ID_NOT_OURS;
+    }
+
+    if (build_out) {
+        for (i = 0; i < BUILD_N; i++)
+            build_out[i] = (char)buf[MAGIC_PREFIX_N + 5U + i];
+        build_out[BUILD_N] = 0;
+    }
+
+    /* The variant field sits straight after the prefix. An unrecognised one is
+     * still OURS — a newer build with a transport this mfselect predates — and
+     * that matters more than naming it, because the guard protecting the
+     * user's backup keys off "ours" alone. It gets its own value rather than
+     * being folded into UART: guessing a variant would be a false statement
+     * about the ROM on the card, and the whole point of this block is to stop
+     * making those. */
+    if (buf[MAGIC_PREFIX_N] == 'W')
+        return ID_WIFI;
+    if (buf[MAGIC_PREFIX_N] == 'U')
+        return ID_UART;
+    return ID_OURS_OTHER;
+}
+
+
 /* Read a .sum sidecar: four hex digits. Returns 0 on success, -1 on a missing,
  * short or malformed file. Silent — every caller reports in its own terms. */
 static int8_t read_sum(const char *path, uint16_t *out)
@@ -504,7 +613,8 @@ static int8_t backup_valid(void)
  * Returns after leaving its report on screen. */
 static void bootstrap(void)
 {
-    uint16_t installed, ours;
+    uint16_t installed, copied;
+    int8_t   id;
     uint8_t  k;
 
     if (backup_valid())
@@ -520,20 +630,30 @@ static void bootstrap(void)
         return;
     }
 
-    /* Our own checksum comes from the .sum shipped beside our ROM, not a
-     * constant compiled in here — so rebuilding the stub does not silently
-     * invalidate the guard. No .sum means the guard cannot run at all, and
-     * capturing blind is precisely the mistake it exists to prevent. */
-    if (read_sum(DEZ_SUM, &ours) != 0) {
-        msg_attr("dezogif.sum is missing, so", ATTR_ERR);
-        msg("the installed ROM cannot be");
-        msg("checked against ours.");
-        msg("Refusing to make a backup.");
+    /* THE GUARD, and it now asks the ROM itself rather than a sidecar file.
+     *
+     * It used to compare the installed ROM's CRC against dezogif.sum. That
+     * made the guard depend on the .sum being present AND on it coming from
+     * the very same build — and BUILD_TIME changes the CRC on every build, so
+     * after any upgrade the comparison failed, the guard fell silent, and this
+     * function captured our own ROM as the user's `original.rom`. The magic
+     * block is stable across builds by construction, so identity no longer
+     * degrades with age, and the "no .sum, refusing to act" path that used to
+     * be needed here is gone with it. */
+    id = rom_identity(MF_ROM, 0);
+
+    /* rom_crc above has already read this file, so this should not happen —
+     * but "should not" is not "cannot", and the safe answer to not knowing
+     * what is installed is to leave the card alone rather than capture it. */
+    if (id == ID_UNREADABLE) {
+        msg_attr("cannot read the installed", ATTR_ERR);
+        msg("ROM's identity. Refusing to");
+        msg("make a backup.");
         wait_key();
         return;
     }
 
-    if (installed == ours) {
+    if (id != ID_NOT_OURS) {
         msg_attr("That is the dezogif_ng ROM,", ATTR_WARN);
         msg("not the original. Saving it");
         msg("would lose the stock ROM, so");
@@ -567,7 +687,10 @@ static void bootstrap(void)
         wait_key();
         return;
     }
-    if (rom_crc(ORIG_TMP, &ours) != 0 || ours != installed) {
+    /* INTEGRITY, not identity — this is the CRC's remaining job and it is
+     * untouched by the magic block: did the bytes we just wrote match the
+     * bytes we read? A short write on a tired card is what this catches. */
+    if (rom_crc(ORIG_TMP, &copied) != 0 || copied != installed) {
         msg_attr("backup verify FAILED;", ATTR_ERR);
         msg("nothing was saved.");
         esx_f_unlink(ORIG_TMP);
@@ -603,12 +726,28 @@ static void bootstrap(void)
 static const char *installed_name(void)
 {
     uint16_t cur, other;
+    int8_t   id;
 
     /* These names are printed at column 12, so they must fit in 20 columns. */
+
+    /* Ours is answered by the magic block, which costs one 20-byte read and,
+     * unlike a CRC, still says yes after the stub has been rebuilt. */
+    id = rom_identity(MF_ROM, build_str);
+    if (id == ID_UNREADABLE)
+        return "unreadable";
+    if (id == ID_UART)
+        return "dezogif_ng UART";
+    if (id == ID_WIFI)
+        return "dezogif_ng WiFi";
+    if (id == ID_OURS_OTHER)
+        return "dezogif_ng ROM";
+
+    /* Not ours. The stock ROM has no magic of its own, so the only handle on
+     * it is the checksum of the copy we captured — which is sound here,
+     * because that file and its .sum were written together by this program
+     * and neither is ever rebuilt. */
     if (rom_crc(MF_ROM, &cur) != 0)
         return "unreadable";
-    if (read_sum(DEZ_SUM, &other) == 0 && other == cur)
-        return "dezogif_ng ROM";
     if (read_sum(ORIG_SUM, &other) == 0 && other == cur)
         return "official MF ROM";
     return "unrecognised";
@@ -702,6 +841,15 @@ void main(void)
         clear_row(ROW_STATUS);
         print_at(1, ROW_STATUS, "Installed: ");
         print_at(12, ROW_STATUS, name);
+
+        /* The build number, when there is one, so a user can say which build
+         * is on the card without computing a checksum — which is the reason
+         * it is in the ROM at all. "dezogif_ng UART 0001" is 20 characters
+         * and column 12 leaves exactly 20, so the longest case fits the row
+         * with nothing to spare. */
+        if (build_str[0]) {
+            print_at(12 + (uint8_t)strlen(name) + 1, ROW_STATUS, build_str);
+        }
 
         sel = menu_select(sel);
 

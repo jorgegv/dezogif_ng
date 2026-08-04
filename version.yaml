@@ -1,0 +1,16 @@
+# Build number for the ROM identity block (issue #4).
+#
+# It is emitted into every enNextMf.rom as the last field of the magic string,
+# e.g. DeZoGiFnG_UART_0001, and mfselect shows it so a user can say which build
+# is on their card without a checksum.
+#
+# Range 0-65535, rendered as four uppercase hex digits.
+#
+# Bump it with `make bump` — never by editing this file by hand, because the
+# Makefile is what validates the range. The house rule is one bump per merge to
+# main; see CLAUDE.md.
+#
+# It is NOT part of identity. mfselect matches the "DeZoGiFnG_" prefix and the
+# variant field, never this number: matching a per-build value is precisely the
+# fragility the identity block exists to remove.
+build_number: 1

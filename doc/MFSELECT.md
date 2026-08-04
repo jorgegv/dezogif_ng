@@ -35,6 +35,10 @@ Copy three files into a new `/mfselect/` directory on the SD card:
 every build produces a different image and a different checksum; a mismatched pair makes mfselect
 refuse to install, which is the correct behaviour but a confusing way to discover the mistake.
 
+**A mismatched pair no longer endangers your backup, though**, and it used to. mfselect identifies
+our ROM by a magic string inside it (`DeZoGiFnG_UART_0001`), not by its checksum, so identity
+survives a rebuild — see *Identity vs integrity* below.
+
 The fourth and fifth files — `original.rom` and `original.sum` — are written by mfselect itself on
 its first run.
 
@@ -64,12 +68,33 @@ stub as the stock Multiface ROM and leave no copy of the real one anywhere on th
 
 So:
 
-- If the installed ROM matches `dezogif.sum`, mfselect **refuses** and says why.
+- If the installed ROM **carries our magic string**, mfselect **refuses** and says why.
 - Otherwise it shows the checksum and **asks** before capturing, because "not ours" is not proof of
   "stock" — it could be upstream dezogif's ROM, or any other third-party Multiface ROM.
 
 Bench check M4 exists specifically for this: it runs mfselect on a card where our ROM is already
 installed with no backup present, answers Y anyway, and requires that no `original.rom` appears.
+
+**M6 is the one that matters**, and M4 could never have caught what it catches. This guard used to
+compare checksums, so it only recognised our ROM while `dezogif.sum` came from the *same build* —
+and `BUILD_TIME` changes the checksum on every build, so the guard fell silent the moment anyone
+upgraded the stub, and captured our ROM as their `original.rom`. M6 ships a deliberately stale
+`.sum`, which is what an upgraded card looks like, and requires the guard to hold anyway. Verified
+by reverting the guard to its old form: M4 still passed, M6 failed with the backup destroyed.
+
+### Identity vs integrity
+
+Two different questions, and answering the first with the second was the bug above:
+
+| Question | Answered by |
+|---|---|
+| Is this ROM ours, and which variant? | the **magic string** at ROM offset `0x1FE0` |
+| Did these bytes land intact? | the **CRC** in the `.sum` files |
+
+The magic is `DeZoGiFnG_` + variant (`UART`/`WIFI`) + `_` + a four-hex-digit build number from
+`version.yaml`. **Match the prefix and the variant; never the build number** — it changes, and
+matching it would reintroduce exactly the per-build fragility the block removes. mfselect shows it
+beside the ROM name so you can say which build is on the card without computing anything.
 
 **Existence of `original.rom` is not proof of a backup**, and assuming it was cost a REJECT in
 review. Opening a file with `CREAT_TRUNC` creates the directory entry before the first byte is

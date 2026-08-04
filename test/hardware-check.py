@@ -117,7 +117,17 @@ def connect(host, port, timeout, socket_attempts=20, protocol_attempts=2, budget
     a 25x regression in exactly the dimension that matters when somebody is
     sitting in front of a real Next waiting to be told what is wrong. Two
     protocol attempts ride out a single jitter spike, which is the transient
-    this is for, and report a genuine fault in about thirty seconds.
+    this is for.
+
+    THE PER-CALL BOUND IS NOT THE BENCH'S TIME-TO-REPORT, and an earlier
+    version of this paragraph conflated them. One `connect()` costs at most two
+    protocol attempts — about thirty seconds at the default timeout — but the
+    bench makes several, and a fault that stops one connecting usually stops
+    the others too. Measured against a deliberately broken build: the whole run
+    takes about **two minutes**, against 6m25s before the budgets were split.
+    Thirty seconds was this author's arithmetic; two minutes is what a
+    stopwatch said, and the difference is the sort of thing ERRORS.md exists
+    for.
 
     `budget` is a wall-clock backstop over the whole thing, so no combination
     of slow failures can run away regardless of the counts.

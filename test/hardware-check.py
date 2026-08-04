@@ -122,12 +122,20 @@ def connect(host, port, timeout, socket_attempts=20, protocol_attempts=2, budget
     THE PER-CALL BOUND IS NOT THE BENCH'S TIME-TO-REPORT, and an earlier
     version of this paragraph conflated them. One `connect()` costs at most two
     protocol attempts — about thirty seconds at the default timeout — but the
-    bench makes several, and a fault that stops one connecting usually stops
-    the others too. Measured against a deliberately broken build: the whole run
-    takes about **two minutes**, against 6m25s before the budgets were split.
+    bench makes several. Measured against a build with the connection id
+    deliberately hardcoded: the whole run takes about **two minutes**, against
+    6m25s before the budgets were split.
+
+    The extra time in that particular run was H4's and H5's own fresh
+    connections each needing a retry cycle, because the hardcoded id happened
+    to coincide with jnext's low-id reuse timing — a property of how that
+    specific break interacts with the emulator, not a general rule that one
+    fault stalls every connection. The first draft of this paragraph gave the
+    general version, which was a plausible mechanism rather than the traced
+    one, and ERRORS.md already carries an entry about the difference.
+
     Thirty seconds was this author's arithmetic; two minutes is what a
-    stopwatch said, and the difference is the sort of thing ERRORS.md exists
-    for.
+    stopwatch said.
 
     `budget` is a wall-clock backstop over the whole thing, so no combination
     of slow failures can run away regardless of the counts.

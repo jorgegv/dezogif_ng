@@ -46,10 +46,14 @@ lists everything available:
 
 ~~~
 make all        # the ROM, the program and the unit tests
-make mf_rom     # build/enNextMf.rom, the deployable artefact
+make mf-rom     # build/enNextMf.rom, the deployable artefact
+make mfselect   # build/mfselect.nex, the on-Next ROM switcher (see Deployment)
 ~~~
 
 Build output goes to `build/`.
+
+`mfselect` is the one component built with [z88dk](https://github.com/z88dk/z88dk) rather than
+sjasmplus. It is not part of `make all`.
 
 
 # Testing
@@ -63,21 +67,89 @@ VS Code, no hardware. It installs the freshly built ROM into a copy of an SD car
 Next, fires a Multiface NMI from guest code and judges the resulting screenshots. `make
 check-reproducible` verifies that a pinned `BUILD_TIME` yields a byte-identical ROM.
 
+~~~
+make test-mfselect
+~~~
+
+runs mfselect's own bench: three headless jnext runs asserting on the files pulled back off the SD
+image rather than on pixels — that the stock ROM is captured byte-identically, that the on-Next
+and host checksums agree, that installing works, and that mfselect refuses to mistake this
+project's ROM for the original. It is not part of `make test`.
+
 The Z80 unit tests under `src/unit_tests/` are DeZog-driven and need VS Code; they are a manual
 layer.
 
 
 # Deployment
 
-The enNextMf.rom binary needs to be copied to the ZX Next SD card under machines/next/enNextMf.rom.
+The stub **is** the Multiface ROM: `build/enNextMf.rom` replaces
+`machines/next/enNextMf.rom` on the Next's SD card. **The card already has one, and it is the
+stock Multiface ROM — you must keep a copy of it.** Without one you cannot get the normal
+Multiface back, and you will want it back every time the stub misbehaves.
 
-There exists already one, so you need to backup the original.
+There are two ways to do that swap.
 
-The program (dezogif/enNextMf.rom) is started after NextOS has been started by pressing the yellow NMI button.
+## Recommended: mfselect, on the Next itself
 
-To re-initialize later you need to hold down the "Symbol Shift" (or CTRL) key while hitting the NMI button.
+`mfselect` is a small NextZXOS utility that switches the installed Multiface ROM between the stock
+one and this project's, with the card still in the machine. It captures the stock ROM the first
+time it runs, so the backup is made for you rather than being something you must remember.
 
-Note: the SW (enNextMf.rom) is known to work with ZXNext core 03.01.10 and core 03.02.00. It will not work on older cores.
+Install it once, by copying three files into a new `/mfselect/` directory on the card:
+
+| From | To |
+|---|---|
+| `build/mfselect.nex` | `/mfselect/mfselect.nex` |
+| `build/enNextMf.rom` | `/mfselect/dezogif.rom` |
+| `build/dezogif.sum`  | `/mfselect/dezogif.sum` |
+
+Copy the `.rom` and the `.sum` **from the same build** — `BUILD_TIME` is stamped into the ROM, so
+each build has a different checksum, and a mismatched pair is refused.
+
+Then, from the NextZXOS command line:
+
+~~~
+.nexload /mfselect/mfselect.nex
+~~~
+
+Up/Down to move, ENTER to choose:
+
+~~~
+ mfselect            dezogif_ng
+ Installed: official MF ROM
+
+ Select ROM to install:
+   Official Multiface NMI ROM
+   dezogif_ng DZRP NMI ROM
+   Exit without changes
+
+ Up/Down to move   ENTER to run
+~~~
+
+Either choice is copied over the official path and **verified by reading it back**. Then
+**power-cycle the machine** — switch it off and on. The Multiface ROM is read at power-on, so
+nothing changes until then.
+
+On its very first run mfselect offers to save the currently installed ROM as the original. It
+refuses to do that if what is installed is already this project's ROM, because saving the debug
+stub as "the original" would lose the stock Multiface ROM with no copy left on the card. If you
+have already installed the stub by hand, restore the stock ROM before running mfselect, or its
+backup will simply never be made.
+
+Full detail, including the checksum scheme: [doc/MFSELECT.md](doc/MFSELECT.md).
+
+## By hand
+
+Put the card in a PC, back up `machines/next/enNextMf.rom` somewhere safe, and copy
+`build/enNextMf.rom` over it.
+
+## Using the stub
+
+Once installed, the stub starts after NextZXOS has booted, by pressing the yellow NMI button. To
+re-initialise later, hold "Symbol Shift" (or CTRL) while hitting the NMI button.
+
+Note: the stub is known to work with ZX Next core 03.01.10 and 03.02.00. It will not work on older
+cores — stackless NMI, which it depends on, does not exist there.
 
 
 # License

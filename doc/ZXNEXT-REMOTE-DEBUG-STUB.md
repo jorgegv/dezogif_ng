@@ -233,7 +233,11 @@ for DeZog to connect to and drags a PC-side relay back into the design.
 
 **Chosen: Next as TCP server.**
 
-1. `AT+CWJAP` (usually already configured by NextZXOS).
+1. **Association — NOT done by the stub.** WiFi is a prerequisite the user satisfies once with
+   `/apps/wifi/setup/wifi2.bas`, and the ESP-01 keeps the credentials in its own flash. The stub
+   sends no `AT+CWJAP`, holds no SSID and no passphrase, and only *verifies* it has an address.
+   Decided 2026-08-04; storing credentials in the ROM was considered and rejected — see
+   [WIFI-SETUP.md](WIFI-SETUP.md) and MEMORY.md.
 2. `AT+CIPMUX=1`.
 3. `AT+CIPSERVER=1,<port>`.
 4. Inbound data arrives as `+IPD,<id>,<len>:<bytes>`; each reply is prefixed with
@@ -796,10 +800,13 @@ happens.
 | A2 | PC | Build (or download) the stub's `enNextMf.rom` |
 | A3 | PC | SD card into the PC; back up `machines/next/enNextMf.rom`; copy the stub's over it |
 | A4 | Next | SD card back in. Confirm core ≥ 03.01.10 and Multiface enabled in the machine config |
-| A5 | PC | Give the Next a **static DHCP reservation** on the router — then its IP never moves and `launch.json` is written once |
-| A6 | PC | Write `launch.json` (§B.5) |
+| **A5** | **Next** | **Get the Next onto WiFi**, with `/apps/wifi/setup/wifi2.bas`, and confirm it reports an IP address. **The stub never does this and holds no credentials** — see [WIFI-SETUP.md](WIFI-SETUP.md), which also covers what breaks it later. Once per machine |
+| A6 | PC | Give the Next a **static DHCP reservation** on the router — then its IP never moves and `launch.json` is written once |
+| A7 | PC | Write `launch.json` (§B.5) |
 
-Two physical acts, both once ever.
+Three acts on the Next, all once ever — and A5 is the one people will forget, because a
+debugger that cannot reach the network looks like a broken debugger rather than a machine that was
+never put on WiFi.
 
 ### B.2 Every power-on
 

@@ -166,6 +166,47 @@ def chk_preamble(d, expect):
     return FAIL, "expected %s, observed %s" % (expect, desc)
 
 
+def chk_init_consumes_payload(d):
+    """The other half of issue #7, which C2 cannot reach.
+
+    C2 over-declares the length and requires SILENCE, so it proves the remote
+    reads at least as far as the length promised. It says nothing about the
+    opposite direction: whether the remote stops reading at the end of the
+    declared payload and leaves the stream where the next command begins.
+
+    This sends a CMD_INIT whose length is HONEST — it counts every byte sent —
+    but whose payload carries four bytes after the name's NUL. A remote that
+    frames on the NUL instead of on the length consumes fewer bytes than it was
+    given, the four survivors become the head of the next command's header, and
+    the session is desynchronised from there on. So the assertion is not on this
+    command's answer alone: a SECOND, entirely ordinary CMD_INIT follows on the
+    same connection and has to come back carrying its own sequence number.
+
+    It is also the "a well-formed CMD_INIT still works" check issue #7 asks for,
+    in the only form that is not a weaker duplicate of C1: C1 already proves a
+    minimal frame is answered, and would go on passing for a fix that consumed
+    too little.
+
+    Nothing on the wire here is malformed. DZRP frames on the length, and a
+    client that declares what it sends is entitled to be understood.
+    """
+    payload = dzrp.init_payload() + b"\xEE" * 4
+    body = talk(d, dzrp.CMD_INIT, payload)
+    if len(body) < 6:
+        return FAIL, "response too short for error+version+machine+name: %d bytes" % len(body)
+    if body[0] != 0:
+        return FAIL, "error code %d on a frame whose length was correct" % body[0]
+    # The real assertion. A remote still standing four bytes back reads this
+    # command's header out of the leftovers and answers the wrong thing, or
+    # nothing at all — either way not a response carrying this sequence number.
+    again = talk(d, dzrp.CMD_INIT, dzrp.init_payload())
+    if len(again) < 6 or again[0] != 0:
+        return FAIL, ("the command after a padded CMD_INIT was not answered correctly "
+                      "(%d bytes, error %s)" % (len(again), again[0] if again else "?"))
+    return PASS, ("4 bytes past the name's NUL were consumed with the frame, and the next "
+                  "command was answered in sync")
+
+
 def chk_loopback(d):
     """Framing and byte order, without touching machine state. The project's
     dzrp skill puts this first for our own server: if it does not round-trip,
@@ -251,6 +292,9 @@ CHECKS = [
     ("C6 sequence numbers echo back", chk_sequence, "INIT"),
     ("C7 CMD_GET_REGISTERS returns a register block", chk_registers, "GET_REGISTERS"),
     ("C8 memory write/read round-trip", chk_memory, "WRITE_MEM"),
+    # Last on purpose: it is the one check that deliberately leaves bytes in
+    # flight, so a remote that mishandles them stays broken only for itself.
+    ("C9 CMD_INIT consumes exactly the declared payload", chk_init_consumes_payload, "INIT"),
 ]
 
 

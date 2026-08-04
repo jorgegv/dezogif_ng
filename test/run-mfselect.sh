@@ -28,9 +28,13 @@
 #       is not a guard. M4 and M7 differ only in which of our ROMs is installed.
 #   M8  selecting the UART ROM installs it byte-identically — the fourth menu
 #       entry reaches the file it names, which M3 says nothing about
-#   M9  mfselect DISTINGUISHES the two variants on screen: with our UART ROM
-#       installed and with our WiFi ROM installed, the status row must differ
-#       in exactly the four columns of the transport name and nowhere else
+#   M9  mfselect names the installed variant CORRECTLY on screen — the status
+#       row's transport field must match the menu's own rendering of that same
+#       label, in the same screenshot, and differ from the other one. Judged
+#       per screenshot on purpose: comparing the two runs against each other
+#       cannot tell a correct pair from a swapped pair
+#   M10 and nothing else on that row differs between the two runs, which is
+#       what M9 alone does not cover
 #
 # mfselect must run under a booted NextZXOS — every file access is the esxdos
 # API, and `jnext prog.nex` injects at frame 0 with NextZXOS never booted, so
@@ -259,30 +263,77 @@ else
     pass "M7 guard held against our UART ROM"
 fi
 
-# M9 — the two variants are told apart ON SCREEN, which no file on the card can
-# show. Runs 2 and 3 are identical but for which of our ROMs is installed, and
-# both were captured at the same frame, so the status row is the only thing that
-# may differ — and it must, or installed_name() is answering "ours" without
-# answering "which".
+# M9 — the label on screen is the RIGHT one, judged inside each screenshot on
+# its own. This is the check that must survive a swap, and the earlier version
+# of it did not: it only compared the two runs against each other, so two labels
+# **exchanged** — each run showing the other's — differed in exactly the columns
+# it demanded and passed. An independent reviewer swapped the two strings in
+# installed_name(), rebuilt, and got 9/9. Two runs disagreeing is not either of
+# them being right, and nothing else on this bench reads the screen at all: M3
+# and M8 assert on the bytes of a file, which say nothing about what was
+# displayed about them.
 #
-# The columns are derived, not guessed: print_at(1, ROW_STATUS, "Installed: ")
-# fills columns 1-11 and the name starts at column 12, so "dezogif_ng UART" puts
-# its transport field at columns 23-26. The build number that follows is the
-# same in both runs and must NOT differ. Requiring the exact set is what makes
-# this discriminating: an installed_name() that returned one string for both
-# variants gives an empty set, and one that failed to identify either gives a
-# much wider one.
-expect_cols="23 24 25 26"
-if [ -f "$shots/mfselect-guard-wifi.png" ] && [ -f "$shots/mfselect-guard-uart.png" ]; then
-    got_cols=$(python3 "$CELLDIFF" "$shots/mfselect-guard-wifi.png" \
-                                   "$shots/mfselect-guard-uart.png" 2)
-    if [ "$got_cols" = "$expect_cols" ]; then
-        pass "M9 the status row names the variant: columns [$got_cols] differ, nothing else"
+# The ground truth is already in the picture. mfselect's menu draws
+# "dezogif_ng WiFi (ESP-01)" on row 6 and "dezogif_ng UART (joy port)" on row 7
+# whatever is installed, in the same ROM font and the same attribute as the
+# status row — so each screenshot contains a correct rendering of BOTH labels,
+# and the status row can be checked against them without OCR and without a
+# committed reference bitmap.
+#
+# All four columns are derived from one fact — every one of these strings starts
+# with the 11 characters "dezogif_ng " — so the transport field sits 11 cells
+# into each of them:
+#
+#   status row  print_at(12, ROW_STATUS, "dezogif_ng WiFi")  -> cols 23-26, row 2
+#   menu WiFi   print_at(2,  ROW_MENU+1, "dezogif_ng WiFi …") -> cols 13-16, row 6
+#   menu UART   print_at(2,  ROW_MENU+2, "dezogif_ng UART …") -> cols 13-16, row 7
+#
+# Cells are compared as raw pixels, so the attributes have to match too. They do:
+# the status row and the unselected menu rows are both ATTR_BODY, and the
+# selected row — the inverse-video one — is row 5 in these runs, because neither
+# sends an arrow key. If that ever changes this check goes red rather than quiet.
+STATUS_FIELD=2:23-26
+MENU_WIFI_FIELD=6:13-16
+MENU_UART_FIELD=7:13-16
+
+# label_ok <screenshot> <own-menu-field> <other-menu-field>
+label_ok() {
+    local shot=$1 own=$2 other=$3
+    [ "$(python3 "$CELLDIFF" cells "$shot@$STATUS_FIELD" "$shot@$own")" = "same" ] &&
+    [ "$(python3 "$CELLDIFF" cells "$shot@$STATUS_FIELD" "$shot@$other")" = "differ" ]
+}
+
+wifi_shot=$shots/mfselect-guard-wifi.png
+uart_shot=$shots/mfselect-guard-uart.png
+if [ -f "$wifi_shot" ] && [ -f "$uart_shot" ]; then
+    m9=0
+    label_ok "$wifi_shot" "$MENU_WIFI_FIELD" "$MENU_UART_FIELD" \
+        || { m9=1; log "      WiFi run: status field is not the WiFi menu label"; }
+    label_ok "$uart_shot" "$MENU_UART_FIELD" "$MENU_WIFI_FIELD" \
+        || { m9=1; log "      UART run: status field is not the UART menu label"; }
+    if [ "$m9" -eq 0 ]; then
+        pass "M9 each run's status row carries the CORRECT transport label, matched against the menu's own rendering of it"
     else
-        fail "M9 status rows differ in columns [$got_cols], expected [$expect_cols]"
+        fail "M9 the status row is mislabelled (a swap, or a name that is not one of the two)"
     fi
 else
     fail "M9 a guard-run screenshot is missing"
+fi
+
+# M10 — and nothing ELSE on that row differs between the two runs. M9 reads four
+# cells; this one covers the other twenty-eight, so a name of a different length
+# (which shifts the build number that follows it), a changed prefix or a row that
+# was never drawn cannot hide behind a correct transport field.
+expect_cols="23 24 25 26"
+if [ -f "$wifi_shot" ] && [ -f "$uart_shot" ]; then
+    got_cols=$(python3 "$CELLDIFF" rows "$wifi_shot" "$uart_shot" 2)
+    if [ "$got_cols" = "$expect_cols" ]; then
+        pass "M10 the status rows differ in columns [$got_cols] and nowhere else"
+    else
+        fail "M10 status rows differ in columns [$got_cols], expected [$expect_cols]"
+    fi
+else
+    fail "M10 a guard-run screenshot is missing"
 fi
 
 # --- run 4: a previous capture was interrupted, leaving a short backup ------

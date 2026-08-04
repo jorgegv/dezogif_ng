@@ -182,13 +182,23 @@ anything the screen said.
 
 Stated here because the temptation to over-read the first hardware success will be considerable.
 
-- **The stub has never resumed a debuggee — anywhere.** Not on hardware, not in the emulator.
-  `CMD_CONTINUE`, the exit path, `backup.asm` and the **return-to-debuggee half of stackless NMI**
-  are unexecuted code. Of stackless NMI only the *entry* side has ever run, and §3.4 of the plan is
-  clear that the return half is the one that matters, because without it entering the debugger
-  corrupts the program being debugged. That is [issue
-  #2](https://github.com/jorgegv/dezogif_ng/issues/2), and no amount of green here touches it.
-- **AltROM.** Nothing has run under a patched ROM, in either place.
+- **The stub has never resumed a debuggee ON HARDWARE.** It does so in the emulator — bench checks
+  C10 and C11 of `make test-dzrp-stub` load a fixture over DZRP, `CMD_CONTINUE` onto a temporary
+  breakpoint, and get the `NTF_PAUSE` back with the registers intact, so `CMD_CONTINUE`, the exit
+  path and `backup.asm`'s restoration are executed code now. **None of that has happened on a
+  Next.** This run does not attempt it, and a green H1-H6 says nothing about it.
+- **The stackless-NMI *return address*, in either place.** This one survives the paragraph above
+  intact, and the distinction is narrow enough to be worth spelling out: C10 sets `PC` itself with
+  `CMD_SET_REGISTER`, so `backup.pc` never comes from `save_nmi_return_address`, the routine that
+  reads NR `0xC2`/`0xC3`. Reaching it needs an M1 press taken while the debuggee is *running* —
+  a second NMI landing after a `CMD_CONTINUE` — which no test anywhere performs. §3.4 of the plan
+  is clear that this is the half that matters, because without it entering the debugger corrupts
+  the program being debugged. **Hardware is the right place to close it**, because the timing race
+  that makes it unschedulable under a frame-counting emulator does not exist when a human presses
+  the button.
+- **AltROM on hardware.** It is exercised in the emulator by C10 — the fixture's breakpoint is an
+  `RST 0`, which reaches the debugger only through the code `copy_altrom` installs at
+  0x0000/0x0066 — but nothing has run under a patched ROM on a Next.
 - **DeZog itself.** The evidence is a conformance suite, not a debugging session. Stepping and
   breakpoints over WiFi are untried; `remoteType: "cspect"` with `hostname` is the configuration to
   try, and Appendix B of the plan carries the `launch.json`.

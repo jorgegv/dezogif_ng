@@ -70,11 +70,19 @@ WHAT THIS SCRIPT CANNOT SEE, and none of it is hidden:
   * The Next's screen. Whether the stub drew its UI, whether the error area is
     clear, and what the core version reads are observations for the human at
     the machine. doc/HARDWARE-TESTING.md carries them as a checklist.
-  * The resume path. The stub has never resumed a debuggee anywhere, emulator
-    included, so there is nothing here for hardware to confirm or deny. That
-    is issue #2's CMD_CONTINUE work, and it must not be faked by sending one
-    here and calling a silent machine a pass.
-  * AltROM. Untested in jnext too.
+  * The resume path ON HARDWARE. The stub does resume a debuggee in the
+    emulator — bench checks C10/C11 of make test-dzrp-stub — but no CMD_CONTINUE
+    has ever been sent to a Next. This script deliberately does not send one:
+    resuming needs a debuggee loaded and a breakpoint planted, and a bare
+    CMD_CONTINUE against an unloaded machine is a crash, not a test. Doing it
+    properly here is worth doing and is not done.
+  * The stackless-NMI return ADDRESS, which the emulator does not cover either:
+    C10 sets PC itself, so save_nmi_return_address never runs. It needs an M1
+    press while the debuggee is RUNNING, and hardware is the natural place for
+    that — a human pressing the button has none of the frame-versus-wall-clock
+    race that makes it unschedulable under jnext.
+  * AltROM on hardware. Exercised in jnext by C10's RST 0 breakpoint, which can
+    only reach the debugger through the patched Alt ROM; never on silicon.
   * The UART build. It needs a joy-port cable and a USB serial adapter; the
     conformance suite reaches it as serial:<dev>:<baud> when someone has that
     hardware set up, and this script does not pretend to.
@@ -517,10 +525,12 @@ def h5_throughput(host, port, timeout, results, nbytes):
 UNCOVERED = """
 NOT COVERED BY THIS RUN, and none of it is incidental:
 
-  * The resume path. The stub has never resumed a debuggee anywhere — not on
-    hardware, not in the emulator. CMD_CONTINUE, the exit path, backup.asm and
-    the return-to-debuggee half of stackless NMI are all unexecuted. Issue #2.
-  * AltROM, for the same reason: nothing has run under a patched ROM.
+  * The resume path ON HARDWARE. It works in the emulator (C10/C11 of
+    make test-dzrp-stub); no CMD_CONTINUE has ever reached a Next. Sending a
+    bare one here would crash the machine, not test it.
+  * The stackless-NMI return ADDRESS, untested in either place: it needs an M1
+    press taken while the debuggee is running, which nothing performs yet.
+  * AltROM on hardware. Exercised in jnext by C10's RST 0; never on silicon.
   * The Next's screen. Record it by hand — see doc/HARDWARE-TESTING.md.
   * The UART build, which needs a joy-port cable:
         make test-dzrp REMOTE=serial:/dev/ttyUSB0:921600

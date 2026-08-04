@@ -108,7 +108,7 @@ test: $(ROM) $(TRIGGER_BIN) $(COPPER_BIN)
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" ROM="$(ROM)" \
 	 TRIGGER_BIN="$(TRIGGER_BIN)" COPPER_BIN="$(COPPER_BIN)" $(TEST)/run-headless.sh
 
-# Run the mfselect headless bench (2 jnext runs; not part of `make test`)
+# Run the mfselect headless bench (3 jnext runs; not part of `make test`)
 test-mfselect: $(MFSELECT_NEX) $(DEZOGIF_SUM) $(ROM)
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" NEX="$(MFSELECT_NEX)" \
 	 ROM="$(ROM)" SUM="$(DEZOGIF_SUM)" ROMSUM="$(ROMSUM)" $(TEST)/run-mfselect.sh

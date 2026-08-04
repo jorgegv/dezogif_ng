@@ -71,6 +71,26 @@ So:
 Bench check M4 exists specifically for this: it runs mfselect on a card where our ROM is already
 installed with no backup present, answers Y anyway, and requires that no `original.rom` appears.
 
+**Existence of `original.rom` is not proof of a backup**, and assuming it was cost a REJECT in
+review. Opening a file with `CREAT_TRUNC` creates the directory entry before the first byte is
+written, so a capture interrupted by a power cut leaves a *short* `original.rom`. Taking that as
+"already backed up" made every later run skip the capture silently — and the user would then
+install the stub believing the stock ROM was safe when no copy of it existed. Two changes followed:
+
+- `backup_valid()` checks size and the presence of a readable `.sum`, not just existence. It
+  deliberately does not re-CRC 8 KB at every start: an interrupted capture always yields a short
+  file, which the size test catches instantly, and the backup's bytes are CRC-checked both when
+  written and by `install()` before they are ever copied over the live ROM.
+- **Every ROM write is now atomic.** The bytes go to a temporary in the same directory as their
+  destination, are verified there, and only then is the destination unlinked and the temporary
+  renamed onto it. The live Multiface ROM is never truncated in the hope that the write succeeds.
+  In the capture path the `.sum` is written *before* the rename, so a power cut between them leaves
+  no `original.rom` and the next run simply captures again — the reverse order could leave a ROM
+  with no checksum, which `backup_valid()` rejects and no run could repair.
+
+Bench check M5 covers it: seed a zero-length `original.rom`, run, and require that it is recaptured
+from the stock ROM byte-identically.
+
 ## Checksums
 
 CRC-16/CCITT (poly 0x1021, init 0xFFFF, no reflection, no final xor), stored as four uppercase hex

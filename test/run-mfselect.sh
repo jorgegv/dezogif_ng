@@ -17,6 +17,8 @@
 #       exists, the first run must NOT capture it as "the original". This is
 #       the failure mode the whole design exists to prevent: capturing the
 #       debug stub as the stock ROM loses the real one with no copy anywhere.
+#   M5  a backup left SHORT by an interrupted capture is detected as unusable
+#       and recaptured, rather than being trusted because the file exists
 #
 # mfselect must run under a booted NextZXOS — every file access is the esxdos
 # API, and `jnext prog.nex` injects at frame 0 with NextZXOS never booted, so
@@ -117,7 +119,7 @@ stock=$OUT/mfselect-stock.rom
 get_file "$SD_IMAGE" "$MF_PATH" "$stock" || die "no stock MF ROM on the reference image"
 stock_sum=$(python3 "$ROMSUM" "$stock")
 
-log "== mfselect bench (2 headless runs, ~90s)"
+log "== mfselect bench (3 headless runs, ~2min)"
 log "   stock MF ROM CRC $stock_sum, dezogif_ng ROM CRC $ours_sum"
 [ "$stock_sum" != "$ours_sum" ] \
     || die "stock and dezogif_ng ROMs have the same CRC; the bench cannot tell them apart"
@@ -193,9 +195,40 @@ else
     pass "M4 guard held: our own ROM was not captured as the original"
 fi
 
+# --- run 3: a previous capture was interrupted, leaving a short backup ------
+#
+# Added after a review found this: existence of original.rom was being taken as
+# proof of a backup. Opening with CREAT_TRUNC creates the directory entry
+# before any byte is written, so an interrupted capture leaves a SHORT file —
+# and treating that as "already backed up" makes every later run skip the
+# capture silently, leaving the stock ROM with no copy anywhere. The stock ROM
+# is installed here, so a correct mfselect must notice the backup is unusable
+# and capture it again.
+img3=$OUT/sd-mfselect-3.img
+prepare_image "$img3" "$stock"
+: >"$OUT/mfselect-truncated.rom"
+mcopy -o -i "$img3@@$part_off" "$OUT/mfselect-truncated.rom" ::/mfselect/original.rom
+run_mfselect "$img3" "$shots/mfselect-recapture.png" \
+    --delayed-keypress-frames 1500 y \
+    --delayed-keypress-frames 2000 space \
+    --delayed-screenshot-frames 2600 \
+    --delayed-automatic-exit-frames 2700
+
+recap=$OUT/mfselect-recaptured.rom
+rm -f "$recap"
+if get_file "$img3" ::/mfselect/original.rom "$recap"; then
+    if cmp -s "$recap" "$stock"; then
+        pass "M5 a truncated backup is detected and recaptured from the stock ROM"
+    else
+        fail "M5 backup still not the stock ROM after recapture ($(wc -c <"$recap") bytes)"
+    fi
+else
+    fail "M5 original.rom vanished entirely"
+fi
+
 log ""
 if [ "$failures" -eq 0 ]; then
-    log "mfselect bench: 4/4 checks passed"
+    log "mfselect bench: 5/5 checks passed"
 else
     log "mfselect bench: $failures check(s) FAILED"
     exit 1

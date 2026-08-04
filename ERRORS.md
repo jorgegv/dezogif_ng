@@ -5,6 +5,37 @@ attempting similar logic.
 
 ---
 
+## "The backup file exists" is not "a backup exists"
+
+**Symptom.** None visible — which is the point. Found by the independent
+reviewer of the mfselect branch, who reproduced it rather than arguing it.
+
+**Cause.** `mfselect`'s first-run capture asked `esx_f_stat(ORIG_ROM, &es) == 0`
+— does the file exist — and skipped the capture if so. But `esx_f_open` with
+`ESX_MODE_OPEN_CREAT_TRUNC` creates the directory entry *before* the first byte
+is written, so a capture interrupted by a power cut leaves a **short**
+`original.rom`. Every later run then saw the file, decided the backup was done,
+and skipped the capture **silently and permanently**. The user would go on to
+install the stub believing the stock ROM was safe, with no copy of it anywhere
+on the card — the exact loss the program's guard exists to prevent, reached
+through a different door.
+
+**Fix.** Two changes, and the second is the general one:
+
+- `backup_valid()` tests size and a readable `.sum`, not existence.
+- **Every ROM write is atomic**: write a temporary in the same directory,
+  verify it, then unlink the destination and rename. Nothing that another
+  component depends on — a backup, or the Multiface ROM the firmware loads at
+  boot — is destroyed before its replacement is known good.
+
+**Lesson.** `CREAT_TRUNC` is a destructive operation that happens *before* the
+constructive one. Any file opened that way is already lost when the write
+begins, so the truth of "is this file good" can never be its existence. The
+author's own bench had four checks and none of them covered a partially written
+file; the reviewer's first question was what happens on power loss mid-copy.
+
+---
+
 ## Running a NEX headless: `jnext prog.nex` does NOT boot NextZXOS
 
 **Symptom.** `mfselect.nex` printed its banner and then froze. Identical

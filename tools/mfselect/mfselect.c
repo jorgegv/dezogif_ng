@@ -47,6 +47,16 @@
 #define DEZ_ROM     "/mfselect/dezogif.rom"
 #define DEZ_SUM     "/mfselect/dezogif.sum"
 
+/* Every ROM this program writes is written to a temporary first, verified,
+ * and only then renamed into place. Opening the real path with CREAT_TRUNC
+ * destroys the existing file before the first byte arrives, so a power cut
+ * mid-write would leave a short file at a path something else depends on —
+ * for ORIG_ROM a backup that exists but is not a ROM, for MF_ROM a Multiface
+ * ROM the firmware will still try to load. The temporaries live in the same
+ * directory as their destination so the rename cannot cross a volume. */
+#define ORIG_TMP    "/mfselect/original.tmp"
+#define MF_TMP      "/machines/next/mfselect.tmp"
+
 /* tbblue.fw loads exactly this many bytes, so anything else at the official
  * path is wrong and is refused rather than copied around. */
 #define ROM_SIZE    8192U
@@ -418,18 +428,39 @@ static void install(const char *rom, const char *sum, const char *label)
         return;
     }
 
+    /* Write and verify beside the live ROM, which is not touched until the
+     * replacement is known good. */
     msg("Copying...");
-    if (copy_rom(rom, MF_ROM) != 0)
+    esx_f_unlink(MF_TMP);
+    if (copy_rom(rom, MF_TMP) != 0) {
+        esx_f_unlink(MF_TMP);
         return;
+    }
 
     msg("Verifying...");
-    if (rom_crc(MF_ROM, &got) != 0)
+    if (rom_crc(MF_TMP, &got) != 0) {
+        esx_f_unlink(MF_TMP);
         return;
+    }
     if (got != want) {
         msg_attr("VERIFY FAILED", ATTR_ERR);
         msg_hex("  got  ", got);
         msg_hex("  want ", want);
-        msg_attr("the installed ROM is BAD", ATTR_ERR);
+        msg("the ROM in use was NOT");
+        msg("touched; nothing changed.");
+        esx_f_unlink(MF_TMP);
+        return;
+    }
+
+    /* The only moment the live ROM changes: two directory operations, no data
+     * movement. Should the rename fail the verified copy is still on the card
+     * under MF_TMP, so say where it is rather than leaving the user guessing. */
+    esx_f_unlink(MF_ROM);
+    if (esx_f_rename(MF_TMP, MF_ROM) != 0) {
+        msg_attr("could not put the new ROM in", ATTR_ERR);
+        msg("place. A verified copy is at");
+        msg(MF_TMP);
+        msg("- rename it by hand.");
         return;
     }
 
@@ -442,15 +473,40 @@ static void install(const char *rom, const char *sum, const char *label)
     msg("effect only then.");
 }
 
+/* Is the stored backup actually usable? Existence is NOT enough, and assuming
+ * it was a silent data-loss path: opening a file with CREAT_TRUNC creates the
+ * directory entry before the first byte is written, so a capture interrupted
+ * by a power cut leaves a SHORT original.rom. Treating that as "already backed
+ * up" makes every later run skip the capture, without a word — and the user
+ * then installs the stub believing the stock ROM is safe when no copy of it
+ * exists anywhere.
+ *
+ * Size and a readable checksum only, deliberately not a full CRC re-read: an
+ * interrupted capture always yields a short file, which the size test catches
+ * instantly, and the backup's bytes are CRC-checked at both moments that
+ * matter — when it is written, and again by install() before it is ever copied
+ * over the live ROM. Re-reading 8K at every start would add seconds to the
+ * common path to re-prove something already proven. */
+static int8_t backup_valid(void)
+{
+    struct esx_stat es;
+    uint16_t stored;
+
+    if (esx_f_stat(ORIG_ROM, &es) != 0)
+        return 0;
+    if (es.size != ROM_SIZE)
+        return 0;
+    return (read_sum(ORIG_SUM, &stored) == 0);
+}
+
 /* First run: capture the stock ROM, with the guard described at the top.
  * Returns after leaving its report on screen. */
 static void bootstrap(void)
 {
-    struct esx_stat es;
     uint16_t installed, ours;
     uint8_t  k;
 
-    if (esx_f_stat(ORIG_ROM, &es) == 0)
+    if (backup_valid())
         return;                       /* already captured */
 
     msg_reset();
@@ -491,6 +547,7 @@ static void bootstrap(void)
     msg("");
     msg("Save it as the original? Y/N");
 
+    in_wait_nokey();
     do {
         k = in_inkey();
     } while (k != 'y' && k != 'Y' && k != 'n' && k != 'N');
@@ -502,19 +559,37 @@ static void bootstrap(void)
     }
 
     msg("Saving...");
-    if (copy_rom(MF_ROM, ORIG_ROM) != 0) {
+    esx_f_unlink(ORIG_TMP);
+    if (copy_rom(MF_ROM, ORIG_TMP) != 0) {
         msg_attr("backup failed", ATTR_ERR);
+        esx_f_unlink(ORIG_TMP);
         wait_key();
         return;
     }
-    if (rom_crc(ORIG_ROM, &ours) != 0 || ours != installed) {
+    if (rom_crc(ORIG_TMP, &ours) != 0 || ours != installed) {
         msg_attr("backup verify FAILED;", ATTR_ERR);
-        msg("treat it as unusable");
+        msg("nothing was saved.");
+        esx_f_unlink(ORIG_TMP);
         wait_key();
         return;
     }
+
+    /* Checksum first, then the rename. A power cut between the two leaves no
+     * original.rom at all, so the next run simply captures again — whereas the
+     * reverse order could leave a ROM with no checksum beside it, which
+     * backup_valid() would reject and no run could ever repair. */
     if (write_sum(ORIG_SUM, installed) != 0) {
-        msg_attr("could not write the sum", ATTR_ERR);
+        msg_attr("could not write the sum;", ATTR_ERR);
+        msg("nothing was saved.");
+        esx_f_unlink(ORIG_TMP);
+        wait_key();
+        return;
+    }
+    esx_f_unlink(ORIG_ROM);
+    if (esx_f_rename(ORIG_TMP, ORIG_ROM) != 0) {
+        msg_attr("could not store the backup;", ATTR_ERR);
+        msg("a verified copy is at");
+        msg(ORIG_TMP);
         wait_key();
         return;
     }

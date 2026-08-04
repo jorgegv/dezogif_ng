@@ -313,13 +313,21 @@ def chk_memory(d):
 # framing, registers, a memory round trip — none of which needs the debuggee
 # to ever run again. Until these checks existed, no evidence anywhere in this
 # project showed the stub RESUMING a debuggee: not on hardware, not in the
-# emulator. So the exit path, backup.asm's restoration, and the
-# return-to-debuggee half of stackless NMI (plan §3.4 — the half that matters,
-# because without it entering the debugger corrupts the program being
-# debugged) were unexecuted code.
+# emulator. So the exit path and backup.asm's restoration were unexecuted
+# code, and so was the AltROM patch, since nothing had ever run an RST 0.
+#
+# WHAT THEY DO NOT COVER, because the line is fine and easy to lose: the
+# stackless-NMI RETURN ADDRESS. C9 sets PC itself with CMD_SET_REGISTER, so
+# backup.pc never comes from save_nmi_return_address, which is the routine
+# that reads NR 0xC2/0xC3. That runs only on an M1 press taken while
+# prgm_state is PRGM_RUNNING — a SECOND NMI, landing after a CMD_CONTINUE —
+# and jnext's --delayed-nmi counts emulated frames while this client counts
+# wall clock, so scheduling one is a race and not a check. Plan §3.4 calls
+# that the half that matters; what C9 establishes is the half it depends on,
+# that restore_registers really hands the machine back.
 #
 # The existing bench check W2 does send a CMD_CONTINUE, and it must NOT be
-# read as covering this: it resumes zeroed registers on purpose, so the
+# read as covering any of this: it resumes zeroed registers on purpose, so the
 # machine crashes into a stray RST 0. That is a way of provoking an
 # unprompted notification, not a demonstration that the return path works.
 #

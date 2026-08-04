@@ -248,7 +248,8 @@ fi
 # transport_byte_available poll is a status-bit read that returns at once, so
 # the `jp nz,cmd_loop` never fires and cmd_loop — with the blocking
 # transport_wait_rx inside it — is never reached at all. The run ends when
-# --delayed-automatic-exit-frames kills it. Nothing after "the debugger came up" executes: not the exit path,
+# --delayed-automatic-exit-frames kills it. Nothing after "the debugger
+# came up" executes: not the exit path,
 # not backup.asm's restoration, and not the return-to-debuggee half of
 # stackless NMI — which is the half plan §3.4 says actually matters, because
 # without it entering the debugger corrupts the program being debugged. What

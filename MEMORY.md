@@ -34,7 +34,9 @@ lists as required reading:
 The why is the paragraph above it: a game that grabs the joy port leaves the
 Next emitting endless zeroes, and the preamble is how DeZog resynchronises.
 DeZog implements the split itself — `ZxNextSerialRemote` strips byte 165,
-`CSpectRemote` does not.
+`CSpectRemote` does not (verified against the installed DeZog 3.7.4,
+`~/.vscode/extensions/maziac.dezog-3.7.4/out/extension.js`; both classes
+identify themselves by their own log strings, which survive minification).
 
 **So M1's answer is settled, and it is the opposite of "remove it".** The
 preamble is **required in UART mode and must be absent in WiFi mode**, which
@@ -101,14 +103,6 @@ stackless NMI** — the half plan §3.4 says actually matters, because without i
 entering the debugger corrupts the program being debugged. Of stackless NMI,
 T6 exercises the **entry side only**.
 
-**Two rounds of review were needed to get this paragraph right, and the second
-correction was to the mechanism, not the conclusion.** The first version of it
-claimed `cmd_loop` blocks on `transport_wait_rx`. It does not — `cmd_loop` is
-never entered. That wrong mechanism had been asserted confidently, propagated
-into four files, and was caught only by someone tracing `main.asm:154-191`
-against the source. It is the failure ERRORS.md already names: a plausible
-mechanism stated instead of a traced one.
-
 So the Appendix A row is scoped to that, and the honest summary is: the stub
 comes up. Not "the NMI path is sound".
 
@@ -118,6 +112,14 @@ already in [[ERRORS.md]]. One failure mode is now excluded automatically: T6
 also requires the result to look *unlike* the stock Multiface monitor, which
 catches "our ROM was not actually installed". A crashed machine would still
 pass, so the screenshot remains the artefact to inspect.
+
+**Two rounds of review were needed to get this paragraph right, and the second
+correction was to the mechanism, not the conclusion.** The first version of it
+claimed `cmd_loop` blocks on `transport_wait_rx`. It does not — `cmd_loop` is
+never entered. That wrong mechanism had been asserted confidently, propagated
+into four files, and was caught only by someone tracing `main.asm:154-191`
+against the source. It is the failure ERRORS.md already names: a plausible
+mechanism stated instead of a traced one.
 
 **Also fixed while here.** The bench's summary line was hardcoded `5/5` and
 would have kept saying so after a sixth check was added — a small lie in

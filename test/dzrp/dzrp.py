@@ -127,6 +127,9 @@ class TcpTransport:
             out += chunk
         return out
 
+    def set_timeout(self, seconds):
+        self.sock.settimeout(seconds)
+
     def write(self, data):
         self.sock.sendall(data)
 
@@ -154,6 +157,9 @@ class SerialTransport:
         if len(out) < n:
             raise Timeout("timed out after %d of %d bytes" % (len(out), n))
         return out
+
+    def set_timeout(self, seconds):
+        self.port.timeout = seconds
 
     def write(self, data):
         self.port.write(data)

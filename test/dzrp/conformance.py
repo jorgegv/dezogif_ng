@@ -97,15 +97,30 @@ def chk_init(d):
 
 
 def chk_length_convention(d):
-    """A command's length counts the payload ONLY; a response's counts from the
-    sequence number. They are not symmetric, and assuming they are makes the
-    remote wait in silence rather than complain — which is how this check
-    earned its place. CMD_INIT answering at all proves the outbound half; the
-    inbound half is proven by the frame parsing cleanly."""
-    body = talk(d, dzrp.CMD_INIT, dzrp.init_payload())
-    if not body:
-        return FAIL, "no response body"
-    return PASS, "command length = payload only; response length counts the seq byte"
+    """Prove the command length convention by violating it.
+
+    An earlier version of this check just sent a well-formed CMD_INIT and
+    declared victory, which asserted nothing chk_init did not already assert —
+    the reviewer called it a strictly weaker duplicate, correctly.
+
+    So it now sends CMD_INIT with the WRONG length: payload + 2, the symmetric
+    reading. A remote that counts the payload only will be left waiting for two
+    bytes that never arrive, and must NOT produce a valid response. If it
+    answers anyway, our understanding of the convention is wrong in a way that
+    matters, and saying so is more useful than a green tick.
+    """
+    payload = dzrp.init_payload()
+    frame, seq = d.build_command(dzrp.CMD_INIT, payload, length=len(payload) + 2)
+    d.send_raw(frame)
+    d.t.set_timeout(2.0)                 # deliberately short: we expect silence
+    try:
+        got_seq, _ = d._read_frame()
+    except dzrp.DzrpError:
+        return PASS, "an over-long length is not accepted (command length = payload only)"
+    if got_seq == seq:
+        return FAIL, ("the remote answered a command whose length counted seq+cmd too, "
+                      "so the convention is not payload-only as documented")
+    return PASS, "no valid response to an over-long length"
 
 
 def chk_preamble(d, expect):

@@ -206,7 +206,13 @@ all: main unit-tests mfselect
 # Build the debugger program (build/main.bin + build/mf_nmi.bin)
 main: $(MAIN_BIN) $(MF_NMI_BIN)
 
-# Assemble the Z80 unit tests (build/ut.nex)
+# ASSEMBLES ut.nex AND RUNS NOTHING, which the old description ("Assemble the
+# Z80 unit tests") was accurate about and still managed to obscure. The tests
+# inside it are DeZog-driven — they need "unitTests": true plus zsim in VS Code
+# to execute — so nothing in test/ or tools/ so much as references ut.nex.
+# Making them runnable headless is issue #3.
+#
+# ASSEMBLE the Z80 unit tests only (build/ut.nex) — running them needs VS Code, see issue #3
 unit-tests: $(UT_BIN)
 
 # Build the deployable Multiface ROM (build/enNextMf.rom; TRANSPORT=wifi for the other)
@@ -258,7 +264,13 @@ mfselect: $(MFSELECT_NEX)
 	@echo "  Nothing to rename. Each .rom and its .sum come from this one build,"
 	@echo "  which is what makes them a coherent set."
 
-# Run the local headless test suite in jnext (no VS Code, no hardware)
+# NOT the Z80 unit tests, and calling this "the test suite" invited exactly that
+# reading. This boots a Next in jnext with our ROM installed as the Multiface
+# ROM, fires NMIs at it and judges SCREENSHOTS. The unit tests under
+# src/unit_tests/ are a separate body of code that `make unit-tests` assembles
+# and nothing here executes.
+#
+# Boot a Next in jnext and judge screenshots — 6 checks, no VS Code, no hardware
 test: $(ROM) $(TRIGGER_BIN) $(COPPER_BIN)
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" ROM="$(ROM)" \
 	 TRIGGER_BIN="$(TRIGGER_BIN)" COPPER_BIN="$(COPPER_BIN)" $(TEST)/run-headless.sh

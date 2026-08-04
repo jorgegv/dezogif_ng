@@ -411,10 +411,20 @@ the stub project's side.
 
 ### 8.2 The gap in jnext's ESP emulation that this project would hit
 
+**Status (2026-08-04): the primary gap is CLOSED and exercised.** jnext 0.99.118 shipped the
+server-mode triad ([jnext#210]), and this project has now used it: `make test-esp` brings the
+emulated module up as a TCP server and echoes over a real socket — see M0(b). The description
+below is kept because the *reasoning* still governs anything further we ask jnext for, but read
+its present tense as of the filing date, not of today. What is still absent is `AT+CIPMODE`
+passthrough, which the chosen design cannot use anyway (§4.2), and `AT+CWJAP=` in its setting
+form, which the emulator does not need and hardware will.
+
 Both absences below are deliberate and documented in `src/esp01/include/esp01/esp_at.h`, whose
 stated rule is that every emulated command must appear in software that actually runs on a Next.
 **This project is the first real consumer of the server path**, which is exactly the bar that
 file sets.
+
+[jnext#210]: https://github.com/jorgegv/jnext/issues/210
 
 **Primary requirement — server mode.** Per §4.2 this needs three things together, not one:
 
@@ -550,6 +560,26 @@ Two independent proofs, on real hardware, before any porting work:
 - **b)** The same, but `AT+CIPMUX=1` + `AT+CIPSERVER=1,<port>` with `+IPD` parsing, and `nc` on
   the PC connecting *to the Next*. This is the shape the real thing uses (§4.2), so it is the
   one that must ultimately pass.
+  **DONE in jnext, headless (2026-08-04); NOT yet on hardware.** `test/esp_server.asm` brings the
+  module up — `ATE0`, `AT`, `AT+CIPMUX=1`, `AT+CIPSERVER=1,11000`, `AT+CIFSR` — then parses
+  `+IPD,<id>,<len>:` and echoes the payload back with `AT+CIPSEND=<id>,<len>`. It is bench
+  `make test-esp`, and its assertions are on **bytes over a socket**, not on pixels: E1 the
+  listener exists (which covers the whole AT chain, since each step gates the next and
+  `CIPSERVER` is refused without `CIPMUX`), E2/E3 payloads echo back byte-identically, E4 a
+  second *simultaneous* connection echoes too.
+
+  **E4 is the one that pays for itself**, and it was verified by breaking the fixture on purpose
+  rather than by argument. With the id hardcoded to `0` — the value the Espressif documentation
+  leads you to expect — E2, E3 and E4 all fail with *empty* replies, which is precisely the
+  "no error, no data" signature MEMORY.md warns looks like a DZRP bug. With it hardcoded to `1`,
+  E2 and E3 **pass** and only E4 fails. So the id must be read from the header, and only E4
+  proves it was.
+
+  What this does **not** cover: real hardware. jnext has no `AT+CWJAP=` at all, only the query
+  form, so the emulated module is permanently associated and the fixture never has to join a
+  network. The fixture is nevertheless pinned to **115200** — the rate the ESP-01 answers at
+  until told otherwise — because jnext models baud as timing only and would have accepted
+  anything, which is exactly the kind of divergence that passes here and fails on the bench-top.
 - **c)** A Copper list (`WAIT`/`MOVE $02,$08`) whose NMI you can observe firing.
   **DONE (2026-08-04), in jnext, headless.** `test/copper_nmi.asm` writes a two-instruction list
   — `WAIT line 100,0` then `MOVE $02,$08` — and the stock Multiface ROM takes the screen, 91.41%
@@ -564,6 +594,15 @@ Two independent proofs, on real hardware, before any porting work:
 Doing (a) first is deliberate: it isolates "is the ESP path alive at all" from "is my `+IPD`
 parser right". Run in jnext where possible, but note (b) cannot run in jnext until §8.2 lands —
 hardware first is acceptable here.
+
+**That ordering was overtaken by events, and (b) went first.** §8.2's gap closed
+([jnext#210](https://github.com/jorgegv/jnext/issues/210), in 0.99.118) before either spike was
+written, so (b) became runnable headless — and (a) is a *client*-mode spike for a transport §4.2
+already rejected, whose value was only ever that it was the quickest thing to try. Once (b) could
+run automatically and repeatably, spending hardware time on the shape the design does not use
+would have been the wrong order. **(a) is therefore not done and is no longer on the critical
+path**; it survives only as the fallback in §4.2, and if that fallback is ever needed, this is
+where the spike for it belongs.
 
 ### M1 — Fork, add the second transport, feature parity
 Fork dezogif. Put the joy-port serial path behind a transport interface, then add beside it an ESP
@@ -701,7 +740,11 @@ Facts checked directly against a primary source during the analysis:
 | jnext refuses `AT+CIPMUX=1` with `ERROR` by design, and why | `src/esp01/include/esp01/esp_at.h` | **verified** |
 | DeZog is MIT and merges outside PRs | GitHub API | **verified** |
 | jnext implements stackless NMI | `src/cpu/im2.h`, `src/cpu/z80_cpu.h`, `src/port/nextreg.h` | **verified** |
-| jnext does not emulate `AT+CIPMODE`/`AT+CIPSERVER` | `src/esp01/include/esp01/esp_at.h` | **verified** |
+| jnext does not emulate `AT+CIPMODE`/`AT+CIPSERVER` | `src/esp01/include/esp01/esp_at.h` | **was verified; `AT+CIPSERVER` NO LONGER TRUE** — shipped in 0.99.118 (jnext#210). `AT+CIPMODE` still absent |
+| **The ESP can be brought up as a TCP server from Z80 and echo over a socket** | `make test-esp` E1-E4, jnext 0.99.118 | **verified** — M0(b) |
+| **The `+IPD` connection id must be read, not assumed** | same bench, broken deliberately: id hardcoded to `0` fails E2-E4, to `1` fails only E4 | **verified** |
+| jnext's inbound connection ids start at 1, not 0 | `esp_at.h` simplification 8a; observed as `accepted as cid 1` / `cid 2` | **verified for jnext** — hardware numbering remains **unverified** |
+| Real ESP-AT firmware needs association and answers at 115200 | Espressif AT instruction set; jnext has no `AT+CWJAP=` setting form to model it | **inferred** — untested, and the reason M0(b) proves nothing about hardware |
 | ESP TCP throughput in the tens of KB/s | general knowledge | **estimate** |
 | NMI poll costs ~100-200 T-states/frame | arithmetic, not measured | **estimate** |
 | CTS/RTR populated on a given board | — | **unverified** |

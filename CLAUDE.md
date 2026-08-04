@@ -121,6 +121,17 @@ strongest:
 4. **`make test-mfselect`** — the mfselect bench, 3 headless runs, 5 checks, asserting on files
    pulled back off the SD image rather than on pixels. Deliberately **not** part of `make test`:
    mfselect is separate tooling and is not in `make all` either. See `doc/MFSELECT.md`.
+4b. **`make test-esp`** — the M0(b) ESP server bench: one headless jnext run with
+   `test/esp_server.asm` injected, and a TCP client (`test/esp-echo-client.py`) connecting to the
+   port the *guest* opened through the emulated ESP-01. Four checks, and they assert on **bytes
+   over a socket**, which no other layer here does — E1 the AT chain came up and something is
+   listening, E2/E3 payloads echo back byte-identically, E4 a second simultaneous connection
+   echoes too. E4 is not redundant: with the `+IPD` connection id hardcoded to `1` the first
+   three checks pass and only E4 fails, which was demonstrated rather than argued. Separate from
+   `make test` for two structural reasons — it needs a client running *concurrently* with the
+   emulator, and it binds a host TCP port, so it cannot make `make test`'s promise of no external
+   dependencies. **It proves nothing about hardware**: jnext has no `AT+CWJAP=` setting form, so
+   the emulated module is permanently associated, and it models baud as timing only.
 5. **`build/ut.nex`** — the upstream Z80 unit tests under `src/unit_tests/`. These are
    **DeZog-driven** (`"unitTests": true` + zsim) and therefore need VS Code; they are a manual
    layer and gate nothing. Making them headless would need a driver we do not have.

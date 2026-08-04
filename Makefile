@@ -56,6 +56,7 @@ MAIN_ASM    = $(SRC)/main.asm
 UT_ASM      = $(SRC)/unit_tests/unit_tests.asm
 TRIGGER_ASM = $(TEST)/nmi_trigger.asm
 COPPER_ASM  = $(TEST)/copper_nmi.asm
+ESP_ASM     = $(TEST)/esp_server.asm
 MFSELECT_C  = $(TOOLS)/mfselect/mfselect.c
 ROMSUM      = $(TOOLS)/romsum.py
 
@@ -68,6 +69,7 @@ ROM         = $(OUT)/enNextMf.rom
 UT_BIN      = $(OUT)/ut.nex
 TRIGGER_BIN = $(OUT)/nmi_trigger.bin
 COPPER_BIN  = $(OUT)/copper_nmi.bin
+ESP_BIN     = $(OUT)/esp_server.bin
 
 # mfselect's deployables: the utility, and the checksum of the ROM it installs.
 # The .sum is a build product on purpose — a checksum computed on the Next from
@@ -112,6 +114,11 @@ test: $(ROM) $(TRIGGER_BIN) $(COPPER_BIN)
 test-mfselect: $(MFSELECT_NEX) $(DEZOGIF_SUM) $(ROM)
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" NEX="$(MFSELECT_NEX)" \
 	 ROM="$(ROM)" SUM="$(DEZOGIF_SUM)" ROMSUM="$(ROMSUM)" $(TEST)/run-mfselect.sh
+
+# Run the ESP-01 server bench (M0(b): 1 jnext run + a TCP client; not part of `make test`)
+test-esp: $(ESP_BIN)
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" ESP_BIN="$(ESP_BIN)" \
+	 $(TEST)/run-esp.sh
 
 # Run the DZRP conformance suite against a remote (REMOTE=tcp:<host>:<port>)
 test-dzrp:
@@ -158,6 +165,9 @@ $(TRIGGER_BIN): $(TRIGGER_ASM) Makefile | $(OUT)
 
 $(COPPER_BIN): $(COPPER_ASM) Makefile | $(OUT)
 	$(SJASMPLUS) -DCOPPER_NMI_BIN=\"$@\" $(COPPER_ASM)
+
+$(ESP_BIN): $(ESP_ASM) Makefile | $(OUT)
+	$(SJASMPLUS) -DESP_SERVER_BIN=\"$@\" $(ESP_ASM)
 
 # The deployable ROM is the NMI entry code followed by the debugger image.
 # tbblue.fw loads exactly ROM_SIZE bytes, so a wrong size is a build error

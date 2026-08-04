@@ -5,6 +5,68 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-04 — M0(b) first, and M0(a) is off the critical path
+
+**Decided, and it reorders the plan.** M1's WiFi half starts with the **M0(b)
+spike** — the ESP brought up as a TCP server in a standalone fixture — and not
+with `transport_esp.asm`. Landed as `test/esp_server.asm` + `make test-esp`.
+
+**Why the spike rather than going straight at the transport.** Two unknowns
+would otherwise be debugged at once: the AT/`+IPD` protocol, and the
+debugger's own constraints. The second is not hypothetical —
+`transport_wait_rx` runs with layer-2 read/write possibly mapped and therefore
+**no CALLs and no PUSH/POP** (`transport_uart.asm`), which is a bad place to
+first meet a framing bug. Plan §9 already said this ("it isolates 'is the ESP
+path alive at all' from 'is my `+IPD` parser right'"); the only new thing is
+that jnext#210 made it runnable headless, so it costs one bench target instead
+of a hardware session.
+
+**The spike is not throwaway, and that is what settles the cost question.** It
+is a permanent bench check whose assertions are on **bytes over a socket** —
+the first in this repository that are. Every other layer judges pixels or
+files, and ERRORS.md already records a pixel check that could not tell success
+from noise.
+
+**M0(a) is dropped from the critical path, deliberately.** It is a *client*-mode
+spike (`AT+CIPSTART` + `AT+CIPMODE=1`) for a transport §4.2 rejected, and its
+whole value was being the quickest thing to try on hardware. Once (b) ran
+automatically, spending a hardware session on the shape the design does not use
+was the wrong order. It survives only as §4.2's fallback. **Not rejected on
+merit — deferred**, and if the fallback is ever needed it is the first thing to
+write.
+
+**What the bench established, by breaking it on purpose rather than by
+argument.** With the `+IPD` connection id hardcoded to `0` — the value the
+Espressif documentation leads you to expect — E2, E3 and E4 fail with *empty*
+replies: no error, no data, exactly the signature the jnext-inbound-id entry
+below predicts. With it hardcoded to `1`, the first three checks **pass** and
+only E4 fails. So E4 (a second simultaneous connection) is the only check that
+catches an id that is assumed rather than read, and it earns its place.
+
+**Two divergences the emulator cannot show, written down before they bite.**
+
+- **Association.** jnext has no `AT+CWJAP=` at all, only the query form, so the
+  emulated module is permanently on a network. Hardware is not, and the stub
+  will need a bring-up path the bench can never exercise.
+- **Baud.** jnext models baud as *timing* only, so the fixture would have
+  passed at any rate. It is pinned to **115200** anyway — what a real ESP-01
+  answers at until told otherwise — because a value that only works in the
+  emulator is precisely the kind of thing that passes CI and fails on the
+  bench-top. Upstream's 921600 is a *joy-port cable* rate, where both ends are
+  ours to choose; the ESP's is not. Raising it is M3's baud negotiation and
+  must start by talking at 115200.
+
+**Rejected.** Writing `transport_esp.asm` first and testing it through
+`make test-dzrp` (two unknowns at once, and the harness has never run against
+our stub either — [[#DZRP's two length conventions]]); folding this into
+`make test` (it needs a concurrent client and binds a host port, so it cannot
+keep that suite's no-external-dependencies promise); asserting on the
+fixture's border colour (the socket checks are strictly stronger, and a check
+that cannot fail independently is noise — the border stays as *diagnosis*, to
+name which step stopped).
+
+---
+
 ## 2026-08-04 — DZRP's two length conventions, and where 0xA5 really comes from
 
 **Found by the DZRP conformance suite** ([issue #2]) on its first run against a

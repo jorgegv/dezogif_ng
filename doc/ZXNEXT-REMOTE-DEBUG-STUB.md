@@ -759,6 +759,13 @@ Facts checked directly against a primary source during the analysis.
   ERRORS.md exists largely because these keep turning out backwards.
 - **estimate** — arithmetic or general knowledge, not measured.
 
+**The list is not exhaustive, and the table qualifies these where it needs to.** `unverified`
+is weaker than all four — nothing checked and no source to derive from, as against `inferred`,
+which at least has a derivation behind it. `verified for jnext` and `verified, scoped` are the top
+rung with its limits stated inline, which is preferable to a rung per shade of scope. What matters
+is that a claim never sits *higher* than its evidence; sitting lower, or off the ladder with its
+reason attached, is fine.
+
 | Claim | Source | Status |
 |---|---|---|
 | ESP and joy-port serial share UART0 behind a mux | `zxnext.vhd:3340-3349` | **verified** |

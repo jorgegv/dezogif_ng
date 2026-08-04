@@ -79,6 +79,7 @@
 /* Screen layout. */
 #define ROW_TITLE   0
 #define ROW_STATUS  2
+#define ROW_PROMPT  4
 #define ROW_MENU    5
 #define MENU_ITEMS  3
 #define ROW_MSG     10
@@ -629,6 +630,11 @@ static void draw_chrome(void)
     attr_run(0, ROW_TITLE, 32, ATTR_BAR);
     print_at(0, ROW_FOOT,  " Up/Down to move   ENTER to run ");
     attr_run(0, ROW_FOOT, 32, ATTR_BAR);
+
+    /* Static, and nothing clears this row: cls() runs once at start, and the
+     * only later erasures are the status row, the menu rows and the message
+     * area. Drawing it here keeps it out of the menu redraw loop. */
+    print_at(1, ROW_PROMPT, "Select ROM to install:");
 }
 
 static void draw_status(void)

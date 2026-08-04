@@ -218,9 +218,25 @@ strongest:
    design, and it is the one merge to date that legitimately broke the UART byte-identity gate.
    See `doc/DZRP-TESTING.md`. Like `test-esp`, not part of `make test`: it binds a host TCP port.
    **It says nothing about hardware.**
-5. **`build/ut.nex`** — the upstream Z80 unit tests under `src/unit_tests/`. These are
-   **DeZog-driven** (`"unitTests": true` + zsim) and therefore need VS Code; they are a manual
-   layer and gate nothing. Making them headless would need a driver we do not have.
+4d. **`make test-unit`** — the Z80 unit tests under `src/unit_tests/`, headless (issue #3). One
+   jnext run of `build/ut-headless.nex`, 5 checks. **28 of the 64 test cases run; 36 cannot and
+   are reported as `UT-SKIP` on every run.** Those 36 need ports invented by `src/simulation/uart.js`,
+   a JavaScript peripheral DeZog's zsim loads as `customCode` — the Z80 cannot trap its own I/O,
+   so they are unreachable from inside the guest, and a project-specific peripheral does not
+   belong in jnext. **Do not read a green run as "the unit tests pass"**; read it as
+   "the 28 that can run, pass". What they cover is the banking and breakpoint code — all of
+   `ut_backup.asm`, all of `ut_breakpoints.asm`, all of `ut_utilities.asm` — not the DZRP command
+   layer, whose gate is `test-dzrp-stub`. The count is pinned in **two** places (the Makefile,
+   checked against the sources at build time; the bench, checked against what ran), because
+   pinning only the total would let a test slide from the runnable set into the excluded one
+   unnoticed. **Silence is a FAIL**: jnext's run is frame-bounded, so a hang ends it quietly with
+   status 0, and check U2 requires an explicit end-of-run marker — the last `UT-BEGIN` names the
+   test that wedged. Not part of `make test`, for consistency with every other bench here rather
+   than for the usual reason: this one has no external dependency and binds no port. See
+   `doc/UNIT-TESTS.md`. **It says nothing about hardware.**
+5. **`build/ut.nex`** — the same tests, **DeZog-driven** (`"unitTests": true` + zsim + the
+   `customCode` plugin) in VS Code. Still a manual layer, and still the only way to exercise the
+   36 that 4d must skip. `make unit-tests` assembles it; nothing here runs it.
 6. **Real hardware** — the only truth for ESP timing, WiFi behaviour and anything the emulator
    models rather than is.
 

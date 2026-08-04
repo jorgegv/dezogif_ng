@@ -242,6 +242,102 @@ mfselect-uart` pair (it is one deployable directory, not two).
 
 ---
 
+## 2026-08-04 — The unit tests run headless, and 36 of 64 never can
+
+**Built and measured**, issue #3. `make test-unit` runs the Z80 unit tests in
+jnext with no VS Code. **28 of the 64 cases run and pass; 36 are excluded and
+say so on every run.**
+
+**The thing the issue did not know, and it reshapes the problem.** The issue
+says the tests need VS Code because DeZog *drives* them — enumerates the
+`UT_*` labels, patches `UNITTEST_CALL_ADDR`, decides pass/fail by breakpoint.
+True, and only half of it. **The assertions are also PC-side.** An assertion
+here is a comment on an inert `nop`:
+
+    nop ; TEST ASSERTION HL == 2
+
+`SLDOPT COMMENT ... ASSERTION` copies it into the SLD and DeZog evaluates
+`HL == 2` in JavaScript at a conditional breakpoint. So `ut.nex` is not a test
+needing a runner; it is a test **whose checks are not in the image at all**.
+Any headless approach has to compile ~291 assertions into Z80, not just
+enumerate labels. Issue #3's approach (2), "external driver, keeps the assembly
+untouched", cannot work for that reason — a driver has nothing to evaluate.
+
+**The design.** Upstream's `unit_tests.inc` is replaced by
+`headless/ut_headless.inc`, same macro names, assertions compiled to Z80; the
+~65 assertions written *inline* rather than through a macro are rewritten by
+`tools/ut-headless-gen.py` into copies under `build/`. **Nothing in
+`src/unit_tests/` is modified** — `make unit-tests` and the VS Code path still
+work, and `git blame` against maziac/dezogif stays useful.
+
+Two details worth keeping. **The assertion must disturb nothing** — upstream
+writes runs of them on different registers back to back, so each macro saves
+AF plus its scratch and consumes the compare with a *conditional call*, `ld`
+between `cp` and `call` not touching flags. And **the failing assertion names
+itself**: `ut_assert_fail` pops its own return address, so no per-assertion id
+has to be allocated or kept in step with the source.
+
+**Silence is a FAIL, and that is the load-bearing property.** jnext's run is
+frame-bounded, so a wedged guest ends the run quietly with status 0. `UT-BEGIN`
+is emitted *before* each test and the bench requires an explicit `UT-DONE`; a
+hang therefore fails and the last `UT-BEGIN` names the culprit. **Demonstrated
+by breaking it**: an injected `jr $` gave `U2 the suite did NOT finish — it
+hung or crashed in: 01 ut_utilities.UT_div_hl_e`, and two deliberately broken
+assertions (one inline, one macro) went red with addresses that map to the
+exact lines.
+
+**Why 36 cannot run, and it is not a shortcut.** `.vscode/launch.json` gives
+zsim a `customCode` plugin, **`src/simulation/uart.js`** — a JavaScript
+peripheral inventing ports `0x8000`, `0x0001`-`0x0004`, and a `0x133B`/`0x143B`
+UART whose RX is a queue and whose TX is always ready. Every test that drives
+the debugger through a command reads its response back through those. **The Z80
+cannot trap its own I/O**, so they cannot be provided from inside the guest,
+and providing them in jnext is out of scope — a project-specific peripheral in
+a general emulator, against this project's own rule that nothing of ours goes
+there.
+
+**The exclusion list is derived and was validated by measurement, not by
+reading the JS.** Every test was run *alone in its own emulator process*
+(`-DUT_ONLY=<n>`, kept as a diagnostic). The marker-based rule covers every
+test that fails or hangs under jnext and adds exactly one more:
+`ut_nmi.UT_nmi_cause_button`, which **passes for the wrong reason** — its
+zsim-only setup write to port `0x0002` does nothing on a real machine, and the
+real NR `0x02` happens to satisfy `nmi66h`'s cause check anyway. Excluded too,
+because a test that passes without its setup having worked is not evidence.
+
+**Isolation was verified, not assumed.** Several tests self-modify the debugger
+and never undo it — `ut_uart` patches `transport_read_byte.timeout`, `ut_nmi`
+patches `MF.nmi66h.is_button_cause` — so a later test could jump into a
+leftover trampoline, land on its `TC_END` and be **reported as a pass it never
+earned**. The runner restores all eight MMU slots and copies a pristine 8 KB
+program bank back before each test, and the single-run verdicts are identical
+to the isolated per-test ones.
+
+**Counts are pinned in two places** — the Makefile (checked against the
+sources at build time) and the bench (checked against what ran). Pinning only
+the total would let a test slide from the runnable set into the excluded set
+while the total stayed right, which is the "runs 5 of 25, reports 5/5" failure
+in a new costume.
+
+**The gate held.** Both ROMs are byte-identical to `main`'s with `BUILD_TIME`
+and the build number pinned — UART `13217f12…`, WiFi `d144ccb2…` — and
+`make test` 6/6, `make test-mfselect` 10/10 are unchanged. Nothing that
+produces a ROM was touched.
+
+**Rejected.** Reimplementing `uart.js`'s ports in jnext (out of scope, and the
+wrong home for a project-specific peripheral); rewriting the excluded tests to
+use memory instead of ports (that changes upstream's assertions and would test
+my simulator rather than the code); dropping the excluded tests from the table
+silently (an exclusion nobody sees is an exclusion nobody notices); folding
+`test-unit` into `make test` (it *could* — no external dependency, no port —
+but every other bench here is its own target, and `make test` is documented at
+length as the screenshot bench).
+
+**The issue's "25 test cases" is wrong: there are 64.** `TC_END` appears 64
+times, and there are 64 `UT_*` entry points.
+
+---
+
 ## 2026-08-04 — WiFi is a prerequisite; the stub holds no credentials
 
 **Decided (user).** In WiFi mode the stub assumes the Next is **already

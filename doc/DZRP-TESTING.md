@@ -52,7 +52,16 @@ against our own stub then means the stub, not the harness.
     make test-dzrp REMOTE=tcp:127.0.0.1:11000
 
 Result on 2026-08-04, CSpect 3.1.0.0 / DeZogPlugin v2.3.0.20958 / DZRP 2.0.0 — **6 passed, 0
-failed, 2 unsupported of 8**.
+failed, 2 unsupported of 8**. That was the **eight**-check suite: **C9 has never been measured
+against CSpect**, so it is validated only by having been shown failing against our own pre-fix ROM.
+
+**Check that nothing else holds the port before believing a run of this.** Every check opens its
+own connection, so a remote that comes and goes on 11000 — another jnext, a bench in a second
+worktree — can serve *different checks of one suite run*. That is not hypothetical: an attempt to
+measure C9 here produced three mutually contradictory results, and the tell was C1 reporting
+`dezogif v2.2.1` / DZRP 2.1.0, which is our own stub, in a run aimed at CSpect. `make
+test-dzrp-stub` refuses to start in that situation; `make test-dzrp` cannot, because it has no idea
+what it was pointed at. `ss -ltn | grep 11000` first.
 
 ## Result against our own stub
 

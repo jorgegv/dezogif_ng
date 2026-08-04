@@ -181,16 +181,45 @@ cmd_init:
     ret
 
 .inner:
-    ; Read version number
-    ld hl,receive_buffer.payload
-    ld de,3
-    call receive_bytes
-    ; Read remote program name
-.read_loop
-    call transport_read_byte
-    or a
-    jr nz,.read_loop
-    ret
+    ; Consume exactly the payload the frame declared: 3 version bytes followed
+    ; by the remote's NUL-terminated program name, none of which is used here.
+    ;
+    ; THE LENGTH DECIDES HOW MUCH OF THE STREAM BELONGS TO THIS COMMAND, NOT
+    ; THE NUL. Upstream read the version by count and then the name until a zero
+    ; byte, ignoring the length field entirely, so a length that disagreed with
+    ; the payload desynchronised the stream silently and for the rest of the
+    ; session (issue #7). Every other handler in this file already trusts the
+    ; length — cmd_loopback, cmd_write_mem, cmd_restore_mem, cmd_exec_asm — and
+    ; this one now does too. The NUL is a property of the payload's contents;
+    ; framing is not its job.
+    ;
+    ; The bytes are read and dropped. The response is built from our own
+    ; DZRP_VERSION and PROGRAM_NAME, so nothing above ever looks at the remote's
+    ; version or name, and storing a client-chosen count into the 102-byte
+    ; payload buffer would need a bound check that buys nothing.
+    ;
+    ; The boundaries a hostile client can reach all fall out of that one rule,
+    ; with no special case for any of them:
+    ;  - a name that fills the frame with no NUL: only the declared bytes leave
+    ;    the stream, and what follows is the client's next frame by definition;
+    ;  - a length below 3: fewer than three bytes are read, so there is no
+    ;    over-read waiting for version bytes that were never promised;
+    ;  - a length of 0: nothing is read;
+    ;  - a length longer than what was actually sent: the read blocks and the
+    ;    transport's own RX timeout resets the call stack, drains and reports —
+    ;    the same recovery any other over-declared command already gets.
+    ;
+    ; Only the low 16 bits are used, as everywhere else here.
+    ld de,(receive_buffer.length)
+.read_loop:
+    ld a,d
+    or e
+    ret z
+    dec de
+    push de
+    call transport_read_byte	; Changes DE; HL is not used here
+    pop de
+    jr .read_loop
 
 
 ;===========================================================================

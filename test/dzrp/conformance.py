@@ -51,19 +51,29 @@ class Unsupported(Exception):
     """The remote does not implement this command."""
 
 
-def talk(d, cmd_id, payload=b""):
-    """Send a command, mapping a dropped connection onto Unsupported.
+# CMD_INIT is how every DZRP conversation starts. A remote that cannot answer
+# it is broken, not partial, so it is never eligible to be excused as
+# UNSUPPORTED however it fails.
+ALWAYS_REQUIRED = {"INIT"}
 
-    A remote that does not know a command may answer with an error, or may
-    simply close — CSpect's plugin throws and disconnects. Neither is a
-    protocol violation, so neither is reported as a failure here.
+
+def talk(d, cmd_id, payload=b""):
+    """Send a command, mapping only a DELIBERATE refusal onto Unsupported.
+
+    A remote that does not know a command closes the connection — that is what
+    CSpect's plugin does, and it is not a protocol violation.
+
+    A TIMEOUT IS NOT THAT. It means the remote is waiting for bytes we did not
+    send, which is what a wrong length field looks like from this side, and
+    treating it as "unimplemented" is how this suite once reported a completely
+    broken handshake as 8 UNSUPPORTED checks and exit 0. Timeouts propagate as
+    failures.
     """
     try:
         return d.command(cmd_id, payload)
     except dzrp.DzrpError as e:
-        msg = str(e)
-        if "closed" in msg or "timed out" in msg:
-            raise Unsupported(msg)
+        if "closed" in str(e):
+            raise Unsupported(str(e))
         raise
 
 
@@ -101,16 +111,15 @@ def chk_length_convention(d):
 def chk_preamble(d, expect):
     """Does the remote prefix frames with 0xA5?
 
-    The specification describes no preamble. Our stub emits one anyway
-    (src/message.asm, send_4bytes_length_and_seqno and send_ntf_pause) as a
-    resync marker for a serial line that carries zeroes when the joy port is
-    unconfigured — emitted but never expected, since the stub's own receive
-    path reads length/seq/command with no preamble.
+    Not a bug hunt — a capability probe. Upstream extended DZRP by this byte
+    for the serial link (doc/legacy/Design.md:30-31): DeZog "will wait on this
+    byte before it recognizes messages coming from the Next", because a game
+    that grabs the joy port makes the Next emit endless zeroes. DeZog's
+    ZxNextSerialRemote strips byte 165; its CSpectRemote does not.
 
-    That makes it a property of one transport rather than of DZRP, sitting in a
-    file CLAUDE.md says must not know which transport it was built for. Whether
-    a socket remote has it decides whether M1's WiFi mode can reuse that code
-    unchanged, so this check reports it always and asserts it on demand.
+    So the correct answer differs by transport: present in UART mode, absent
+    for a socket remote. That is why this reports rather than assumes, and why
+    --expect-preamble exists for callers who know which they are talking to.
     """
     talk(d, dzrp.CMD_INIT, dzrp.init_payload())
     seen = d.observed_start_byte
@@ -247,7 +256,7 @@ def main():
             else:
                 status, detail = fn(d)
         except Unsupported as e:
-            if cmd_name in required:
+            if cmd_name in required or cmd_name in ALWAYS_REQUIRED:
                 status = FAIL
                 detail = "CMD_%s is REQUIRED but the remote does not implement it (%s)" % (
                     cmd_name, e)
@@ -267,6 +276,12 @@ def main():
     summary = "%d passed, %d failed, %d unsupported, of %d checks" % (
         counts[PASS], counts[FAIL], counts[UNSUP], total)
     print("DZRP conformance: " + summary)
+    # Everything-unsupported is not a pass. A remote that answered nothing at
+    # all would otherwise exit 0, which is precisely the "green result that
+    # cannot distinguish success from noise" ERRORS.md already warns about.
+    if counts[PASS] == 0:
+        print("  (nothing passed — treating that as a failure, not a partial remote)")
+        return 1
     return 1 if counts[FAIL] else 0
 
 

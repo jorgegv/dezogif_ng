@@ -33,17 +33,19 @@ the payload alone it answered at once, and its reply's own length counted the
 sequence byte. Assuming symmetry here costs a silent hang, not an error, which
 is the most expensive kind of wrong.
 
-THE START BYTE. The specification describes no preamble: a frame begins with
-the length. Our own stub nevertheless emits 0xA5 before every response and
-notification (`src/message.asm`, `send_4bytes_length_and_seqno` and
-`send_ntf_pause`), commented as needed because "the ZX Next transmits a lot of
-zeroes if the joy port is not configured" — a resync marker for a noisy serial
-line. It is emitted but never expected: the stub's own receive path reads
-length/seq/command with no preamble. So it is a property of one transport, not
-of DZRP, and a remote may or may not have it. This client therefore treats the
-start byte as a per-remote setting, defaulting to autodetect, and reports what
-it found — because for this project that observation is a finding, not a
-detail.
+THE START BYTE IS REAL, DOCUMENTED, AND SERIAL-ONLY. Upstream's own design
+doc says it outright (doc/legacy/Design.md:30-31): "the DZRP protocol was
+extended by one byte which is sent as first byte of a message (only in
+direction from ZX Next to PC). This is the MESSAGE_START_BYTE (0xA5). DeZog
+will wait on this byte before it recognizes messages coming from the Next."
+The reason is in the paragraph above it: a game that grabs the joy port makes
+the Next transmit endless zeroes, and the preamble is how DeZog resynchronises.
+
+DeZog implements exactly that split — its ZxNextSerialRemote scans for and
+strips byte 165, its CSpectRemote does not. So the byte is REQUIRED in UART
+mode and must be ABSENT in WiFi mode: it is a property the transport
+contributes, not an error to remove. This client therefore treats it as a
+per-remote setting, defaulting to autodetect.
 """
 
 import socket
@@ -224,17 +226,28 @@ class Dzrp:
         if self.start_byte == "auto":
             if first[0] == START_BYTE:
                 # Only conclude "start byte" if what follows is a credible
-                # length. A payload length whose low byte happens to be 0xA5
-                # would otherwise be misread as a preamble.
+                # length. A frame with NO preamble whose length is exactly 165
+                # also begins 0xA5, so this must fall back rather than raise —
+                # it used to raise, and would have reported a perfectly good
+                # remote as desynced the first time a response happened to be
+                # 165 bytes long.
                 probe = self.t.read(4)
                 length = struct.unpack("<I", probe)[0]
                 if 1 <= length <= MAX_FRAME:
                     self.start_byte = START_BYTE
                     self.observed_start_byte = START_BYTE
                     return self._finish_frame(length)
-                raise Desync(
-                    "first byte was 0xA5 but the next four are not a sane length (%d)"
-                    % length)
+                # Re-read those five bytes as <length:4><seq:1> with no
+                # preamble: 0xA5 was the length's low byte after all. No extra
+                # read is needed, we already hold them.
+                length = struct.unpack("<I", first + probe[:3])[0]
+                if not 1 <= length <= MAX_FRAME:
+                    raise Desync(
+                        "leading 0xA5 is neither a preamble nor a sane length (%d)" % length)
+                self.start_byte = None
+                self.observed_start_byte = None
+                body = probe[3:] + self.t.read(length - 1)
+                return body[0], body[1:]
             self.start_byte = None
             self.observed_start_byte = None
             length = struct.unpack("<I", first + self.t.read(3))[0]

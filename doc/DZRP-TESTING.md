@@ -79,13 +79,24 @@ The spec's two tables say exactly this, in wording easy to skim past. Sending `C
 symmetric length produced **no reply at all**: CSpect sat waiting for the two bytes it thought it
 was still owed. Assuming symmetry costs a silent hang, not an error.
 
-### Our stub's `0xA5` preamble is not part of DZRP
+### Our stub's `0xA5` preamble is serial-only, and deliberately so
 
 `src/message.asm` defines `MESSAGE_START_BYTE: equ 0xA5` and emits it before every response
-(`send_4bytes_length_and_seqno`) and every notification (`send_ntf_pause`), commented as needed
-because "the ZX Next transmits a lot of zeroes if the joy port is not configured". It is **emitted
-but never expected** — the stub's own receive path reads length/seq/command with no preamble.
+(`send_4bytes_length_and_seqno`) and every notification (`send_ntf_pause`). It is emitted but
+never expected — the receive path reads length/seq/command with no preamble.
 
-The specification describes no preamble, and CSpect emits none. So it is a **serial-transport
-resync marker living in `message.asm`**, one of the three files CLAUDE.md says must not be able to
-tell which transport they were assembled against. See MEMORY.md; M1 has to resolve it.
+That asymmetry is **by design, and documented upstream**. `doc/legacy/Design.md:30-31`:
+
+> the DZRP protocol was extended by one byte which is sent as first byte of a message (only in
+> direction from ZX Next to PC). This is the MESSAGE_START_BYTE (0xA5). DeZog will wait on this
+> byte before it recognizes messages coming from the Next.
+
+The reason is the paragraph above it: a game that takes the joy port leaves the Next transmitting
+endless zeroes, and the preamble is how DeZog resynchronises. DeZog implements exactly that split
+— `ZxNextSerialRemote` scans for and strips byte 165, `CSpectRemote` does not, and `make
+test-dzrp` against CSpect confirms the socket side emits none.
+
+**So the byte is required in UART mode and must be absent in WiFi mode.** It is a property the
+transport contributes, not a defect to delete. Removing it in both modes would break
+interoperability with DeZog's real `zxnext` remote — the UART regression CLAUDE.md's hard rule
+exists to prevent. See MEMORY.md for what M1 has to do about it.

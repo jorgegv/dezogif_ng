@@ -5,48 +5,52 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
-## 2026-08-04 — The stub's 0xA5 preamble is a serial artefact, and it leaks
+## 2026-08-04 — DZRP's two length conventions, and where 0xA5 really comes from
 
 **Found by the DZRP conformance suite** ([issue #2]) on its first run against a
 reference remote, which is what the suite was built for.
 
-**Two protocol facts, both measured against CSpect's DeZog plugin, not
-inferred.**
+**1. The two directions use different length conventions.** A *command*'s
+length counts the **payload only**; a *response*'s counts **from the sequence
+byte**. DeZog's spec says exactly this in two tables whose wording differs by a
+clause. Sending `CMD_INIT` with a symmetric length produced no reply at all —
+the remote sat waiting for two bytes it thought it was owed. The cost of
+assuming symmetry is a silent hang, not an error. Confirmed three ways by the
+reviewer: our own stub's send and receive paths, DeZog 3.7.4's `sendDzrpCmd`,
+and CSpect.
 
-1. **The two directions use different length conventions.** A *command*'s
-   length counts the **payload only**; a *response*'s counts **from the
-   sequence byte**. DeZog's spec says exactly this in two tables whose wording
-   differs by a clause. Sending `CMD_INIT` with a symmetric length produced no
-   reply at all — the remote sat waiting for two bytes it thought it was owed.
-   The cost of assuming symmetry is a silent hang, not an error.
+**2. `0xA5` is a documented DZRP extension for the serial link — NOT a leak.**
+The first version of this entry called it "a serial artefact that leaks into
+`message.asm`" and said "nothing here establishes why the zero noise required
+it, only that the comment says so". **Both statements were wrong**, and the
+source that disproves them is `doc/legacy/Design.md:30-31`, a file CLAUDE.md
+lists as required reading:
 
-2. **`0xA5` is not part of DZRP.** `src/message.asm` defines
-   `MESSAGE_START_BYTE: equ 0xA5` and emits it before every response
-   (`send_4bytes_length_and_seqno`) and every notification (`send_ntf_pause`),
-   commented as needed because "the ZX Next transmits a lot of zeroes if the
-   joy port is not configured". The spec describes no preamble and CSpect emits
-   none.
+> the DZRP protocol was extended by one byte which is sent as first byte of a
+> message (only in direction from ZX Next to PC). This is the
+> MESSAGE_START_BYTE (0xA5). DeZog will wait on this byte before it recognizes
+> messages coming from the Next.
 
-**Why (2) matters, and it is an M1 blocker rather than a curiosity.** The byte
-is **emitted but never expected** — the stub's own receive path reads
-length/seq/command with no preamble — so it is a resync marker for one
-transport. It lives in `message.asm`, which CLAUDE.md names as one of the three
-files that *must not be able to tell which transport they were assembled
-against*. The transport extraction of 2026-08-03 reported those three as clean;
-they were not. A WiFi build reusing this code unchanged would emit a stray byte
-before every response, and DeZog's `cspect` remote would fail to parse it.
+The why is the paragraph above it: a game that grabs the joy port leaves the
+Next emitting endless zeroes, and the preamble is how DeZog resynchronises.
+DeZog implements the split itself — `ZxNextSerialRemote` strips byte 165,
+`CSpectRemote` does not.
 
-**Not yet decided: what M1 does about it.** The options are visible and the
-choice is not obvious — make the preamble a property the transport contributes
-(the honest fix, and it grows the interface a third time after the byte stream,
-the lifecycle and the UI); or emit it in both modes and find out whether the
-socket remote tolerates a leading byte; or drop it in both and discover whether
-the serial path really needed it. Nothing here establishes *why* the zero noise
-required it, only that the comment says so. **Do not pick one from this entry.**
+**So M1's answer is settled, and it is the opposite of "remove it".** The
+preamble is **required in UART mode and must be absent in WiFi mode**, which
+makes it a property the *transport* contributes — the fourth thing the
+assembly-time switch selects, after the byte stream, the lifecycle and the UI.
+An earlier draft listed "drop it in both modes and see whether the serial path
+needed it" as an option to try; that would have broken interoperability with
+DeZog's real `zxnext` remote, i.e. exactly the UART regression CLAUDE.md's hard
+rule exists to catch.
 
-**Rejected already:** treating it as a bug in the conformance suite. The suite
-reports the preamble rather than assuming either answer, precisely so this
-question could be asked of a real remote instead of argued.
+**How the error happened, because it is the repeating one.** The claim was
+derived from the DZRP spec plus one socket remote, without reading the
+project's own frozen upstream design doc. [[ERRORS.md]] already carries an
+entry for this shape — deriving a hardware fact instead of reading the VHDL —
+and this is the protocol-side repeat. Caught by the independent reviewer, not
+by the author.
 
 [issue #2]: https://github.com/jorgegv/dezogif_ng/issues/2
 

@@ -7,3 +7,5 @@
 *.nex
 notes.md
 build/
+__pycache__/
+*.pyc

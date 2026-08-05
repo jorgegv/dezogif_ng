@@ -5,6 +5,155 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-05 — A wait that ends must end somewhere harmless; and a spurious error after every single reply
+
+**Decided and measured, issue #16.** Three changes plus one accident, and the
+accident is the largest of them.
+
+**THE ACCIDENT FIRST, because it was in front of everybody for a month.**
+`esp_flush_chunk` waited for `"SEND OK"` and the module answers
+`"\r\nSEND OK\r\n"`, so the trailing CRLF stayed in the RX FIFO. `cmd_loop`'s
+`transport_wait_rx` ends on **any** byte from the module, so it returned at
+once, `receive_bytes` asked for a command, `esp_sync_ipd` scanned two bytes of
+nothing and timed out — **a full `rx_timeout` into `drain_main` after every
+single response.** "Last Error: RX Timeout" on a healthy machine, `prgm_state`
+back to `PRGM_IDLE`, the backup fields re-initialised, ~100 ms of drain and a
+repaint. Every reply.
+
+Measured rather than deduced: a WiFi ROM with `TRANSPORT_WAIT_RX_SECONDS=0` —
+a wait that *cannot* expire — still painted it after one `CMD_INIT` and thirty
+seconds of silence, which leaves nothing else it can be. Same ROM, same client:
+**848 bright-red pixels before, 0 after.** `esp_str_ok` already ended in CRLF;
+this one did not.
+
+**Why nothing caught it, and this is the transferable part.** Every check in
+this repository judges the **reply**, and the reply is long gone by the time
+this happens — `make test-dzrp-stub` is 14/14 either way. It was found only
+because issue #16's *control* run misbehaved: the unbounded build could not be
+made to sit in the wait, because this bounced it out after every command. **A
+control that refuses to reproduce the old behaviour is evidence about the
+system, not a broken control.**
+
+**A — the bound, and where expiry goes is the whole decision.**
+`transport_wait_rx` was the only unbounded wait in either transport. BC and DE
+are untouched between the two layer-2 writes either side of the loop, so the
+counter lives in registers: the no-CALL/no-PUSH rule was never the obstacle it
+had been taken for.
+
+**Expiry does NOT report and does NOT go through `drain_main`.** The issue asked
+for `jp rx_timeout` and that would have been wrong. `cmd_loop` ends
+`jr cmd_loop`, so this wait **is** the debugger's idle state once a client has
+attached — what it waits for is the next thing the user does in DeZog, and
+someone reading code for a minute before pressing F10 is the normal session.
+Any finite bound therefore fires on healthy sessions, and `drain_main` falls
+into `main`, which re-initialises `prgm_state`, `backup.speed`,
+`backup.interrupt_state`, `backup.layer_2_port` and `slot_backup.slot0` — the
+**debuggee's** saved state. That trade is "convert a hang nobody has reproduced
+into silent corruption of the program being debugged", and it was caught by the
+manager session tracing it rather than by the author. It restores the layer-2
+port, resets SP and jumps to `main_idle` instead.
+
+Nothing is half-received at that moment, provably: the loop can only get there
+with `esp_rx_remaining` zero, no frame held and the FIFO empty — its own
+conditions — and `cmd_loop`'s `TRANSPORT_END_MESSAGE` already flushed the
+outgoing buffer. **That is what makes leaving safe from THIS wait and would not
+from a wait for bytes already owed**, and it is the sentence to keep.
+
+It also **removes** a hazard rather than trading one. Parked in that wait, an
+unsolicited `<id>,CONNECT` or `<id>,CLOSED` ends it and then fails to parse as
+a `+IPD` header — reaching the same destructive reset. The WiFi build does that
+today, every time a client disconnects while idle.
+
+**Landing in `main_loop` made a destructive key reachable, and `main` is split
+because of it.** `check_key_border`'s `jp main` (and the UART build's joy-port
+keys) now go to `main_redraw`, which does everything except that state reset.
+Before the bound, those keys could only be polled while `PRGM_IDLE`, so the
+reset was a no-op; afterwards "B" — a border toggle — would have discarded a
+stopped debuggee's saved state. Also caught in review, not by the author.
+`main_idle` is the timer init, so an expiry cannot arrive with garbage in the
+border-colour counter.
+
+**Five seconds**, `WAIT_SECS`-overridable. The long-bound argument evaporates
+once expiry is non-destructive: the only cost of a short bound is bouncing into
+a poll loop the debugger already runs whenever no client is attached.
+
+**B — a send that has announced its length is completed, whatever happens.** On
+the prompt-timeout arm the payload now goes out anyway and the fault is
+remembered and reported afterwards; the payload loop uses a bounded
+`esp_send_try` so a byte that could not be written can no longer stop the frame
+half-way. The **real** payload, not filler: if the module was merely slow its
+prompt arrives while the bytes are still being shifted and the client gets its
+reply, which is measurably what happens under the injected budget.
+
+**C — five consecutive faults bring the AT chain back up.** `esp_fault_count`
+is incremented by `rxtx_error` and cleared by `transport_init` and by a
+`SEND OK`. `esp_recover` stops the listener first, because `AT+CIPSERVER=1` is
+refused while one is running and a re-init without it would paint "ESP-01 setup
+failed" over a working module.
+
+**What is counted is the decision, not the number.** The idle wait's expiry is
+deliberately **not** counted: it is indistinguishable from a client that is
+thinking, and a recovery closes connections, so counting it would let a healthy
+paused session be disconnected by its own debugger. That is what lets the limit
+be five rather than one.
+
+**NONE OF THIS IS A FIX FOR ISSUE #15, and the evidence points away from it.**
+The manager session drove four candidate triggers at a real Next on build 000B
+while this was being written — a client dying mid-command, a client that stops
+**reading** mid-response, connection churn, and an RST landing while the stub
+was blocked mid-flush — and **not one wedged it**; every one recovered within
+~3 s. The first is precisely this loop with five payload bytes owed and the peer
+gone: the next connection was answered in **4 ms**, because the loop also ends
+on any byte from the module and a new connection makes the module speak. So the
+unbounded wait is survivable on hardware, and an abandoned `AT+CIPSEND` is too.
+What B fixes is a state a module should never be left in; what A buys is a
+debugger that answers its own keyboard again. Issue #15 stays open.
+
+**Evidence: `make test-no-hang`, four runs, all green, N3 shown red first.**
+N1 is the loop as it was (`WAIT_SECS=0`), N2 the shipped ROM one constant away.
+**The verdict is a keypress, not a reply**: the wait ends on any byte, so a
+second command un-sticks even the unbounded build — asserting "can it still
+serve" would have produced a check that passes either way. So "B" is pressed
+during the silence and the border is read: yellow when the key was never polled,
+black when it was. N3: before, both clients unanswered at 20 s; after, both
+answered in 0.01 s with 824 bright-red pixels of "TX Timeout" as the
+**precondition** that the injected budget was really reached — jnext's log
+cannot show our timeout expiring, so without it N3 could pass having tested
+nothing. N4 shows C's mechanism fires and re-listens; it is **not** evidence
+that the recovery repairs anything, because nothing here can make the emulated
+module unresponsive.
+
+**Rejected.** `jp rx_timeout` on expiry (above — it corrupts healthy sessions);
+a long bound to make that rare (any bound fires eventually, and "rare
+corruption" is worse than "visible"); a liveness probe (`AT` → `OK`) before
+deciding (unnecessary once expiry is harmless); gating the keyboard on
+`prgm_state` instead of splitting `main` (it would have made "B" and "R" dead
+during a session, and "R" is the escape hatch); counting the idle expiry towards
+the recovery (it would disconnect healthy paused sessions); a different sentinel
+for `esp_tx_fault` inside `esp_send_raw` rather than a bounded variant (the
+payload loop is the one caller that must not divert, and a global change would
+have moved every other call site's failure semantics).
+
+**NOT COVERED, and said plainly.** The **serial build's** half of A: identical
+code, and nothing here can drive that transport headless — `make test`'s T6 runs
+the serial ROM but attaches no client, so it never reaches `cmd_loop`. C at its
+**shipped** limit, and C against a module that is actually broken. Anything at
+all about a real ESP-01. And the **head-of-line blocking** the manager measured
+the same day — one client that stops reading blocks the stub for as long as it
+holds the socket, 33 s observed — which is deliberately **not** in this branch:
+every chunk is already bounded and each one *succeeds* slowly, so no timeout
+constant reaches it; it needs a bound on total elapsed time across chunks, a
+time source this transport does not have, and a decision about what a client
+sees when a response is abandoned mid-stream. Filed separately.
+
+**Cost.** UART +36 bytes (`main_end` 0xF1DB→0xF1FF), WiFi +187
+(0xF7F5→0xF8B0), 3233 and 1520 bytes still free to the identity block. **Both
+ROMs move on purpose**: A is common code and `main.asm`/`constants.asm` are
+shared. Pinned: UART `ba860de1`→`12e09efe`, WiFi `d3804367`→`f58faa73`. Both
+variants `check-reproducible`.
+
+---
+
 ## 2026-08-05 — The screen reports the SESSION, not the connection; and a bench that reads it
 
 **Decided and built, issue #14.** WiFi mode's screen gains one line at row 8,

@@ -5,6 +5,48 @@ attempting similar logic.
 
 ---
 
+## A control that would not reproduce the old behaviour — and it was right
+
+**Symptom.** Issue #16's bench needed a client to sit quietly in `cmd_loop`'s
+wait so a screenshot could show whether the stub had noticed. The negative
+control was a ROM built with `TRANSPORT_WAIT_RX_SECONDS=0` — the loop with no
+bound at all, which by construction can never leave. It left anyway: its screen
+carried the same 848 bright-red pixels and the same black border as the bounded
+build, so N1 and N2 were indistinguishable and neither meant anything.
+
+**The first instinct was that the control was broken**, and two plausible
+stories were available — the keypress landing before the exchange, or the frame
+counter being mis-tuned. Both were wrong, and both would have been "fixed" by
+turning knobs until the numbers looked right.
+
+**Cause, and it was a real defect in the stub.** `esp_flush_chunk` matched
+`"SEND OK"` where the module answers `"\r\nSEND OK\r\n"`, so two bytes were left
+in the RX FIFO after every reply. `transport_wait_rx` ends on **any** byte from
+the module, so it returned at once, `esp_sync_ipd` found no `+IPD` header in
+`"\r\n"`, and the stub took a full `rx_timeout` into `drain_main` — **after
+every single response**, unbounded wait or not. That is why the control could
+not hold the state: nothing could.
+
+**How it was settled: by making the control's claim impossible to dodge.** A
+wait with `WAIT_SECS=0` *cannot* expire, so an "RX Timeout" on that ROM cannot
+be the wait. That left one candidate, and the CRLF fix took the same run from
+848 bright-red pixels to 0.
+
+**Why no test had ever seen it.** Every check in this repository judges the
+**reply**, and the reply is sent before this happens: `make test-dzrp-stub` is
+14/14 before and after. The stub was paying ~100 ms and a full state reset per
+command, in the open, for a month.
+
+**Lesson, and this file has the shape twice already in the other direction.**
+ERRORS.md keeps saying a fix untested by removing it is a correlation. This is
+the mirror image: **when the removal does not reproduce the old behaviour, that
+is a measurement, not a broken control.** Ask what else could be producing the
+symptom before adjusting the harness — the harness is the thing you have not
+yet questioned, but it is also the thing you are about to bend until it agrees
+with you.
+
+---
+
 ## A correctly-held mutex that does not exclude, because the emulator outlived it
 
 **Symptom.** Mid-session, with three agents working in parallel, a bench run

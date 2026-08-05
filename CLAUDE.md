@@ -335,6 +335,34 @@ strongest:
    tracking, which is M3. **UART mode draws no such line at all**, deliberately: over a cable there
    is no connection event to observe, so there is nothing here to test. **It says nothing about
    hardware.**
+4h. **`make test-no-hang`** — issue #16: waits that end, sends that are not abandoned, and a
+   module the stub can bring back up by itself. 4 headless jnext runs, and the **third and fourth**
+   benches to move a build-time constant to reach their subject. **N1** the loop as it was
+   (`WAIT_SECS=0`) — a client that speaks once and then goes quiet **without hanging up** leaves
+   the stub in `cmd_loop`'s wait; **N2** the *shipped* ROM, one constant away, where the bound
+   expires. **The verdict is a keypress, not a reply, and that is load-bearing**: the wait ends on
+   **any** byte from the module, so a second command — or a disconnect, whose `<id>,CLOSED` the
+   module emits — un-sticks even the unbounded build, and asserting "can it still serve" would have
+   produced a check that passes either way. That is a *hardware* measurement, not a reading: a
+   client killed mid-command on a real Next, next connection answered in 4 ms. So "B" is pressed
+   during the silence and the border is judged — yellow when `main_loop` was never reached and the
+   key was never polled, black when it was. **N3** an `AT+CIPSEND` whose `>` arrives later than the
+   stub will wait (`RX_WAIT=400 TX_PASSES=1`): the announced `<len>` bytes must still be written,
+   or the module counts them off against whatever it is told next. jnext holds that state **by
+   construction** — `esp_at.cpp:496` enters payload mode with the prompt, `:181` counts, no timeout
+   between — so it was **shown red on the commit before the fix**: both clients unanswered at 20 s,
+   against both answered in 0.01 s after. Its precondition is 824 bright-red pixels of
+   `TX Timeout`, because jnext's log cannot show *our* budget expiring. **N4** the self-recovery
+   with `FAULT_LIMIT=1`: the chain really re-runs (`AT+CIPSERVER=0`, then one more `— listening`
+   than a bring-up alone) and a client is served afterwards. **N4 shows the mechanism fires and
+   nothing more** — no run here can make the emulated module unresponsive, so what it
+   re-initialises is a module that was never broken.
+   **None of this fixes issue #15 and none of it may be described as doing so**: four candidate
+   triggers driven at a real Next on 2026-08-05, including both mechanisms this bench covers, all
+   recovered within ~3 s. **NOT covered**: the serial build's half of the bound (identical code,
+   and nothing here can drive that transport headless — T6 attaches no client, so it never reaches
+   `cmd_loop`), the recovery at its shipped limit, and anything about a real ESP-01. Not part of
+   `make test`: it binds a host TCP port.
 5. **`build/ut.nex`** — the same tests, **DeZog-driven** (`"unitTests": true` + zsim + the
    `customCode` plugin) in VS Code. Still a manual layer, and still the only way to exercise the
    36 that 4d must skip. `make unit-tests` assembles it; nothing here runs it.

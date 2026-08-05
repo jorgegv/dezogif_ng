@@ -56,10 +56,41 @@ could match its pattern inside them. And **a scan whose own pattern begins with
 '+' cannot capture**, or it would swallow the line it is looking for: that is
 `esp_sync_ipd` and `esp_query_address`'s `+CIFSR:STAIP,`. So a client connecting
 inside bring-up's one `AT+CIFSR` exchange can still lose its first command,
-which is [[#2026-08-05 — W2's precondition]] territory (issue #10) and measured
-NOT to be fixed by this: 5 of 6 runs with the precondition either way.
+which is issue #10 and is measured NOT to be fixed by this: 5 of 6 runs with W2's
+precondition either way. **That one is closed bench-side instead** — the DZRP
+bench settles 2 s after the listener appears and before any client connects,
+which took the precondition to 6 of 6, and which `test/run-tx-patience.sh`
+already did for the same reason (ERRORS.md). The bench declines to race the
+stub; the window in bring-up is still there.
 
-**A bug of mine, caught by running it and not by reading it.**
+**TWO bugs of mine, both caught by running it and not by reading it, and the
+second by the reviewer rather than by me.**
+
+The second was the same *shape* as the first, one site along.
+`esp_rx_from_hold` was cleared only by `esp_sync_ipd` — the wire path — so
+between finishing a held command and the next chunk arriving off the wire the
+buffer read as busy and `esp_capture_ipd` refused every capture. The first
+collision was handled; the next one lost its command, silently, for exactly the
+reason the first one no longer did. **Reproduced 11 times out of 11** with a
+client that speaks while the stub is answering a held command. It is cleared in
+`transport_read_byte` now, where `esp_rx_remaining` reaches zero — the only
+place that count is decremented, so every path passes through it.
+`transport_wait_rx` also had to learn about a held frame: it has no timeout by
+design, so with a frame held and a quiet module it would have spun for ever.
+
+**W4 could not see it, and making it able to took three measured attempts.** A
+single collision never reaches the stuck state, because the next command comes
+off the wire through the idle poll, which frees the buffer on the way past. Two
+collisions do not either, for the same reason. What does is a client connected
+in advance that speaks the moment the first reply lands — and even that needs
+the *held* command to have a long answer (a five-byte `CMD_READ_MEM` returning
+1 KB, five `AT+CIPSEND` chunks) or the window is a millisecond wide and the
+check passes against a ROM known to be broken. It must NOT be a large loopback:
+loopback echoes, so the command itself would exceed `ESP_HOLD_MAX` and be
+dropped by design, failing a correct stub. Both wrong versions were run, not
+imagined.
+
+**The first bug, for the record.**
 `transport_byte_available` polls through `esp_sync_ipd` **directly**, not through
 `esp_require_payload`, so clearing "serving from the hold" in the latter left a
 spent buffer selected and the next command was read out of already-consumed

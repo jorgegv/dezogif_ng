@@ -50,13 +50,29 @@ and issues `AT+CIPSEND`; the second frame is then sitting in the RX FIFO **ahead
 `OK\r\n> `**, and the wait for that prompt skipped it exactly as it skips the module's unsolicited
 lines — read off the wire and discarded. No error, nothing sent, the client waiting for ever.
 
+**It then adds a third client**, connected in advance and speaking the moment the first reply
+lands, so its frame arrives while the stub is still answering the *other* command out of its hold
+buffer. That is a different bug from the collision and a single collision cannot reach it: the
+next command normally comes off the wire through the idle poll, which frees the buffer on the way
+past. The held command is a five-byte `CMD_READ_MEM` returning 1 KB — five `AT+CIPSEND` chunks —
+because with everything small the window is about a millisecond and the check stops
+discriminating, measured against a ROM known to have the defect.
+
 **W4 asserts its own precondition, as W2 does**, and here it is load-bearing rather than
 belt-and-braces: it greps jnext's log for two `+IPD` frames emitted with nothing sent between them.
 A race that did not race is not a test, and without that line W4 would pass whenever the two writes
 happened not to collide.
 
-**It was shown red first**, against `main`'s ROM: *"exactly one of the two was answered, which is
-the signature of a frame eaten by the wait for AT+CIPSEND's prompt"*.
+**It was shown red first, against two different ROMs, and each half of it fails on its own one:**
+
+| ROM | W4 |
+|---|---|
+| `main` | **FAIL** — *"exactly one of the two was answered"* |
+| the fix's first version, which freed the hold buffer only when the wire next spoke | **FAIL** — *"the client that arrived while the stub was answering a HELD command was lost"* |
+| the fix as merged | **PASS** |
+
+The middle row is the one that matters: that defect was found in review, reproduced 11 times out
+of 11, and the first version of W4 was **green** over it.
 
 **The same defect's other window is NOT reachable here**, and that is worth knowing before anyone
 reads W4 as covering issue #11 whole. The wait for `SEND OK` loses a frame the same way, but jnext
@@ -104,6 +120,15 @@ fixture is written for the memory map `cmd_init` leaves on a Next and would need
 any CSpect result meant anything.
 
 ## Result against our own stub
+
+**Since 2026-08-05 every run of this bench settles two seconds between the listener appearing and
+the first client connecting** (issue #10). The port exists as soon as `AT+CIPSERVER` is accepted,
+and the stub then sends `AT+CIFSR` and scans the answer for `OK`; a client landing inside that scan
+loses its first command, which showed up as W2 failing its own precondition about one run in three.
+Measured: 6 of 6 runs with the settle, 5 of 6 without. `test/run-tx-patience.sh` settles for the
+same reason. **It is the bench declining to race the stub, not the stub being fixed** — the window
+in bring-up is real, and it is the one case issue #11's fix deliberately cannot capture from,
+because that scan's own pattern begins with `+`.
 
 **2026-08-05, no scan discards an inbound frame (issue #11) — `make test-dzrp-stub`: W1, W2, W3
 **and W4** pass, and 12 passed, 0 failed, 0 unsupported of 12.** W4 is new and was red on the

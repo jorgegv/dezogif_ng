@@ -2,7 +2,7 @@
 #
 # The DZRP conformance suite, pointed at OUR OWN STUB.
 #
-# Invoked by `make test-dzrp-stub`. Two headless jnext runs with the WiFi ROM
+# Invoked by `make test-dzrp-stub`. Four headless jnext runs with the WiFi ROM
 # installed as the Multiface ROM and an emulated M1 button press to bring the
 # debugger up, with a TCP client talking to the emulated ESP-01.
 #
@@ -37,6 +37,17 @@
 #          measuring something other than the resume — a green check that
 #          cannot reach its own failing case is the mistake ERRORS.md already
 #          records twice.
+#
+#   run 4
+#     W4   TWO COMMANDS ARRIVING BACK TO BACK ARE BOTH ANSWERED. One of them
+#          used to be destroyed by the wait for AT+CIPSEND's prompt, which
+#          skipped it exactly as it skips the module's unsolicited lines — no
+#          error, nothing sent, the client waiting for ever (issue #11). It
+#          asserts its own precondition from the module's log, the way W2 does:
+#          two +IPD frames really were emitted with nothing sent between them.
+#          The same defect's OTHER window, the wait for SEND OK, is
+#          unreachable here because jnext answers instantly; that one is
+#          hardware bench H3.
 #
 # WHAT IT DOES NOT COVER. Real hardware, where the ESP has to be associated
 # first and answers at whatever baud it was last left at (doc/WIFI-SETUP.md).
@@ -120,6 +131,7 @@ LISTEN_TIMEOUT=60
 MF_ROM_PATH='::/machines/next/enNextMf.rom'
 CONFORMANCE=$(dirname "$0")/dzrp/conformance.py
 ORPHAN=$(dirname "$0")/dzrp/orphan-notify.py
+QUEUED=$(dirname "$0")/dzrp/queued-commands.py
 
 # Longer than the suite's own 5 s default. The loopback sweep now goes to 4096
 # bytes, which is ~8 KB over a 115200 link plus seventeen AT+CIPSEND round
@@ -142,6 +154,7 @@ die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [ -f "$ROM" ]        || die "WiFi ROM not built: $ROM (run 'make mf-rom-wifi')"
 [ -f "$CONFORMANCE" ]|| die "conformance suite not found: $CONFORMANCE"
 [ -f "$ORPHAN" ]     || die "W2 fixture not found: $ORPHAN"
+[ -f "$QUEUED" ]     || die "W4 fixture not found: $QUEUED"
 python3 -c 'import PIL' 2>/dev/null || die "python3 Pillow is required for W2's screen check"
 command -v mcopy >/dev/null || die "mtools (mcopy) is required to install the ROM into the SD image"
 
@@ -188,9 +201,11 @@ sd=$OUT/sd-dzrp.img
 jlog=$OUT/dzrp-stub.log
 jlog2=$OUT/dzrp-stub-w2.log
 jlog3=$OUT/dzrp-stub-w3.log
+jlog4=$OUT/dzrp-stub-w4.log
 shot=$OUT/screenshots/dzrp-stub.png
 shot2=$OUT/screenshots/dzrp-stub-w2.png
 shot3=$OUT/screenshots/dzrp-stub-w3.png
+shot4=$OUT/screenshots/dzrp-stub-w4.png
 
 jnext_pid=""
 cleanup() {
@@ -419,11 +434,59 @@ fi
 
 # ===========================================================================
 
+# ===========================================================================
+# Run 4 — W4: two commands queued back to back, both must be answered
+#
+# Its own emulator run because it needs a stub that has not been resumed or
+# crashed by the runs above, and because its precondition is read out of a
+# clean log.
+# ===========================================================================
+
+log ""
+log "== run 4: two commands arriving back to back"
+
+if ! start_stub "$jlog4" "$shot4"; then
+    fail "W4 the stub never listened on 127.0.0.1:$PORT for the queued-command run"
+else
+    set +e
+    queued_out=$(DZRP_PORT="$PORT" DZRP_TIMEOUT="$CONTROL_TIMEOUT" python3 "$QUEUED" 2>&1)
+    queued_rc=$?
+    set -e
+    stop_stub
+    printf '%s\n' "$queued_out" | sed 's/^/  | /'
+
+    q_connects=$(grep -c "accepted as cid" "$jlog4" || true)
+
+    # THE PRECONDITION, asserted from the module's own log rather than assumed:
+    # two +IPD frames really were put on the wire with nothing sent between
+    # them. Without this W4 passes vacuously whenever the client's two writes
+    # happen not to collide — which is most of the reason a race makes a bad
+    # test. `AT ->` is the module talking, `AT <-` is the stub.
+    collided=$(grep -E 'AT (->|<-)' "$jlog4" \
+        | awk '/AT -> .*\+IPD,/ { if (prev) { hit++ } ; prev = 1 ; next }
+               { prev = 0 }
+               END { print hit + 0 }')
+
+    if [ "$q_connects" -gt 6 ]; then
+        fail "W4 CONTAMINATED — $q_connects connections in $jlog4 where this fixture makes 2. Another bench run reached our stub, so this verdict means nothing in either direction."
+    elif [ "$collided" -lt 1 ]; then
+        fail "W4 the precondition never happened — no two +IPD frames were emitted back to back in $jlog4, so the collision was not tested"
+    elif [ "$queued_rc" -ne 0 ]; then
+        fail "W4 a command that arrived while the stub was answering another was LOST (issue #11) — see the lines above and $jlog4"
+    else
+        pass "W4 two commands queued back to back are both answered ($collided collision(s) in the module's log), so no scan discarded an inbound frame"
+    fi
+fi
+
+# ===========================================================================
+# Summary
+# ===========================================================================
+
 log ""
 if [ "$failures" -ne 0 ]; then
     log "Diagnosis:"
-    log "  jnext logs:   $jlog  $jlog2  $jlog3"
-    log "  screenshots:  $shot  $shot2  $shot3"
+    log "  jnext logs:   $jlog  $jlog2  $jlog3  $jlog4"
+    log "  screenshots:  $shot  $shot2  $shot3  $shot4"
 fi
 
 exit "$((failures > 0 ? 1 : 0))"

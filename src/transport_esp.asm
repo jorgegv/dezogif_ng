@@ -113,6 +113,39 @@
 ;    have multiplied the idle poll's worst case by the same factor — see
 ;    transport_byte_available on why that poll can stall at all.
 ;
+; 8. NO SCAN MAY DESTROY AN INBOUND FRAME, and one of them used to. Every wait
+;    here skips what it is not looking for — that is what lets it step over the
+;    module's unsolicited lines instead of desynchronising on them — and a
+;    `+IPD` arriving mid-scan was skipped in exactly the same way, i.e. read off
+;    the wire and thrown away. The client was answered by nothing at all.
+;
+;    THIS COST A THIRD HARDWARE SESSION, and unlike points 3 and 7 it also
+;    reproduces here. Two windows, measured separately:
+;
+;      * AT+CIPSEND's '>' (esp_wait_prompt). Two commands queued back to back
+;        put the second one's whole frame in the FIFO ahead of the prompt. In
+;        jnext this fails 4 runs out of 4, and its esp01 log shows both headers
+;        emitted and one answered — bench check W4.
+;      * "SEND OK" (esp_wait_string). The module forwards the reply to the
+;        client before it tells us the send finished, so a client that answers
+;        at once lands inside the wait. Measured on a real Next as a 20-50 ms
+;        window; invisible here, because jnext answers instantly. Hardware
+;        bench H3.
+;
+;    So esp_read_scan captures the frame — header parsed, payload held — and
+;    the scan carries on looking for its own pattern. esp_require_payload then
+;    serves the held frame as the next command. The buffer is ESP_HOLD_MAX and
+;    exactly one frame deep, which is the shape of the traffic: a frame is only
+;    captured while we are answering the previous command.
+;
+;    WHAT IS NOT COVERED. A frame longer than the buffer, or a second one while
+;    the first is still held, is read off the wire and dropped — losing the
+;    command, as before, but leaving the stream framed, which the old code did
+;    not. And a scan whose own pattern begins with '+' cannot capture: that is
+;    esp_sync_ipd and the "+CIFSR:STAIP," in esp_query_address, so a client
+;    connecting inside bring-up's one AT+CIFSR exchange can still lose its
+;    first command.
+;
 ;---------------------------------------------------------------------------
 ; What this file does NOT do, deliberately
 ;---------------------------------------------------------------------------
@@ -191,6 +224,23 @@ UART_TX_FULL:       equ 1   ; 1=Tx buffer is full
 ; round trips and more RAM; this is not a measured optimum, it is a size that
 ; obviously fits.
 ESP_TX_CHUNK:   equ 240
+
+; How much of an inbound frame met MID-SCAN can be held (issue #11, point 8 in
+; the header). Every DZRP command that a second client can plausibly have in
+; flight while we are answering the first fits: CMD_INIT is ~32 bytes here,
+; CMD_CONTINUE 11, CMD_READ_MEM 5, and H3's loopbacks 30. What does not fit is
+; a bulk write — CMD_WRITE_BANK pushes 8-16 KB — and that is the documented
+; residual rather than an oversight: a buffer that could hold one is a buffer
+; the size of the largest DZRP command, which is exactly the RAM cost this
+; transport is built not to pay (see esp_sync_ipd).
+;
+; OVERRIDABLE, like ESP_IP_MAX and ESP_RX_WAIT, and for the identical reason:
+; the "too long to hold" path cannot be reached by any bench that sends
+; ordinary commands, so the only way to exercise it is to bring the bound down
+; to meet the traffic.
+ IFNDEF ESP_HOLD_MAX
+ESP_HOLD_MAX:   equ 256
+ ENDIF
 
 ; One pass of the RX poll below, in loop iterations. ~68 T-states each, so at
 ; 28 MHz (which is where the debugger runs — init_main_bank and enter_debugger
@@ -354,6 +404,36 @@ ESP_PORT_LEN:   equ esp_str_port_end - esp_str_port
 
 ; Payload bytes still owed by the current +IPD chunk.
 esp_rx_remaining:   defw 0
+
+;---------------------------------------------------------------------------
+; The held frame — issue #11, and point 8 in the header.
+;
+; A scan that discards what it is not looking for destroys an inbound command
+; that arrives while it is running. These four hold the one frame such a scan
+; may meet, so it can be served to the command layer afterwards instead.
+;
+; The states are:
+;   esp_hold_len != 0                a frame is held and not yet started
+;   esp_rx_from_hold != 0            the current chunk IS that frame, being read
+;   both clear                       the buffer is free
+; A capture is allowed only when both are clear, which is what stops a second
+; frame overwriting one that is held or half-read.
+;---------------------------------------------------------------------------
+esp_hold_len:       defw 0
+; The connection the held frame came from. NOT copied into esp_conn_id at
+; capture time, deliberately: a capture can happen halfway through a response
+; being flushed, and esp_conn_id names the connection THAT is being answered.
+; The two are joined only when the frame is adopted — esp_require_payload.
+esp_hold_id:        defb 0
+esp_hold_ptr:       defw 0
+esp_rx_from_hold:   defb 0
+esp_hold_buf:       defs ESP_HOLD_MAX
+
+; Set by whichever entry point of esp_wait_string is running: a scan looking
+; for a line that starts with '+' cannot also capture one (esp_sync_ipd's own
+; "+IPD," and esp_query_address's "+CIFSR:STAIP,"). Written at every entry,
+; never inherited.
+esp_scan_hold:      defb 0
 
 ; The connection the last +IPD arrived on, echoed back on AT+CIPSEND. Pure
 ; data: every value the module can hand out is an ordinary connection, 0
@@ -634,6 +714,176 @@ esp_copy_string:
 
 
 ;===========================================================================
+; Reads one byte FOR A SCAN, capturing an inbound frame instead of eating it.
+;
+; This is the whole of issue #11's fix. The scans in this file skip whatever
+; they are not looking for, which is what lets them step over the module's
+; unsolicited lines — and it is also what destroyed a `+IPD` that arrived while
+; one of them was running. Measured in two places, both real:
+;
+;   * waiting for AT+CIPSEND's '>' — two commands queued back to back, and the
+;     second one's whole frame sits in the FIFO ahead of the prompt. jnext
+;     reproduces this 4 times out of 4, and its own log shows both +IPD headers
+;     emitted and only one answered.
+;   * waiting for SEND OK — the module forwards the reply to the client before
+;     it tells us the send completed, so a client that answers at once lands
+;     inside the wait. Hardware only: measured on a real Next as a 20-50 ms
+;     window, invisible in jnext, which answers instantly.
+;
+; A '+' is the only thing that can start an inbound frame, and nothing else the
+; module says while it owes us an answer begins with one (`SEND OK`, `ERROR`,
+; `OK`, `<id>,CONNECT`, `<id>,CLOSED`, `busy`). So a '+' hands over to
+; esp_capture_ipd and the scan then carries on looking for its own pattern.
+;
+; Returns:
+;  NC and A = a byte that is not part of an inbound frame, or CY on timeout.
+; Changes:
+;  AF, BC, DE  (HL is preserved: both callers hold their pattern there)
+;===========================================================================
+esp_read_scan:
+    call esp_try_read_raw
+    ret c
+    cp '+'
+    jr z,.frame
+    ; CARRY MUST BE CLEAR HERE. Both callers read it as "timed out", and `cp`
+    ; sets it for every byte below '+' — which is most of a DZRP payload. `or a`
+    ; clears it and leaves the byte alone.
+    or a
+    ret
+
+.frame:
+    ld a,(esp_scan_hold)
+    or a                        ; also clears the carry for the return below
+    jr nz,.capture
+    ld a,'+'                    ; this scan is looking for a '+' line itself
+    ret
+
+.capture:
+    push hl
+    call esp_capture_ipd
+    pop hl
+    jr esp_read_scan
+
+
+;===========================================================================
+; Takes an inbound `+IPD,<id>,<len>:` frame off the wire and holds it, having
+; already read the '+'.
+;
+; It is called from inside a wait, so it must ALWAYS come back — a frame it
+; cannot hold is still read off the wire and dropped, because leaving half of
+; one in the stream would desynchronise the scan that called us. That is
+; already an improvement on what this replaced, where the scan consumed an
+; unknown number of payload bytes and could match its pattern inside them.
+;
+; It does NOT touch esp_conn_id or esp_conn_valid; see esp_hold_id.
+; Changes:
+;  AF, BC, DE, HL
+;===========================================================================
+esp_capture_ipd:
+    ; "IPD," has to follow. esp_str_ipd+1 IS that string — sharing it with the
+    ; parser's own pattern is what stops the two drifting apart.
+    ld hl,esp_str_ipd+1
+.verify:
+    ld a,(hl)
+    or a
+    jr z,.header
+    push hl
+    call esp_try_read_raw
+    pop hl
+    ret c
+    cp (hl)
+    ret nz                      ; some other `+` line: those bytes are gone
+    inc hl
+    jr .verify
+
+.header:
+    ld c,','
+    call esp_read_decimal
+    ret c
+    ld a,h
+    or a
+    ret nz                      ; an id that does not fit a byte: not ours
+    ld a,l
+    push af                     ; the id, until the length is known
+    ld c,':'
+    call esp_read_decimal
+    pop bc                      ; B = the id
+    ret c
+
+    ; HL = the payload length. Hold it only if the buffer is free AND big
+    ; enough; otherwise read it away, which keeps the stream framed.
+    ld a,(esp_rx_from_hold)
+    or a
+    jr nz,.drop
+    ld de,(esp_hold_len)
+    ld a,d
+    or e
+    jr nz,.drop
+    ld de,ESP_HOLD_MAX
+    push hl
+    or a
+    sbc hl,de                   ; len - ESP_HOLD_MAX
+    pop hl
+    jr z,.keep                  ; exactly full still fits
+    jr c,.keep
+.drop:
+    ; Read the payload away. The command is lost — the same loss this used to
+    ; have for every frame, now narrowed to one that is too big to hold or one
+    ; arriving while another is still held.
+    ld a,h
+    or l
+    ret z
+    push hl
+    call esp_try_read_raw
+    pop hl
+    ret c
+    dec hl
+    jr .drop
+
+.keep:
+    ld a,b
+    ld (esp_hold_id),a
+    ld (esp_hold_len),hl
+    ld de,esp_hold_buf
+.copy:
+    ld a,h
+    or l
+    ret z
+    push hl, de
+    call esp_try_read_raw
+    pop de, hl
+    jr c,.truncated
+    ld (de),a
+    inc de
+    dec hl
+    jr .copy
+
+.truncated:
+    ; The module stopped mid-frame. What was read is not a command, so the hold
+    ; goes back to empty rather than being served as one.
+    ld hl,0
+    ld (esp_hold_len),hl
+    ret
+
+
+;===========================================================================
+; Reads the next byte of the held frame.
+; Returns:
+;  A = the byte.
+; Changes:
+;  AF  (HL is preserved: transport_read_byte's contract)
+;===========================================================================
+esp_hold_read_byte:
+    push hl
+    ld hl,(esp_hold_ptr)
+    ld a,(hl)
+    inc hl
+    ld (esp_hold_ptr),hl
+    pop hl
+    ret
+
+
+;===========================================================================
 ; Scans the incoming stream until a pattern is seen.
 ;
 ; Naive matching, with a restart that RE-TESTS the mismatching byte against the
@@ -645,6 +895,17 @@ esp_copy_string:
 ; answers it owes, and skipping past them is exactly what makes this transport
 ; resynchronise instead of desynchronising.
 ;
+; TWO ENTRY POINTS, and which one a caller uses is not a matter of taste.
+; esp_wait_string_hold captures an inbound frame met while scanning (issue #11,
+; esp_read_scan); esp_wait_string eats it, as everything here used to.
+;
+; The rule is mechanical: **a scan whose own pattern starts with '+' cannot
+; capture**, because the capture would swallow the very line it is looking for.
+; That is esp_sync_ipd's "+IPD," and esp_query_address's "+CIFSR:STAIP,"" — and
+; it is the residual this fix does not close: a client connecting during the
+; one AT+CIFSR exchange of bring-up can still lose its first command. Every
+; other scan here holds.
+;
 ; Parameter:
 ;  HL = NUL-terminated pattern.
 ; Returns:
@@ -652,13 +913,19 @@ esp_copy_string:
 ; Changes:
 ;  AF, BC, DE, HL
 ;===========================================================================
+esp_wait_string_hold:
+    ld a,1
+    jr esp_wait_string.set
 esp_wait_string:
+    xor a
+.set:
+    ld (esp_scan_hold),a
     push hl                 ; keep the pattern start for restarts
 .next:
     ld a,(hl)
     or a
     jr z,.matched
-    call esp_try_read_raw   ; A = the byte read; HL still points at the pattern
+    call esp_read_scan      ; A = the byte read; HL still points at the pattern
     jr c,.timeout
     cp (hl)
     jr nz,.mismatch
@@ -709,9 +976,14 @@ esp_wait_string:
 ;   AF, BC, DE, HL
 ;===========================================================================
 esp_wait_prompt:
+    ; It captures: its only caller is esp_flush_chunk, and this is the window
+    ; that loses a command when two arrive back to back — the one jnext
+    ; reproduces. See esp_read_scan.
+    ld a,1
+    ld (esp_scan_hold),a
     ld hl,esp_str_error
 .next:
-    call esp_try_read_raw
+    call esp_read_scan
     jr c,.silent
     cp '>'
     jr z,.prompt
@@ -877,8 +1149,16 @@ esp_sync_ipd:
     call esp_read_decimal
     ret c
     ld (esp_rx_remaining),hl
-    or a                    ; NC
-    ret
+    ; The current chunk is now the WIRE's, so the held-frame buffer is free
+    ; again. It is cleared HERE rather than in esp_require_payload because this
+    ; is the only routine that makes a wire chunk current, and it has two
+    ; callers: transport_byte_available polls through it directly, and leaving
+    ; that path out meant a spent hold stayed selected and the next command was
+    ; read out of a buffer that had already been consumed. Measured, not
+    ; reasoned: the frame arrived, nothing was sent, and the client timed out.
+    xor a
+    ld (esp_rx_from_hold),a
+    ret                     ; NC, from the xor
 
 .bad:
     ; A header this routine cannot parse is abandoned WHERE IT STANDS: the rest
@@ -904,6 +1184,21 @@ esp_require_payload:
     ld a,h
     or l
     ret nz
+
+    ; A HELD FRAME COMES BEFORE ANYTHING STILL ON THE WIRE, because it arrived
+    ; first — it was taken off the wire by a scan that would otherwise have
+    ; destroyed it (esp_capture_ipd). This is where it becomes the current
+    ; chunk, and where its connection becomes the one replies go to: nothing
+    ; before this point touches esp_conn_id, so a response being flushed cannot
+    ; be redirected halfway through by a command arriving from somewhere else.
+    ld hl,(esp_hold_len)
+    ld a,h
+    or l
+    jr nz,.adopt_held
+
+    ; Nothing held: the next chunk comes off the wire. esp_sync_ipd is what
+    ; releases the buffer, because it is also reachable from
+    ; transport_byte_available.
     call esp_sync_ipd
     jr c,.timeout
     ; A zero-length chunk would loop here forever. jnext never frames one
@@ -916,6 +1211,22 @@ esp_require_payload:
 .timeout:
     nop ; LOGPOINT esp_require_payload: ERROR=TIMEOUT
     jp rx_timeout   ; ASSERTION
+
+.adopt_held:
+    ; HL = the held length. The hold's own length goes to zero here and
+    ; esp_rx_from_hold takes over as "the buffer is busy", so a capture during
+    ; the response to THIS command cannot overwrite what is still being read.
+    ld (esp_rx_remaining),hl
+    ld hl,0
+    ld (esp_hold_len),hl
+    ld hl,esp_hold_buf
+    ld (esp_hold_ptr),hl
+    ld a,(esp_hold_id)
+    ld (esp_conn_id),a
+    ld a,1
+    ld (esp_conn_valid),a
+    ld (esp_rx_from_hold),a
+    ret
 
 
 ;===========================================================================
@@ -938,6 +1249,12 @@ transport_drain_with_timeout:
     xor a
     ld (esp_rx_remaining),a
     ld (esp_rx_remaining+1),a
+    ; A held frame is a fragment too. A drain means "abandon this and go idle",
+    ; and serving a command captured before whatever went wrong would put the
+    ; two ends back out of step in a new way.
+    ld (esp_hold_len),a
+    ld (esp_hold_len+1),a
+    ld (esp_rx_from_hold),a
     ld (esp_tx_len),a
     ld bc,UART_TX
 
@@ -1062,6 +1379,13 @@ transport_byte_available:
     or l
     jr nz,.ret
 
+    ; A frame captured by a scan is a command that has already arrived, and
+    ; main_loop would otherwise never go and read it.
+    ld hl,(esp_hold_len)
+    ld a,h
+    or l
+    jr nz,.ret
+
     ; Nothing owed. Is the module saying anything at all?
     ld a,HIGH UART_TX
     in a,(LOW UART_TX)
@@ -1106,7 +1430,11 @@ transport_read_byte:
     ld a,YELLOW
     out (BORDER),a
 
-    jp esp_read_raw
+    ; The current chunk is either the wire or the frame a scan held for us.
+    ld a,(esp_rx_from_hold)
+    or a
+    jp z,esp_read_raw
+    jp esp_hold_read_byte
 
 
 ;===========================================================================
@@ -1276,7 +1604,7 @@ esp_flush_chunk:
     ; TCP stack has taken the segment. Same tight pair, same reason.
     ld hl,esp_str_send_ok
     call esp_rx_budget_long
-    call esp_wait_string
+    call esp_wait_string_hold
     call esp_rx_budget_short
     ret nc
 
@@ -1479,7 +1807,7 @@ esp_query_address:
     ; address is already in hand, and main_bank_entry falls into drain_main,
     ; which discards anything still on the wire.
     ld hl,esp_str_ok
-    jp esp_wait_string
+    jp esp_wait_string_hold
 
 
 ;===========================================================================
@@ -1509,7 +1837,7 @@ esp_show_status:
 esp_command_ok:
     call esp_send_string
     ld hl,esp_str_ok
-    call esp_wait_string
+    call esp_wait_string_hold
     ret nc
     ld a,ERROR_RX_TIMEOUT
     scf

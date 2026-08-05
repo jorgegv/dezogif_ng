@@ -1264,8 +1264,14 @@ esp_sync_ipd:
 
 ;===========================================================================
 ; Makes sure at least one payload byte is owed to us, synchronising to the
-; next +IPD header if the previous chunk is used up. Does not return on
-; failure — see esp_read_raw.
+; next +IPD header if the previous chunk is used up — and, since issue #13,
+; making sure that chunk belongs to the command being received rather than to
+; whoever spoke next. Does not return on failure — see esp_read_raw.
+;
+; It is also where a command's connection is CLAIMED: this is the one routine
+; every payload byte passes through, and claiming at sync time instead would be
+; inert, because main_loop's poll synchronises a frame BEFORE cmd_loop's
+; TRANSPORT_END_MESSAGE releases the previous command.
 ; Changes:
 ;  AF, BC, DE, HL
 ;===========================================================================
@@ -1378,7 +1384,7 @@ esp_next_wire_chunk:
     or l
     ret nz
 .timeout:
-    nop ; LOGPOINT esp_require_payload: ERROR=TIMEOUT
+    nop ; LOGPOINT esp_next_wire_chunk: ERROR=TIMEOUT
     jp rx_timeout   ; ASSERTION
 
 

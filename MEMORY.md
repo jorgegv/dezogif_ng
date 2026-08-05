@@ -28,8 +28,20 @@ real regression:
 1. **There is nothing to pause.** The handler is reachable only from `cmd_loop`,
    which runs only while the debugger is stopped, so the command cannot arrive
    in any other state.
-2. **Writing `prgm_state` would break `cmd_continue`.** DeZog sends `CMD_PAUSE`
-   right after `CMD_INIT`, i.e. in `PRGM_LOADING`. Overwriting that with
+2. **Writing `prgm_state` would break `cmd_continue`.** A client may legitimately
+   send `CMD_PAUSE` before the first `CMD_CONTINUE` — conformance check C12 does
+   exactly that — so it can arrive while `prgm_state` is `PRGM_LOADING`.
+
+   An earlier version of this entry said *"DeZog sends `CMD_PAUSE` right after
+   `CMD_INIT`"*, which the reviewer could not substantiate: tracing DeZog 3.7.4
+   found no automatic path, only the UI Pause button, the debug console, a
+   unit-test timeout and `CSpectRemote.disconnect()`. The narrower claim is the
+   one that holds and the one the fix actually rests on — and the conclusion is
+   unchanged either way, since not writing `prgm_state` is right regardless of
+   which client sends it when. Recorded because a reason that turns out to be
+   unsupported is worth more as a correction than as a quiet deletion.
+
+   Overwriting that with
    `PRGM_STOPPED` — the obvious "mark ourselves stopped" move — makes the next
    `cmd_continue` skip its `cp PRGM_LOADING` branch, so the border colour is
    never restored and the flashing border is never disabled. The correct side

@@ -479,9 +479,11 @@ cmd_continue:
 ; ANSWERING IS THE WHOLE OF IT, AND DOING MORE WOULD BE WRONG. This handler is
 ; only ever reached from cmd_loop, which runs only while the debugger is
 ; stopped, so the command cannot arrive in any other state and there is nothing
-; here to pause. In particular it must NOT touch prgm_state: DeZog sends
-; CMD_PAUSE right after CMD_INIT, i.e. in PRGM_LOADING, and overwriting that
-; with PRGM_STOPPED would make the next cmd_continue skip its "loading
+; here to pause. In particular it must NOT touch prgm_state: a client may
+; legitimately send CMD_PAUSE before the first CMD_CONTINUE — our own
+; conformance check C12 does exactly that, CMD_INIT then CMD_PAUSE — which
+; means it can arrive while prgm_state is PRGM_LOADING. Overwriting that with
+; PRGM_STOPPED would make the next cmd_continue skip its "loading
 ; finished" branch (.start, above) and leave the flashing border on. Nor does
 ; it send an NTF_PAUSE — that notification reports a TRANSITION into the
 ; stopped state, and no transition happens here. CSpect's plugin behaves the

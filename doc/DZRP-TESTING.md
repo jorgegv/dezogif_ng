@@ -209,7 +209,8 @@ it, and fixing it moved both ROMs' bytes.
 
 **Acknowledging is the whole of the fix, deliberately.** `cmd_loop` runs only while the debugger is
 stopped, so command 7 cannot arrive in any other state and there is nothing to stop. It must not
-touch `prgm_state`: DeZog sends `CMD_PAUSE` right after `CMD_INIT`, i.e. in `PRGM_LOADING`, and
+touch `prgm_state`: a client may legitimately send `CMD_PAUSE` before the first `CMD_CONTINUE` —
+check C12 does exactly that — so it can arrive while `prgm_state` is `PRGM_LOADING`, and
 overwriting that with `PRGM_STOPPED` would make the next `cmd_continue` skip its "loading finished"
 branch and leave the flashing border on. Nor does it send an `NTF_PAUSE` — that notification
 reports a *transition* into the stopped state and there is none here. CSpect's plugin does the

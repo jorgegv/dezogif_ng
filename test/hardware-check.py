@@ -689,14 +689,14 @@ def h5_throughput(host, port, timeout, results, nbytes):
 UNCOVERED = """
 NOT COVERED BY THIS RUN, and none of it is incidental:
 
-  * The stackless-NMI return ADDRESS, untested in either place: it needs the
-    Multiface NMI button pressed while the debuggee is RUNNING, which nothing
-    performs yet. C10 sets PC itself, so save_nmi_return_address never runs —
-    and that routine is the only thing that recovers the interrupted program's
-    address from NR 0xC2/0xC3. Closing it needs a finger, not more code: run a
-    fixture that spins in a known address range, CMD_CONTINUE it, press the
-    button, and check PC came back inside that range. It cannot be automated in
-    jnext, where --delayed-nmi counts frames and the client counts wall clock.
+  * The stackless-NMI return address is NO LONGER on this list. It was closed on
+    2026-08-05 by a human with a real DeZog session: CMD_CONTINUE with no
+    breakpoint, the M1 button pressed while the debuggee spun in a jr $, and the
+    NTF_PAUSE came back with break reason 1 while CMD_GET_REGISTERS reported
+    PC=0x801C — where it was spinning. That value can only come from
+    save_nmi_return_address reading NR 0xC2/0xC3. This bench still cannot do it,
+    and neither can jnext, where --delayed-nmi counts frames and a client counts
+    wall clock. It needed a finger.
   * The Next's screen — but only for as long as nobody reads it over the wire.
     While the debugger is stopped cmd_init maps 8K banks 10 and 11 at 0x4000
     (commands.asm), which is 128K bank 5, the display file the ULA is showing

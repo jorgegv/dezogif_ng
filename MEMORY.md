@@ -5,6 +5,56 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-05 — DeZog drives the stub on a Next, and the stackless-NMI return address finally runs
+
+**Measured, not decided**, and it closes both M1's last item and the oldest
+unverified claim in the project. A VS Code session, `remoteType: "cspect"`,
+pointed at a real Next over WiFi: attach, disassemble, registers, memory,
+single-step, **manual break**, clean disconnect, reattach. Captured through a
+logging TCP tap, frozen at 1586 lines.
+
+**The result that matters most is the twenty-second notification.** A
+`CMD_CONTINUE` with **no temporary breakpoint** set the conformance fixture
+running in its `jr $` at `0x801C`; ten seconds later the **M1 button** was
+pressed; the `NTF_PAUSE` came back with break reason **1**
+(`BREAK_REASON.MANUAL_BREAK`) and `CMD_GET_REGISTERS` reported **PC `0x801C`,
+SP `0x9F00`**. `cmd_get_registers` reads `backup.pc`, and on a press taken while
+`prgm_state` is `PRGM_RUNNING` that value comes from
+**`save_nmi_return_address` reading NR `0xC2`/`0xC3`** — the routine plan §3.4
+calls the half that matters, because without it entering the debugger corrupts
+the debuggee. **It had never executed anywhere**, in the emulator or on silicon,
+and every NOT-COVERED list in this repository named it.
+
+**It needed a finger, and that is the transferable part.** The reason no bench
+could reach it is written down in three places: `--delayed-nmi` counts emulated
+frames while a DZRP client counts wall clock, and the frame rate collapses under
+traffic, so scheduling one is a race rather than a check. A human pressing a
+button has no such race. **When a path is unreachable by construction from the
+harness, ask whether it is reachable by a person** — the same move that got the
+connect string read at 15 characters and the Reset-is-not-enough answer.
+
+**Two errors of mine in writing this up, both caught in review, both the same
+shape.** I said all thirteen notifications were identical at `0x801C` — they are
+not: the first two are `0x8017` and `0x8019`, DeZog stepping the instructions
+after the trap, and the truth is the stronger claim. And I said thirteen when the
+frozen log has **twenty-two**. Both came from reading a `tail -5` and a snapshot
+of a **live** log while the session was still running. ERRORS.md already carries
+"a claim asserted from what the script does rather than what it runs"; this is
+the same disease with a moving file. **Freeze the evidence before quoting it.**
+
+**Also confirmed by the real client, on silicon:** `CMD_PAUSE` at shutdown.
+DeZog's `CSpectRemote.disconnect()` sends command 7 and blocks on it, exactly as
+predicted that morning from reading its minified source — so before issue #8
+landed, every Shift+F5 would have hung. A fix reasoned from a code read, then
+exercised by the thing it was written for.
+
+**What the same evening cost:** two hardware wedges, each recovered only by
+power-cycling — issue #15, with the anti-hang design as #16. Functionality is
+complete; robustness is not, and the one unbounded wait in either transport
+(`transport_wait_rx`) is where it starts.
+
+---
+
 ## 2026-08-05 — The sprite commands answer nothing, at exactly the length asked for
 
 **Decided (user) and built, issue #9.** `CMD_GET_SPRITES` (18) and

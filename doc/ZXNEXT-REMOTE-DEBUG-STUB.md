@@ -727,26 +727,54 @@ being a rung and not a formality.
 
 **M1's last item closed, 2026-08-05: DeZog itself has now driven the stub on a real Next.** A
 session in VS Code with `remoteType: "cspect"` pointed at `<next-ip>:11000` attached, disassembled,
-read registers and memory, **single-stepped**, disconnected cleanly and reattached. Captured
-byte-for-byte through a logging TCP tap, so it is a record rather than a report:
+read registers and memory, **single-stepped**, broke in with the **NMI button**, disconnected
+cleanly and reattached. Captured through a logging TCP tap, so it is a record rather than a report.
+
+Counts are from a **frozen snapshot** of that tap (the session was still running when it was taken,
+and an earlier draft of this paragraph quoted numbers from a truncated view — see below):
 
 - `CMD_INIT` from `DeZog vv24.18.0`, answered `dezogif v2.2.1` / DZRP 2.1.0 / machine 4;
-- 69 `CMD_READ_MEM`, 14 `CMD_GET_REGISTERS`, 1 `CMD_LOOPBACK`;
-- **13 `CMD_CONTINUE` and 13 `NTF_PAUSE`**, each reporting break reason 0 at `0x801C` in bank 5 —
-  the `jr $` at the end of the conformance suite's own fixture, which the preceding
-  `make test-hardware` run had left in memory. Stepping a `jr $` lands on it again, which is why
-  every notification is identical;
+- 121 `CMD_READ_MEM`, 26 `CMD_GET_REGISTERS`, 1 `CMD_LOOPBACK`, across 5 connections;
+- **22 `CMD_CONTINUE` and 22 `NTF_PAUSE`**. Twenty-one carry break reason 0 and land at
+  **`0x8017`, then `0x8019`, then `0x801C` nineteen times** — DeZog stepping the three instructions
+  after the conformance fixture's trap (`ld a,0xC3`, `ld (0x9805),a`, `jr $`), the last of which
+  branches to itself, which is why the tail of them repeats. The addresses are *not* all identical,
+  and that they differ is the stronger fact: it shows DeZog computing each step's target and the
+  stub planting a temporary breakpoint there, on silicon;
 - shutdown is `CMD_PAUSE` then `CMD_CLOSE`, **both answered**, socket closed 1 ms later, and a
-  reattach 33 s afterwards worked.
+  reattach 33 s afterwards worked and went on stepping.
 
-Each of those thirteen resumes exercised `CMD_CONTINUE`, the temporary-breakpoint patch,
-`restore_registers`, the AltROM `RST 0` path back in, and `send_ntf_pause` — the whole
-execution-control loop, driven by the real client rather than by our own suite.
+Each resume exercised `CMD_CONTINUE`, `set_tmp_breakpoint`'s patch, `restore_registers`, the AltROM
+`RST 0` path back in, and `send_ntf_pause` — the whole execution-control loop, driven by the real
+client rather than by our own suite.
 
-**That answers open question 1**: the `cspect` remote makes no assumption above the wire that this
-stub does not satisfy. It also retired issue #8 the hard way — DeZog's `CSpectRemote.disconnect()`
-really does send `CMD_PAUSE` and block on it, exactly as predicted from reading its source that
-morning, so before that fix every Shift+F5 would have hung the client.
+**THE TWENTY-SECOND NOTIFICATION IS THE ONE THAT MATTERS MOST, AND IT CLOSES THE LAST UNEXECUTED
+PATH IN THIS PROJECT.** It carries break reason **1**, `BREAK_REASON.MANUAL_BREAK`
+(`breakpoints.asm:20`):
+
+```
+-> CMD CONTINUE  seq=35  payload=00 00 00 ...        no temporary breakpoint: run free
+<- NTF           seq=0   payload=01 01 00 00 00 00   reason 1 = MANUAL_BREAK
+<- RSP           seq=36  payload=1C 80 00 9F ...     PC=0x801C, SP=0x9F00
+```
+
+A `CMD_CONTINUE` with no breakpoint set the fixture running in its `jr $`; ten seconds later the
+**M1 button** was pressed; the stub broke in and reported it. `cmd_get_registers` reads from
+`backup.pc`, and for a press taken while `prgm_state` is `PRGM_RUNNING` that value can only have
+come from **`save_nmi_return_address` reading NR `0xC2`/`0xC3`** (`mf.asm:119`, `:165-193`). It
+returned `0x801C` — exactly where the debuggee was spinning — with SP `0x9F00`, the fixture's own
+stack.
+
+**So the stackless-NMI return address is verified, on hardware.** §3.4 calls it the half that
+matters, because without it entering the debugger corrupts the program being debugged; §8.2 and
+Appendix A have carried it as unverified since the fork, and no test anywhere — emulator or
+silicon — had ever executed it. It needed a finger on a button, which is precisely why no bench
+could reach it.
+
+**That also answers open question 1**: the `cspect` remote makes no assumption above the wire that
+this stub does not satisfy. It retired issue #8 the hard way too — DeZog's
+`CSpectRemote.disconnect()` really does send `CMD_PAUSE` and block on it, exactly as predicted from
+reading its source that morning, so before that fix every Shift+F5 would have hung the client.
 
 **What the same evening also found is a liveness fault**, twice, each needing a power cycle:
 issue #15, with the anti-hang design in issue #16. M1's functionality is complete; its
@@ -883,7 +911,7 @@ reason attached, is fine.
 | The debuggee's registers survive the round trip in both directions | same bench, C11: `BC`/`IX` read back out of memory where the *resumed program* stored them; `PC`/`SP`/`AF`/`BC`/`DE`/`HL`/`IX` from `CMD_GET_REGISTERS` afterwards | **verified** |
 | **The AltROM patch works** | C10: the breakpoint is an `RST 0`, which can only reach the debugger through the code `copy_altrom` installs at 0x0000/0x0066 — and while the debuggee runs slot 0 holds `ROM_BANK` (`main.asm:150`, restored `breakpoints.asm:192`) with the AltROM enabled (`altrom.asm:55`, the only enable, never disabled) | **verified**, in jnext and **on hardware** — C10 runs there too, through H2's delegation to the same suite |
 | C10 detects a stub that answers `CMD_CONTINUE` and does not resume | two controls: bench W3 (`--no-continue`) and a ROM whose `cmd_continue` returns to `cmd_loop` instead of `restore_registers` — C10/C11 red against both | **verified** |
-| The stackless-NMI **return address** (NR `0xC2`/`0xC3` → `save_nmi_return_address`) is correct | — | **unverified** — C10 sets `PC` itself, so the routine never runs; reaching it needs an M1 press against a *running* debuggee, §8.2 |
+| The stackless-NMI **return address** (NR `0xC2`/`0xC3` → `save_nmi_return_address`) is correct | **a real DeZog session on a Next, 2026-08-05**: `CMD_CONTINUE` with no breakpoint set the fixture running in its `jr $`, the M1 button was pressed, and the `NTF_PAUSE` carried break reason 1 (`MANUAL_BREAK`) with `CMD_GET_REGISTERS` returning **PC `0x801C`, SP `0x9F00`** — where it was spinning, on its own stack. `backup.pc` can only come from that routine on a press taken while `prgm_state` is `PRGM_RUNNING` | **verified on hardware** — the last unexecuted path in the entry/exit choreography. It needed a finger on a button, which is why no bench could ever reach it |
 | `CMD_PAUSE` while stopped is answered with the Length=1 response | `make test-dzrp-stub` C12, measured green; `commands.asm` maps command 7 to `cmd_pause` | **verified** — issue #8. It got **no** response until then, a failure the serial build had always had |
 | DeZog's `cspect` remote really sends command 7 and blocks on it, while its `zxnext` remote never puts it on the wire | DeZog 3.7.4 `out/extension.js`: `CSpectRemote` has no `sendDzrpCmdPause` override and inherits `await this.sendDzrpCmd(7)`; `ZxNextSerialRemote`'s throws "use the yellow NMI button" | **verified** — why upstream never saw issue #8 |
 | dezogif declines a software MF NMI: `nmi66h` serves button causes only | `mf_rom.asm` `nmi66h`, `zxnext.vhd:3843-3848`; `make test` T4 | **verified** |
@@ -911,7 +939,7 @@ reason attached, is fine.
 | **No scan in the ESP transport destroys an inbound `+IPD`** | issue #11. Bench W4 in jnext (red on `main`, red on the intermediate fix, green after); hardware bench H3, 3 runs of 3 green at build 000A, against 3 failures of 3 before it | **verified**, both places — and the two halves are covered in different places: jnext can only reach the `AT+CIPSEND` prompt window, hardware only the `SEND OK` one |
 | The `SEND OK` window on a real module is 20-50 ms wide | measured on a Next, 3 trials at each of 8 delays: lost at 0/2/5/10/20 ms, clean at 50/100/250 ms | **verified** — and note a nine-character `SEND OK` costs ~2 ms at 115200, so the window is not the transmission |
 | A single client that pipelines loses commands the same way | tested on a Next, one connection, 3 trials at each of 8 delays including 0 ms: never lost one | **disproved as stated** — the discriminator is a *second connection*, not the timing alone. The mechanism behind that is a reading, not a measurement |
-| **DeZog drives the stub on real hardware: attach, disassemble, registers, memory, single-step, clean disconnect, reattach** | a logging TCP tap between VS Code and a Next, 2026-08-05: `DeZog vv24.18.0` ↔ `dezogif v2.2.1`, 69 `CMD_READ_MEM`, 14 `CMD_GET_REGISTERS`, **13 `CMD_CONTINUE` each answered by an `NTF_PAUSE` at `0x801C` bank 5**, then `CMD_PAUSE` + `CMD_CLOSE` both answered | **verified** — the last item of M1, and the answer to open question 1 |
+| **DeZog drives the stub on real hardware: attach, disassemble, registers, memory, single-step, manual break, clean disconnect, reattach** | a logging TCP tap between VS Code and a Next, 2026-08-05, frozen snapshot: `DeZog vv24.18.0` ↔ `dezogif v2.2.1`, 121 `CMD_READ_MEM`, 26 `CMD_GET_REGISTERS`, **22 `CMD_CONTINUE` each answered by an `NTF_PAUSE`** — at `0x8017`, `0x8019`, then `0x801C`, plus one `MANUAL_BREAK` — then `CMD_PAUSE` + `CMD_CLOSE` both answered | **verified** — the last item of M1, and the answer to open question 1 |
 | The stub can be left unable to serve anyone, recovered only by power-cycling | two occurrences in one evening; TCP still accepted (accept latency degraded 83 ms → 389 ms → timeout), no border flicker, screen intact. NOT caused by a clean disconnect — that was measured and is safe | **verified that it happens; the mechanism is a hypothesis** — issue #15, design in #16 |
 | The connect string draws a correct address on hardware | user's own machine, 2026-08-05, at a 15-character address | **reported on hardware** — one machine, one reporter, no re-runnable artefact |
 | NMI poll costs ~100-200 T-states/frame | arithmetic, not measured | **estimate** |

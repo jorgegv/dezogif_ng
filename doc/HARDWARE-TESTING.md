@@ -284,7 +284,12 @@ Stated here because the temptation to over-read the first hardware success will 
   delegates to `conformance.py`, and that suite carries C10/C11.** The claim was written from what
   the script does rather than what it runs, and the run that disproved it printed the false
   version underneath its own evidence. When a check delegates, its coverage is the delegate's too.
-- **The stackless-NMI *return address*, in either place.** This one survives the paragraph above
+- ~~**The stackless-NMI *return address*, in either place.**~~ **CLOSED on hardware, 2026-08-05**: a
+  `CMD_CONTINUE` with no breakpoint, the M1 button pressed, and the `NTF_PAUSE` came back with break
+  reason 1 and `CMD_GET_REGISTERS` reporting PC `0x801C` — where the debuggee was spinning. That PC
+  can only have come from `save_nmi_return_address`. The struck text follows, because it is the
+  reasoning that made it look unreachable and it was right about benches and wrong about people.
+  **The stackless-NMI return address, in either place.** This one survives the paragraph above
   intact, and the distinction is narrow enough to be worth spelling out: C10 sets `PC` itself with
   `CMD_SET_REGISTER`, so `backup.pc` never comes from `save_nmi_return_address`, the routine that
   reads NR `0xC2`/`0xC3`. Reaching it needs an M1 press taken while the debuggee is *running* —

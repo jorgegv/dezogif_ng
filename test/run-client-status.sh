@@ -92,6 +92,15 @@ FONT_ROM_PATH='::/machines/next/48.rom'
 CLIENT=$(dirname "$0")/dzrp/session-client.py
 SCREENTEXT=$(dirname "$0")/screen-text.py
 
+# Shared jnext teardown — issue #17. This script's own stop_all was the first
+# implementation of it, written when the contamination was seen; the other six
+# benches never got it, which is what made #17 a repository-wide defect rather
+# than a one-file one. The reasoning, and the two mistakes made getting it
+# right, now live in that file. Defines functions and nothing else, so it cannot
+# disturb the `set -euo pipefail` above or the traps below.
+# shellcheck source=test/bench-jnext.sh
+. "$(dirname "$0")/bench-jnext.sh"
+
 log()  { printf '%s\n' "$*"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
@@ -145,7 +154,12 @@ cleanup() {
         kill "$jnext_pid" 2>/dev/null || true
         wait "$jnext_pid" 2>/dev/null || true
     fi
+    # Unlinked BEFORE departure is confirmed: bench_await_departure can exit,
+    # and an exit that skipped this would leak a gigabyte (ERRORS.md).
     rm -f "$sd"
+    # The EXIT path had no departure check even here — stop_all covers the run
+    # boundaries, but not an interrupt landing mid-run. Issue #17.
+    bench_await_departure "$sd"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -171,25 +185,8 @@ fail() { printf 'FAIL  %s\n' "$*"; failures=$((failures + 1)); }
 # lock this script holds is the worst failure mode in this repository: it binds
 # port 11000 for the NEXT agent's bench, whose client then talks to our stub and
 # whose run can come out GREEN on our answers. So the departure is checked, not
-# assumed, and a sweep kills anything left behind by OUR sd image — a path
-# unique to this bench, so it can never reach another run's emulator.
-#
-# our_jnext_pids — every jnext process running OUR sd image, and nothing else.
-#
-# `pgrep -x jnext` alone would find other agents' emulators; `pgrep -f <image>`
-# alone matches any process whose command line merely MENTIONS the image, which
-# in a shell session includes the diagnostic command you typed to look for it.
-# Measured: a plain `pgrep -f sd-client-status` reported a hit with no jnext
-# running at all. So: exact process name, then the image read out of /proc.
-our_jnext_pids() {
-    local p
-    for p in $(pgrep -x jnext 2>/dev/null || true); do
-        if tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -q -- "$sd"; then
-            printf '%s ' "$p"
-        fi
-    done
-}
-
+# assumed, by bench_await_departure — which kills only what OUR sd image is
+# running, a path unique to this bench.
 stop_all() {
     if [ -n "$client_pid" ] && kill -0 "$client_pid" 2>/dev/null; then
         kill "$client_pid" 2>/dev/null || true
@@ -202,17 +199,7 @@ stop_all() {
     fi
     jnext_pid=""
 
-    local i left
-    for i in $(seq 40); do
-        left=$(our_jnext_pids)
-        [ -z "$left" ] && return 0
-        # shellcheck disable=SC2086
-        [ "$i" -eq 8 ]  && kill $left 2>/dev/null
-        # shellcheck disable=SC2086
-        [ "$i" -eq 24 ] && kill -9 $left 2>/dev/null
-        sleep 0.25
-    done
-    die "an emulator of ours is STILL running after this run was stopped (PIDs $(our_jnext_pids)). Refusing to go on: it holds port $PORT, and the next bench to take the lock would be answered by it."
+    bench_await_departure "$sd"
 }
 
 # start_stub <logfile> <screenshot> — boot a Next with our WiFi ROM, press M1,

@@ -138,6 +138,11 @@ SHOT_TIMEOUT=60
 
 MF_ROM_PATH='::/machines/next/enNextMf.rom'
 
+# Shared jnext teardown — issue #17. Defines functions and nothing else, so it
+# cannot disturb the `set -euo pipefail` above or the traps below.
+# shellcheck source=test/bench-jnext.sh
+. "$(dirname "$0")/bench-jnext.sh"
+
 log()  { printf '%s\n' "$*"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
@@ -190,7 +195,12 @@ cleanup() {
         kill "$jnext_pid" 2>/dev/null || true
         wait "$jnext_pid" 2>/dev/null || true
     fi
+    # Unlinked BEFORE departure is confirmed: bench_await_departure can exit,
+    # and an exit that skipped this would reintroduce the abandoned-gigabyte
+    # leak ERRORS.md records.
     rm -f "$sd"
+    # And only now is the lock safe to drop — issue #17.
+    bench_await_departure "$sd"
 }
 trap cleanup EXIT
 # A handler that only RETURNS does not stop a bash script — the shell defers the
@@ -227,6 +237,12 @@ print(sum(1 for i in range(0, len(raw), 3)
 run_exchange() {
     local rom=$1 logfile=$2 shotfile=$3
     rm -f "$shotfile"
+
+    # Per run, not only at pre-flight: a foreign listener appearing between two
+    # of this script's own runs would answer the client below, and a
+    # contaminated run can come out GREEN (issue #17).
+    bench_require_port_free "$PORT" "before this run started"
+
     cp --reflink=auto -f "$SD_IMAGE" "$sd"
     mcopy -o -i "$sd@@$part_off" "$rom" "$MF_ROM_PATH"
 
@@ -274,6 +290,10 @@ sys.exit(0 if s.connect_ex(('127.0.0.1', $PORT)) == 0 else 1)
     fi
     jnext_pid=""
     rm -f "$sd"
+    # That killed and reaped the `timeout` WRAPPER, which says nothing about
+    # jnext or about port 11000. The next run — and the next bench to take the
+    # lock — must not inherit this one's listener. Issue #17.
+    bench_await_departure "$sd"
 
     [ "$rc" -eq 10 ] && return 10
     [ -s "$shotfile" ] || return 11

@@ -137,6 +137,11 @@ SHOT_FRAMES=1100
 RUN_TIMEOUT=600
 LISTEN_TIMEOUT=60
 
+# Shared jnext teardown — issue #17. Defines functions and nothing else, so it
+# cannot disturb the `set -euo pipefail` above or the traps below.
+# shellcheck source=test/bench-jnext.sh
+. "$(dirname "$0")/bench-jnext.sh"
+
 MF_ROM_PATH='::/machines/next/enNextMf.rom'
 CONFORMANCE=$(dirname "$0")/dzrp/conformance.py
 ORPHAN=$(dirname "$0")/dzrp/orphan-notify.py
@@ -231,7 +236,14 @@ cleanup() {
         kill "$jnext_pid" 2>/dev/null || true
         wait "$jnext_pid" 2>/dev/null || true
     fi
+    # The image is unlinked BEFORE departure is confirmed, and that ordering is
+    # deliberate: bench_await_departure can exit, and an exit that skipped this
+    # would reintroduce the abandoned-gigabyte leak ERRORS.md records. An
+    # emulator still holding the file keeps its blocks until it is killed, which
+    # is exactly what the loud failure is telling a human to do.
     rm -f "$sd"
+    # And only now is the lock safe to drop — issue #17.
+    bench_await_departure "$sd"
 }
 trap cleanup EXIT
 # A handler that only RETURNS does not stop a bash script — the shell defers
@@ -247,13 +259,19 @@ failures=0
 pass() { printf 'PASS  %s\n' "$*"; }
 fail() { printf 'FAIL  %s\n' "$*"; failures=$((failures + 1)); }
 
-# stop_stub — end the emulator run and reap it.
+# stop_stub — end the emulator run and reap it, and REFUSE TO CONTINUE UNTIL THE
+# EMULATOR IS ACTUALLY GONE.
+#
+# `jnext_pid` is the `timeout` WRAPPER's, so the wait below returns when the
+# wrapper has gone and says nothing about jnext or about port 11000. See
+# test/bench-jnext.sh for what that cost on 2026-08-05.
 stop_stub() {
     if [ -n "$jnext_pid" ] && kill -0 "$jnext_pid" 2>/dev/null; then
         kill "$jnext_pid" 2>/dev/null || true
         wait "$jnext_pid" 2>/dev/null || true
     fi
     jnext_pid=""
+    bench_await_departure "$sd"
 }
 
 # start_stub <logfile> <screenshot> — boot a Next with our WiFi ROM, press M1,
@@ -265,6 +283,12 @@ stop_stub() {
 start_stub() {
     local logfile=$1 shotfile=$2
     rm -f "$shotfile"
+
+    # Per run, not only at pre-flight: a foreign listener appearing between two
+    # of this script's own runs would answer the client we are about to start,
+    # and a contaminated run can come out GREEN (issue #17).
+    bench_require_port_free "$PORT" "before this run started"
+
     timeout "$RUN_TIMEOUT" "$JNEXT" \
         --headless --machine next \
         --sdcard "$sd" \

@@ -57,6 +57,34 @@ CELLDIFF=${CELLDIFF:-test/cell-diff.py}
 MF_PATH='::/machines/next/enNextMf.rom'
 RUN_TIMEOUT=300
 
+# Shared jnext teardown — issue #17. Defines functions and nothing else, so it
+# cannot disturb the `set -euo pipefail` above or the trap below.
+# shellcheck source=test/bench-jnext.sh
+. "$(dirname "$0")/bench-jnext.sh"
+
+# WHAT ISSUE #17 MEANS HERE, AND WHAT IT DOES NOT. This bench passes no --esp,
+# so its runs never bind port 11000 and it takes no bench lock; the "a survivor
+# answers the next agent's client" failure cannot happen from here. What CAN
+# happen is an emulator left running after a `timeout` fired or the script was
+# interrupted — competing for the machine with whatever bench holds the lock,
+# and holding a gigabyte working image open. Departure is confirmed for that
+# reason, by the same code, and the claim is the smaller one.
+#
+# The six working images are still left behind on purpose: that leak is real,
+# recorded in ERRORS.md, and removing it is a different change from this one.
+current_image=""
+cleanup() {
+    if [ -n "$current_image" ]; then
+        bench_await_departure "$current_image"
+    fi
+}
+trap cleanup EXIT
+# A handler that only RETURNS does not stop a bash script — the shell defers the
+# signal, runs the handler and carries on. These exit, and the EXIT trap runs on
+# the way out.
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 failures=0
 checks=0
 log()  { printf '%s\n' "$*"; }
@@ -136,6 +164,8 @@ run_mfselect() {
     local keys
     keys=$(type_keys 560 ".nexload /mfselect/mfselect.nex")
     rm -f "$shot"
+    current_image=$image
+    local rc=0
     # shellcheck disable=SC2086
     timeout "$RUN_TIMEOUT" "$JNEXT" --headless --machine next \
         --sdcard "$image" --rtc "2026-01-01 12:00:00" \
@@ -146,7 +176,16 @@ run_mfselect() {
         --delayed-keypress-frames 1000 enter \
         "$@" \
         --delayed-screenshot "$shot" \
-        >/dev/null 2>&1 || die "jnext run failed or timed out (image=$image)"
+        >/dev/null 2>&1 || rc=$?
+
+    # BEFORE anything is read off the image, and before the next run starts.
+    # `timeout` returning is not jnext having exited — on a timeout it has only
+    # been sent a SIGTERM, and an emulator still holding this image open is one
+    # that may still be writing to it. Issue #17; see test/bench-jnext.sh.
+    bench_await_departure "$image"
+    current_image=""
+
+    [ "$rc" -eq 0 ] || die "jnext run failed or timed out (image=$image)"
 }
 
 # A run that only needs mfselect to reach its menu: answer the capture prompt,

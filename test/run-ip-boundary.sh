@@ -93,6 +93,16 @@ RUN_TIMEOUT=300
 
 MF_ROM_PATH='::/machines/next/enNextMf.rom'
 
+# Must match ESP_SERVER_PORT in src/transport_esp.asm. Nothing here talks to it
+# — the verdict is read off the screen — but the stub still binds it, so the
+# port has to be free before a run and free again after one. Issue #17.
+PORT=11000
+
+# Shared jnext teardown — issue #17. Defines functions and nothing else, so it
+# cannot disturb the `set -euo pipefail` above or the traps below.
+# shellcheck source=test/bench-jnext.sh
+. "$(dirname "$0")/bench-jnext.sh"
+
 log()  { printf '%s\n' "$*"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
@@ -137,7 +147,11 @@ cleanup() {
         kill "$jnext_pid" 2>/dev/null || true
         wait "$jnext_pid" 2>/dev/null || true
     fi
+    # Unlinked BEFORE departure is confirmed: bench_await_departure can exit,
+    # and an exit that skipped this would leak a gigabyte (ERRORS.md).
     rm -f "$sd"
+    # And only now is the lock safe to drop — issue #17.
+    bench_await_departure "$sd"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -163,6 +177,12 @@ print(sum(1 for i in range(0, len(raw), 3)
 run_stub() {
     local rom=$1 logfile=$2 shotfile=$3
     rm -f "$shotfile"
+
+    # The stub binds the port even though nothing here connects to it, so a
+    # foreign listener makes AT+CIPSERVER fail and the stub paints an error —
+    # which this bench reads as its verdict. Refuse rather than mis-report.
+    bench_require_port_free "$PORT" "before this run started"
+
     cp --reflink=auto -f "$SD_IMAGE" "$sd"
     mcopy -o -i "$sd@@$part_off" "$rom" "$MF_ROM_PATH"
 
@@ -180,6 +200,10 @@ run_stub() {
     wait "$jnext_pid" 2>/dev/null || true
     jnext_pid=""
     rm -f "$sd"
+    # That `wait` returned when the `timeout` WRAPPER exited, which says nothing
+    # about jnext or about port 11000 — and the next run's stub cannot bind a
+    # port this one is still holding. Issue #17.
+    bench_await_departure "$sd"
     [ -s "$shotfile" ] || return 1
 
     # The reply really was the one this bench reasoned about. Without this the

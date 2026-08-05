@@ -82,6 +82,11 @@ RUN_TIMEOUT=180
 
 CLIENT=$(dirname "$0")/esp-echo-client.py
 
+# Shared jnext teardown — issue #17. Defines functions and nothing else, so it
+# cannot disturb the `set -euo pipefail` above or the traps below.
+# shellcheck source=test/bench-jnext.sh
+. "$(dirname "$0")/bench-jnext.sh"
+
 log()  { printf '%s\n' "$*"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
@@ -147,7 +152,16 @@ cleanup() {
         kill "$jnext_pid" 2>/dev/null || true
         wait "$jnext_pid" 2>/dev/null || true
     fi
+    # Unlinked BEFORE departure is confirmed: bench_await_departure can exit,
+    # and an exit that skipped this `rm` would reintroduce the very leak the
+    # paragraph above is about.
     rm -f "$sd"
+    # AND THE WRAPPER GOING IS NOT THE EMULATOR GOING. `jnext_pid` is the
+    # `timeout` process, so everything above can succeed with jnext still bound
+    # to port 11000 — and this script holds the bench lock, which the next
+    # agent's run would then take while our listener answers their client.
+    # Issue #17; the reasoning is in test/bench-jnext.sh.
+    bench_await_departure "$sd"
 }
 trap cleanup EXIT
 # A handler that just RETURNS does not stop a bash script: the shell defers the
@@ -185,6 +199,12 @@ set -e
 # Let the run finish on its own so the screenshot is written. The EXIT trap
 # stays armed: it is what removes the working image, on every path out of here.
 wait "$jnext_pid" 2>/dev/null || true
+
+# `wait` returned when the `timeout` WRAPPER exited, which is not the same
+# statement as "jnext exited and released port 11000". Confirmed here rather
+# than at the EXIT trap so a survivor is reported BEFORE the verdict below,
+# instead of after a line that says all checks passed. Issue #17.
+bench_await_departure "$sd"
 
 # --- verdict ---------------------------------------------------------------
 

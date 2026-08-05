@@ -496,6 +496,9 @@ def h3_attempt(conns, delay):
         if body != payload:
             return False, ("connection %d got %d bytes back, not its own payload"
                            % (i + 1, len(body)))
+    # The result, and nothing after it. What it MEANS — that the +IPD id is read
+    # from the header rather than assumed — is explanation, and lives in
+    # doc/HARDWARE-TESTING.md where H3 is described (user, 2026-08-05).
     return True, "two simultaneous connections each got their own payload back"
 
 
@@ -540,6 +543,15 @@ def h3_connection_id(host, port, timeout, results):
         if ok:
             results.add("H3", PASS, detail + retry_note(retries))
             return
+
+        # FROM HERE THE H3 LINE IS DELIBERATELY OVER THE ~20-WORD BUDGET this
+        # file's checks otherwise keep, and it is the only such line here.
+        # Its deepest form joins three facts — which connection got no reply,
+        # which other connection is holding the payload, and whether a pause
+        # makes it work — and it is exactly that combination that discriminates
+        # the SEND OK window from an id bug. Dropping any one of them puts the
+        # reader back where this project spent eight hours on 2026-08-05 with
+        # nothing but "no reply". See ERRORS.md and doc/HARDWARE-TESTING.md.
 
         # IT FAILED. Now find out WHY, in the same run, because "no reply" on
         # its own has already cost this project five hypotheses.

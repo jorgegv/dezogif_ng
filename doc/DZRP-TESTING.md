@@ -170,14 +170,14 @@ hash the same as `main`'s with `BUILD_TIME` pinned, and there is no `make bump`.
 both built from `main`'s sources with one edit:
 
 1. **`cmd_close` routed to `cmd_not_supported`** (the jump-table shape issue #8 fixed for
-   `CMD_PAUSE`): C15 red on the *first* assertion, `no response within 25s; the remote is still
-   serving`. That is the pre-#8 defect reproduced on a different command.
+   `CMD_PAUSE`): C15 red on the *first* assertion, `no response within 25s; remote still serving`.
+   That is the pre-#8 defect reproduced on a different command.
 2. **`cmd_close` answering and then never returning to service** — `TRANSPORT_END_MESSAGE`
    followed by `jr $` in place of `jp main`, so the response really is flushed and the stub then
    goes nowhere: C15 red on the *second* assertion, the one that matters, with
-   `answered, but the next command on that connection was not; and it stopped answering afterwards`.
-   A stub that acknowledges a close it did not complete is exactly what a green C15 must not
-   tolerate — the same shape as C10's `ret`-instead-of-resume control (MEMORY.md, 2026-08-05).
+   `answered, but the next command was not; remote stopped answering`. A stub that acknowledges a
+   close it did not complete is exactly what a green C15 must not tolerate — the same shape as
+   C10's `ret`-instead-of-resume control (MEMORY.md, 2026-08-05).
 
 **A third variant was run and C15 PASSED it, which is reported because it bounds the check.**
 With `jp main` replaced by `jp cmd_loop` the stub answers `CMD_CLOSE` and goes on serving without
@@ -315,12 +315,27 @@ Two conventions follow from it and both are load-bearing:
 - **The id never changes.** `test/run-dzrp-stub.sh`'s W3 asserts its negative control with
   `grep '^FAIL  C10 '`, and `test/hardware-check.py`'s `classify()` takes the code from field 2 of
   every `FAIL` line. Shorten the prose after the id; never the id.
-- **A silence still says which kind it was.** C12, C13, C14 and C15 all report a missing answer as
-  `no response within Ns; <liveness>`, where the tail is one of three: *the remote is still serving*
-  — it swallowed the command and carried on, so a client blocks for ever, which is issue #8's shape;
-  *and it stopped answering afterwards* — this run cannot separate "no reply" from "the command
-  killed it"; *and liveness was not probed*. Collapsing those three into "no response" would be a
-  check failing for a reason outside its own subject, which ERRORS.md says has to be said out loud.
+- **A silence still says which kind it was.** C12, C13, C14 and C15 report a missing answer as
+  `no response within Ns; <liveness>`, where the tail is **three words**, one of:
+
+  | tail | what it means |
+  |---|---|
+  | `remote still serving` | it swallowed the command and carried on, so a client blocks for ever — issue #8's shape, and the interesting case |
+  | `remote stopped answering` | this run cannot separate "no reply" from "the command killed it" |
+  | `liveness not probed` | `--remote` was not set, so we do not know |
+
+  Collapsing those three into "no response" would be a check failing for a reason outside its own
+  subject, which ERRORS.md says has to be said out loud. Three words rather than five because every
+  caller pays for the tail inside its own budget, so a longer phrase spends words in four checks at
+  once.
+
+- **`PRECONDITION:` is a one-word label with a documented meaning.** It prefixes a C10/C11 failure
+  where the *setup* broke — the fixture did not land in memory, the marker area did not clear, the
+  register block was too short to index — before the check's own subject was ever reached. **Nothing
+  on such a line is evidence about the resume**; report it as a memory or register fault, not as a
+  resume fault. The long form spelled that out on every occurrence and pushed three branches past
+  the budget, which is what measuring the **failure** paths turned up: the first pass measured a
+  healthy run's PASS lines only, and a rule checked on the happy path is a rule half checked.
 
 ### C10 and C11: the execution-control fixture
 

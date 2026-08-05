@@ -5,6 +5,53 @@ attempting similar logic.
 
 ---
 
+## Deleting the ROMs is NOT enough before a pinned hash comparison
+
+**Symptom.** A test-only branch — no file under `src/` touched, `git diff main --
+src/ Makefile` empty — reported that the **WiFi ROM had changed**:
+`fb9b5e92…` before, `5fd2d3d7…` after. Taken at face value that is a test-only
+change that moved a ROM, which is impossible, and it would have meant a `make
+bump` for a build nobody had altered.
+
+**Cause.** The comparison ran
+
+```sh
+rm -f build/enNextMf.rom build/enNextMf-wifi.rom
+make BUILD_TIME=1700000000 mf-rom-wifi
+```
+
+The ROM is `cat build/mf_nmi-wifi.bin build/main-wifi.bin`, and **the two `.bin`
+files were not deleted**. Their sources had not changed, so make left them alone
+— and they had been assembled minutes earlier by a bench run at the *unpinned*
+`BUILD_TIME`. The "pinned" build therefore concatenated an unpinned image, and
+`BUILD_TIME` is stamped into the ROM.
+
+**Fix.** Delete the intermediates too, or do not hand-roll it at all:
+
+```sh
+rm -f build/*.bin build/enNextMf*.rom      # then build pinned
+make check-reproducible                    # or this, which builds its own
+```
+
+The comparison was then byte-identical both ways, and confirmed a third way by
+`git stash`ing the branch and rebuilding from clean `main`.
+
+**This CORRECTS a rule already written down, which is why it is here rather than
+in a commit message.** MEMORY.md 2026-08-05 (the identity-line entry) says
+*"Delete the outputs before any pinned comparison"* — and that is exactly what
+was done, and it was not sufficient. The output is not the thing make decides
+about; **its prerequisites are.** Read "outputs" as "everything derived",
+`.bin` files included.
+
+**Lesson, and it generalises past this Makefile.** When you pin a variable that
+is consumed *inside* a build step, deleting that step's product does not
+invalidate the products of the steps before it. Ask what the final artefact is
+assembled *from*, and delete that. A build system whose inputs did not change
+will cheerfully hand you yesterday's answer to today's question — and here the
+answer was a hash, i.e. the one kind of answer that looks unarguable.
+
+---
+
 ## A control that would not reproduce the old behaviour — and it was right
 
 **Symptom.** Issue #16's bench needed a client to sit quietly in `cmd_loop`'s

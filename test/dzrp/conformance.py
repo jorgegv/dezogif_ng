@@ -504,8 +504,8 @@ def load_debuggee(d):
 
     back = _read_mem(d, DBG_CODE, len(DEBUGGEE))
     if back != DEBUGGEE:
-        raise Precondition("the fixture did not land at 0x%04X (%d bytes back, "
-                           "not %d)" % (DBG_CODE, len(back), len(DEBUGGEE)))
+        raise Precondition("the fixture did not land at 0x%04X (%d/%d bytes)"
+                           % (DBG_CODE, len(back), len(DEBUGGEE)))
     mark = _read_mem(d, DBG_MARK, MARK_LEN)
     if mark != bytes(MARK_LEN):
         raise Precondition("the marker area at 0x%04X did not clear (%s)"
@@ -561,21 +561,30 @@ def _remote_still_answers():
 
 
 def _liveness():
-    """A few words saying which kind of silence this was.
+    """Three words saying which kind of silence this was.
 
     "No reply" has three quite different meanings and a verdict line that
     collapses them is a check failing for a reason outside its own subject
-    (ERRORS.md). Still serving = the command was swallowed and the client would
-    block for ever; stopped answering = the run cannot separate "no reply" from
-    "the command killed it"; not probed = we do not know, and say so. The
-    reasoning behind each is in doc/DZRP-TESTING.md, not in the line.
+    (ERRORS.md):
+
+      remote still serving      it swallowed the command and carried on, so a
+                                client blocks for ever — issue #8's shape
+      remote stopped answering  this run cannot separate "no reply" from "the
+                                command killed it"
+      liveness not probed       --remote was not set, so we do not know
+
+    THREE WORDS EACH, DELIBERATELY. Every caller appends this to its own detail,
+    so whatever it returns is paid for inside that caller's twenty-word budget;
+    a longer phrase here spends words in four checks at once. The meanings are
+    written out in doc/DZRP-TESTING.md, which is where a reader has room for
+    them.
     """
     alive = _remote_still_answers()
     if alive is True:
-        return "the remote is still serving"
+        return "remote still serving"
     if alive is False:
-        return "and it stopped answering afterwards"
-    return "and liveness was not probed"
+        return "remote stopped answering"
+    return "liveness not probed"
 
 
 def chk_continue_resumes(d):
@@ -801,14 +810,18 @@ def chk_close(d):
     try:
         again = d.command(dzrp.CMD_INIT, dzrp.init_payload())
     except dzrp.Timeout:
-        return FAIL, ("answered, but the next command on that connection was not; %s"
-                      % _liveness())
+        # THE SECOND ASSERTION'S FAILURE, and the one control (B) produces. Kept
+        # inside the line budget: which connection went quiet, and what that
+        # implies, is in this docstring and in doc/DZRP-TESTING.md rather than
+        # here. "remote still serving" here is the interesting case — a NEW
+        # connection is served while this one is not, and DeZog reuses this one.
+        return FAIL, "answered, but the next command was not; %s" % _liveness()
     except dzrp.DzrpError as e:
         if "closed" in str(e):
-            return FAIL, "answered, then hung up: it does not serve on that connection"
+            return FAIL, "answered, then hung up: this connection is not served"
         raise
     if len(again) < 6 or again[0] != 0:
-        return FAIL, "answered, but the CMD_INIT after it came back as %d bytes" % len(again)
+        return FAIL, "answered, but the next CMD_INIT was %d bytes" % len(again)
     return PASS, "Length=1 response, and a CMD_INIT after it answered in sync"
 
 
@@ -959,7 +972,14 @@ def main():
             # A failure, because nothing was established — but named as what it
             # is, so it is not read as evidence about this check's subject.
             status = FAIL
-            detail = "PRECONDITION, not this check's subject: %s" % e
+            # ONE WORD, and it is a label rather than a sentence: everything
+            # after it is the fault itself, and the fault has to fit the line
+            # budget beside it. What PRECONDITION *means* — the setup broke, so
+            # nothing here is evidence about this check's subject — is in
+            # doc/DZRP-TESTING.md. The long form spent six words saying it on
+            # every occurrence and pushed three C10/C11 branches past the
+            # budget, which is what measuring the FAIL paths turned up.
+            detail = "PRECONDITION: %s" % e
         except dzrp.DzrpError as e:
             status, detail = FAIL, str(e)
         finally:

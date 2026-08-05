@@ -5,6 +5,114 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-05 — C15 sends CMD_CLOSE; a check says WHAT HAPPENED and the docs say what it means
+
+**Decided (user) and built.** Three things landed together, and the last is a
+standing rule rather than a one-off.
+
+**1. C15, and the half of it that is not obvious.** Nothing in the conformance
+suite had ever sent **command 2**: C1-C14 each take a fresh connection and drop
+it, which is a TCP event and not a DZRP one, so the remote was never told a
+session ended. C15 asserts the specified **Length=1 response** *and* that a
+`CMD_INIT` after it is answered. The second is the point — `cmd_close` answers
+**first** and only then leaves through `jp main`, whose prologue is destructive
+(`prgm_state` → `PRGM_IDLE`, `backup.speed`, `backup.interrupt_state`,
+`slot_backup.slot0`, then `transport_activate` and `show_ui`). **The response is
+written before all of that and proves none of it.**
+
+The follow-up is `CMD_INIT` because DeZog's own stress driver does exactly that
+— `cmdList`'s first entry is `sendDzrpCmdClose()` immediately followed by
+`sendDzrpCmdInit()` on the same remote — and because no remote may refuse
+`CMD_INIT`, so a failure there cannot be a capability difference wearing this
+check's name. It is sent **without `talk()`**: `talk()` maps a closed connection
+onto `Unsupported`, and C15's command name is `CLOSE`, so a remote that answered
+perfectly and then hung up would have been reported as *not implementing the
+command it had just implemented*.
+
+**WHAT CONTROL (C) PROVED C15 CANNOT SEE, and it belongs here rather than only
+in a docstring.** Three scratch ROMs, one edit each, none committed. (A)
+`cmd_close` routed to `cmd_not_supported` → red on the response. (B) `cmd_close`
+flushing and then hanging → red on serving on, which is the half that matters.
+**(C) `jp cmd_loop` in place of `jp main` → C15 PASSES.** That stub answers and
+goes on serving *without ever running the destructive prologue*, and C15 is
+blind to it, because `prgm_state` and the backup fields are **not observable over
+a socket**. So the honest statement of what C15 establishes is "answered, and
+still serving" — never "the session state was reset". A check bounded by
+measurement rather than by assertion.
+
+**(B) needed an explicit `TRANSPORT_END_MESSAGE` before its hang, and that is a
+real fact about the WiFi build**: `cmd_close`'s response is buffered and the
+flush lives at `main_redraw`, so on that build the response reaches the wire
+*because of* `jp main`. Without the added flush, (B) would have gone red on the
+response and proved nothing about serving on.
+
+**2. `UNCOVERED` moved out of `hardware-check.py` into
+[doc/HARDWARE-TESTING.md].** A thirty-line block printed after every run is read
+once and then scrolled past; a document can be revised, cited and diffed.
+
+**THE BRIEF FOR THIS WAS WRONG ABOUT ITS PREMISE, and the near-miss is the
+transferable part.** It said the doc did not carry the content. It did — a
+section called *"What a green run does NOT establish"*, with the stackless-NMI
+paragraph in a **fuller** form than the harness had. Following the instruction
+literally would have minted a second section duplicating the first. Only three
+things were genuinely missing and were folded in: the screen paragraph
+(`CMD_READ_MEM 0x4000,6912` fetches the stub's own screen, so S1-S5 could be
+assertions), the UART "this gap has GROWN" (byte-identity has answered nothing
+four times — #7, #8, #9, #12), and the interleaved-commands bullet, which still
+described #13 as an open defect when it is fixed with W5 as its check.
+
+**And the deletion nearly cost a correction.** The `UNCOVERED` block carried the
+sentence recording that *"AltROM on hardware, never on silicon"* had become
+untrue. `hardware-check.py`'s **module docstring still held the uncorrected
+version**, so removing the block would have left the wrong claim as the only
+surviving one — a retraction deleted while the thing it retracted stayed. **When
+deleting prose, check whether it is the only place a correction lives.**
+
+**3. A check line says what happened; the documents say what it means.** Every
+verdict `conformance.py` and `hardware-check.py` print is now one sentence of
+**about twenty words**. Ids are untouched and are interface, not prose:
+`run-dzrp-stub.sh`'s W3 greps `^FAIL  C10 ` and `classify()` takes the code from
+field 2.
+
+**Measured on the PASS path only the first time, and that was the review's
+finding.** "All 15 lines comply, max 19" was true of a *healthy* run and said
+nothing about the failure branches — where a 25-word C15 line lived, quoted
+verbatim in our own documentation, produced by our own control. Re-measuring
+across **every** branch then found three more, the `PRECONDITION` ones on
+C10/C11. **A rule checked on the happy path is a rule half checked**, and the
+paths a test bench exists for are the unhappy ones.
+
+**One deliberate exception, marked where it is taken**: `hardware-check.py`'s H3
+*failure* composite runs to ~25 words, because it joins which connection got no
+reply, which other connection holds the payload, and whether a pause fixes it —
+and that combination is what discriminates the `SEND OK` window from an id bug.
+Dropping one fact returns the reader to the bare "no reply" that cost this
+project eight hours on 2026-08-05. The **user narrowed the exception explicitly**
+to the failure line: H3's PASS line lost its `— the +IPD id is read from the
+header, not assumed` tail, which is explanation, and it now lives in the doc.
+
+**Rejected.** Keeping the reasoning in the printed lines (a verdict a reviewer
+scrolls is a verdict nobody reads); a per-check verbosity flag (two renderings to
+keep in step, for output nobody reads twice); `--require CLOSE` in
+`run-dzrp-stub.sh` — *wanted*, by the same argument as the existing
+`--require CONTINUE`, but that file was being edited for issue #17 and is
+recorded as a follow-up instead.
+
+**Test-only: both ROMs are byte-identical to `main`'s** with `BUILD_TIME` pinned
+(`49d92c15…`, `fb9b5e92…`), so **no `make bump`**. Getting that comparison right
+took two goes and the failure is in [[ERRORS.md]]: deleting the ROMs is not
+enough, because make reuses `main-wifi.bin`/`mf_nmi-wifi.bin` assembled at an
+unpinned `BUILD_TIME`. **That corrects the wording of the 2026-08-05 identity
+entry below**, which says to delete "the outputs" — the outputs are not what make
+decides about; their prerequisites are.
+
+**`make test-dzrp-stub`: W1-W5 pass, 15 passed / 0 failed of 15, exit 0.**
+C15 has **not** run on hardware; the next hardware run is 15 checks, not 14.
+
+[doc/HARDWARE-TESTING.md]: doc/HARDWARE-TESTING.md
+
+---
+
 ## 2026-08-05 — A bench observes its emulator leave; the check is shared, not copied
 
 **Decided and built, issue #17.** The invariant is: **no bench may release the

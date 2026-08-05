@@ -208,6 +208,19 @@ were killed by nothing more than reading the Next's screen.
 
 ### H3, and precisely what it does and does not establish
 
+**What a green H3 means.** Its line reads exactly
+
+    H3   PASS  two simultaneous connections each got their own payload back
+
+and stops there, because that is the *result*. What it **means** is the sentence that used to be
+bolted onto the end of it: **the `+IPD` connection id is read from the header, not assumed.** Two
+connections are the only way to see that — with one, a stub that hardcoded whatever id it happened
+to be given would pass — and that is the whole of why the check opens two.
+
+Its **failure** line is the one place in this bench that runs past the one-sentence budget, and
+deliberately: see the note at the call site in `test/hardware-check.py`. It joins three facts, and
+it is the combination that discriminates.
+
 Two connections open at once, each given its own payload, each required to get *its own* payload
 back. With one connection a stub that ignored the header and hardcoded an id would pass — this is
 bench check E4's shape, and E4 earned its place by being the only check that failed when the id was

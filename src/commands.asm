@@ -46,7 +46,7 @@ cmd_jump_table:
 .set_register:		defw cmd_set_register		; 4
 .write_bank:		defw cmd_write_bank			; 5
 .continue:			defw cmd_continue			; 6
-.pause:				defw cmd_not_supported		; 7, not supported on a ZX Next
+.pause:				defw cmd_pause				; 7, acknowledged; see cmd_pause
 .read_mem:			defw cmd_read_mem			; 8
 .write_mem:			defw cmd_write_mem			; 9
 .set_slot:			defw cmd_set_slot			; 10
@@ -469,6 +469,46 @@ cmd_continue:
 .not_loading:
     ; Continue
     jp restore_registers
+
+
+;===========================================================================
+; CMD_PAUSE
+; Acknowledges the command. Sends the Length=1 response the specification
+; requires — the sequence number and nothing else — and returns to cmd_loop.
+;
+; ANSWERING IS THE WHOLE OF IT, AND DOING MORE WOULD BE WRONG. This handler is
+; only ever reached from cmd_loop, which runs only while the debugger is
+; stopped, so the command cannot arrive in any other state and there is nothing
+; here to pause. In particular it must NOT touch prgm_state: DeZog sends
+; CMD_PAUSE right after CMD_INIT, i.e. in PRGM_LOADING, and overwriting that
+; with PRGM_STOPPED would make the next cmd_continue skip its "loading
+; finished" branch (.start, above) and leave the flashing border on. Nor does
+; it send an NTF_PAUSE — that notification reports a TRANSITION into the
+; stopped state, and no transition happens here. CSpect's plugin behaves the
+; same way: its Pause() stops the CPU and calls SendResponse(), while the
+; notification is emitted later and only if the state actually changed.
+;
+; Breaking into a FREELY RUNNING debuggee is a different problem and is
+; milestone M2, not this: mf_rom.asm's nmi66h serves button NMIs only (bench
+; check T4 asserts that decline deliberately), so while the debuggee runs
+; nothing polls the link and no command can be received at all.
+;
+; Upstream routed command 7 to cmd_not_supported, which stores an error and
+; jumps to drain_main: the frame was consumed and NOTHING was sent, so a client
+; waited forever. That was invisible upstream because DeZog's ZxNextSerialRemote
+; overrides sendDzrpCmdPause() to throw "To pause execution use the yellow NMI
+; button of the ZX Next" and never puts the command on the wire. Our WiFi mode
+; is driven by the cspect remote (plan §7), which does NOT override it and so
+; inherits DzrpRemote's `await this.sendDzrpCmd(7)` — it sends command 7 and
+; blocks on the response. Issue #8; conformance check C12.
+; Changes:
+;  NA
+;===========================================================================
+cmd_pause:
+    ; LOGPOINT [CMD] cmd_pause
+    ; Send response: the sequence number alone
+    ld de,1
+    jp send_length_and_seqno
 
 
 ;===========================================================================

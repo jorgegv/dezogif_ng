@@ -161,11 +161,18 @@ UT_get_cmd_pointer:
     call get_cmd_pointer
     ; ASSERTION HL == cmd_interrupt_on_off
 
-    ; Some not supported
-    ld a,7
+    ; Some not supported. 18 (CMD_GET_SPRITES), not 7: command 7 is CMD_PAUSE
+    ; and IS supported now — it is acknowledged rather than swallowed (issue #8).
+    ld a,18
     ld (receive_buffer.command),a
     call get_cmd_pointer
     ; ASSERTION HL == cmd_not_supported
+
+    ; CMD_PAUSE is dispatched, not dropped
+    ld a,7
+    ld (receive_buffer.command),a
+    call get_cmd_pointer
+    ; ASSERTION HL == cmd_pause
 
     ; Out of range
     ld a,24

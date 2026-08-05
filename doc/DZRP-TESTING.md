@@ -40,6 +40,30 @@ and only the `CMD_CONTINUE` withheld (`--only C10 --no-continue`). C10 must go *
 "C10 passed" would say nothing about whether C10 can fail — the same reason T3 exists for T4 in
 `make test`.
 
+A **fourth** run is check **W4**, and it is the only check here whose subject is two clients at
+once. Two connections are opened and initialised one at a time, and then both write a
+`CMD_LOOPBACK` at the same instant, through a barrier — so the module emits two `+IPD` frames back
+to back. **Both must be answered.**
+
+Until issue #11 exactly one of them was, every time. The stub reads the first frame, executes it
+and issues `AT+CIPSEND`; the second frame is then sitting in the RX FIFO **ahead of the module's
+`OK\r\n> `**, and the wait for that prompt skipped it exactly as it skips the module's unsolicited
+lines — read off the wire and discarded. No error, nothing sent, the client waiting for ever.
+
+**W4 asserts its own precondition, as W2 does**, and here it is load-bearing rather than
+belt-and-braces: it greps jnext's log for two `+IPD` frames emitted with nothing sent between them.
+A race that did not race is not a test, and without that line W4 would pass whenever the two writes
+happened not to collide.
+
+**It was shown red first**, against `main`'s ROM: *"exactly one of the two was answered, which is
+the signature of a frame eaten by the wait for AT+CIPSEND's prompt"*.
+
+**The same defect's other window is NOT reachable here**, and that is worth knowing before anyone
+reads W4 as covering issue #11 whole. The wait for `SEND OK` loses a frame the same way, but jnext
+answers instantly so there is no window to land in; on a real Next it is **20-50 ms** wide,
+measured, and it is hardware bench **H3**. One fix covers both; only one half of it has a check on
+this side of the line.
+
 Extra arguments go through `DZRP_ARGS`:
 
     make test-dzrp REMOTE=tcp:127.0.0.1:11000 \
@@ -80,6 +104,10 @@ fixture is written for the memory map `cmd_init` leaves on a Next and would need
 any CSpect result meant anything.
 
 ## Result against our own stub
+
+**2026-08-05, no scan discards an inbound frame (issue #11) — `make test-dzrp-stub`: W1, W2, W3
+**and W4** pass, and 12 passed, 0 failed, 0 unsupported of 12.** W4 is new and was red on the
+commit before it.
 
 **2026-08-05, `CMD_PAUSE` answered (issue #8) — `make test-dzrp-stub`: W1, W2 and W3 pass, and
 12 passed, 0 failed, 0 unsupported of 12. The target exits 0 for the first time.** Every check

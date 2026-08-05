@@ -5,6 +5,93 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-05 — No scan may destroy an inbound frame; the transport gets one frame of memory
+
+**Decided and measured, issue #11.** Every wait in `transport_esp.asm` skips
+what it is not looking for — the property that lets it step over the module's
+unsolicited lines instead of desynchronising on them — and a `+IPD` arriving
+mid-scan was skipped the same way: read off the wire and thrown away. The client
+was answered by nothing at all. `esp_read_scan` now **captures** such a frame
+and `esp_require_payload` serves it as the next command.
+
+**The measurement came first and it moved the target.** Three sweeps against a
+real Next and one against jnext:
+
+1. **One connection never fails**, at any delay from 0 to 250 ms, 3 trials each.
+   So the standing claim that *"a single pipelining client would hit it too"* is
+   **not supported** in the send-after-reply shape. The discriminator is the
+   other connection, not timing alone.
+2. **The window is 20-50 ms**, where a nine-character `SEND OK` costs ~2 ms at
+   115200. Any timeout sized against the old reasoning would have been wrong.
+3. **There is a SECOND window and jnext reproduces it 4 times out of 4.** Two
+   commands queued back to back: the second frame sits in the FIFO ahead of
+   `AT+CIPSEND`'s `OK\r\n> `, so `esp_wait_prompt` eats it. jnext's own esp01
+   log shows both `+IPD` headers emitted and one `AT+CIPSEND` issued. **That
+   retires "jnext never reproduces it"** — true of the `SEND OK` window, false
+   of this one — and it is what made a red-first headless check possible at all.
+
+**The design decision, and it breaks a stated principle on purpose.**
+`esp_sync_ipd`'s comment says the payload is never buffered, "what keeps this
+transport's RAM cost a constant rather than a function of the largest DZRP
+command". That still holds for the normal path. The exception is **one frame,
+`ESP_HOLD_MAX` = 256 bytes**, and it is the minimum that can work: the `SEND OK`
+window could have been closed by holding the header alone and leaving the
+payload on the wire, but the **prompt** window cannot — the prompt is still owed
+*after* the frame, so reaching it means passing over the payload, and passing
+over it means having somewhere to put it. Measurement (3) is what ruled the
+cheap option out; without it the header-only fix would have looked complete and
+shipped half a repair.
+
+**esp_conn_id is NOT written at capture time**, and this is the subtle half. A
+capture can land halfway through a response being flushed, and `esp_conn_id`
+names the connection *that* response is going to. Adopting the id there would
+redirect the rest of a reply to whoever spoke last — a new bug in the family the
+id has already cost this project a night over. The id rides in `esp_hold_id`
+and is joined to the transport only in `esp_require_payload`.
+
+**What is deliberately still lost.** A frame longer than the buffer, or a second
+one while the first is held, is read off the wire and dropped — but *framed*
+correctly, where the old code consumed an unknown number of payload bytes and
+could match its pattern inside them. And **a scan whose own pattern begins with
+'+' cannot capture**, or it would swallow the line it is looking for: that is
+`esp_sync_ipd` and `esp_query_address`'s `+CIFSR:STAIP,`. So a client connecting
+inside bring-up's one `AT+CIFSR` exchange can still lose its first command,
+which is [[#2026-08-05 — W2's precondition]] territory (issue #10) and measured
+NOT to be fixed by this: 5 of 6 runs with the precondition either way.
+
+**A bug of mine, caught by running it and not by reading it.**
+`transport_byte_available` polls through `esp_sync_ipd` **directly**, not through
+`esp_require_payload`, so clearing "serving from the hold" in the latter left a
+spent buffer selected and the next command was read out of already-consumed
+bytes: the frame arrived, nothing was sent, the client timed out — the very
+symptom being fixed, reintroduced by the fix. It is cleared in `esp_sync_ipd`
+now, the one routine that makes a wire chunk current. **Two callers, one of
+which bypasses the obvious place to put the state change**: worth checking for
+by grep before choosing where a flag lives.
+
+**Evidence.** Bench **W4**, shown red first against `main`'s ROM ("exactly one
+of the two was answered") and green after. It asserts its own precondition from
+jnext's log — two `+IPD` frames really emitted back to back — because a race that
+did not race is not a test. Full suite 12/12 with W1-W4. **The UART ROM is
+byte-identical to `main`'s** (`9e6bae1d`, pinned), which is what says nothing
+shared moved: this file is in the WiFi build only.
+
+**NOT CONFIRMED ON HARDWARE.** The `SEND OK` window is the one a real Next
+measured, and re-running H3 needs the ROM reflashed. Until then this is a defect
+fixed in the source, proven against its *other* window in an emulator, and
+unproven on the machine that found it. Cost: **+485 bytes**, WiFi only —
+`main_end` 0xF5CC → 0xF7B1, 1775 free to the identity block.
+
+**Rejected.** Holding only the header and deferring the payload (measurement (3)
+shows it cannot close the prompt window); a bigger buffer sized to the largest
+DZRP command (that is the RAM cost the design refuses, and `CMD_WRITE_BANK` is
+8-16 KB); sending the payload without waiting for `>` (the prompt is what says
+the module switched to data mode, and no hardware here can test the guess);
+parsing `<id>,CLOSED` to know what to expect (a second pattern in the hot path
+for a case `ERROR` already covers).
+
+---
+
 ## 2026-08-05 — The screen names the fork, the transport and the build; upstream's version leaves it
 
 **Decided, issue #12.** The banner is now

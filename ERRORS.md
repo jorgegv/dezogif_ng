@@ -5,6 +5,40 @@ attempting similar logic.
 
 ---
 
+## Clearing a flag in the obvious routine, which one caller bypasses
+
+**Symptom.** Issue #11's fix, first version: two commands queued back to back
+were now both answered — and then the *next* client's `CMD_INIT` was silently
+ignored, 2 trials in 4. The frame arrived, the stub sent nothing, the client
+timed out. Exactly the symptom being fixed, reintroduced by the fix.
+
+**Cause.** The transport can now serve a command out of a held buffer, so
+`esp_rx_from_hold` says which source the current chunk comes from. It was
+cleared in `esp_require_payload`, which is where the next chunk is asked for —
+and that is one of **two** ways a chunk becomes current. `transport_byte_available`
+polls through `esp_sync_ipd` **directly**, bypassing it. A chunk taken by the
+poll therefore arrived with the flag still set from the previous command, and
+the payload was read out of a buffer that had already been consumed.
+
+**Fix.** Clear it in `esp_sync_ipd` — the one routine that makes a *wire* chunk
+current, and therefore the one place both paths pass through.
+
+**Lesson, and it is a grep rather than an insight.** When state describes "which
+of several sources is current", put the clear where the *source* is selected,
+not where a caller asks for more. Before choosing, list the callers:
+`grep -n "call esp_sync_ipd"` takes a second and would have shown two. This file
+already carries the same shape for control flow — enumerating a routine's exits
+from the ones you happened to read — and this is the state-machine version of
+it.
+
+**What found it: running the thing.** The bug is invisible in the diff and
+obvious in a 4-trial probe. Both versions assemble, both pass the whole
+conformance suite (which uses one connection at a time, so it never asks for a
+chunk through the poll while a hold is spent), and the difference shows only in
+a client that opens a new connection after a collision.
+
+---
+
 ## A bench that failed 2 runs in 8 — and the build was fine
 
 **Symptom.** While building `make test-tx-patience` (issue #11), the *control*

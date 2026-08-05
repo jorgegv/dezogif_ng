@@ -148,15 +148,29 @@ pause**, then reports which of three things it found. On hardware, 3 runs of 3:
 holding nothing. The race is easy to lose because the module forwards the reply **to the client**
 before it tells the **stub** `SEND OK`, so the client can answer while the stub is still scanning.
 
-**The scope is wider than two connections.** Any client with data in flight while the stub is
-flushing a reply can lose a command — a single pipelining client would hit it too. DeZog is
-strictly request/response, which is why the 12/12 conformance run on hardware is genuine and not
-luck.
+**FIXED IN THE STUB, AND NOT YET CONFIRMED HERE.** Issue #11's fix holds the frame instead of
+eating it (`esp_read_scan`), and it is green in the emulator against the *other* window of the
+same defect — bench W4, which was red on the commit before it. **Nothing has re-run H3 on a Next
+since**, because that needs the ROM reflashed. Until someone does, this section describes a
+defect that is fixed in the source and unproven on the machine that found it. **Re-running H3 is
+the single highest-value thing a Next can do for this project right now.**
 
-**H3 still reports FAIL, deliberately.** The stub really does lose that command; a check that went
-green because a workaround exists would be lying. Tracked as issue #11, where the four disproven
-hypotheses are kept on purpose — each was plausible, and two were killed by nothing more than
-reading the Next's screen.
+**Two things measured on 2026-08-05 correct what this section used to say**, and both came from a
+sweep the bench does not do:
+
+- **One connection never loses a command**, at any delay from 0 to 250 ms, 3 trials each. So *"a
+  single pipelining client would hit it too"* is **not supported** for the send-after-reply shape.
+  The discriminator is the *other connection*, not the timing alone — most likely the module holds
+  inbound data for the link it is currently sending on and releases data on other links at once.
+  That last clause is a reading, not a measurement.
+- **The window is 20-50 ms wide** (fails at 0/2/5/10/20 ms, clean at 50/100/250 ms), where a
+  nine-character `SEND OK` costs about 2 ms at 115200. Worth knowing before any timeout is sized
+  against it.
+
+**H3 still reports FAIL until a Next says otherwise.** A check that went green on the strength of
+an emulator run against a different window of the same bug would be exactly the over-reading this
+document exists to prevent. Issue #11 keeps its four disproven hypotheses on purpose — each was
+plausible, and two were killed by nothing more than reading the Next's screen.
 
 ### H3, and precisely what it does and does not establish
 

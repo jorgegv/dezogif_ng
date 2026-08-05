@@ -227,7 +227,14 @@ strongest:
    **W2**: an unprompted `NTF_PAUSE` aimed at a client that has gone must leave the stub quiet
    (no error on its screen) and still serving, instead of parking on a TX timeout. A third run is
    **W3**, the negative control for C10 (below): the same run with only the `CMD_CONTINUE`
-   withheld, which C10 must go red on.
+   withheld, which C10 must go red on. A fourth run is **W4** (issue #11): two clients write a
+   command at the same instant, so the module emits two `+IPD` frames back to back, and **both
+   must be answered** — until the fix exactly one was, because the frame sitting in the FIFO ahead
+   of `AT+CIPSEND`'s `>` was skipped by the wait for that prompt, as though it were one of the
+   module's unsolicited lines. It asserts the collision really happened from jnext's own log, so
+   it cannot pass vacuously, and it was shown red on the commit before the fix. **The same
+   defect's other window — the wait for `SEND OK` — is unreachable here** (jnext answers
+   instantly) and is hardware bench H3, still unconfirmed since the fix.
    **C2** was the standing red
    until issue #7 landed: `cmd_init` read the remote's program name until a NUL and ignored the
    frame's length field, so a length that disagreed with the payload desynchronised silently
@@ -243,7 +250,7 @@ strongest:
    and came back as it left them. **Still not covered**: the stackless-NMI *return address*
    (C10 sets `PC` itself, so `save_nmi_return_address` is never involved) and the M1 button
    breaking a *running* debuggee — both need a second NMI timed against live traffic.
-   **Result 2026-08-05: W1, W2 and W3 pass, 12 passed / 0 failed of 12 — the target exits 0.**
+   **Result 2026-08-05: W1-W4 pass, 12 passed / 0 failed of 12 — the target exits 0.**
    **C12 was the last red and issue #8 closed it**: `CMD_PAUSE` was mapped to `cmd_not_supported`,
    which stores an error and jumps to `drain_main`, so the stub sent **no response at all** where
    the spec requires a Length=1 one and a client waited forever. Same shape as C2 — common code

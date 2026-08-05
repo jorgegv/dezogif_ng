@@ -94,7 +94,18 @@ A **static DHCP reservation** on the router is worth the two minutes: the addres
 
 ## Step 3 — bring the stub up
 
-Power on, let NextZXOS boot, then **press the NMI (M1) button once**.
+Power on, let NextZXOS boot, then **press the NMI button once — the Multiface one, NOT DRIVE**.
+
+**Which button, since this document calls it "M1" and your case almost certainly does not.** "M1"
+is the FPGA's name for the signal, not a label: `zxnext.vhd:2090` reads
+`nmi_assert_mf <= '1' when (hotkey_m1 = '1' or nmi_sw_gen_mf = '1') and nr_06_button_m1_nmi_en`,
+and NR `0x06` **bit 3** is `nr_06_button_m1_nmi_en`. The line below it is the other one:
+`hotkey_drive` → `nmi_assert_divmmc`, gated by NR `0x06` **bit 4** — that is **DRIVE**, the DivMMC
+NMI, and it brings up the esxdos browser, not this stub. So of the three buttons — RESET, DRIVE and
+NMI — it is the third. In an emulator the same two are **F9** (Multiface) and **F10** (DivMMC),
+`zxnext.vhd:6348-6349`.
+
+If the stub's UI appears, you pressed the right one: nothing else on the machine draws that screen.
 
 Record what happens on screen — this is observation, not decoration, and the script cannot see any
 of it:
@@ -282,9 +293,15 @@ Stated here because the temptation to over-read the first hardware success will 
   the program being debugged. **Hardware is the right place to close it**, because the timing race
   that makes it unschedulable under a frame-counting emulator does not exist when a human presses
   the button.
-- **AltROM on hardware.** It is exercised in the emulator by C10 — the fixture's breakpoint is an
-  `RST 0`, which reaches the debugger only through the code `copy_altrom` installs at
-  0x0000/0x0066 — but nothing has run under a patched ROM on a Next.
+- ~~**AltROM on hardware.**~~ **Covered since 2026-08-05, and the struck line is kept because of
+  how it was wrong.** It said the emulator exercised the patched ROM and "nothing has run under a
+  patched ROM on a Next" — but H2 delegates to `conformance.py`, and C10 runs there too. The chain:
+  while the debuggee runs slot 0 holds `ROM_BANK` (`main.asm:150`, restored at
+  `breakpoints.asm:192`) with the AltROM enabled (`altrom.asm:55`, the only enable and nothing
+  disables it), so C10's temporary breakpoint — an `RST 0` — can only reach the debugger through
+  the code `copy_altrom` installs at 0x0000. **C10 passed on a Next, so the patched AltROM
+  executed on silicon.** Same mistake as the resume claim two bullets above: written from what the
+  script does rather than from what it runs.
 - **DeZog itself.** The evidence is a conformance suite, not a debugging session. Stepping and
   breakpoints over WiFi are untried; `remoteType: "cspect"` with `hostname` is the configuration to
   try, and Appendix B of the plan carries the `launch.json`.
@@ -316,6 +333,7 @@ predictions. These are the results.**
 | Inbound connection ids on real firmware | unverified | **verified indirectly: the first client gets id 0.** Not by observation — no PC-side check can see the ids — but by the failure it caused, which is only possible if the id was 0. See the divergence table at the top |
 | The `+IPD` id is read rather than assumed | emulator only | **verified on hardware** — H3, two simultaneous connections, each getting its own payload |
 | DZRP conformance | emulator only | **12 of 12 on hardware** (build 000A). It was 11 of 12 when first run, the red being `CMD_PAUSE` — issue #8, fixed and now re-measured on a Next |
+| **The AltROM patch works on hardware** | C10's `RST 0` breakpoint, which reaches the debugger only through `copy_altrom`'s code at 0x0000, with slot 0 = `ROM_BANK` and the AltROM enabled while the debuggee runs | **verified on hardware** — it was listed as emulator-only until someone followed what H2 actually runs |
 | A command arriving while the stub is answering another survives | **red on hardware, 3 runs of 3** — the `SEND OK` window, which no emulator here can reach | **verified on hardware, 3 runs of 3** (build 000A, issue #11). Median round trip and throughput unchanged by the fix: 11.3-11.5 ms and 6.1-8.2 KB/s against 11.5 ms and 8.3 before it |
 | The debuggee resumes | emulator only | **verified on hardware** — C10/C11 through H2's delegation |
 | The connect string shows a correct address | never read on hardware | **reported on hardware** — correct at **15 characters**, the length the parser used to refuse and one jnext cannot produce |

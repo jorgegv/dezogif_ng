@@ -689,15 +689,39 @@ def h5_throughput(host, port, timeout, results, nbytes):
 UNCOVERED = """
 NOT COVERED BY THIS RUN, and none of it is incidental:
 
-  * The stackless-NMI return ADDRESS, untested in either place: it needs an M1
-    press taken while the debuggee is running, which nothing performs yet.
-    C10 sets PC itself, so save_nmi_return_address never runs.
-  * AltROM on hardware. Exercised in jnext by C10's RST 0; never on silicon.
-  * The Next's screen. Record it by hand — see doc/HARDWARE-TESTING.md.
-  * The UART build, which needs a joy-port cable:
+  * The stackless-NMI return ADDRESS, untested in either place: it needs the
+    Multiface NMI button pressed while the debuggee is RUNNING, which nothing
+    performs yet. C10 sets PC itself, so save_nmi_return_address never runs —
+    and that routine is the only thing that recovers the interrupted program's
+    address from NR 0xC2/0xC3. Closing it needs a finger, not more code: run a
+    fixture that spins in a known address range, CMD_CONTINUE it, press the
+    button, and check PC came back inside that range. It cannot be automated in
+    jnext, where --delayed-nmi counts frames and the client counts wall clock.
+  * The Next's screen — but only for as long as nobody reads it over the wire.
+    While the debugger is stopped cmd_init maps 8K banks 10 and 11 at 0x4000
+    (commands.asm), which is 128K bank 5, the display file the ULA is showing
+    and the one ula.print_char writes to. So CMD_READ_MEM 0x4000,6912 fetches
+    the stub's own screen, and the S1-S5 observations below could be assertions
+    instead of a photograph. Until then: record them by hand, see
+    doc/HARDWARE-TESTING.md.
+  * The UART build, which needs a joy-port cable and a USB serial adapter:
         make test-dzrp REMOTE=serial:/dev/ttyUSB0:921600
-  * Whether a reply can be flushed to the WRONG connection when two commands
-    interleave. That is a property of our buffering, not of the hardware.
+    Worth knowing that this gap has GROWN. The serial path's only guard has been
+    byte-identity — "the UART ROM did not change" — and issues #7, #8, #9 and
+    #12 each changed it deliberately, so that guard has answered nothing four
+    times running. Nothing has ever executed the serial transport end to end.
+  * A reply flushed to the WRONG connection when two commands interleave, which
+    is issue #13 and is a defect rather than a caveat: three handlers answer
+    before reading their payload, and the reads can move esp_conn_id. Needs a
+    payload split across +IPD frames plus a second client, so DeZog cannot
+    reach it and every bench here stays green.
+
+WHAT THIS LIST NO LONGER SAYS, because it became untrue: "AltROM on hardware,
+never on silicon". C10's temporary breakpoint is an RST 0; while the debuggee
+runs slot 0 holds ROM_BANK (main.asm) with the AltROM enabled (altrom.asm, and
+nothing disables it), so that RST 0 can only reach the debugger through the code
+copy_altrom installed at 0x0000. C10 passing here means the patched AltROM
+executed on the machine.
 """
 
 

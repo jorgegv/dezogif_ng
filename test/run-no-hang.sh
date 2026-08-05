@@ -152,8 +152,13 @@ BOOT_FRAMES=900
 # The "B" press, and then the picture. Both must land after the exchange, and
 # the shipped bound is 5 emulated seconds — ~250 frames — which has to fit
 # between the exchange and the keypress. See the ordering note in the header for
-# which of these is asserted and which fails safely. Measured: the exchange
-# lands around frame @@EXCHANGE_FRAME@@ in these runs.
+# which of these is asserted and which fails safely.
+#
+# MEASURED, from the runs' own logs rather than chosen: the NMI is at frame 900,
+# the client's first command lands ~2.1 s of emulated time after it, and these
+# runs advance ~300 frames a second while idle — so the exchange is around frame
+# 1500, well below KEY_FRAMES. The frame rate collapses once traffic flows, which
+# is why the gap to SHOT_FRAMES is generous.
 KEY_FRAMES=6000
 SHOT_FRAMES=9000
 
@@ -265,6 +270,21 @@ print('%d,%d,%d' % seen.pop())
 # the eight non-bright colours.
 BORDER_BLACK=0,0,0
 BORDER_YELLOW=182,182,0
+
+# bright_red <png> — how many pixels are EXACTLY bright red, i.e. how much
+# "Last Error: ..." is on the screen. ui.asm colours the bottom nine rows
+# RED+BRIGHT and nothing else on that screen is red at all, and by the note
+# above the border can never be bright, so exact (255,0,0) can only be that
+# error text. The same measure W2 and P2 use. N3's precondition; N1 and N2 do
+# not use it, because expiry deliberately reports nothing.
+bright_red() {
+    python3 -c "
+from PIL import Image
+raw = Image.open('$1').convert('RGB').tobytes()
+print(sum(1 for i in range(0, len(raw), 3)
+          if raw[i] == 255 and raw[i+1] == 0 and raw[i+2] == 0))
+"
+}
 
 # start_stub <rom> <logfile> <screenshot> — boot a Next with <rom> as the
 # Multiface ROM, press M1, and wait for the stub's own listener. That wait is an
@@ -392,20 +412,32 @@ shot3=$OUT/screenshots/no-hang-slowprompt.png
 rc=0
 if start_stub "$ROM_SLOWPROMPT" "$OUT/no-hang-slowprompt.log" "$shot3"; then
     python3 "$SEND_CLIENT" --host 127.0.0.1 --port "$PORT" \
-        --timeout "$CLIENT_TIMEOUT" | sed 's/^/  | /' || rc=$?
-    # The precondition, asserted from the module's own log rather than assumed:
-    # the stub must really have announced at least one send. Without this a run
-    # in which nothing was ever sent would pass N3 for the wrong reason.
-    sends=$(grep -c 'AT+CIPSEND' "$OUT/no-hang-slowprompt.log" || true)
+        --timeout "$CLIENT_TIMEOUT" --after-shot "$shot3" \
+        --shot-timeout "$SHOT_TIMEOUT" | sed 's/^/  | /' || rc=$?
+    # A send really was announced, from the module's own log.
+    sends=$(grep -c 'AT+CIPSEND=.* accepted' "$OUT/no-hang-slowprompt.log" || true)
     stop_stub
+    # AND THE BUDGET REALLY EXPIRED, which the log cannot show — jnext has no
+    # view of our timeout. The stub's screen does: every route through
+    # esp_flush_chunk's fault arm ends in "Last Error: TX Timeout", so bright red
+    # means the injected budget was reached. Both builds paint it; this is the
+    # precondition, and the verdict is whether a second client was answered
+    # afterwards. Without it a run where the prompt arrived comfortably in time
+    # would pass N3 having tested nothing.
+    red=0
+    [ -s "$shot3" ] && red=$(bright_red "$shot3")
     if [ "$rc" -eq 2 ]; then
         fail "N3 the client could not reach the stub at all, so nothing was tested"
+    elif [ "$rc" -eq 12 ] || [ "$rc" -eq 13 ]; then
+        fail "N3 no usable screenshot (client exit $rc), so the precondition could not be read"
     elif [ "${sends:-0}" -lt 1 ]; then
-        fail "N3 the precondition never happened — no AT+CIPSEND in $OUT/no-hang-slowprompt.log, so the module was never put in the state this check is about"
+        fail "N3 the precondition never happened — no AT+CIPSEND accepted in $OUT/no-hang-slowprompt.log, so the module was never put in the state this check is about"
+    elif [ "$red" -eq 0 ]; then
+        fail "N3 the stub reports NO transport fault ($shot3 has no bright red), so the injected budget was never actually reached — the prompt arrived in time and this run tested nothing"
     elif [ "$rc" -ne 0 ]; then
-        fail "N3 a SECOND client went unanswered after the first send missed its prompt ($sends AT+CIPSEND in the log) — the module is still counting off payload it was promised"
+        fail "N3 a SECOND client went unanswered after the first send missed its prompt ($sends announced, $red bright-red pixels of 'TX Timeout') — the module is still counting off payload it was promised"
     else
-        pass "N3 the first send missed its prompt ($sends AT+CIPSEND in the log) and a second client was still answered — the module was not left owed"
+        pass "N3 the first send missed its prompt ($sends announced, $red bright-red pixels of 'TX Timeout') and a second client was still answered — the module was not left owed"
     fi
 else
     stop_stub

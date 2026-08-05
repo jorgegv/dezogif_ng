@@ -734,6 +734,13 @@ esp_client_text_table_end:
 
 esp_tx_len:         defb 0
 esp_tx_byte:        defb 0
+
+; Set when something went wrong DURING a chunk that had already been announced.
+; It is not reported where it happens, because reporting means leaving, and
+; leaving is the one thing esp_flush_chunk may not do between announcing a
+; length and writing it (issue #16, part B). So the fault is remembered, the
+; transaction is completed, and the report comes afterwards.
+esp_tx_fault:       defb 0
 esp_tx_buffer:      defs ESP_TX_CHUNK
 esp_cmd_buffer:     defs 24
 
@@ -743,15 +750,21 @@ esp_cmd_buffer:     defs 24
 ;===========================================================================
 
 ;===========================================================================
-; Writes one byte to the UART, waiting for room.
+; Writes one byte to the UART, waiting for room, and SAYS whether it got out.
+;
+; The bounded primitive. esp_send_raw below is the "a failure here is fatal"
+; wrapper, and the payload loop in esp_flush_chunk is the one caller that must
+; not use it: once a length has been announced, stopping in the middle of the
+; payload is the one thing that cannot be allowed (issue #16, part B).
 ; Parameter:
 ;  A = the byte to write.
 ; Returns:
-;  A and flags unchanged.
+;  NC and A unchanged if it was written, CY and A unchanged if the FIFO stayed
+;  full for the whole budget.
 ; Changes:
-;  BC
+;  F, BC
 ;===========================================================================
-esp_send_raw:
+esp_send_try:
     push af, de
     ld bc,UART_TX
     ld de,ESP_TX_WAIT
@@ -763,12 +776,34 @@ esp_send_raw:
     ld a,d
     or e
     jr nz,.wait
-    nop ; LOGPOINT esp_send_raw: ERROR=TIMEOUT
-    jp tx_timeout   ; ASSERTION
+    ; The FIFO never drained. The byte is NOT written — writing into a full
+    ; FIFO loses it in hardware, so there is nothing to gain by trying.
+    pop de, af
+    scf
+    ret
 .ready:
     pop de, af
     out (c),a
+    or a                    ; NC; A is the byte and survives
     ret
+
+
+;===========================================================================
+; Writes one byte to the UART. A failure does not return to the caller — it
+; resets the call stack and re-enters the main loop, as everything else in this
+; transport's error paths does.
+; Parameter:
+;  A = the byte to write.
+; Returns:
+;  A unchanged.
+; Changes:
+;  F, BC
+;===========================================================================
+esp_send_raw:
+    call esp_send_try
+    ret nc
+    nop ; LOGPOINT esp_send_raw: ERROR=TIMEOUT
+    jp tx_timeout   ; ASSERTION
 
 
 ;===========================================================================
@@ -1998,6 +2033,9 @@ transport_flush:
 ;  AF, BC, DE, HL
 ;===========================================================================
 esp_flush_chunk:
+    xor a
+    ld (esp_tx_fault),a
+
     ; "AT+CIPSEND=<id>,<len>\r\n"
     ld hl,esp_str_cipsend
     ld de,esp_cmd_buffer
@@ -2037,8 +2075,31 @@ esp_flush_chunk:
     call esp_rx_budget_short
     jr nc,.have_prompt
     or a
-    jr nz,.timeout          ; A = 1: the module said nothing at all
-    jr .no_client           ; A = 0: ERROR
+    jr z,.no_client         ; A = 0: ERROR, and the module never took the send
+
+    ; A = 1: SILENCE. THE LENGTH IS ALREADY ANNOUNCED, SO THE TRANSACTION MUST
+    ; BE COMPLETED (issue #16, part B). The old code jumped to .timeout here —
+    ; walking away with the module owed <len> bytes, which is a state a module
+    ; should never be left in: ESP-AT counts every byte it is given afterwards
+    ; against that promise, so the next AT command line is eaten as payload and
+    ; nothing is answered again until the count runs out. jnext models exactly
+    ; that (esp_at.cpp:496 enters payload mode with the prompt, :181 counts, no
+    ; timeout between), and bench N3 is red on the commit before this one.
+    ;
+    ; The real payload goes out rather than filler, and that is not thrift: if
+    ; the module was merely slow, its prompt arrives while these bytes are still
+    ; being shifted, it takes them, and the client gets the reply it was owed —
+    ; which is measurably what happens under the injected budget N3 uses. If it
+    ; was not slow but broken, the bytes are noise it was going to be sent
+    ; anyway.
+    ;
+    ; NOT PROOF THAT THIS WEDGES REAL HARDWARE. Issue #15 offers the abandoned
+    ; send as its best explanation for a Next that needed a power cycle and says
+    ; plainly that it is a reading; four candidate triggers driven at a real
+    ; Next on 2026-08-05 — this one among them — all recovered within ~3 s.
+    ld a,1
+    ld (esp_tx_fault),a
+    ; Flow through: write the bytes.
 
 .have_prompt:
     ld a,(esp_tx_len)
@@ -2047,7 +2108,15 @@ esp_flush_chunk:
 .send_payload:
     ld a,(hl)
     push bc, hl
-    call esp_send_raw
+    ; esp_send_try, NOT esp_send_raw: a diverted send here would stop the frame
+    ; half-written, which is the same defect one level down. Each byte still
+    ; gets its own bounded wait, so this cannot spin; a byte that could not be
+    ; written is lost, and the fault is reported once the frame is complete.
+    call esp_send_try
+    jr nc,.byte_sent
+    ld a,1
+    ld (esp_tx_fault),a
+.byte_sent:
     pop hl, bc
     inc hl
     djnz .send_payload
@@ -2055,6 +2124,12 @@ esp_flush_chunk:
     ; The buffer is spent whatever the module says next.
     xor a
     ld (esp_tx_len),a
+
+    ; Anything that went wrong is reported HERE, after the promise has been
+    ; kept, rather than where it happened.
+    ld a,(esp_tx_fault)
+    or a
+    jr nz,.timeout
 
     ; Owed too, and slower than the prompt: the module only says this once its
     ; TCP stack has taken the segment. Same tight pair, same reason.

@@ -21,12 +21,21 @@ neither is a verdict. The verdict is the SECOND connection, which is a client
 that did nothing wrong asking a question the module can only answer if it is
 back in command mode.
 
+IT ALSO HOLDS THE RUN OPEN FOR A SCREENSHOT, and that picture is the bench's
+PRECONDITION rather than its verdict. Whether the '>' prompt really arrived
+later than the stub was willing to wait is not visible in the module's log —
+jnext cannot see our budget expire — but it IS visible on the stub's own screen,
+because every route through esp_flush_chunk's fault arm ends in "Last Error: TX
+Timeout". Both the fixed and the pre-fix build paint it; what differs is whether
+a second client is answered afterwards. Without that check N3 could pass
+vacuously against a run where the budget was never reached at all.
+
 EXIT CODES
   0   the second client was answered
   1   the second client was not answered  (the module is still swallowing)
   2   could not connect at all
-  3   the FIRST client was never even framed — the run never got far enough to
-      be evidence about anything
+  12  the screenshot already existed before the first exchange
+  13  the screenshot never appeared inside --shot-timeout
 """
 
 import argparse
@@ -65,7 +74,16 @@ def main():
     ap.add_argument("--gap", type=float, default=2.0,
                     help="seconds between the two connections, so the stub has "
                          "finished its drain and repainted before the second one")
+    ap.add_argument("--after-shot", required=True,
+                    help="the screenshot the bench reads its precondition from; "
+                         "must not exist yet when the first exchange starts")
+    ap.add_argument("--shot-timeout", type=float, default=180.0)
     args = ap.parse_args()
+
+    if os.path.exists(args.after_shot):
+        print("the screenshot %s already existed before anything was sent, so "
+              "it says nothing about this run" % args.after_shot)
+        return 12
 
     ok1, msg1 = one_init(args.host, args.port, args.timeout, "client 1")
     print(msg1)
@@ -80,6 +98,18 @@ def main():
         # The listener went away entirely. That is not "the module is
         # swallowing" and must not be reported as it.
         return 2
+
+    # Hold the run open until the picture exists, so the bench can read the
+    # precondition off it. Reported either way; the verdict is ok2.
+    t0 = time.time()
+    while not os.path.exists(args.after_shot):
+        if time.time() - t0 > args.shot_timeout:
+            print("no screenshot after %.0fs" % args.shot_timeout)
+            return 13
+        time.sleep(0.25)
+    time.sleep(0.5)
+    print("screenshot appeared %.1fs after the exchanges" % (time.time() - t0))
+
     return 0 if ok2 else 1
 
 

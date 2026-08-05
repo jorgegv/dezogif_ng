@@ -7,6 +7,7 @@
 .PHONY: help all main unit-tests ut-headless mf-rom mf-rom-wifi mf-rom-sum mfselect test \
         test-unit test-mfselect \
         test-esp test-dzrp test-dzrp-stub test-ip-boundary test-tx-patience \
+        test-client-status \
         test-hardware bump check-reproducible \
         check-reproducible-wifi clean
 
@@ -378,6 +379,17 @@ test-dzrp-stub:
 	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
 	 ROM="$(OUT)/enNextMf-wifi.rom" DZRP_ARGS="$(DZRP_ARGS)" $(TEST)/run-dzrp-stub.sh
+
+# The session line on the Next's own screen (issue #14): three jnext runs, one
+# per state, each judged by READING row 8 back as text with the ZX ROM font
+# rather than by comparing runs. Comparing runs cannot tell a correct pair of
+# labels from a swapped one — see ERRORS.md and test/run-client-status.sh.
+#
+# Run the client-session status line bench (3 jnext runs; not part of `make test`)
+test-client-status:
+	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
+	 ROM="$(OUT)/enNextMf-wifi.rom" $(TEST)/run-client-status.sh
 
 # The address parser's length boundary, which no other bench can reach: jnext
 # always answers AT+CIFSR with a 12-character address and there is no option to

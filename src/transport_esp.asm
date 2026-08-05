@@ -229,6 +229,29 @@
 
 
 ;===========================================================================
+; TRANSPORT_CLIENT_ATTACHED / TRANSPORT_CLIENT_DETACHED — CMD_INIT, CMD_CLOSE.
+;
+; The two moments a debug session can be observed from above the byte stream.
+; Each records one in esp_client_state, which esp_show_status draws; the redraw
+; itself is not done here, because both call sites already reach show_ui —
+; cmd_init calls it, cmd_close leaves through `jp main`. That is what keeps the
+; line off the per-command path: nothing here repaints anything.
+;
+; AF only, and it is free at both sites. See transport.asm for why these are
+; macros and what they are allowed to claim.
+;===========================================================================
+    MACRO TRANSPORT_CLIENT_ATTACHED
+    ld a,ESP_CLIENT_ATTACHED
+    ld (esp_client_state),a
+    ENDM
+
+    MACRO TRANSPORT_CLIENT_DETACHED
+    ld a,ESP_CLIENT_DETACHED
+    ld (esp_client_state),a
+    ENDM
+
+
+;===========================================================================
 ; Constants
 ;===========================================================================
 
@@ -376,6 +399,35 @@ ESP_LINK_FAILED:        equ 2   ; the AT chain did not complete
 ; refused — because from the screen's point of view they are one situation and
 ; have one first move. Splitting them would need the module to have said
 ; something to tell them apart, which in the silent case it has not.
+
+; What the UI has to say about the debug SESSION (issue #14). Set by
+; TRANSPORT_CLIENT_ATTACHED / TRANSPORT_CLIENT_DETACHED, i.e. by CMD_INIT and
+; CMD_CLOSE and by nothing else.
+;
+; THESE ARE EVENTS THAT HAPPENED, NOT A LIVE CONNECTION, AND THE WORDING BELOW
+; IS PICKED SO THE SCREEN CANNOT CLAIM MORE THAN THAT. What this transport can
+; see is frames, not connections: the id is refreshed by an inbound `+IPD` and a
+; departed peer is discovered only when an AT+CIPSEND is answered ERROR. So
+;
+;   * a client that opens TCP and says nothing is invisible — ATTACHED is about
+;     CMD_INIT, not about a socket;
+;   * a client that vanishes without CMD_CLOSE leaves ATTACHED standing, which
+;     is why that state's line says a session was OPENED rather than that one is
+;     open. It states what was observed and stops there.
+;
+; Closing the second gap means reading the module's unsolicited `<id>,CONNECT`
+; and `<id>,CLOSED` lines, which is the same tracking the "residual" note in
+; esp_flush_chunk's .no_client defers to M3's reconnect work. Until that exists,
+; saying less is the only honest option — a line reading "client connected" ten
+; minutes after the client left is worse than no line at all.
+ESP_CLIENT_NONE:        equ 0   ; no CMD_INIT since the debugger came up
+ESP_CLIENT_ATTACHED:    equ 1   ; a CMD_INIT arrived, and no CMD_CLOSE since
+ESP_CLIENT_DETACHED:    equ 2   ; a CMD_CLOSE arrived
+
+; The row the session line is drawn on. Under the connect block at rows 6 and 7,
+; which is where a reader looking for "has my session arrived" is already
+; looking, and clear of the key list — WiFi mode's starts at row 11.
+ESP_CLIENT_ROW:         equ 8
 
 
 ;===========================================================================
@@ -532,6 +584,18 @@ esp_init_error:     defb 0
 ; module did not answer" rather than claiming an address it never asked for.
 esp_link_state:     defb ESP_LINK_FAILED
 
+; Which of the three SESSION lines show_ui draws (issue #14). Written only by
+; TRANSPORT_CLIENT_ATTACHED / TRANSPORT_CLIENT_DETACHED.
+;
+; Its lifetime is deliberately the debugger's, not a command's: this whole block
+; is part of the image mf_rom.asm's init_main_bank copies into MAIN_BANK, and
+; that copy happens on the FIRST M1 press after power-on and on a Symbol Shift
+; re-init, not on every press (mf_rom.asm:130-172 takes the magic-number path
+; straight to mf_nmi_button_pressed). So breaking into a running debuggee with
+; the button leaves the line saying what it said, which is correct — the session
+; is still there — and a re-init resets it to NONE, which is also correct.
+esp_client_state:   defb ESP_CLIENT_NONE
+
 ;---------------------------------------------------------------------------
 ; The UI half of the transport interface (MEMORY.md 2026-08-04).
 ;
@@ -589,6 +653,62 @@ esp_status_text_table:
     defw esp_text_failed
 esp_status_text_table_end:
     ASSERT (esp_status_text_table_end - esp_status_text_table) / 2 == ESP_LINK_FAILED + 1
+
+
+;---------------------------------------------------------------------------
+; The session line (issue #14), one row under the block above.
+;
+; EACH OF THESE IS A PAST-TENSE STATEMENT ABOUT SOMETHING THAT WAS OBSERVED, and
+; the phrasing is the substance of the change rather than decoration. See
+; ESP_CLIENT_NONE and following for what this transport can and cannot see; the
+; short version is that CMD_INIT and CMD_CLOSE are the only two events above the
+; byte stream, so "a session was opened" is sayable and "a client is connected"
+; is not. Naming the command that was seen is what makes the limit legible to
+; whoever reads the screen: it is plainly a report of protocol traffic, not of a
+; socket.
+;
+; A line per state, drawn in every link state including FAILED, where it is
+; merely uninteresting rather than wrong. There is no blank alternative: a row
+; that appears and disappears is the "screen with holes in it" the status block
+; above already refuses to be.
+;
+; The 32-column bound is an ASSERT per string, not arithmetic in a comment. The
+; longest of them is 27 characters today and the temptation with any of these is
+; to spend the slack; ERRORS.md carries three entries about bounds nothing
+; checked, one of them in the line directly above this one.
+;---------------------------------------------------------------------------
+esp_text_client_none:
+    defb AT, 0, ESP_CLIENT_ROW*8
+.text:
+    defb "No debug session yet."
+.end:
+    defb 0
+    ASSERT .end - .text <= 32
+
+esp_text_client_attached:
+    defb AT, 0, ESP_CLIENT_ROW*8
+.text:
+    defb "Session opened (CMD_INIT)."
+.end:
+    defb 0
+    ASSERT .end - .text <= 32
+
+esp_text_client_detached:
+    defb AT, 0, ESP_CLIENT_ROW*8
+.text:
+    defb "Session closed (CMD_CLOSE)."
+.end:
+    defb 0
+    ASSERT .end - .text <= 32
+
+; Indexed by esp_client_state, which esp_show_status does not range-check —
+; same rule as the table above, and the assembler counts rather than a reader.
+esp_client_text_table:
+    defw esp_text_client_none
+    defw esp_text_client_attached
+    defw esp_text_client_detached
+esp_client_text_table_end:
+    ASSERT (esp_client_text_table_end - esp_client_text_table) / 2 == ESP_CLIENT_DETACHED + 1
 
 esp_tx_len:         defb 0
 esp_tx_byte:        defb 0
@@ -2066,12 +2186,25 @@ esp_query_address:
 ;===========================================================================
 ; Draws WiFi mode's status block, where UART mode draws its joy-port selection.
 ; Called from show_ui; see the data above.
+;
+; Two independent things: the LINK (rows 6-7, decided once during bring-up) and
+; the SESSION (row 8, from CMD_INIT/CMD_CLOSE). They are drawn from separate
+; tables because they answer separate questions — "where do I connect" and "did
+; anyone" — and neither state constrains the other. Both strings begin with
+; their own AT, so the second does not depend on where the first ended.
 ; Changes:
 ;  AF, BC, DE, HL
 ;===========================================================================
 esp_show_status:
     ld hl,esp_status_text_table
     ld a,(esp_link_state)
+    add a                       ; *2
+    add hl,a
+    ld de,(hl)
+    call text.ula.print_string
+
+    ld hl,esp_client_text_table
+    ld a,(esp_client_state)
     add a                       ; *2
     add hl,a
     ld de,(hl)

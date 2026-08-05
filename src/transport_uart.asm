@@ -76,6 +76,26 @@
 
 
 ;===========================================================================
+; TRANSPORT_CLIENT_ATTACHED / TRANSPORT_CLIENT_DETACHED — CMD_INIT, CMD_CLOSE.
+;
+; Nothing here, and that is a statement rather than a gap. Over a cable there
+; is no connection to report: the joy-port link exists whenever the debugger
+; holds the port, whether or not anything is on the other end of it, so a line
+; saying "client connected" would be an assertion this transport cannot make.
+; The two commands would still tell it a session had been opened and closed —
+; but a screen that says so here and cannot say when the peer went would be
+; less honest than one that says nothing, and issue #14's acceptance criterion
+; is precisely that the line must not lie in the states the transport cannot
+; see. So UART mode keeps upstream's screen, unchanged and unclaiming.
+;===========================================================================
+    MACRO TRANSPORT_CLIENT_ATTACHED
+    ENDM
+
+    MACRO TRANSPORT_CLIENT_DETACHED
+    ENDM
+
+
+;===========================================================================
 ; Constants
 ;===========================================================================
 

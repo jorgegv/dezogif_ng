@@ -38,6 +38,31 @@
 ;                                   transport that must announce a frame's
 ;                                   length before its bytes sends the frame.
 ;
+;   Session events (macros, for the same reason)
+;     TRANSPORT_CLIENT_ATTACHED     CMD_INIT was received: a debug client has
+;                                   just opened a session
+;     TRANSPORT_CLIENT_DETACHED     CMD_CLOSE was received: it closed one
+;
+;   These exist so the transport can SAY SO on the Next's own screen, which is
+;   the one channel the PC side does not have (issue #14). They are macros, and
+;   the interface's rule about common code is why: cmd_init and cmd_close are in
+;   commands.asm, which must not be able to tell which transport it was
+;   assembled against, so the mode-specific part cannot be an `IF ROM_VARIANT`
+;   there. A transport with nothing to report expands them to nothing, and the
+;   UART build's bytes do not move.
+;
+;   THEY REPORT EVENTS, NOT A LIVE CONNECTION. CMD_INIT and CMD_CLOSE are the
+;   only two moments a transport above the byte stream can observe, and neither
+;   is TCP: a socket can be open before the first and after the second, and a
+;   client that vanishes without CMD_CLOSE produces no event at all. Whatever an
+;   implementation draws must therefore claim only what these two prove — see
+;   esp_client_state in transport_esp.asm, where the wording is chosen for
+;   exactly that reason. Tracking the module's `<id>,CONNECT` / `<id>,CLOSED`
+;   lines is what would close the gap, and it is M3's reconnect work.
+;
+;   AF is free at both call sites (commands.asm), so an implementation may use
+;   it without saving; nothing else is.
+;
 ; The lifecycle deactivate is a MACRO, not a subroutine, because the one place
 ; that needs it is already inline in the resume path (`backup.asm`) and a call
 ; there would cost bytes and a stack slot in a routine that has neither to

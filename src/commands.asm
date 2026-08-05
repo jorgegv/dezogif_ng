@@ -147,6 +147,11 @@ cmd_init:
     ld (prgm_state),a
     ; Enable flashing border
     call transport_flashing_border.enable
+    ; A debug client has opened a session. The transport decides whether it can
+    ; honestly say so on the Next's screen; this is only the event (issue #14).
+    ; Before show_ui, so the redraw below is the one that draws it — nothing
+    ; here repaints on its own account.
+    TRANSPORT_CLIENT_ATTACHED
     ; Afterwards start all over again / show	; Afterwards start all over again / show the "UI"
     call show_ui
 
@@ -235,6 +240,9 @@ cmd_close:
     ld (prgm_state),a
     ; Enable flashing border
     call transport_flashing_border.enable
+    ; The session was closed cleanly, which is the only ending this stub can
+    ; observe (issue #14). `jp main` reaches show_ui, so the line is drawn there.
+    TRANSPORT_CLIENT_DETACHED
     ; Afterwards start all over again / show the "UI"
     jp main
 

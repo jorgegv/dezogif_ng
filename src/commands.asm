@@ -57,16 +57,13 @@ cmd_jump_table:
 .loopback:			defw cmd_loopback			; 15
 .get_sprites_palette:	defw cmd_get_sprites_palette	; 16
 .get_sprites_clip_window_and_control:	defw cmd_get_sprites_clip_window_and_control	; 17
-.get_sprites:		defw cmd_not_supported		; 18, not supported on a ZX Next
-.get_sprite_patterns:	defw cmd_not_supported	; 19, not supported on a ZX Next
+.get_sprites:		defw cmd_get_sprites		; 18, answered but empty; see there
+.get_sprite_patterns:	defw cmd_get_sprite_patterns	; 19, ditto
 .get_port:			defw cmd_read_port	; 20
 .write_port:		defw cmd_write_port	; 21
 .exec_asm:			defw cmd_exec_asm	; 22
 .interrupt_on_off:	defw cmd_interrupt_on_off	; 23
 .end
-
-;.get_sprites:			defw 0	; not supported on a ZX Next
-;.get_sprite_patterns:	defw 0	; not supported on a ZX Next
 
 ;.add_breakpoint:		defw 0		; not supported (see set_breakpoints/restore_mem)
 ;.remove_breakpoint:	defw 0	; not supported (see set_breakpoints/restore_mem)
@@ -666,6 +663,98 @@ cmd_get_tbblue_reg:
     call read_tbblue_reg	; Result in A
     ; Send
     jp transport_write_byte
+
+
+;===========================================================================
+; CMD_GET_SPRITES / CMD_GET_SPRITE_PATTERNS
+;
+; THE NEXT CANNOT READ EITHER OF THESE BACK, and that is checked in the VHDL
+; rather than taken from upstream. Ports 0x57 (attribute upload) and 0x5B
+; (pattern upload) have NO read decode at all: zxnext.vhd:651-652 declares
+; port_57_wr and port_5b_wr and no read counterpart, and neither appears in the
+; port read mux (zxnext.vhd:2803-2806) or the data mux (:2838-2841). Port
+; 0x303B IS readable but returns the sprite STATUS byte, not attributes. So this
+; is a property of the silicon, which is why upstream's jump table sent both to
+; cmd_not_supported and why DeZog's own ZxNextSerialRemote throws "The sprite
+; attributes can't be read on a ZX Next unfortunately" before the command ever
+; reaches a wire.
+;
+; AN EMULATOR IS NOT SUBJECT TO THIS AND WE ARE. CSpect's DeZog plugin answers
+; these for real, because it runs in the HOST, where the sprite arrays are
+; ordinary variables; jnext's own DZRP server (its issue #12) will be able to do
+; the same. Our stub is Z80 code running INSIDE the machine, so it is bounded by
+; what the CPU can reach — in jnext exactly as on hardware, since jnext models
+; the write-only-ness faithfully. The same DeZog session will therefore show a
+; populated sprite view against an emulator and an empty one against a real
+; Next: a capability difference in the target, not a fault in either. Plan
+; section 8.4 lists this family among the tier no hardware target can implement.
+;
+; SO WHY ANSWER AT ALL. Because the client this transport is spoken to by is a
+; DIFFERENT one. DeZog's CSpectRemote — the `cspect` remote WiFi mode uses —
+; overrides neither, and inherits `await this.sendDzrpCmd(18, …)`: it sends the
+; command and blocks. And cmd_not_supported does not merely stay silent, it
+; jumps to drain_main, which re-initialises the debugger — prgm_state to
+; PRGM_IDLE, the clock and backup state reset, the screen repainted. Opening
+; DeZog's sprite view therefore hung the client AND tore the session down
+; underneath it. Issue #9, and the same shape as #8's CMD_PAUSE: adopting a new
+; client re-exposes what the old one hid.
+;
+; THE ANSWER IS ZEROS, AT EXACTLY THE LENGTH ASKED FOR, and the length is not
+; ours to choose. DeZog asserts it — `assert(count*5 == r.length)` for sprites
+; and `assert(r.length == 256*count)` for patterns, verified in the installed
+; 3.7.4 — so a short reply is a desync rather than a refusal, and DZRP has no
+; error response to send instead. A zeroed attribute has its visible bit clear,
+; so the sprite view renders empty: the closest thing to "there is nothing I can
+; show you" that this wire format can say.
+;
+; The index is read and dropped: with no data to index into it selects nothing.
+; Changes:
+;  NA
+;===========================================================================
+cmd_get_sprites:
+    ; LOGPOINT [CMD] cmd_get_sprites
+    call sprites_read_count     ; A = count
+    ; 5 bytes per sprite: HL = A*5, which cannot carry (255*5 = 1275).
+    ld l,a
+    ld h,0
+    add hl,hl               ; *2
+    add hl,hl               ; *4
+    ld e,a
+    ld d,0
+    add hl,de               ; *5
+    jr sprites_send_zeros
+
+cmd_get_sprite_patterns:
+    ; LOGPOINT [CMD] cmd_get_sprite_patterns
+    call sprites_read_count     ; A = count
+    ; 256 bytes per pattern, so the count IS the high byte. 255*256 = 65280,
+    ; and the length field below adds one for the sequence number: 65281 still
+    ; fits the 16 bits send_length_and_seqno takes.
+    ld h,a
+    ld l,0
+    ; Flow through
+
+sprites_send_zeros:
+    ; HL = how many payload bytes to send.
+    push hl
+    inc hl                  ; + the sequence number
+    ex de,hl
+    call send_length_and_seqno
+    pop hl
+.loop:
+    ld a,h
+    or l
+    ret z
+    xor a
+    call transport_write_byte
+    dec hl
+    jr .loop
+
+sprites_read_count:
+    ; The payload is <index><count>. The index is read so the stream stays in
+    ; step and then dropped.
+    call transport_read_byte
+    jp transport_read_byte
 
 
 ;===========================================================================

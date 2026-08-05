@@ -106,6 +106,8 @@ NAMES = {
     "WRITE_MEM": dzrp.CMD_WRITE_MEM,
     "CONTINUE": dzrp.CMD_CONTINUE,
     "PAUSE": dzrp.CMD_PAUSE,
+    "GET_SPRITES": dzrp.CMD_GET_SPRITES,
+    "GET_SPRITE_PATTERNS": dzrp.CMD_GET_SPRITE_PATTERNS,
 }
 
 # Set from --remote. The execution-control checks need a SECOND connection to
@@ -685,6 +687,85 @@ def chk_pause_while_stopped(d):
     return PASS, "answered with the sequence number and an empty payload"
 
 
+SPRITE_COUNT = 4
+
+
+def _chk_sprite_family(d, cmd, per_item, name):
+    """CMD_GET_SPRITES / CMD_GET_SPRITE_PATTERNS: answered, at the exact length.
+
+    WHY THE LENGTH IS NOT NEGOTIABLE, and why "answer something short" is not an
+    option for a remote that cannot supply the data. DeZog asserts the size in
+    the client — `assert(count*5 == r.length)` for sprites and
+    `assert(r.length == 256*count)` for patterns, in the installed 3.7.4 — and
+    then slices the reply into fixed-size records. A short reply is a desync,
+    not a refusal, and DZRP has no error response to send instead.
+
+    A ZX Next genuinely cannot read either back: ports 0x57 and 0x5B have no
+    read decode in the FPGA at all (zxnext.vhd:651-652, and neither appears in
+    the read mux at :2803-2806). So the only honest answer at the required
+    length is zeros, whose visible bit is clear — an empty sprite view. An
+    EMULATOR-side remote answers these for real, because its sprite state is
+    host memory; that is a capability difference between targets, and this check
+    accepts either as long as the length is right.
+
+    SCOPE. This asserts the two things a client actually suffers — a hang, and a
+    desync. It does NOT see the third thing issue #9 reports, that the old
+    handler jumped to drain_main and re-initialised the debugger underneath the
+    client: `prgm_state` is not observable over the socket. What is observable
+    is that the session goes on working, which is asserted by the second command
+    below.
+    """
+    talk(d, dzrp.CMD_INIT, dzrp.init_payload())
+    try:
+        body = talk(d, cmd, bytes([0, SPRITE_COUNT]))
+    except dzrp.Timeout:
+        alive = _remote_still_answers()
+        if alive is True:
+            state = ("the remote is still serving, so it swallowed the command "
+                     "and carried on — DeZog blocks for ever on a response that "
+                     "never comes")
+        elif alive is False:
+            state = "and the remote stopped answering afterwards"
+        else:
+            state = "and liveness afterwards was not probed"
+        return FAIL, ("no response within %.0fs: %s" % (d.base_timeout, state))
+
+    want = SPRITE_COUNT * per_item
+    if len(body) != want:
+        return FAIL, ("answered with %d payload bytes where the client asserts "
+                      "%d for a count of %d — a length DeZog rejects is a "
+                      "desync, not a refusal" % (len(body), want, SPRITE_COUNT))
+
+    # The session must survive it. The handler this replaces reached drain_main,
+    # which re-initialises the debugger, so "answered" alone is not the whole
+    # question.
+    try:
+        regs = talk(d, dzrp.CMD_GET_REGISTERS)
+    except (dzrp.DzrpError, OSError) as e:
+        return FAIL, ("answered with the right length, but the next command on "
+                      "the same connection failed (%s) — the session did not "
+                      "survive it" % e)
+    if len(regs) < 28:
+        return FAIL, ("answered, but the following CMD_GET_REGISTERS came back "
+                      "as %d bytes, so the stream is out of step" % len(regs))
+
+    zeros = not any(body)
+    return PASS, ("%d %s came back as %d bytes%s, and the next command was "
+                  "answered in sync"
+                  % (SPRITE_COUNT, name, len(body),
+                     " of zeros — no data to give, which is what a Next can say"
+                     if zeros else " with data, so this remote can read them"))
+
+
+def chk_get_sprites(d):
+    return _chk_sprite_family(d, dzrp.CMD_GET_SPRITES, 5, "sprite attributes")
+
+
+def chk_get_sprite_patterns(d):
+    return _chk_sprite_family(d, dzrp.CMD_GET_SPRITE_PATTERNS, 256,
+                              "sprite patterns")
+
+
 CHECKS = [
     ("C1 CMD_INIT negotiates a version", chk_init, "INIT"),
     ("C2 length conventions are as specified", chk_length_convention, "INIT"),
@@ -706,6 +787,10 @@ CHECKS = [
     ("C11 the debuggee's state survives the resume", chk_continue_state,
      "CONTINUE"),
     ("C12 CMD_PAUSE while stopped is answered", chk_pause_while_stopped, "PAUSE"),
+    ("C13 CMD_GET_SPRITES is answered at the length the client asserts",
+     chk_get_sprites, "GET_SPRITES"),
+    ("C14 CMD_GET_SPRITE_PATTERNS is answered at the length the client asserts",
+     chk_get_sprite_patterns, "GET_SPRITE_PATTERNS"),
 ]
 
 

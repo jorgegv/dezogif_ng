@@ -1330,6 +1330,17 @@ transport_wait_rx:
     or a
     jr nz,.ready
 
+    ; Or a whole frame held by a scan, which is a command that has already
+    ; arrived and will never make the FIFO test below true again. Without this
+    ; the wait spins for ever when the module has nothing more to say — there
+    ; is no timeout in this loop, by design (see the no-CALL note above).
+    ld a,(esp_hold_len)
+    or a
+    jr nz,.ready
+    ld a,(esp_hold_len+1)
+    or a
+    jr nz,.ready
+
     ; Otherwise anything from the module at all.
     ld a,HIGH UART_TX
     in a,(LOW UART_TX)	; Read status bits
@@ -1422,6 +1433,31 @@ transport_read_byte:
     ld hl,(esp_rx_remaining)
     dec hl
     ld (esp_rx_remaining),hl
+
+    ; THE BUFFER IS FREE THE MOMENT ITS LAST BYTE IS TAKEN, and getting that
+    ; wrong is what the first version of this shipped. esp_rx_from_hold was
+    ; cleared only when a later chunk came off the WIRE, so between finishing a
+    ; held command and the next wire chunk the buffer read as busy and every
+    ; capture was refused — the second collision lost its command, silently and
+    ; for exactly the reason the first one no longer did. Reproduced 11 times
+    ; out of 11 by the reviewer with three clients; W4 could not see it, because
+    ; one collision never reaches the state. Clearing it HERE covers every path,
+    ; because this is the only place esp_rx_remaining is decremented.
+    ;
+    ; The flag also says where THIS byte comes from, so it is read before it is
+    ; cleared and the answer is carried in C across the border write —
+    ; .flash2 is patched by transport_flashing_border and there must go on being
+    ; exactly one of it.
+    ld c,0                      ; source: the wire
+    ld a,(esp_rx_from_hold)
+    or a
+    jr z,.source_chosen
+    inc c                       ; source: the held frame
+    ld a,h
+    or l
+    jr nz,.source_chosen
+    ld (esp_rx_from_hold),a     ; A is 0: this byte empties the chunk
+.source_chosen:
     pop hl
 
     ; Change border. Before the read, not after it, because the read's result
@@ -1430,8 +1466,7 @@ transport_read_byte:
     ld a,YELLOW
     out (BORDER),a
 
-    ; The current chunk is either the wire or the frame a scan held for us.
-    ld a,(esp_rx_from_hold)
+    ld a,c
     or a
     jp z,esp_read_raw
     jp esp_hold_read_byte

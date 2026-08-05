@@ -144,6 +144,11 @@ DZRP_TIMEOUT=${DZRP_TIMEOUT:-25}
 # missing notification whatever the wait was.
 CONTROL_TIMEOUT=${CONTROL_TIMEOUT:-10}
 
+# Seconds between the listener appearing and the first client connecting. See
+# the note in start_stub; test/run-tx-patience.sh uses the same value for the
+# same reason.
+SETTLE=${SETTLE:-2}
+
 log()  { printf '%s\n' "$*"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
@@ -268,6 +273,20 @@ s = socket.socket()
 s.settimeout(0.2)
 sys.exit(0 if s.connect_ex(('127.0.0.1', $PORT)) == 0 else 1)
 " 2>/dev/null; then
+            # THEN SETTLE, BEFORE ANY CLIENT SPEAKS. The port exists as soon as
+            # AT+CIPSERVER is accepted, and the stub then sends AT+CIFSR and
+            # scans its answer for OK. A client landing inside that scan puts
+            # `<id>,CONNECT` and its own `+IPD` into it, and its first command
+            # is lost — the stub is looking for a line that starts with '+',
+            # which is the one case issue #11's fix deliberately cannot capture.
+            #
+            # This is issue #10's spurious W2, and it is not a guess: with this
+            # settle the precondition arose in 6 runs of 6, and without it in 5
+            # of 6 — the same shape ERRORS.md records for test-tx-patience,
+            # which settles for the same reason. It is the bench declining to
+            # race the stub, NOT the stub being fixed: the window is real and
+            # closing it is bring-up's problem, not this script's.
+            sleep "$SETTLE"
             return 0
         fi
         sleep 0.25
@@ -468,7 +487,7 @@ else
                END { print hit + 0 }')
 
     if [ "$q_connects" -gt 6 ]; then
-        fail "W4 CONTAMINATED — $q_connects connections in $jlog4 where this fixture makes 2. Another bench run reached our stub, so this verdict means nothing in either direction."
+        fail "W4 CONTAMINATED — $q_connects connections in $jlog4 where this fixture makes 3. Another bench run reached our stub, so this verdict means nothing in either direction."
     elif [ "$collided" -lt 1 ]; then
         fail "W4 the precondition never happened — no two +IPD frames were emitted back to back in $jlog4, so the collision was not tested"
     elif [ "$queued_rc" -ne 0 ]; then

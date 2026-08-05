@@ -19,8 +19,18 @@ server and speaks DZRP through it (`src/transport_esp.asm`). A DZRP client talks
 under jnext and gets correct answers: `make test-dzrp-stub`. The two ROMs now also **draw different
 screens**: WiFi mode reports the ESP's own baud rate and the address to connect to
 (`AT+CIFSR` → `Connect at <ip>:11000`) where UART mode keeps upstream's cable baud rate and
-joy-port selector. What is **not** built yet is M2's asynchronous break, and anything at all on
-real hardware — **nothing in this project has ever run on a Next.**
+joy-port selector. What is **not** built yet is M2's asynchronous break.
+
+**It has now run on a real ZX Spectrum Next**, 2026-08-04 — the stub takes the M1 NMI and paints
+its UI on core 03.02.01, and mfselect installed it. That single evening found **two bugs no
+emulator here could ever have found**, both because jnext's values sit on the safe side of ours:
+a connection id of 0 (jnext numbers from 1, real ESP-AT from 0) that made the stub discard every
+reply, and a 15-character IP address (jnext's is 12) that the connect-string parser refused. See
+MEMORY.md and ERRORS.md.
+
+**What has NOT run on hardware is a DZRP session.** The listener comes up and answers a TCP
+connect; no client has yet completed the conformance suite against a Next, and nothing has resumed
+a debuggee there. Do not read "it runs on hardware" as more than the entry path.
 
 It is deployed by replacing `machines/next/enNextMf.rom` on the Next's SD card — the stub *is* the
 Multiface ROM. The PC-side client is **DeZog** in VS Code, speaking **DZRP**.

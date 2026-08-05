@@ -709,7 +709,8 @@ machine no way to say which ROM was installed. It now sends `AT+CIFSR`, parses t
 and draws `Connect at <ip>:11000`, with a two-line plain-language message in the same place when
 there is no address or the AT chain did not complete. The UART ROM's bytes did not move.
 
-**A DZRP session has now run on hardware** (2026-08-05). A real Next answered **11 of 12**
+**A DZRP session has now run on hardware** (2026-08-05), and since build 000A **every check of the
+hardware bench passes** — 12 of 12 conformance, H3 included. The first run answered **11 of 12**
 conformance checks over WiFi — the one red being `CMD_PAUSE`, since fixed as issue #8 — and that
 included **C10/C11, so a debuggee was resumed on silicon**, not only in the emulator. Latency and
 throughput were measured rather than estimated: median **13.0 ms** round trip, and 8192 bytes
@@ -882,6 +883,9 @@ reason attached, is fine.
 | ESP TCP throughput | **measured on hardware**: 8192 bytes across the wire in 1.01 s = 71% of what 115200 8N1 can carry | **verified** (2026-08-05) |
 | Round-trip latency 10-100 ms | **measured on hardware**: min 10.8 ms, median 13.0 ms, max 23.6 ms over 20 samples | **verified** (2026-08-05) — at the good end of the estimate |
 | The stub resumes a debuggee, and its state survives | conformance C10/C11, in jnext and then on a Next | **verified**, both places |
+| **No scan in the ESP transport destroys an inbound `+IPD`** | issue #11. Bench W4 in jnext (red on `main`, red on the intermediate fix, green after); hardware bench H3, 3 runs of 3 green at build 000A, against 3 failures of 3 before it | **verified**, both places — and the two halves are covered in different places: jnext can only reach the `AT+CIPSEND` prompt window, hardware only the `SEND OK` one |
+| The `SEND OK` window on a real module is 20-50 ms wide | measured on a Next, 3 trials at each of 8 delays: lost at 0/2/5/10/20 ms, clean at 50/100/250 ms | **verified** — and note a nine-character `SEND OK` costs ~2 ms at 115200, so the window is not the transmission |
+| A single client that pipelines loses commands the same way | tested on a Next, one connection, 3 trials at each of 8 delays including 0 ms: never lost one | **disproved as stated** — the discriminator is a *second connection*, not the timing alone. The mechanism behind that is a reading, not a measurement |
 | The connect string draws a correct address on hardware | user's own machine, 2026-08-05, at a 15-character address | **reported on hardware** — one machine, one reporter, no re-runnable artefact |
 | NMI poll costs ~100-200 T-states/frame | arithmetic, not measured | **estimate** |
 | CTS/RTR populated on a given board | — | **unverified** |

@@ -234,7 +234,8 @@ strongest:
    module's unsolicited lines. It asserts the collision really happened from jnext's own log, so
    it cannot pass vacuously, and it was shown red on the commit before the fix. **The same
    defect's other window — the wait for `SEND OK` — is unreachable here** (jnext answers
-   instantly) and is hardware bench H3, still unconfirmed since the fix.
+   instantly) and is hardware bench H3 — **confirmed green on a real Next, 3 runs of 3, build 000A**,
+   which is the symmetric answer to the 3 failures of 3 that opened the issue.
    **C2** was the standing red
    until issue #7 landed: `cmd_init` read the remote's program name until a NUL and ignored the
    frame's length field, so a length that disagreed with the payload desynchronised silently

@@ -107,10 +107,18 @@ did not race is not a test. Full suite 12/12 with W1-W4. **The UART ROM is
 byte-identical to `main`'s** (`9e6bae1d`, pinned), which is what says nothing
 shared moved: this file is in the WiFi build only.
 
-**NOT CONFIRMED ON HARDWARE.** The `SEND OK` window is the one a real Next
-measured, and re-running H3 needs the ROM reflashed. Until then this is a defect
-fixed in the source, proven against its *other* window in an emulator, and
-unproven on the machine that found it. Cost: **+485 bytes**, WiFi only —
+**CONFIRMED ON HARDWARE the same day, and this paragraph used to say the
+opposite.** The `SEND OK` window is the one a real Next measured and the one no
+emulator here can reach, so until the ROM was reflashed this was a defect proven
+against its *other* window and unproven on the machine that found it. Build
+000A: **H3 green, 3 runs of 3** — the symmetric answer to the 3 failures of 3
+that opened the issue — and the whole hardware bench green for the first time,
+12 of 12 conformance included. **It costs nothing measurable**: median round trip
+11.3 / 11.4 / 11.5 ms against 11.5 ms before, throughput 6.1 / 7.1 / 8.2 KB/s
+against 8.3, the top of that spread matching the pre-fix figure. Measured three
+times rather than once, because the first run alone showed 6.1 KB/s and a 108 ms
+latency outlier that did not recur, and reporting either as a cost of the fix
+would have been the reasoning-instead-of-measuring mistake this file exists for. Cost: **+485 bytes**, WiFi only —
 `main_end` 0xF5CC → 0xF7B1, 1775 free to the identity block.
 
 **Rejected.** Holding only the header and deferring the payload (measurement (3)

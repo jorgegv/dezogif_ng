@@ -2,9 +2,11 @@
 
     make test-hardware NEXT_IP=192.168.1.42
 
-**It runs on a real ZX Spectrum Next.** The stub takes the M1 NMI, brings the ESP-01 up as a TCP
-server, and answered **11 of 12 DZRP conformance checks on hardware** on 2026-08-05 — including
-resuming a debuggee. The results are at the bottom of this page, with the numbers.
+**It runs on a real ZX Spectrum Next, and as of build 000A every check here passes.** The stub
+takes the M1 NMI, brings the ESP-01 up as a TCP server, answers **12 of 12 DZRP conformance
+checks on hardware** — including resuming a debuggee — and survives a command arriving while it is
+answering another, which is the one thing it demonstrably could not do this morning. The results
+are at the bottom of this page, with the numbers.
 
 This page is the procedure for repeating that, and `test/hardware-check.py` is the part a PC can
 do by itself. Read it end to end before starting: much of it is about what to *observe*, because
@@ -115,7 +117,7 @@ of it:
 |---|---|
 | **H1** | Something is listening on `<ip>:11000` |
 | **H2** | DZRP conformance — delegated to `conformance.py`, not reimplemented. **Its coverage is the suite's**, which now includes C10/C11, the resume checks — so a passing H2 means a debuggee was resumed on whatever this was pointed at |
-| **H3** | The `+IPD` connection id is **read from the header**, not assumed. **Red on hardware since 2026-08-05, for a reason that is not the id** — it fails back-to-back and succeeds with a 1s pause, so it discriminates its own cause; see below and issue #11 |
+| **H3** | The `+IPD` connection id is **read from the header**, not assumed. **Red on hardware for eight hours on 2026-08-05, for a reason that was not the id** — it failed back-to-back and succeeded with a 1s pause, so it discriminated its own cause. Green since build 000A; see below and issue #11 |
 | **H4** | Round-trip latency, **measured** |
 | **H5** | Throughput, **measured** |
 
@@ -131,10 +133,31 @@ that UART0 came up at a rate the real module answers at; and that `ATE0`, `AT+CI
 are one. Work through: is the *WiFi* ROM installed; was M1 pressed since power-on; is the Next
 associated; is the IP right; has something else on the machine taken the ESP.
 
-### H3 is RED on hardware, and the failure is understood
+### H3 was RED on hardware, and is now GREEN — the whole bench passes
 
-Since 2026-08-05 (build 0008) H3 fails on a real Next, reproducibly. **It is not the connection
-id**, and the check now says so itself in a single run.
+**Build 000A, 2026-08-05: 3 passed, 0 failed, 2 measured of 5.** The first fully green run of this
+bench in the project's history, and the section below is kept as it stood — the diagnosis, the two
+wrong hypotheses it corrected and the measurements it rests on — because how it was found is worth
+more than the fact that it is fixed.
+
+The fix is issue #11: no scan in `transport_esp.asm` may discard an inbound `+IPD`; one is now
+held and served as the next command. **Confirmed here in 3 runs of 3, which is the symmetric
+answer to the 3 failures of 3 that opened it.** The same runs say the fix costs nothing
+measurable: median round trip 11.3 / 11.4 / 11.5 ms against 11.5 ms before it, and throughput
+6.1 / 7.1 / 8.2 KB/s against 8.3 — the top of that spread matching the pre-fix figure, so the low
+one is this link's ordinary variation and not a price. Expected, since the work added is one
+compare per byte on the *scan* paths and none at all on payload reads.
+
+**The half a bench cannot confirm, and it is the one this section is about.** jnext reproduces the
+`AT+CIPSEND` prompt window (check W4) and cannot reach the `SEND OK` window at all, because it
+answers instantly. So until these runs, the fix was proven against the *other* window of the same
+defect and unproven on the machine that found this one. That gap is now closed by measurement
+rather than by argument.
+
+#### What it was, and how it was pinned down
+
+Since 2026-08-05 (build 0008) H3 failed on a real Next, reproducibly. **It was not the connection
+id**, and the check says so itself in a single run.
 
 It tries the two exchanges back to back; on failure it reopens and retries with a **1-second
 pause**, then reports which of three things it found. On hardware, 3 runs of 3:
@@ -148,13 +171,6 @@ pause**, then reports which of three things it found. On hardware, 3 runs of 3:
 holding nothing. The race is easy to lose because the module forwards the reply **to the client**
 before it tells the **stub** `SEND OK`, so the client can answer while the stub is still scanning.
 
-**FIXED IN THE STUB, AND NOT YET CONFIRMED HERE.** Issue #11's fix holds the frame instead of
-eating it (`esp_read_scan`), and it is green in the emulator against the *other* window of the
-same defect — bench W4, which was red on the commit before it. **Nothing has re-run H3 on a Next
-since**, because that needs the ROM reflashed. Until someone does, this section describes a
-defect that is fixed in the source and unproven on the machine that found it. **Re-running H3 is
-the single highest-value thing a Next can do for this project right now.**
-
 **Two things measured on 2026-08-05 correct what this section used to say**, and both came from a
 sweep the bench does not do:
 
@@ -167,10 +183,11 @@ sweep the bench does not do:
   nine-character `SEND OK` costs about 2 ms at 115200. Worth knowing before any timeout is sized
   against it.
 
-**H3 still reports FAIL until a Next says otherwise.** A check that went green on the strength of
-an emulator run against a different window of the same bug would be exactly the over-reading this
-document exists to prevent. Issue #11 keeps its four disproven hypotheses on purpose — each was
-plausible, and two were killed by nothing more than reading the Next's screen.
+**H3 reported FAIL for as long as a Next had not said otherwise**, which was the right answer for
+the eight hours it took: a check that went green on the strength of an emulator run against a
+*different* window of the same bug would have been exactly the over-reading this document exists to
+prevent. Issue #11 keeps its four disproven hypotheses on purpose — each was plausible, and two
+were killed by nothing more than reading the Next's screen.
 
 ### H3, and precisely what it does and does not establish
 
@@ -298,7 +315,8 @@ predictions. These are the results.**
 | tbblue does not checksum `enNextMf.rom` | inferred | **verified** — ours booted |
 | Inbound connection ids on real firmware | unverified | **verified indirectly: the first client gets id 0.** Not by observation — no PC-side check can see the ids — but by the failure it caused, which is only possible if the id was 0. See the divergence table at the top |
 | The `+IPD` id is read rather than assumed | emulator only | **verified on hardware** — H3, two simultaneous connections, each getting its own payload |
-| DZRP conformance | emulator only | **11 of 12 on hardware**, the one red being `CMD_PAUSE` (issue #8, since fixed — not yet re-measured on a Next) |
+| DZRP conformance | emulator only | **12 of 12 on hardware** (build 000A). It was 11 of 12 when first run, the red being `CMD_PAUSE` — issue #8, fixed and now re-measured on a Next |
+| A command arriving while the stub is answering another survives | **red on hardware, 3 runs of 3** — the `SEND OK` window, which no emulator here can reach | **verified on hardware, 3 runs of 3** (build 000A, issue #11). Median round trip and throughput unchanged by the fix: 11.3-11.5 ms and 6.1-8.2 KB/s against 11.5 ms and 8.3 before it |
 | The debuggee resumes | emulator only | **verified on hardware** — C10/C11 through H2's delegation |
 | The connect string shows a correct address | never read on hardware | **reported on hardware** — correct at **15 characters**, the length the parser used to refuse and one jnext cannot produce |
 

@@ -460,7 +460,29 @@ esp_cmd_cifsr:      defb "AT+CIFSR",13,10,0
 esp_str_ok:         defb "OK",13,10,0
 esp_str_ipd:        defb "+IPD,",0
 esp_str_error:      defb "ERROR",0
-esp_str_send_ok:    defb "SEND OK",0
+; THE CRLF IS PART OF THE PATTERN, AND LEAVING IT OUT COST A SPURIOUS ERROR
+; AFTER EVERY SINGLE RESPONSE. The module answers "\r\nSEND OK\r\n"; matching
+; only the seven characters left the trailing CRLF sitting in the RX FIFO, and
+; cmd_loop's next transport_wait_rx ends on ANY byte from the module — so it
+; returned at once, receive_bytes asked for a command, esp_sync_ipd scanned two
+; bytes of nothing and timed out, and the stub took a full rx_timeout into
+; drain_main. Every reply. "Last Error: RX Timeout" on a machine with nothing
+; wrong with it, `prgm_state` back to PRGM_IDLE, the backup fields
+; re-initialised, ~100 ms of drain and a repaint — and that is also exactly what
+; issue #15 photographed on the wedged Next and read as a leftover from an
+; earlier fault.
+;
+; MEASURED, not deduced. Same ROM, same client, one CMD_INIT and then thirty
+; seconds of silence: the stub's own screen carried 848 bright-red pixels of
+; "Last Error: RX Timeout" before this CRLF and 0 after it. Nothing caught it
+; because every check in this repository judges the REPLY, and the reply is long
+; gone by the time this happens — `make test-dzrp-stub` is 14/14 either way.
+;
+; esp_str_ok already ends in CRLF, for the same reason. esp_str_error does not,
+; and esp_wait_prompt's ERROR arm therefore leaves the same two bytes behind —
+; noted rather than changed, because that arm is only reached when the peer has
+; gone and the stub is on its way to idle anyway.
+esp_str_send_ok:    defb "SEND OK",13,10,0
 esp_str_cipsend:    defb "AT+CIPSEND=",0
 
 ; The anchor in AT+CIFSR's answer, opening quote included. ESP-AT reports one

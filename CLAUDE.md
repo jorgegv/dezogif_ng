@@ -312,6 +312,29 @@ strongest:
    `TX_PASSES`, which is what attributes the lost reply to the two waits the fix scopes. Not part
    of `make test`: it binds a host TCP port. **It says nothing about a real ESP-01** — the value 10
    is a judgement call, and only H3/H5 on hardware can settle it.
+4g. **`make test-client-status`** — WiFi mode's session line (issue #14), 3 headless jnext runs,
+   and the **only bench here that reads the screen back as TEXT** rather than comparing it with
+   another picture. **N1** a client connects over TCP and says nothing: the line must still read
+   `No debug session yet.`, because the line reports a DZRP session and a socket is not one — that
+   is the honesty check, not a baseline. **N2** after `CMD_INIT` it reads `Session opened
+   (CMD_INIT).`; **N3** after `CMD_CLOSE` it reads `Session closed (CMD_CLOSE).`, with the client
+   sending one further command first, because `cmd_close` answers *before* it reaches `show_ui` and
+   so its response proves nothing about the screen.
+   **Why not a cross-run comparison**: the two interesting states are adjacent lines of similar
+   length, so **swapping them** is the obvious bug and is exactly what sailed through mfselect's
+   first M9 (ERRORS.md). `cell-diff.py`'s answer there — find the correct glyphs elsewhere in the
+   same image — is unavailable here, because these words appear nowhere else on that screen. So
+   `test/screen-text.py` decodes the row with the ZX ROM font taken off the same SD image the
+   machine boots, and each run is judged on what it *says*. Shown red first three ways: `main`'s
+   ROM 0/3, the labels swapped N2+N3 red, `cmd_close`'s setter removed N3 red.
+   The reader is validated **inside each image** before its verdict is used (row 12 must read
+   `R = Reset`), and the capture's mtime is checked against the client's own timestamp, so a
+   screenshot that came too early reports a harness fault rather than a wrong line.
+   **Scope**: it covers what `CMD_INIT`/`CMD_CLOSE` prove and nothing else. A client that vanishes
+   without `CMD_CLOSE` leaves the line at "opened" — that needs `<id>,CONNECT`/`<id>,CLOSED`
+   tracking, which is M3. **UART mode draws no such line at all**, deliberately: over a cable there
+   is no connection event to observe, so there is nothing here to test. **It says nothing about
+   hardware.**
 5. **`build/ut.nex`** — the same tests, **DeZog-driven** (`"unitTests": true` + zsim + the
    `customCode` plugin) in VS Code. Still a manual layer, and still the only way to exercise the
    36 that 4d must skip. `make unit-tests` assembles it; nothing here runs it.

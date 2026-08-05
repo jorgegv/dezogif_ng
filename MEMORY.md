@@ -5,6 +5,123 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-05 — The screen reports the SESSION, not the connection; and a bench that reads it
+
+**Decided and built, issue #14.** WiFi mode's screen gains one line at row 8,
+under the connect block:
+
+    No debug session yet.
+    Session opened (CMD_INIT).
+    Session closed (CMD_CLOSE).
+
+**THE CHEAP HALF WAS BUILT AND THE HONEST HALF WAS NOT, deliberately, and the
+wording is what carries the difference.** The issue offered two: `CMD_INIT` /
+`CMD_CLOSE`, which are already handlers running at the right moments; or
+tracking the module's unsolicited `<id>,CONNECT` / `<id>,CLOSED` lines, which is
+the same work as the reconnect residual `esp_flush_chunk`'s `.no_client` defers
+to M3. The acceptance criterion is what decides between them — *"either it
+tracks `<id>,CONNECT`/`<id>,CLOSED` and can be honest, or it says only what
+`CMD_INIT`/`CMD_CLOSE` prove"* — and this says only the latter.
+
+So every state is a **past-tense statement about an event that was observed**,
+and each names the command it saw. That is not a style choice: it is the whole
+of what makes the line legal. "Client connected" would be a claim about a socket
+this transport cannot see, and would still be standing ten minutes after the
+client had gone. "Session opened (CMD_INIT)" is true when it is drawn and stays
+true afterwards, and a reader can see from the parenthesis that it reports
+protocol traffic rather than a live link.
+
+**What it therefore does NOT claim, stated in the source in the same words:** a
+client that connects and never speaks (N1 asserts the line stays at NONE while
+such a client is connected — a socket is not a session), and a client that
+vanishes without `CMD_CLOSE`, which leaves ATTACHED standing. Closing the second
+needs the `<id>,CLOSED` tracking above.
+
+**UART mode gets the macros and expands them to NOTHING**, and that is also a
+decision rather than an omission. Over a cable there is no connection to report:
+the link exists whenever the debugger holds the joy port, whether or not
+anything is on the other end. A line there could say a session had been opened
+and could never say the peer had gone — less honest than silence.
+
+**The seam is two macros, not an `IF ROM_VARIANT` in `commands.asm`.**
+`TRANSPORT_CLIENT_ATTACHED` / `TRANSPORT_CLIENT_DETACHED` join the interface
+beside `TRANSPORT_DEACTIVATE` and the two framing macros, for the reason
+CLAUDE.md states as a hard rule: `commands.asm` must not be able to tell which
+transport it was assembled against. **The UART ROM is byte-identical to
+`main`'s** — `ba860de1…`, `main_end` 0xF1DB unmoved, with `BUILD_TIME` and the
+build number pinned — which is the evidence that the seam held across a change
+to common code. WiFi: `d3804367…` → `ea850838…`, `main_end` 0xF7F5 → 0xF86C,
+**+119 bytes**, 1362 still free to the identity block.
+
+**Neither macro repaints.** Both call sites already reach `show_ui` — `cmd_init`
+calls it, `cmd_close` leaves through `jp main` — so the line costs nothing per
+command, which the issue asks for explicitly.
+
+**The state's lifetime is the debugger's, and that falls out of where it
+lives.** It is in the image `init_main_bank` copies into MAIN_BANK, and that
+copy happens on the FIRST M1 press after power-on and on a Symbol Shift
+re-init — not on every press, because `mf_rom.asm`'s magic-number path goes
+straight to `mf_nmi_button_pressed`. So breaking into a running debuggee with
+the button leaves the line saying what it said, which is right, and a re-init
+resets it, which is also right.
+
+**THE BENCH READS THE SCREEN BACK AS TEXT, and that is the part worth copying.**
+`make test-client-status`, three jnext runs, one per state. Every prior screen
+check here compares one picture with another, and ERRORS.md records exactly what
+that is worth: mfselect's M9 compared two runs, passed, and a reviewer then
+**swapped** the two labels and it passed again. Here the two interesting states
+are adjacent lines of similar length, so a swap is the obvious bug — and
+cell-diff's answer to M9 (find the correct glyphs elsewhere in the same image)
+is unavailable, because these words appear nowhere else on that screen.
+
+`test/screen-text.py` decodes a row instead. No OCR and no committed reference
+bitmap: the stub prints with the ZX ROM font, `main_bank_entry` copies it out of
+the paged-in ROM at 0x3D00, and the bench pulls the same font off **the same SD
+image the machine boots**. `ula.print_char` XORs an 8x8 glyph onto a screen
+`show_ui` has just cleared, at multiples of 8, so reversing a cell is a
+dictionary lookup. Each run therefore has a reading of its own line and is
+judged alone.
+
+**Shown red first, three ways, all re-run after a bench-serialisation scare (see
+[[ERRORS.md]]):** against `main`'s ROM, 0 of 3 — row 8 empty; with the two table
+entries **swapped**, N1 green and N2/N3 red, each reporting the other's text;
+with `TRANSPORT_CLIENT_DETACHED` removed from `cmd_close`, only N3 red. The
+second is the M9 trap and the first alone would not have caught it.
+
+**Two things in the bench are checks on the bench.** The reader is validated
+inside every image before its verdict is used — row 12 must read `R = Reset`,
+drawn by the same code in the same font and not in question — so a broken
+font or geometry reports itself instead of failing the subject. And the
+screenshot's mtime is compared against the client's own "state is set"
+timestamp, because jnext can only be told to capture at a FRAME and nothing can
+make that wait for a TCP client: a capture that came too early is reported as a
+harness problem, not as the screen saying the wrong thing.
+
+**Rejected.** Present-tense wording of any kind, for the reason above; a line
+that appears only in some link states (a row that comes and goes is the "screen
+with holes in it" the status block already refuses to be — in FAILED it is
+merely uninteresting, never wrong); reading the screen over DZRP with
+`CMD_READ_MEM` instead of from a screenshot (it needs the same font to mean
+anything, and couples the check to the debuggee's slot mapping); a host-side
+render compared pixel-by-pixel rather than decoded (a mismatch would say "these
+pixels differ" where a reading says what the line actually shows); folding the
+three runs into `make test-dzrp-stub` (its four runs are the project's strongest
+gate and this is a different subject; a separate target also keeps the diff away
+from a file two other branches are working in).
+
+**Noted, NOT fixed, and measured rather than assumed to be pre-existing.** N2's
+screenshot carries `Last Error: RX Timeout` in the red area: a client that sends
+one command and then goes quiet leaves `cmd_loop` reading a header that never
+arrives, and the stub reports a fault on a machine with nothing wrong with it.
+**`main`'s own ROM does exactly the same in the same phase** — checked, same
+three runs, same rows — so this change neither causes nor cures it. It is the
+neighbourhood of issues #15/#16 and belongs to whoever owns those. The session
+line survives that repaint correctly, which is worth knowing: `drain_main` does
+not reset `esp_client_state`, so the screen goes on reporting the session that
+is in fact still open.
+
+---
+
 ## 2026-08-05 — A reply belongs to one connection; a command belongs to one connection's frames
 
 **Decided and measured, issue #13.** Two separate rules, because the defect was
@@ -97,6 +214,10 @@ does not fix mode 2 at all, since a command's payload can span frames however it
 is read. A "reserved" connection id to mean no-owner (the same reservation
 mistake `esp_conn_valid` exists to have stopped, ERRORS.md). Clearing ownership
 in `transport_flush` (mid-message, see above).
+
+---
+
+## 2026-08-05 — DeZog drives the stub on a Next, and an NMI against a RUNNING debuggee returns correctly
 
 **Measured, not decided**, and it closes both M1's last item and the oldest
 unverified claim in the project. A VS Code session, `remoteType: "cspect"`,

@@ -44,6 +44,23 @@ check `pgrep -x jnext` **and** `ss -ltn | grep ':11000'` **before and after**
 every bench run, not only before, and kill and wait for anything that survives.
 Note `pgrep -f jnext` matches its own command line and will lie to you.
 
+**The mechanism was NOT reproduced, and the fix is shaped for that.** Killing
+the `timeout` wrapper directly was measured and jnext died in under two
+seconds — so this is not a repair of a known propagation failure, it is a refusal
+to *proceed* on an assumption. `test/run-client-status.sh`'s teardown now blocks
+until the emulator is really gone, escalating `kill` → `kill -9`, and `die`s
+naming the surviving PIDs and saying which port they are holding for whom. Each
+run also re-checks that nothing is listening on 11000 before it starts, rather
+than only once at pre-flight.
+
+**And the sweep that looks for survivors must not match itself.** The first
+version used `pgrep -f <image basename>`, which matches **any** process whose
+command line merely mentions the image — including the diagnostic command typed
+to look for one. Measured: it reported a hit with no jnext running at all. It is
+now `pgrep -x jnext` filtered by the image read out of `/proc/<pid>/cmdline`,
+which is exact in both directions — it cannot miss our emulator and cannot reach
+another agent's.
+
 **Lesson, and it generalises past this repository.** A lock protects a critical
 section; it does not protect a **resource** that a process can still hold after
 leaving the section. When the thing being excluded is a port, a file or a

@@ -251,7 +251,7 @@ strongest:
    and came back as it left them. **Still not covered**: the stackless-NMI *return address*
    (C10 sets `PC` itself, so `save_nmi_return_address` is never involved) and the M1 button
    breaking a *running* debuggee — both need a second NMI timed against live traffic.
-   **Result 2026-08-05: W1-W4 pass, 12 passed / 0 failed of 12 — the target exits 0.**
+   **Result 2026-08-05: W1-W4 pass, 14 passed / 0 failed of 14 — the target exits 0.**
    **C12 was the last red and issue #8 closed it**: `CMD_PAUSE` was mapped to `cmd_not_supported`,
    which stores an error and jumps to `drain_main`, so the stub sent **no response at all** where
    the spec requires a Length=1 one and a client waited forever. Same shape as C2 — common code

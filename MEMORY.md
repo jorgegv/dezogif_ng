@@ -5,6 +5,74 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-05 — The sprite commands answer nothing, at exactly the length asked for
+
+**Decided (user) and built, issue #9.** `CMD_GET_SPRITES` (18) and
+`CMD_GET_SPRITE_PATTERNS` (19) now answer `count*5` and `count*256` **zero
+bytes**. They used to reach `cmd_not_supported`.
+
+**It was worse than silence, which is why it outranked the other options.**
+`cmd_not_supported` jumps to `drain_main`, and that re-initialises the debugger:
+`prgm_state` to `PRGM_IDLE`, clock and backup state reset, `transport_activate`,
+`show_ui`. So opening DeZog's sprite view hung the client **and tore the session
+down underneath it** — any breakpoints or state the client believed in were
+gone, silently, while it waited for ever.
+
+**The length is not ours to choose, and that is what rules out a short "no".**
+DeZog asserts `count*5 == r.length` and `r.length == 256*count` in the client
+and then slices the reply into fixed-size records. A short reply is a **desync**,
+not a refusal, and DZRP has no error response to send instead. So the only
+question left is what to put in bytes we are obliged to send, and zeros are the
+answer: a zeroed attribute has its visible bit clear, so the view renders empty
+— the closest this wire format comes to "there is nothing I can show you".
+
+**A Next genuinely cannot do better, and this time it was READ IN THE VHDL
+rather than inherited.** Upstream's table said "not supported on a ZX Next" and
+DeZog's `ZxNextSerialRemote` throws "The sprite attributes can't be read on a ZX
+Next unfortunately"; both are hearsay by this project's own first hard rule.
+Checked: ports `0x57` (attribute upload) and `0x5B` (pattern upload) have **no
+read decode at all** — `zxnext.vhd:651-652` declares `port_57_wr` / `port_5b_wr`
+and no read counterpart, `grep port_57_rd` is empty, and neither appears in the
+port read mux (`zxnext.vhd:2803-2806`) or the data mux (`:2838-2841`). `0x303B`
+*is* readable and returns the sprite **status** byte, not attributes.
+
+**The asymmetry with an emulator is real and is not a defect.** CSpect's plugin
+answers these for real because it runs in the HOST, where the sprite arrays are
+ordinary variables, and jnext's own DZRP server (its issue #12) will too. Our
+stub is Z80 inside the machine and is bounded by what the CPU can reach — in
+jnext exactly as on silicon, because jnext models the write-only-ness
+faithfully. The same DeZog session will show a populated sprite view against an
+emulator and an empty one against a Next. Plan §8.4 already lists this family
+among the tier no hardware target can implement; C13/C14 accept either.
+
+**Rejected.** Closing the connection, as CSpect does for commands it refuses
+(unambiguous, but it ends the debug session and DeZog must reconnect — a worse
+outcome than an empty view for a *view*); reporting the error on the Next's
+screen as well (it needs a report-without-drain path, since the drain is the
+defect, and that is a change to the error machinery rather than to these two
+commands); implementing them for real (impossible, see the VHDL above).
+
+**Verified red first.** C13 and C14 against `main`'s ROM: *"no response within
+25s: the remote is still serving, so it swallowed the command and carried on"*.
+Green after, and both assert that a **second command on the same connection**
+still works — the session-survival half, which is the part `cmd_not_supported`
+actually broke. `prgm_state` itself is not observable over a socket, and the
+checks say so rather than implying more.
+
+**Cost: +43 bytes, and BOTH ROMs move by design** — `commands.asm` is common
+code, so the UART byte-identity gate is expected to differ, as for #7, #8 and
+#12. Pinned: UART `749692f4` → `9243cad6`; `main_end` 0xF1B0 → 0xF1DB. Suite
+14/14.
+
+**Still routed to `cmd_not_supported`, and still silent**: command 0 (reserved)
+and everything out of range — `ADD_BREAKPOINT`/`REMOVE_BREAKPOINT` (40/41), the
+watchpoints (42/43), `READ_STATE`/`WRITE_STATE` (50/51). The #8 entry called
+this a class; #9 closes the two instances DeZog's `cspect` remote can actually
+reach. The rest are reachable only by a client that sends them, and none does
+today.
+
+---
+
 ## 2026-08-05 — No scan may destroy an inbound frame; the transport gets one frame of memory
 
 **Decided and measured, issue #11.** Every wait in `transport_esp.asm` skips

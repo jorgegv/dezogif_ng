@@ -130,6 +130,18 @@ same reason. **It is the bench declining to race the stub, not the stub being fi
 in bring-up is real, and it is the one case issue #11's fix deliberately cannot capture from,
 because that scan's own pattern begins with `+`.
 
+**2026-08-05, the sprite commands are answered (issue #9) — `make test-dzrp-stub`: W1-W4 pass, and
+**14 passed, 0 failed, 0 unsupported of 14**. C13 and C14 are new and were red on the commit
+before them, with the diagnosis in the check's own words: *"the remote is still serving, so it
+swallowed the command and carried on"*.
+
+`CMD_GET_SPRITES` and `CMD_GET_SPRITE_PATTERNS` cannot return real data from a Next — ports `0x57`
+and `0x5B` have no read decode in the FPGA — so the stub answers `count*5` and `count*256` **zero
+bytes**. The length is not a choice: DeZog asserts it client-side and slices the reply into
+fixed-size records, so a short answer is a desync rather than a refusal. **An emulator-side remote
+can answer these for real** (its sprite state is host memory), and C13/C14 accept either, asserting
+only the length and that the session survives.
+
 **2026-08-05, no scan discards an inbound frame (issue #11) — `make test-dzrp-stub`: W1, W2, W3
 **and W4** pass, and 12 passed, 0 failed, 0 unsupported of 12.** W4 is new and was red on the
 commit before it.

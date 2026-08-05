@@ -5,7 +5,7 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
-## 2026-08-05 — DeZog drives the stub on a Next, and the stackless-NMI return address finally runs
+## 2026-08-05 — DeZog drives the stub on a Next, and an NMI against a RUNNING debuggee returns correctly
 
 **Measured, not decided**, and it closes both M1's last item and the oldest
 unverified claim in the project. A VS Code session, `remoteType: "cspect"`,
@@ -18,12 +18,22 @@ logging TCP tap, frozen at 1586 lines.
 running in its `jr $` at `0x801C`; ten seconds later the **M1 button** was
 pressed; the `NTF_PAUSE` came back with break reason **1**
 (`BREAK_REASON.MANUAL_BREAK`) and `CMD_GET_REGISTERS` reported **PC `0x801C`,
-SP `0x9F00`**. `cmd_get_registers` reads `backup.pc`, and on a press taken while
-`prgm_state` is `PRGM_RUNNING` that value comes from
-**`save_nmi_return_address` reading NR `0xC2`/`0xC3`** — the routine plan §3.4
-calls the half that matters, because without it entering the debugger corrupts
-the debuggee. **It had never executed anywhere**, in the emulator or on silicon,
-and every NOT-COVERED list in this repository named it.
+SP `0x9F00`**. `cmd_get_registers` reads `backup.pc`; `mf_rom.asm`'s dispatch reaches
+`mf_nmi_button_pressed` only while `prgm_state` is `PRGM_RUNNING`; that path
+calls **`save_nmi_return_address`** unconditionally; and the only other writer of
+`backup.pc` needs an `RST 0` that no breakpoint was planted for. So the value is
+that routine's and cannot be stale. **It had never executed anywhere**, in the
+emulator or on silicon, and every NOT-COVERED list in this repository named it.
+
+**WHICH OF ITS TWO BRANCHES RAN IS NOT ESTABLISHED, and I claimed it was.** The
+routine reads NR `0xC2`/`0xC3` in stackless mode and the debuggee's own stack
+otherwise, and **both give the answer we saw**. Nothing read NR `0xC0` back.
+`doc/legacy/Design.md:378,434` make stackless the default from core 03.01.10 and
+nothing in `src/` clears the bit, so it is a strong presumption — a presumption,
+not an observation. **What is verified is the outcome plan §3.4 actually cares
+about**: an NMI against a running debuggee returned a correct PC on an
+uncorrupted stack, so entering the debugger did not corrupt the debuggee. Caught
+by the reviewer, in a paragraph I wrote about not doing exactly this.
 
 **It needed a finger, and that is the transferable part.** The reason no bench
 could reach it is written down in three places: `--delayed-nmi` counts emulated

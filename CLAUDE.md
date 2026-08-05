@@ -187,9 +187,13 @@ strongest:
      unsolicited line on the wire — see `transport_esp.asm`.) The frame limit ends the run. The
      exit path, `backup.asm` and the AltROM are therefore untested **by T6** — only the entry side
      is. Closing that took issue #2's protocol suite rather than another screenshot, and it is now
-     closed: `make test-dzrp-stub`'s C9/C10 resume a debuggee and it runs (§4c). What is still
-     untested anywhere is the **stackless-NMI return address** — C9 sets `PC` itself, so
-     `save_nmi_return_address` never runs — and the M1 button breaking a *running* debuggee.
+     closed: `make test-dzrp-stub`'s C9/C10 resume a debuggee and it runs (§4c). Neither is still
+     untested: on 2026-08-05 a real DeZog session on a Next ran a fixture free, **the M1 button was
+     pressed while it was running**, and the `NTF_PAUSE` came back `MANUAL_BREAK` with `PC` at the
+     spin address on an uncorrupted stack — so `save_nmi_return_address` ran and its **outcome** is
+     verified. **Which of its two branches ran is not**: NR `0xC2`/`0xC3` and the debuggee's own
+     stack would both give that answer, and nothing read NR `0xC0` back. No bench here can do this
+     — `--delayed-nmi` counts frames and a client counts wall clock — so it stays a human's job.
    Screen comparison is a **percentage of differing pixels** (`test/screen-diff.py`), not a byte
    compare: NextZXOS idling changes 0.01% of the screen and that once produced a false PASS.
 4. **`make test-mfselect`** — the mfselect bench, 6 headless runs, 10 checks, asserting on files

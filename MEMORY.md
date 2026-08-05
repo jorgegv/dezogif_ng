@@ -5,6 +5,95 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-05 — The send waits get their own RX budget; the idle poll keeps the short one
+
+**Decided and measured, issue #11** — the first defect in this project found on
+**real hardware**, and diagnosed off the stub's own screen rather than from the
+PC side.
+
+**The symptom.** Build 0007 on a real Next: hardware bench **H3** failed 3 runs
+of 3 (two connections open, both `CMD_INIT`s answered, connection 1's loopback
+answered, connection 2's second exchange silent) and **H5** intermittently
+truncated — once at *236 of 4097 bytes*, which is one `ESP_TX_CHUNK` of 240 less
+the 4-byte length field. On the Next's screen: **`Last Error: TX Timeout`**.
+
+**Why that text was decisive.** `esp_wait_prompt` already distinguishes the two
+things `AT+CIPSEND` can produce: `ERROR` — the peer has gone, drop the message
+*silently*, which is W2's fix — and *silence*, which reports TX Timeout. The
+screen said silence. So the module answered neither `>` nor `ERROR` inside the
+read budget, which after `transport_init`'s `.done` is **one** pass of
+`ESP_RX_WAIT`, about 100 ms at 28 MHz.
+
+**The other producer of that same screen text was excluded from the VHDL, not by
+preference.** `esp_send_raw`'s TX-FIFO wait also reports `ERROR_TX_TIMEOUT`, so
+the screen alone cannot tell them apart. `uart_tx.vhd:180` starts a frame on
+`i_Tx_en = '1' and (i_cts_n = '0' or i_frame(5) = '0')`; bit 5 of the frame
+register is the hardware-flow-control enable and `esp_uart_init` writes
+`00011000b`, so CTS is ignored and the shifter is never held off. Its 8.5 ms is
+~98 byte times at 115200 and cannot plausibly expire. **That also takes the
+plan's open question 4 — is CTS/RTR populated on this board? — off this path
+entirely**, since nothing in it consults CTS.
+
+**The decision, and the constraint that shaped it.** The obvious fix — raise
+`esp_rx_retries` globally — is wrong, and the reason is already written down in
+this file: `transport_byte_available`, `main_loop`'s idle poll, reads through
+the same `esp_try_read_raw`, and its documented worst case is a **~100 ms stall**
+when the module puts an unsolicited line on the wire. A global 5-10× would make
+that stall 0.5-1 s and buy a visibly sluggish debugger with the fix. So the
+budget is raised around **exactly two calls** — `esp_wait_prompt` for the `>`,
+and the `esp_wait_string` for `SEND OK` — and lowered immediately after. Those
+are the only reads in this transport where the module *owes* an answer to
+something already asked; bring-up is the other such window and already had its
+own budget, which is the shape this follows.
+
+**The value is a judgement call and is labelled as one in the source.**
+`ESP_TX_PASSES = 10`, ~1 s. Nothing we trust documents a real ESP-01's
+`AT+CIPSEND` latency under load, and **no bench here can measure it**. What
+hardware established is the negative: 100 ms is too short. Ten passes is an
+order of magnitude past that, past one retransmit inside the module's own TCP
+stack, and short enough that a dead module still reports within a second rather
+than reading as a hang. Deliberately *smaller* than bring-up's 20, because
+unlike bring-up this can be paid once per chunk. Cost when the module answers
+`SEND FAIL`: that report arrives 1 s late instead of 100 ms.
+
+**Exception safety, which is where a scoped budget usually goes wrong.** The
+pairs are tight: the only routines called with the budget raised are
+`esp_wait_prompt` and `esp_wait_string`, and both always *return* — the sends
+either side of them, which can divert to `tx_timeout`, run at the short budget.
+The one arm that still leaves from inside is `esp_try_read_raw`'s RX overflow,
+which jumps straight to `rxtx_error`, so **`rxtx_error` lowers the budget
+itself**. That closes a pre-existing hole of the same shape: an overflow during
+bring-up never reached `transport_init`'s `.done`, and left `ESP_INIT_PASSES` in
+place for the rest of the power-on session.
+
+**Proved by injection, because the emulator can never reach it otherwise.** New
+bench `make test-tx-patience`, 3 runs. `ESP_RX_WAIT` and `ESP_TX_PASSES` become
+overridable — the same seam and the same justification as `ESP_IP_MAX` — so one
+pass can be shrunk to below jnext's own `AT+CIPSEND` answer latency. **P1** the
+shipped `TX_PASSES=10` against that injected slow module completes; **P2** the
+pre-fix `TX_PASSES=1` loses a reply and paints **824 bright-red pixels**, the
+same count W2 measured pre-fix, i.e. `Last Error: TX Timeout` — the hardware
+symptom reproduced; **P3** the same `TX_PASSES=1` build at the shipped
+`ESP_RX_WAIT` completes, so P2's red is the injected budget and not
+`TX_PASSES=1` by itself. P1 and P2 differ **only** in `TX_PASSES`, which is what
+makes the lost reply attributable to one of the two scoped waits.
+
+**Rejected.** Raising `esp_rx_retries` globally (the idle-poll regression above,
+traded for the fix); parsing `SEND FAIL` as a distinct outcome (it would still
+need a budget to be seen inside, and the two-pattern `esp_wait_prompt` shape
+already covers the case that matters); a belt-and-braces restore at every exit
+of `esp_flush_chunk` *instead of* at `rxtx_error` (it would not cover the
+overflow arm, which is the only real escape); raising `ESP_TX_WAIT` as well —
+the VHDL says it cannot be the fault.
+
+**NOT VERIFIED, and no emulator run can verify it.** jnext answers instantly, so
+the shipped build's timeout path is never taken there: every suite is green
+before and after, and they prove only that nothing broke. `ESP_TX_PASSES = 10`
+is reasoned. **H3 and H5 on a real Next, several times, plus the screen, are the
+only things that can settle it.**
+
+---
+
 ## 2026-08-05 — `CMD_PAUSE` is acknowledged and nothing more; the suite is 12/12
 
 **Decided and measured, issue #8** — the last open issue, and the one that turns

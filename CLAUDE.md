@@ -286,6 +286,20 @@ strongest:
    other layer stayed green: see ERRORS.md. **The maximum-length line is still never RENDERED** —
    no bound setting makes jnext produce a 15-character address — so the 32-column fit is held by
    an assembler `ASSERT` instead. **It says nothing about hardware.**
+4f. **`make test-tx-patience`** — the budget `esp_flush_chunk` gives the module to answer an
+   `AT+CIPSEND`, 3 headless jnext runs, and the **second** bench that moves a build-time constant
+   to reach its subject, for the same reason as 4e: jnext answers instantly, so the timeout arm is
+   dead code in the emulator and stayed green right through issue #11's hardware failure.
+   `ESP_RX_WAIT` and `ESP_TX_PASSES` are `IFNDEF`-guarded and `RX_WAIT=` / `TX_PASSES=` build probe
+   ROMs under their own names. **P1** the shipped `ESP_TX_PASSES=10` against a module slower than
+   one pass — `CMD_INIT` and a 1024-byte loopback both complete, screen clean. **P2** the pre-fix
+   single budget, same module — a reply is lost and the screen shows **824 bright-red pixels**, the
+   count W2 measured pre-fix, i.e. `Last Error: TX Timeout`, which is exactly what the user read
+   off the Next. **P3** the same `TX_PASSES=1` build at the *shipped* `ESP_RX_WAIT` completes — so
+   P2's red is the injected budget, not `TX_PASSES=1` by itself. P1 and P2 differ **only** in
+   `TX_PASSES`, which is what attributes the lost reply to the two waits the fix scopes. Not part
+   of `make test`: it binds a host TCP port. **It says nothing about a real ESP-01** — the value 10
+   is a judgement call, and only H3/H5 on hardware can settle it.
 5. **`build/ut.nex`** — the same tests, **DeZog-driven** (`"unitTests": true` + zsim + the
    `customCode` plugin) in VS Code. Still a manual layer, and still the only way to exercise the
    36 that 4d must skip. `make unit-tests` assembles it; nothing here runs it.

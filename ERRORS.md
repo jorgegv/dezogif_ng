@@ -5,6 +5,48 @@ attempting similar logic.
 
 ---
 
+## A bench that failed 2 runs in 8 — and the build was fine
+
+**Symptom.** While building `make test-tx-patience` (issue #11), the *control*
+started failing: a WiFi ROM at the **shipped** budget, which every other bench
+in this repository passes, lost `CMD_INIT` in 2 of 8 probe runs. Taken at face
+value that would have destroyed the whole demonstration, because the bench's
+contrast is "the injected budget breaks it" and a baseline that breaks on its
+own measures nothing.
+
+**Cause, and it is in the harness rather than the stub.** The probe connected
+the instant the listening port appeared. The port exists as soon as
+`AT+CIPSERVER` is accepted, but the guest then sends `AT+CIFSR` and scans the
+answer for `OK` (`esp_query_address`, the tail that swallows the STAMAC line).
+A client landing inside that window puts `1,CONNECT` / `1,CLOSED` into the same
+scan, and its first command is eaten. The two failing runs are visible in
+jnext's own log as a connection accepted **15 ms** after `AT+CIFSR` was
+answered, against ~140 ms in the passing ones.
+
+**Fix.** Settle after the listener appears, before the DZRP client connects, and
+say in the bench why. The underlying property of bring-up is real and is left
+alone: closing it needs `<id>,CONNECT` tracking, which belongs with M3.
+
+**Two wrong mechanisms were asserted before that, both by reasoning.** First,
+that the FIFO depth made the `SEND OK` wait unreachable — the depth is 64
+(`jnext src/peripheral/uart.h:131`), which nobody had looked up. Second, that a
+particular failing run had timed out on the prompt rather than on `SEND OK`;
+what actually settled *that* was not the log at all but the controlled
+comparison — P1 and P2 differ only in `ESP_TX_PASSES`, so the lost reply can
+only be one of the two waits that constant governs. **The arithmetic that came
+out of it is the useful part**: the module owes `SEND OK` only once it has taken
+the whole chunk, so a 25-byte reply costs ~2 ms and a 240-byte one ~21 ms, which
+is why an injected 3.9 ms budget loses the big reply every time and the small
+one only sometimes.
+
+**Lesson, and this file already carries two shaped like it.** Before a bench's
+*contrast* is evidence, its *baseline* has to be measured — repeatedly, on the
+unmodified build. Eight runs cost four minutes and turned "the fix is
+load-bearing" from a claim into one. A bench whose control is assumed rather
+than run is the same defect as a fix never tested by removing it.
+
+---
+
 ## A bound the emulator can never reach is a bound with no test
 
 **Symptom.** None here, and that is the whole entry. `esp_query_address` copied

@@ -161,9 +161,13 @@ UT_get_cmd_pointer:
     call get_cmd_pointer
     ; ASSERTION HL == cmd_interrupt_on_off
 
-    ; Some not supported. 18 (CMD_GET_SPRITES), not 7: command 7 is CMD_PAUSE
-    ; and IS supported now — it is acknowledged rather than swallowed (issue #8).
-    ld a,18
+    ; Some not supported. COMMAND 0, which is reserved by the protocol and has
+    ; no handler to grow into — unlike the two commands this line named before
+    ; it, each of which stopped being unsupported the moment somebody looked at
+    ; it. It was 7 until CMD_PAUSE was answered (issue #8) and then 18 until the
+    ; sprite commands were (issue #9), and each move was a red unit test found
+    ; after the fact rather than a check that failed with the change.
+    ld a,0
     ld (receive_buffer.command),a
     call get_cmd_pointer
     ; ASSERTION HL == cmd_not_supported
@@ -173,6 +177,17 @@ UT_get_cmd_pointer:
     ld (receive_buffer.command),a
     call get_cmd_pointer
     ; ASSERTION HL == cmd_pause
+
+    ; The sprite commands are dispatched too: answered with an empty payload at
+    ; the length the client asserts, rather than swallowed (issue #9).
+    ld a,18
+    ld (receive_buffer.command),a
+    call get_cmd_pointer
+    ; ASSERTION HL == cmd_get_sprites
+    ld a,19
+    ld (receive_buffer.command),a
+    call get_cmd_pointer
+    ; ASSERTION HL == cmd_get_sprite_patterns
 
     ; Out of range
     ld a,24

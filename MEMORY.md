@@ -33,7 +33,7 @@ Next unfortunately"; both are hearsay by this project's own first hard rule.
 Checked: ports `0x57` (attribute upload) and `0x5B` (pattern upload) have **no
 read decode at all** — `zxnext.vhd:651-652` declares `port_57_wr` / `port_5b_wr`
 and no read counterpart, `grep port_57_rd` is empty, and neither appears in the
-port read mux (`zxnext.vhd:2803-2806`) or the data mux (`:2838-2841`). `0x303B`
+port read mux (`zxnext.vhd:2803-2806`) or the data mux (`:2837-2840`). `0x303B`
 *is* readable and returns the sprite **status** byte, not attributes.
 
 **The asymmetry with an emulator is real and is not a defect.** CSpect's plugin

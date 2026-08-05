@@ -672,9 +672,14 @@ cmd_get_tbblue_reg:
 ; rather than taken from upstream. Ports 0x57 (attribute upload) and 0x5B
 ; (pattern upload) have NO read decode at all: zxnext.vhd:651-652 declares
 ; port_57_wr and port_5b_wr and no read counterpart, and neither appears in the
-; port read mux (zxnext.vhd:2803-2806) or the data mux (:2838-2841). Port
-; 0x303B IS readable but returns the sprite STATUS byte, not attributes. So this
-; is a property of the silicon, which is why upstream's jump table sent both to
+; port read mux (zxnext.vhd:2803-2806) or the data mux (:2837-2840). Port
+; 0x303B IS readable but returns the sprite STATUS byte (sprites.vhd:748 —
+; collision and max-per-line), not attributes. Nor is there a back door through
+; the NextReg mirrors 0x35-0x39 / 0x75-0x79, which `nextreg.txt` describes in a
+; way that reads as if they might be bidirectional: the read-mux case statement
+; has no entry for any of them, only the write side exists. Checked in review,
+; because if any read path existed the right answer would be to implement these
+; for real rather than to answer zeros. So this is a property of the silicon, which is why upstream's jump table sent both to
 ; cmd_not_supported and why DeZog's own ZxNextSerialRemote throws "The sprite
 ; attributes can't be read on a ZX Next unfortunately" before the command ever
 ; reaches a wire.

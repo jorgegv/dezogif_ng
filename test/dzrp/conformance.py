@@ -73,6 +73,20 @@ def _use_colour():
 
 
 COLOUR = _use_colour()
+
+# Whether to draw the in-progress line at all.
+#
+# ONLY ON A TERMINAL, and the reason is not cosmetic: the verdict overwrites the
+# progress line with a carriage return and an erase-to-end-of-line, which needs
+# a console to mean anything. Down a pipe those control characters would land in
+# a log or in front of a line something else is parsing, and `hardware-check.py`
+# matches result lines beginning "FAIL ".
+#
+# So a pipe gets one clean result line per check and nothing else. Nothing is
+# lost there: `hardware-check.py` streams the child's output line by line, so a
+# verdict still appears the moment it lands, which is the same information at
+# the same time — just without a spinner in front of it.
+PROGRESS = sys.stdout.isatty()
 _CODES = {PASS: "\033[1;32m", FAIL: "\033[1;31m", UNSUP: "\033[1;33m"}
 
 
@@ -759,8 +773,11 @@ def main():
         if only and label.split()[0] not in only:
             continue
         ran += 1
-        # Announce before running, on stderr. See the note beside paint().
-        print("      %s ..." % label, file=sys.stderr, flush=True)
+        # Announce before running. On a terminal this is written WITHOUT a
+        # newline and the verdict overwrites it, so the console ends up with
+        # exactly one line per check rather than two.
+        if PROGRESS:
+            print("      %s ..." % label, end="\r", flush=True)
         # Each check gets a fresh connection, so one refused command cannot
         # take the rest down. A remote that serves one client at a time needs
         # a moment to start listening again between them — CSpect's plugin
@@ -805,6 +822,11 @@ def main():
         # flush, because this is usually a pipe and Python would otherwise hold
         # every line until the suite ended — which is the whole problem this
         # streaming exists to fix.
+        # Erase whatever the progress line left on this row before writing the
+        # verdict over it — the labels differ in length, so without this the
+        # tail of a longer previous line survives past the shorter new one.
+        if PROGRESS:
+            print("\033[K", end="")
         print("%s %s%s" % (paint(status), label, " — %s" % detail if detail else ""),
               flush=True)
 

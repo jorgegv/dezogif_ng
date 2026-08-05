@@ -186,6 +186,26 @@ def open_remote(spec, timeout=5.0):
 # --------------------------------------------------------------------------
 
 
+def send_close_quietly(d):
+    """Send CMD_CLOSE on an already-open connection, then always close it.
+
+    The shared tail of conformance.py's and hardware-check.py's end-of-run
+    teardown (issue #14): both leave the Next's screen saying the session is
+    closed rather than repeating whatever CMD_INIT last claimed. Opening the
+    connection is caller-specific — a generic tcp:/serial: remote spec in one,
+    a hardware-tuned retry budget in the other — so only the part that is
+    genuinely identical lives here: a failed CMD_CLOSE is reported and
+    swallowed rather than failing the run, because a teardown is not a check
+    and inventing a verdict out of it is a check nobody designed.
+    """
+    try:
+        d.command(CMD_CLOSE)
+    except (OSError, DzrpError) as e:
+        print("  (teardown: CMD_CLOSE was not answered: %s)" % e)
+    finally:
+        d.close()
+
+
 class Dzrp:
     """One DZRP conversation.
 

@@ -893,17 +893,8 @@ def leave_session_closed(args):
     except (OSError, dzrp.DzrpError) as e:
         print("  (teardown: could not reconnect to send CMD_CLOSE: %s)" % e)
         return
-    try:
-        d = dzrp.Dzrp(transport, start_byte=args.start_byte,
-                      base_timeout=args.timeout)
-        d.command(dzrp.CMD_CLOSE)
-    except (OSError, dzrp.DzrpError) as e:
-        print("  (teardown: CMD_CLOSE was not answered: %s)" % e)
-    finally:
-        try:
-            transport.close()
-        except OSError:
-            pass
+    d = dzrp.Dzrp(transport, start_byte=args.start_byte, base_timeout=args.timeout)
+    dzrp.send_close_quietly(d)
 
 
 def main():

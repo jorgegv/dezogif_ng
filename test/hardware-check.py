@@ -628,12 +628,7 @@ def leave_session_closed(host, port, timeout):
     except (OSError, dzrp.DzrpError) as e:
         print("  (teardown: could not reconnect to send CMD_CLOSE: %s)" % e)
         return
-    try:
-        d.command(dzrp.CMD_CLOSE)
-    except (OSError, dzrp.DzrpError) as e:
-        print("  (teardown: CMD_CLOSE was not answered: %s)" % e)
-    finally:
-        d.close()
+    dzrp.send_close_quietly(d)
 
 
 def h4_latency(host, port, timeout, results, samples):

@@ -70,7 +70,13 @@ INTRO_TEXT:
     ; distinguishable at a glance on a real machine: with the same title and
     ; the same body they were not, and finding out which ROM was installed cost
     ; a hardware session.
+.identity:
     IDENTITY_LINE
+    ; The screen is 32 columns and this line starts at column 0. Held by an
+    ; ASSERT rather than by the arithmetic in the macro's comment: a bound
+    ; written down is a bound nothing checks, and this project has paid for
+    ; that three times (ERRORS.md). Watched to fail, at 25.
+    ASSERT $ - .identity <= 32
     defb AT, 0, 1*8
     defb "DZRP v"
     defb DZRP_VERSION.MAJOR+'0', '.', DZRP_VERSION.MINOR+'0', '.', DZRP_VERSION.PATCH+'0'
@@ -106,7 +112,10 @@ INTRO_TEXT:
 
 INTRO_TEXT:
     defb AT, 0, 0
+.identity:
     IDENTITY_LINE
+    ; 32 columns, as in the WiFi branch above and for the same reason.
+    ASSERT $ - .identity <= 32
     defb AT, 0, 1*8
     defb "DZRP v"
     defb DZRP_VERSION.MAJOR+'0', '.', DZRP_VERSION.MINOR+'0', '.', DZRP_VERSION.PATCH+'0'

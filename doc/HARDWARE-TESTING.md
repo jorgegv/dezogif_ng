@@ -115,7 +115,7 @@ of it:
 |---|---|
 | **H1** | Something is listening on `<ip>:11000` |
 | **H2** | DZRP conformance — delegated to `conformance.py`, not reimplemented. **Its coverage is the suite's**, which now includes C10/C11, the resume checks — so a passing H2 means a debuggee was resumed on whatever this was pointed at |
-| **H3** | The `+IPD` connection id is **read from the header**, not assumed |
+| **H3** | The `+IPD` connection id is **read from the header**, not assumed. **Red on hardware since 2026-08-05, for a reason that is not the id** — it fails back-to-back and succeeds with a 1s pause, so it discriminates its own cause; see below and issue #11 |
 | **H4** | Round-trip latency, **measured** |
 | **H5** | Throughput, **measured** |
 
@@ -130,6 +130,33 @@ that UART0 came up at a rate the real module answers at; and that `ATE0`, `AT+CI
 **If H1 fails, the bench runs nothing else and says so.** Four SKIPs are not four findings, they
 are one. Work through: is the *WiFi* ROM installed; was M1 pressed since power-on; is the Next
 associated; is the IP right; has something else on the machine taken the ESP.
+
+### H3 is RED on hardware, and the failure is understood
+
+Since 2026-08-05 (build 0008) H3 fails on a real Next, reproducibly. **It is not the connection
+id**, and the check now says so itself in a single run.
+
+It tries the two exchanges back to back; on failure it reopens and retries with a **1-second
+pause**, then reports which of three things it found. On hardware, 3 runs of 3:
+
+    connection 2 got no usable reply ... connection 1 had nothing unread ...
+    BUT THE SAME EXCHANGE SUCCEEDS WITH A 1.0s PAUSE before it.
+
+**So it is a timing window.** `esp_flush_chunk` sends the reply and then waits for the module's
+`SEND OK`; `esp_wait_string` discards every byte that is not part of the pattern it scans for. A
+`+IPD` arriving in that window is destroyed — no error, nothing sent, and the other connection
+holding nothing. The race is easy to lose because the module forwards the reply **to the client**
+before it tells the **stub** `SEND OK`, so the client can answer while the stub is still scanning.
+
+**The scope is wider than two connections.** Any client with data in flight while the stub is
+flushing a reply can lose a command — a single pipelining client would hit it too. DeZog is
+strictly request/response, which is why the 12/12 conformance run on hardware is genuine and not
+luck.
+
+**H3 still reports FAIL, deliberately.** The stub really does lose that command; a check that went
+green because a workaround exists would be lying. Tracked as issue #11, where the four disproven
+hypotheses are kept on purpose — each was plausible, and two were killed by nothing more than
+reading the Next's screen.
 
 ### H3, and precisely what it does and does not establish
 

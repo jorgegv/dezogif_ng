@@ -154,6 +154,69 @@ ESP_BAUDRATE:   equ 115200
 ESP_SERVER_PORT:    equ 11000
 
 
+;===========================================================================
+; How long transport_wait_rx sits in cmd_loop before going back to the idle
+; loop — BOTH transports. Issue #16, part A.
+;
+; IT USED TO SIT THERE FOR EVER, and it is the only wait in this program that
+; ever did. Every other one is bounded: esp_try_read_raw by
+; esp_rx_retries x ESP_RX_WAIT, esp_send_raw by ESP_TX_WAIT, transport_drain by
+; its own countdown, and every scan inherits the read's bound. This one had no
+; timeout by design, because it runs where CALLs are forbidden — which is not
+; the same thing as where a countdown is impossible. BC and DE are untouched
+; between the two layer-2 writes either side of the loop, so the counter lives
+; in registers and needs neither the stack nor a memory cell.
+;
+; WHAT EXPIRY DOES IS THE WHOLE DESIGN, AND IT IS NOT A TIMEOUT. It does NOT
+; report an error and it does NOT go through drain_main. It resets SP and jumps
+; to main_loop — the same loop the debugger sits in before any client attaches.
+;
+; That is forced, not preferred. `cmd_loop` (message.asm) ends `jr cmd_loop`, so
+; this wait IS the debugger's idle state once a client has attached: what it is
+; waiting for is the next thing the user does in DeZog, and somebody reading
+; code for a minute before pressing F10 is the normal session, not an unusual
+; one. The stub cannot tell "the module went quiet" from "the person is
+; thinking" — nothing in DZRP polls — so ANY finite bound fires on healthy
+; sessions, and the destination has to be one that costs a healthy session
+; nothing. drain_main is not: it falls through into main, which re-initialises
+; prgm_state, backup.speed, backup.interrupt_state, backup.layer_2_port and
+; slot_backup.slot0, i.e. the DEBUGGEE's saved state. A debuggee stopped at a
+; breakpoint would then resume at 3.5 MHz with interrupts off and the wrong
+; slot 0, silently. main_loop resets none of it and re-enters cmd_loop on the
+; next byte, so the session simply carries on.
+;
+; Nothing is half-received at the moment of expiry, provably: the loop can only
+; get there with esp_rx_remaining zero, no frame held and the RX FIFO empty —
+; those are its own conditions — and cmd_loop's TRANSPORT_END_MESSAGE already
+; flushed the outgoing buffer. So there is no fragment for either end to
+; resynchronise, which is exactly why leaving is safe HERE and would not be from
+; a wait for bytes already owed.
+;
+; It also REMOVES a hazard rather than trading one. Parked in this wait, an
+; unsolicited `<id>,CONNECT` or `<id>,CLOSED` from the module ends it and then
+; fails to parse as a +IPD header, which reaches rx_timeout and therefore the
+; reset described above — the WiFi build does that today, every time a client
+; disconnects while the stub is idle. In main_loop the same line is consumed
+; silently by transport_byte_available.
+;
+; FIVE SECONDS. Long enough that no gap inside an interaction reaches it —
+; DeZog's stepping traffic is milliseconds apart — and short enough that the
+; border and the keyboard come back within five seconds of the last command
+; rather than never. The cost of being wrong on the short side is a poll loop
+; the debugger already runs whenever no client is attached.
+;
+; ONE NUMBER, TWO LOOPS, DIFFERENT COSTS. Each transport turns this into its own
+; pass count from its own measured per-iteration T-state cost, so both land near
+; the same wall time; see UART_WAIT_RX_PASSES and ESP_WAIT_RX_PASSES.
+;
+; ZERO MEANS NO BOUND, and it is not a tuning value: it assembles the loop
+; exactly as it was before this existed, which is the negative control
+; test/run-no-hang.sh needs. See there.
+ IFNDEF TRANSPORT_WAIT_RX_SECONDS
+TRANSPORT_WAIT_RX_SECONDS:  equ 5
+ ENDIF
+
+
 ; Program states
 PRGM_IDLE:		equ 1	; Waiting for a new program (at program start and after CMD_CLOSE)
 PRGM_LOADING:	equ 2	; After CMD_INIT until the first CMD_CONTINUE

@@ -222,22 +222,75 @@ change_border_color:
 ; Note: This runs when possibly the layer 2 read/write is set. I.e. it is not
 ; allowed to read/write data.
 ; I.e. also no CALLs, no PUSH/POP.
+;
+; IT IS BOUNDED, and it did not used to be. On expiry it goes back to main_loop
+; — NOT to rx_timeout, and not to anything that reports an error: this wait is
+; the debugger's idle state once a client has attached, so expiry means "nobody
+; has said anything for a while", which is not a fault and must cost a healthy
+; session nothing. See TRANSPORT_WAIT_RX_SECONDS in constants.asm for the whole
+; argument. The no-CALL/no-PUSH rule is not in the way: BC and DE are untouched
+; between the two layer-2 writes either side of the loop, so the countdown lives
+; in registers and needs neither the stack nor a memory cell.
 ; Changes:
 ;   A, DE, BC
 ;===========================================================================
+
+ IF TRANSPORT_WAIT_RX_SECONDS
+; 59 T-states per iteration when nothing has arrived — 7+11+8+7 for the status
+; read and its not-taken branch, 6+4+4+12 for the countdown — times 65536
+; iterations per outer pass, at the 28 MHz the debugger runs at.
+UART_WAIT_RX_PASSES:    equ (28000000/59) * TRANSPORT_WAIT_RX_SECONDS / 65536
+    ASSERT UART_WAIT_RX_PASSES > 0
+ ENDIF
+
 transport_wait_rx:
     ; Write layer 2 previous value
     ld a,(backup.layer_2_port)
     ld bc,LAYER_2_PORT
     out (c),a
 
+ IF TRANSPORT_WAIT_RX_SECONDS
+    ld bc,UART_WAIT_RX_PASSES
+    ld de,0                 ; the inner counter wraps to 65536 on its first dec
+ ENDIF
+
 .loop:
     ; Check if byte available.
     ld a,HIGH UART_TX
     in a,(LOW UART_TX)	; Read status bits
     bit UART_RX_FIFO_EMPTY,a
-    jr z,.loop   ; Wait until byte available
+ IF TRANSPORT_WAIT_RX_SECONDS
+    jr nz,.ready
+    ; Nothing yet: spend one iteration of the bound.
+    dec de
+    ld a,d
+    or e
+    jr nz,.loop
+    dec bc
+    ld a,b
+    or c
+    jr nz,.loop
 
+    ; The bound expired. THE LAYER-2 PORT IS PUT BACK BEFORE LEAVING — the
+    ; epilogue below is repeated here rather than jumped to, because leaving
+    ; with layer-2 read/write still enabled would send every subsequent memory
+    ; access to layer 2, and there is no register left to carry "expired" past
+    ; a shared epilogue that clobbers A and BC.
+    ld a,(backup.layer_2_port)
+    and 11111010b	; Disable read/write only
+    ld bc,LAYER_2_PORT
+    out (c),a
+    ; Back to the idle loop, which resets no debuggee state and re-enters
+    ; cmd_loop on the next byte. SP is reset because cmd_loop is reached by JP
+    ; from arbitrary depth and this call's frame would otherwise leak two bytes
+    ; per expiry.
+    ld sp,debug_stack.top
+    jp main_idle
+ ELSE
+    jr z,.loop   ; Wait until byte available
+ ENDIF
+
+.ready:
     ; Disable layer 2 read/write
     ld a,(backup.layer_2_port)
     and 11111010b	; Disable read/write only

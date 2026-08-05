@@ -7,7 +7,7 @@
 .PHONY: help all main unit-tests ut-headless mf-rom mf-rom-wifi mf-rom-sum mfselect test \
         test-unit test-mfselect \
         test-esp test-dzrp test-dzrp-stub test-ip-boundary test-tx-patience \
-        test-client-status \
+        test-client-status test-no-hang \
         test-hardware bump check-reproducible \
         check-reproducible-wifi clean
 
@@ -138,6 +138,24 @@ endif
 ifneq ($(TX_PASSES),)
   VARIANT_SUFFIX := $(VARIANT_SUFFIX)-txp$(TX_PASSES)
   VARIANT_FLAGS  += -DESP_TX_PASSES=$(TX_PASSES)
+endif
+
+# WAIT_SECS — the third bench seam, and the only way the BEFORE half of
+# transport_wait_rx's bound can be assembled at all. WAIT_SECS=0 builds the loop
+# exactly as it was before issue #16, with no bound: the negative control that
+# makes the check a check rather than an assertion about nothing. Unlike IP_MAX
+# and RX_WAIT this is not needed to REACH the shipped behaviour — 5 seconds is
+# short enough for a bench to sit out — so the bench's own N2 runs the shipped
+# ROM and only the control is a probe. Both transports honour it.
+# See test/run-no-hang.sh.
+#
+# Same naming rule as IP_MAX and RX_WAIT: each probe ROM gets its own output
+# name, so no probe can be left where a shipped ROM is read from.
+WAIT_SECS ?=
+
+ifneq ($(WAIT_SECS),)
+  VARIANT_SUFFIX := $(VARIANT_SUFFIX)-wait$(WAIT_SECS)
+  VARIANT_FLAGS  += -DTRANSPORT_WAIT_RX_SECONDS=$(WAIT_SECS)
 endif
 
 
@@ -428,6 +446,28 @@ test-tx-patience:
 	 ROM_FIXED="$(OUT)/enNextMf-wifi-rxwait1600-txp10.rom" \
 	 ROM_PREFIX="$(OUT)/enNextMf-wifi-rxwait1600-txp1.rom" \
 	 ROM_CONTROL="$(OUT)/enNextMf-wifi-txp1.rom" $(TEST)/run-tx-patience.sh
+
+# Two things that used to be able to stop the debugger dead (issue #16):
+# cmd_loop's wait for the next command, which had no bound at all, and an
+# AT+CIPSEND that announced a length and then walked away without writing it.
+# Neither is reachable by an ordinary run — the first needs a client that goes
+# quiet WITHOUT hanging up, the second needs the module to answer later than the
+# stub will wait — so N1 moves the bound to zero (the loop as it was) and N3
+# moves the send budget under the emulator's own latency.
+# See test/run-no-hang.sh, which also says what its evidence does NOT cover.
+#
+# N2 runs the SHIPPED WiFi ROM, so the two halves of the pair differ by exactly
+# one constant. The probe ROMs get their own names via WAIT_SECS/RX_WAIT, so
+# none can be left where a shipped ROM is read from.
+#
+# Run the hang-safety bench (3 jnext runs; not part of `make test`)
+test-no-hang: $(ROM_WIFI)
+	@$(MAKE) --no-print-directory TRANSPORT=wifi WAIT_SECS=0 mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi RX_WAIT=400 TX_PASSES=1 mf-rom
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
+	 ROM_UNBOUND="$(OUT)/enNextMf-wifi-wait0.rom" \
+	 ROM_BOUND="$(ROM_WIFI)" \
+	 ROM_SLOWPROMPT="$(OUT)/enNextMf-wifi-rxwait400-txp1.rom" $(TEST)/run-no-hang.sh
 
 # Run the DZRP conformance suite against a remote (REMOTE=tcp:<host>:<port>)
 test-dzrp:

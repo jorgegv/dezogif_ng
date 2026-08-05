@@ -118,7 +118,57 @@ main:
     ; Setup stack
     ld sp,debug_stack.top
 
-    ; CMD_CLOSE writes its response and then jumps straight here, so this is
+    ; RE-INITIALISE THE DEBUGGEE'S SAVED STATE. Everything below this comment
+    ; and above main_redraw belongs to the program being debugged, not to the
+    ; debugger's screen — which is why main_redraw exists and why the two are
+    ; separate entry points (issue #16). Coming here means "there is no session
+    ; to preserve": a fresh start, a CMD_CLOSE, or an error the transport could
+    ; not recover from.
+    ;
+    ; Init clock speed
+    ld a,RTM_3MHZ
+    ld (backup.speed),a
+
+    ; Init state
+    ld a,PRGM_IDLE
+    ld (prgm_state),a
+
+    ; Init interrupt state and layer 2 backup
+    xor a
+    ld (backup.interrupt_state),a
+    ld (backup.layer_2_port),a
+
+    ; Init slot 0 bank
+    ld a,ROM_BANK
+    ld (slot_backup.slot0),a
+
+    ; Flow through
+
+
+;===========================================================================
+; main_redraw - everything `main` does EXCEPT re-initialising the debuggee's
+; saved state above.
+;
+; IT EXISTS BECAUSE main_loop IS NOW REACHABLE WITH A DEBUGGEE LOADED. Before
+; issue #16 the only way into main_loop was through `main`, so the keys polled
+; there could only ever be pressed while prgm_state was PRGM_IDLE and the reset
+; above was a no-op. transport_wait_rx's bound changes that: the debugger drops
+; back into main_loop while a client is attached and possibly stopped at a
+; breakpoint, and `check_key_border`'s `jp main` would then have discarded the
+; debuggee's speed, interrupt state and slot 0 — silently, on a key whose only
+; advertised job is toggling the border. The joy-port keys in the UART build had
+; the same shape.
+;
+; So the display/configuration keys come here instead. Behaviour is unchanged on
+; every path that existed before: they were only ever reachable after `main` had
+; already done that reset, so not repeating it changes nothing.
+;===========================================================================
+main_redraw:
+    di
+    ; Setup stack
+    ld sp,debug_stack.top
+
+    ; CMD_CLOSE writes its response and then jumps straight to main, so this is
     ; the other end of a completed message. Reached from drain_main there is
     ; nothing to send: the drain discards a half-built one rather than letting
     ; a fragment go out as the head of the next reply.
@@ -128,27 +178,11 @@ main:
     xor a
     out (BORDER),a
 
-    ; Init layer 2
+    ; Layer 2 out of the way, so the UI is visible. The BACKUP of that port is
+    ; the debuggee's and is not touched here.
     ld bc,LAYER_2_PORT
     xor a
     out (c),a
-    ld (backup.layer_2_port),a
-
-    ; Init clock speed
-    ld a,RTM_3MHZ
-    ld (backup.speed),a
-
-    ; Init state
-    ld a,PRGM_IDLE
-    ld (prgm_state),a
-
-    ; Init interrupt state
-    xor a
-    ld (backup.interrupt_state),a
-
-    ; Init slot 0 bank
-    ld a,ROM_BANK
-    ld (slot_backup.slot0),a
 
     ; Bring the transport up for the debugger
     call transport_activate
@@ -156,6 +190,15 @@ main:
     ; Show the text
     call show_ui
 
+;===========================================================================
+; main_idle - the idle loop, with its border-colour timer initialised.
+;
+; A separate entry point because transport_wait_rx jumps here when its bound
+; expires (issue #16), and BC/DE are the timer: arriving with whatever that
+; loop happened to leave in them would count the border cadence down from
+; undefined state.
+;===========================================================================
+main_idle:
     ; Border color timer
     ld c,1
     ld de,0
@@ -180,7 +223,9 @@ main_loop:
     ; Check keyboard
     call check_key_reset
     call check_key_border
-    jp z,main   ; Jump if "B" pressed
+    ; main_redraw, not main: a debuggee may be loaded and stopped by the time
+    ; this key is polled — see main_redraw.
+    jp z,main_redraw   ; Jump if "B" pressed
  IF ROM_VARIANT == ROM_VARIANT_UART
     ; The joy-port selector. UART mode only — WiFi mode never takes a joy port,
     ; so there is nothing for 1/2/3 to select. See ui.asm's read_key_joyport.
@@ -192,7 +237,7 @@ main_loop:
     dec e
     ld a,e
     ld (uart_joyport_selection),a
-    jp main
+    jp main_redraw
  ENDIF
 
 .no_keyboard:

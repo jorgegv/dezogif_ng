@@ -1618,14 +1618,53 @@ change_border_color:
 ; or anything at all arriving from the module. The second case is what lets
 ; this obey the no-CALL rule: the actual header parsing happens afterwards, in
 ; transport_read_byte, which is allowed to use the stack.
+;
+; IT IS BOUNDED, and it did not used to be — the only wait in either transport
+; that was not (issue #16, part A). On expiry it goes back to main_idle, NOT to
+; rx_timeout and not to anything that reports: this wait is the debugger's idle
+; state once a client has attached, so expiry means "nobody has said anything
+; for a while", which is not a fault. TRANSPORT_WAIT_RX_SECONDS in constants.asm
+; carries the whole argument, including why drain_main would have been the wrong
+; destination and why leaving here loses nothing.
+;
+; DO NOT READ IT AS A FIX FOR ISSUE #15. A real Next, build 000B, was driven at
+; four candidate triggers on 2026-08-05 — a client dying mid-command, a client
+; that stops reading mid-response, connection churn, and an RST landing while
+; the stub was blocked mid-flush — and none of them wedged it. The first of
+; those is precisely this loop with five payload bytes owed and the peer gone,
+; and the next connection was answered in 4 ms: the loop also ends on ANY byte
+; from the module, and a new connection makes the module speak. So an unbounded
+; wait here is survivable in practice, and what this change buys is that the
+; debugger returns to a loop where the border moves and the keyboard answers,
+; not a rescue from a state anybody has reproduced.
+;
+; The no-CALL/no-PUSH rule is not in the way: BC and DE are untouched between
+; the two layer-2 writes either side of the loop, so the countdown lives in
+; registers and needs neither the stack nor a memory cell.
 ; Changes:
-;   A, BC
+;   A, BC, DE
 ;===========================================================================
+
+ IF TRANSPORT_WAIT_RX_SECONDS
+; 155 T-states per iteration when nothing has arrived — the four memory tests
+; below are 24 T-states each with their branches not taken, the status read and
+; its branch 33, the countdown 26 — times 65536 iterations per outer pass, at
+; the 28 MHz the debugger runs at. Slower per pass than the serial transport's
+; loop, which is exactly why the pass count is derived rather than shared.
+ESP_WAIT_RX_PASSES:     equ (28000000/155) * TRANSPORT_WAIT_RX_SECONDS / 65536
+    ASSERT ESP_WAIT_RX_PASSES > 0
+ ENDIF
+
 transport_wait_rx:
     ; Write layer 2 previous value
     ld a,(backup.layer_2_port)
     ld bc,LAYER_2_PORT
     out (c),a
+
+ IF TRANSPORT_WAIT_RX_SECONDS
+    ld bc,ESP_WAIT_RX_PASSES
+    ld de,0                 ; the inner counter wraps to 65536 on its first dec
+ ENDIF
 
 .loop:
     ; Payload already owed to us?
@@ -1651,7 +1690,36 @@ transport_wait_rx:
     ld a,HIGH UART_TX
     in a,(LOW UART_TX)	; Read status bits
     bit UART_RX_FIFO_EMPTY,a
+ IF TRANSPORT_WAIT_RX_SECONDS
+    jr nz,.ready
+    ; Nothing yet: spend one iteration of the bound.
+    dec de
+    ld a,d
+    or e
+    jr nz,.loop
+    dec bc
+    ld a,b
+    or c
+    jr nz,.loop
+
+    ; The bound expired. THE LAYER-2 PORT IS PUT BACK BEFORE LEAVING — the
+    ; epilogue below is repeated here rather than jumped to, because leaving
+    ; with layer-2 read/write still enabled would send every subsequent memory
+    ; access to layer 2, and there is no register left to carry "expired" past
+    ; a shared epilogue that clobbers A and BC.
+    ld a,(backup.layer_2_port)
+    and 11111010b	; Disable read/write only
+    ld bc,LAYER_2_PORT
+    out (c),a
+    ; Back to the idle loop, which resets no debuggee state and re-enters
+    ; cmd_loop on the next byte. SP is reset because cmd_loop is reached by JP
+    ; from arbitrary depth and this call's frame would otherwise leak two bytes
+    ; per expiry.
+    ld sp,debug_stack.top
+    jp main_idle
+ ELSE
     jr z,.loop   ; Wait until byte available
+ ENDIF
 
 .ready:
     ; Disable layer 2 read/write

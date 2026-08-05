@@ -2,12 +2,19 @@
 
     make test-hardware NEXT_IP=192.168.1.42
 
-**Nothing in this project has ever run on a ZX Spectrum Next.** Every result the repository holds
-was produced inside jnext. This page is the procedure for changing that, and `test/hardware-check.py`
-is the part of it a PC can do by itself.
+**It runs on a real ZX Spectrum Next.** The stub takes the M1 NMI, brings the ESP-01 up as a TCP
+server, and answered **11 of 12 DZRP conformance checks on hardware** on 2026-08-05 — including
+resuming a debuggee. The results are at the bottom of this page, with the numbers.
 
-Read it end to end before starting. Most of it is about what to *observe*, because the majority of
-what hardware can tell us is not reachable over a socket.
+This page is the procedure for repeating that, and `test/hardware-check.py` is the part a PC can
+do by itself. Read it end to end before starting: much of it is about what to *observe*, because
+a good deal of what hardware can tell us is not reachable over a socket.
+
+**Why it is worth running even when everything is green.** Two evenings of hardware testing have
+produced two bugs, and **neither was findable here** — both because jnext's values sit on the safe
+side of ours. A connection id of 0 that the stub read as "no client" and a 15-character IP address
+its parser refused. Every emulator check stayed green through both. Anything that depends on a
+value the emulator holds fixed is untested until this page is run.
 
 ## Why an emulator result is not enough
 
@@ -20,8 +27,8 @@ known, and all three are in the exact area the WiFi build depends on:
 | Its ESP module is **permanently associated** — jnext implements no `AT+CWJAP=` at all, only the query form | Association has never been exercised by any test and never can be. It is a prerequisite the user satisfies once; see [WIFI-SETUP.md](WIFI-SETUP.md) |
 | It numbers inbound connection ids **from 1**, because it reserves slot 0 for outbound `AT+CIPSTART` | That is a **jnext design choice**, and MEMORY.md said outright that hardware may number differently. It does: **real firmware assigned the first client id 0**, measured 2026-08-04 by the WiFi build failing completely on a Next. The stub had used `esp_conn_id == 0` as its "no client" marker, so every reply was discarded — see ERRORS.md and H3 below. Fixed by reserving no id at all. **No emulator check can cover this in either direction**, because jnext never issues 0 |
 
-Two more claims are **estimates** — arithmetic, never measured. H4 and H5 exist to replace them
-with numbers.
+Two more claims were **estimates** — arithmetic, never measured. H4 and H5 replaced them with
+numbers on 2026-08-05; see the results table at the end.
 
 ## Prerequisites
 
@@ -62,9 +69,16 @@ do about it — do not go looking for the address elsewhere and carry on, becaus
 you a client will not be able to reach it either.
 
 `wifi2.bas` on the Next and the router's lease table remain the second opinions, and are worth one
-cross-check the first time: **the address on that screen has never been read from real hardware.**
-Under jnext the module always answers `192.168.1.50`, so what the emulator proves is the mechanism,
-not the value.
+cross-check the first time: **the address on that screen has still not been reported from real
+hardware.** Under jnext the module always answers `192.168.1.50`, so the emulator proves the
+mechanism and never the value.
+
+**A green bench run does not close this**, and the reason is worth knowing. `AT+CIFSR` is the last
+step of `transport_init`, and it is the only bring-up step whose failure still leaves a working
+listener — so H1 and the whole conformance suite can pass while the screen shows
+`No WiFi address`. The 2026-08-05 run passed without anyone reporting what the screen said. It is
+the cheapest observation still outstanding, and the only one that closes the 15-character address
+path end to end on silicon.
 
 A **static DHCP reservation** on the router is worth the two minutes: the address then never moves.
 
@@ -80,7 +94,7 @@ of it:
 | **S1** | Does the stub's UI appear at all? | The first hardware evidence that Multiface paging, the relocation of `MAIN` into a RAM bank at slot 7, and `show_ui` work on silicon. In the emulator this is bench T6 |
 | **S2** | What does `Core:` read? | The stub compares it against 03.01.10 and raises `ERROR_CORE_VERSION_NOT_SUPPORTED` below that |
 | **S3** | Is the **error area** (bottom 9 rows, red on black) clear? | `RX Timeout` there means the AT chain failed — that is still the message, because bring-up failure has no error code of its own. `No WiFi address` means the chain worked and the module has no address to give out |
-| **S4** | What do rows 6 and 7 say? | The status block, and the one thing on this screen composed at run time. `Connect at <ip>:11000` is the success case; `No WiFi address...` and `ESP-01 setup failed...` are the two failures, each in words rather than a code. **This has never been read on hardware** — under jnext the module is permanently associated and always answers `192.168.1.50` |
+| **S4** | What do rows 6 and 7 say? | The status block, and the one thing on this screen composed at run time. `Connect at <ip>:11000` is the success case; `No WiFi address...` and `ESP-01 setup failed...` are the two failures, each in words rather than a code. **Still not reported from hardware**, and a green bench run does not cover it — `AT+CIFSR` failing leaves a working listener, so every check can pass while this line reads `No WiFi address`. Under jnext the module always answers `192.168.1.50` |
 | **S5** | Does the machine return to a usable NextZXOS? | The ESP holds the listening socket, so the listener should survive normal use of the machine |
 
 **Photograph the screen.** It is the only artefact of S1-S5 and it costs nothing.
@@ -92,7 +106,7 @@ of it:
 | Check | What it asserts |
 |---|---|
 | **H1** | Something is listening on `<ip>:11000` |
-| **H2** | DZRP conformance — delegated to `conformance.py`, not reimplemented |
+| **H2** | DZRP conformance — delegated to `conformance.py`, not reimplemented. **Its coverage is the suite's**, which now includes C10/C11, the resume checks — so a passing H2 means a debuggee was resumed on whatever this was pointed at |
 | **H3** | The `+IPD` connection id is **read from the header**, not assumed |
 | **H4** | Round-trip latency, **measured** |
 | **H5** | Throughput, **measured** |
@@ -182,11 +196,17 @@ anything the screen said.
 
 Stated here because the temptation to over-read the first hardware success will be considerable.
 
-- **The stub has never resumed a debuggee ON HARDWARE.** It does so in the emulator — bench checks
-  C10 and C11 of `make test-dzrp-stub` load a fixture over DZRP, `CMD_CONTINUE` onto a temporary
-  breakpoint, and get the `NTF_PAUSE` back with the registers intact, so `CMD_CONTINUE`, the exit
-  path and `backup.asm`'s restoration are executed code now. **None of that has happened on a
-  Next.** This run does not attempt it, and a green H1-H6 says nothing about it.
+- ~~**The stub has never resumed a debuggee ON HARDWARE.**~~ **It has, 2026-08-05.** C10 and C11
+  passed against a real Next: a fixture loaded over DZRP, `CMD_CONTINUE` onto a temporary
+  breakpoint, `NTF_PAUSE` back at `0x8016` with the registers as the program left them. So
+  `CMD_CONTINUE`, the exit path and `backup.asm`'s restoration are executed code **on silicon**,
+  not only in the emulator.
+
+  The struck-through sentence is kept because of *how* it was wrong. It said "this run does not
+  attempt it", which was true of `hardware-check.py`'s own code and false of the run: **H2
+  delegates to `conformance.py`, and that suite carries C10/C11.** The claim was written from what
+  the script does rather than what it runs, and the run that disproved it printed the false
+  version underneath its own evidence. When a check delegates, its coverage is the delegate's too.
 - **The stackless-NMI *return address*, in either place.** This one survives the paragraph above
   intact, and the distinction is narrow enough to be worth spelling out: C10 sets `PC` itself with
   `CMD_SET_REGISTER`, so `backup.pc` never comes from `save_nmi_return_address`, the routine that
@@ -215,19 +235,30 @@ Stated here because the temptation to over-read the first hardware success will 
   `+IPD` refreshes the connection id. Known, deferred to M3's reconnect work.
 - **Anything about a second power cycle**, unless you do one.
 
-## What a green run *would* let the documents claim
+## What the run established — measured 2026-08-05, on a real Next
 
 Appendix A of the plan is a ladder — `verified`, `reported on hardware`, `inferred`, `estimate` —
-and its rule is that a claim must never sit higher than its evidence. A hardware run moves these,
-and nothing else:
+and its rule is that a claim must never sit higher than its evidence. **This table used to be
+predictions. These are the results.**
 
-| Claim | Today | After |
+| Claim | Was | Now |
 |---|---|---|
-| The real ESP-01 answers at 115200 until told otherwise | inferred | verified, if H1 passes |
-| ESP TCP throughput | estimate | measured, by H5 |
-| Round-trip latency 10-100 ms | estimate | measured, by H4 |
-| tbblue does not checksum `enNextMf.rom` | inferred | verified, if the ROM boots |
-| Inbound connection ids on real firmware | unverified | **still unverified** — H3 cannot see them, and neither can any PC-side check |
+| The real ESP-01 answers at 115200 until told otherwise | inferred | **verified** — H1 connected in 274 ms, so the whole AT chain was accepted at that rate |
+| Round-trip latency | estimate, "10-100 ms" | **measured: min 10.8 ms, median 13.0 ms, max 23.6 ms.** At the good end of the guess; single-stepping will feel responsive |
+| ESP TCP throughput | estimate, "tens of KB/s" | **measured: 8.0 KB/s round trip** — 4096 bytes each way in 1.01 s |
+| tbblue does not checksum `enNextMf.rom` | inferred | **verified** — ours booted |
+| Inbound connection ids on real firmware | unverified | **verified indirectly: the first client gets id 0.** Not by observation — no PC-side check can see the ids — but by the failure it caused, which is only possible if the id was 0. See the divergence table at the top |
+| The `+IPD` id is read rather than assumed | emulator only | **verified on hardware** — H3, two simultaneous connections, each getting its own payload |
+| DZRP conformance | emulator only | **11 of 12 on hardware**, the one red being `CMD_PAUSE` (issue #8) |
 
-**Update Appendix A when the run happens, and put the numbers in it.** A measurement nobody wrote
-down is an estimate again by the next session.
+**The throughput figure deserves reading carefully, because the obvious reading is wrong.** 8.0 KB/s
+sounds far below 115200 baud until you count what actually moved: a loopback carries the payload
+**twice**, so 8192 bytes crossed the wire in 1.01 s. At 8N1 the line itself can carry 11520 bytes/s,
+so the transport achieved **71% of line rate** — the framing and round trips cost the other 29%.
+The wire is the bottleneck, not the `AT+CIPSEND` overhead, which is what makes M3's baud
+negotiation worth doing and roughly bounds what it can win: about 2.5x before the fixed costs
+dominate.
+
+An earlier draft of this section reported that as "about a third of the estimate", by comparing a
+one-way payload figure against a line rate. It is recorded here because the arithmetic error
+pointed at the wrong optimisation.

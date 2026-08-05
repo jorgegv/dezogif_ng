@@ -95,6 +95,7 @@ WHAT THIS SCRIPT CANNOT SEE, and none of it is hidden:
 
 import argparse
 import os
+import re
 import socket
 import statistics
 import subprocess
@@ -109,6 +110,26 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CONFORMANCE = os.path.join(HERE, "dzrp", "conformance.py")
 
 PASS, FAIL, SKIP, MEASURED = "PASS", "FAIL", "SKIP", "MEAS"
+
+# Colour, on the same terms as conformance.py and the Makefile's help target:
+# a terminal, and NO_COLOR unset. MEAS is deliberately NOT green — it is a
+# number, not a verdict, and colouring it like a pass would undo the
+# distinction the MEASURED status exists to draw.
+_ANSI = re.compile(r"\033\[[0-9;]*m")
+_CODES = {PASS: "\033[1;32m", FAIL: "\033[1;31m", SKIP: "\033[1;33m",
+          MEASURED: "\033[1;36m"}
+COLOUR = bool(sys.stdout.isatty()) and not os.environ.get("NO_COLOR")
+
+
+def strip_ansi(text):
+    """Colour codes must never reach a parser. See classify()."""
+    return _ANSI.sub("", text)
+
+
+def paint(status):
+    if not COLOUR:
+        return "%-5s" % status
+    return "%s%-5s\033[0m" % (_CODES.get(status, ""), status)
 
 
 def connect(host, port, timeout, socket_attempts=20, protocol_attempts=2, budget=None):
@@ -248,7 +269,7 @@ class Results:
 
     def add(self, tag, status, detail):
         self.rows.append((tag, status, detail))
-        print("  %-4s %-5s %s" % (tag, status, detail), flush=True)
+        print("  %-4s %s %s" % (tag, paint(status), detail), flush=True)
 
     def count(self, status):
         return sum(1 for _, s, _ in self.rows if s == status)
@@ -339,9 +360,27 @@ def h2_conformance(remote, results, extra_args):
     cmd = [sys.executable, CONFORMANCE, "--remote", remote,
            "--expect-preamble", "none", "--require", "INIT,LOOPBACK"] + extra_args
     print("\n--- conformance.py ---", flush=True)
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          text=True)
-    print(proc.stdout, end="", flush=True)
+    # STREAM IT, do not collect it. This used to be subprocess.run(...PIPE)
+    # with the whole transcript replayed afterwards, which meant the suite
+    # appeared to hang for its entire duration and then produced everything at
+    # once — and one of its checks deliberately waits out a 25-second timeout.
+    # The output is still accumulated, because classify() needs it, but the
+    # user sees each verdict as it lands.
+    #
+    # FORCE_COLOR because the child's stdout is this pipe, so it would turn
+    # colour off; we re-enable it only when OUR output is a terminal, and
+    # classify() strips the codes before matching so the parser never sees them.
+    env = dict(os.environ)
+    if sys.stdout.isatty() and not os.environ.get("NO_COLOR"):
+        env["FORCE_COLOR"] = "1"
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, bufsize=1, env=env)
+    captured = []
+    for line in proc.stdout:
+        print(line, end="", flush=True)
+        captured.append(line.rstrip("\n"))
+    proc.wait()
     print("--- end conformance.py ---\n", flush=True)
 
     if proc.returncode == 0:
@@ -351,7 +390,8 @@ def h2_conformance(remote, results, extra_args):
         results.add("H2", FAIL, "the conformance suite could not talk to the remote at all")
         return
 
-    fail_lines = [line for line in proc.stdout.splitlines() if line.startswith("FAIL ")]
+    fail_lines = [strip_ansi(line) for line in captured
+                  if strip_ansi(line).startswith("FAIL ")]
     known, novel = classify(fail_lines)
 
     if known and not novel:

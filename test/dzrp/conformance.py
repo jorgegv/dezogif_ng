@@ -43,6 +43,45 @@ import dzrp  # noqa: E402
 
 PASS, FAIL, UNSUP = "PASS", "FAIL", "UNSUP"
 
+# --------------------------------------------------------------------------
+# Progress and colour
+#
+# A check can take 25 seconds (C12 waits out a timeout; C5 sweeps to 4096
+# bytes), so a suite that prints nothing until it ends looks hung. Each check
+# announces itself BEFORE it runs and its verdict lands when it finishes.
+#
+# THE ANNOUNCEMENT GOES TO STDERR, DELIBERATELY. stdout carries the result
+# lines, and those are parsed — `hardware-check.py`'s classify() matches lines
+# beginning "FAIL " and takes the check code from field 2. Interleaving
+# progress chatter into that stream would be inviting the same class of
+# breakage the length-convention bug came from. stderr shows up next to it on a
+# terminal and stays out of the way of anything reading the results.
+#
+# COLOUR IS OFF WHEN STDOUT IS NOT A TTY, for the same reason: escape codes in
+# front of "FAIL" would stop it starting with "FAIL". `hardware-check.py` runs
+# this through a pipe and sets FORCE_COLOR when its own output is a terminal,
+# and strips the codes before parsing — so the user still gets colour through
+# the hardware bench without the parser ever seeing it.
+# --------------------------------------------------------------------------
+
+def _use_colour():
+    if os.environ.get("NO_COLOR"):
+        return False
+    if os.environ.get("FORCE_COLOR"):
+        return True
+    return sys.stdout.isatty()
+
+
+COLOUR = _use_colour()
+_CODES = {PASS: "\033[1;32m", FAIL: "\033[1;31m", UNSUP: "\033[1;33m"}
+
+
+def paint(status):
+    """The status token, coloured when that is safe."""
+    if not COLOUR:
+        return "%-5s" % status
+    return "%s%-5s\033[0m" % (_CODES.get(status, ""), status)
+
 # Command names, for --require and for reporting.
 NAMES = {
     "INIT": dzrp.CMD_INIT,
@@ -720,6 +759,8 @@ def main():
         if only and label.split()[0] not in only:
             continue
         ran += 1
+        # Announce before running, on stderr. See the note beside paint().
+        print("      %s ..." % label, file=sys.stderr, flush=True)
         # Each check gets a fresh connection, so one refused command cannot
         # take the rest down. A remote that serves one client at a time needs
         # a moment to start listening again between them — CSpect's plugin
@@ -761,7 +802,11 @@ def main():
             d.close()
 
         counts[status] += 1
-        print("%-5s %s%s" % (status, label, " — %s" % detail if detail else ""))
+        # flush, because this is usually a pipe and Python would otherwise hold
+        # every line until the suite ended — which is the whole problem this
+        # streaming exists to fix.
+        print("%s %s%s" % (paint(status), label, " — %s" % detail if detail else ""),
+              flush=True)
 
     print("")
     summary = "%d passed, %d failed, %d unsupported, of %d checks" % (

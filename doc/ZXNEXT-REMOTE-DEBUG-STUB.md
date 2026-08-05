@@ -709,13 +709,25 @@ machine no way to say which ROM was installed. It now sends `AT+CIFSR`, parses t
 and draws `Connect at <ip>:11000`, with a two-line plain-language message in the same place when
 there is no address or the AT chain did not complete. The UART ROM's bytes did not move.
 
-Still open in M1: **DeZog itself has never been pointed at it** — the evidence is the conformance
-suite, not a debugging session, so stepping and breakpoints over WiFi are untried; and **no DZRP
-session has ever run on hardware**. The stub itself has (it takes the M1 NMI on a real Next and
-paints its UI), but nothing has resumed a debuggee there, so every result above is jnext's, where
-its two known fictions bite — it models baud as timing only and its module is permanently
-associated, so the address the UI draws is always jnext's own `192.168.1.50`. **The mechanism is
-tested; the value has never been read off a real machine.**
+**A DZRP session has now run on hardware** (2026-08-05). A real Next answered **11 of 12**
+conformance checks over WiFi — the one red being `CMD_PAUSE`, since fixed as issue #8 — and that
+included **C10/C11, so a debuggee was resumed on silicon**, not only in the emulator. Latency and
+throughput were measured rather than estimated: median **13.0 ms** round trip, and 8192 bytes
+across the wire in 1.01 s, which is **71% of what 115200 8N1 can carry**. The connect string was
+**confirmed correct on the machine**, at a 15-character address — the length its parser used to
+refuse, and one jnext cannot produce, since its module always answers the twelve characters of
+`192.168.1.50`.
+
+**Two bugs came out of those two hardware evenings, and neither was findable in the emulator**,
+both because jnext's values sit on the safe side of ours: a connection id of `0`, which the stub
+read as "no client" and used to discard every reply, and the 15-character address above. Every
+emulator check stayed green through both. That is the standing argument for §6's hardware rung
+being a rung and not a formality.
+
+Still open in M1: **DeZog itself has never been pointed at it.** The evidence is our own
+conformance suite, not a debugging session, so stepping and breakpoints over WiFi are untried and
+open question 1 — whether the `cspect` remote makes assumptions above the wire — is still
+unanswered. That is the last item, and it needs a VS Code session rather than more code.
 
 ### M2 — Asynchronous break
 Add the Copper-driven periodic NMI poll (§4.3). Success: `CMD_PAUSE` from DeZog stops a freely
@@ -863,10 +875,14 @@ reason attached, is fine.
 | jnext does not emulate `AT+CIPMODE`/`AT+CIPSERVER` | `src/esp01/include/esp01/esp_at.h` | **was verified; `AT+CIPSERVER` NO LONGER TRUE** — shipped in 0.99.118 (jnext#210). `AT+CIPMODE` still absent |
 | **The ESP can be brought up as a TCP server from Z80 and echo over a socket** | `make test-esp` E1-E4, jnext 0.99.118 | **verified** — M0(b) |
 | **The `+IPD` connection id must be read, not assumed** | same bench, broken deliberately: id hardcoded to `0` fails E2-E4, to `1` fails only E4 | **verified** |
-| jnext's inbound connection ids start at 1, not 0 | `esp_at.h` simplification 8a; observed as `accepted as cid 1` / `cid 2` | **verified for jnext** — hardware numbering remains **unverified** |
+| jnext's inbound connection ids start at 1, not 0 | `esp_at.h` simplification 8a; observed as `accepted as cid 1` / `cid 2` | **verified for jnext** |
+| **Real ESP-AT firmware assigns the first inbound connection id 0** | the WiFi build failing completely on a Next, 2026-08-04: the stub used `esp_conn_id == 0` as its "no client" marker and discarded every reply | **verified indirectly** — by the failure it caused, not by observation; no PC-side check can see the ids |
 | **A configured Next comes up already associated**, so the stub never needs to join a network | user's own machine, reported 2026-08-04 | **reported on hardware** — a rung the verified/inferred ladder lacked. First-hand and load-bearing, but one machine, one reporter, no captured artefact, and nothing we can re-run |
-| Real ESP-AT firmware answers at 115200 until told otherwise | Espressif AT instruction set; jnext models baud as timing only | **inferred** — untested |
-| ESP TCP throughput in the tens of KB/s | general knowledge | **estimate** |
+| Real ESP-AT firmware answers at 115200 until told otherwise | hardware bench H1 connected in 274 ms, so the whole AT chain was accepted at that rate | **verified** (2026-08-05) |
+| ESP TCP throughput | **measured on hardware**: 8192 bytes across the wire in 1.01 s = 71% of what 115200 8N1 can carry | **verified** (2026-08-05) |
+| Round-trip latency 10-100 ms | **measured on hardware**: min 10.8 ms, median 13.0 ms, max 23.6 ms over 20 samples | **verified** (2026-08-05) — at the good end of the estimate |
+| The stub resumes a debuggee, and its state survives | conformance C10/C11, in jnext and then on a Next | **verified**, both places |
+| The connect string draws a correct address on hardware | user's own machine, 2026-08-05, at a 15-character address | **reported on hardware** — one machine, one reporter, no re-runnable artefact |
 | NMI poll costs ~100-200 T-states/frame | arithmetic, not measured | **estimate** |
 | CTS/RTR populated on a given board | — | **unverified** |
 | tbblue does not checksum `enNextMf.rom` | inferred from dezogif working | **inferred** |

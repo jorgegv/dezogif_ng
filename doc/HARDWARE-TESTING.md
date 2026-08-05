@@ -68,17 +68,25 @@ That is exactly what goes in `launch.json`. If instead it says `No WiFi address`
 do about it — do not go looking for the address elsewhere and carry on, because the stub is telling
 you a client will not be able to reach it either.
 
-`wifi2.bas` on the Next and the router's lease table remain the second opinions, and are worth one
-cross-check the first time: **the address on that screen has still not been reported from real
-hardware.** Under jnext the module always answers `192.168.1.50`, so the emulator proves the
-mechanism and never the value.
+**The address on that screen is correct on real hardware** — confirmed by the user, 2026-08-05,
+on a Next whose address is `192.168.100.136`. That is **reported on hardware** on Appendix A's
+ladder: first-hand and load-bearing, one machine, one reporter, no artefact anyone can re-run.
 
-**A green bench run does not close this**, and the reason is worth knowing. `AT+CIFSR` is the last
-step of `transport_init`, and it is the only bring-up step whose failure still leaves a working
-listener — so H1 and the whole conformance suite can pass while the screen shows
-`No WiFi address`. The 2026-08-05 run passed without anyone reporting what the screen said. It is
-the cheapest observation still outstanding, and the only one that closes the 15-character address
-path end to end on silicon.
+It closes more than it looks. That address is **15 characters**, which is exactly the length the
+connect-string parser used to refuse — its loop bounded DJNZ *passes*, so a maximum-length address
+fell out to "too long" before the closing quote was read, and the screen would have said
+`No WiFi address` on a perfectly configured machine. jnext's module always answers
+`192.168.1.50`, twelve characters, so no check here could ever reach the boundary; it is covered
+only by moving the *bound* instead (`make test-ip-boundary`). This confirmation is the first time
+the real path has run at its real length on silicon.
+
+**A green bench run would not have closed it**, which is why it was worth asking for. `AT+CIFSR` is
+the last step of `transport_init` and the only bring-up step whose failure still leaves a working
+listener — so H1 and the whole conformance suite can pass while the screen reads `No WiFi address`.
+The socket path and the display path diverge there, and only one of them is machine-checkable.
+
+`wifi2.bas` on the Next and the router's lease table remain the second opinions if the line ever
+disagrees with what you expect.
 
 A **static DHCP reservation** on the router is worth the two minutes: the address then never moves.
 
@@ -94,7 +102,7 @@ of it:
 | **S1** | Does the stub's UI appear at all? | The first hardware evidence that Multiface paging, the relocation of `MAIN` into a RAM bank at slot 7, and `show_ui` work on silicon. In the emulator this is bench T6 |
 | **S2** | What does `Core:` read? | The stub compares it against 03.01.10 and raises `ERROR_CORE_VERSION_NOT_SUPPORTED` below that |
 | **S3** | Is the **error area** (bottom 9 rows, red on black) clear? | `RX Timeout` there means the AT chain failed — that is still the message, because bring-up failure has no error code of its own. `No WiFi address` means the chain worked and the module has no address to give out |
-| **S4** | What do rows 6 and 7 say? | The status block, and the one thing on this screen composed at run time. `Connect at <ip>:11000` is the success case; `No WiFi address...` and `ESP-01 setup failed...` are the two failures, each in words rather than a code. **Still not reported from hardware**, and a green bench run does not cover it — `AT+CIFSR` failing leaves a working listener, so every check can pass while this line reads `No WiFi address`. Under jnext the module always answers `192.168.1.50` |
+| **S4** | What do rows 6 and 7 say? | The status block, and the one thing on this screen composed at run time. `Connect at <ip>:11000` is the success case; `No WiFi address...` and `ESP-01 setup failed...` are the two failures, each in words rather than a code. **Confirmed correct on hardware 2026-08-05** at a 15-character address — the length the parser used to refuse, and one jnext can never produce. A green bench run does not cover this: `AT+CIFSR` failing leaves a working listener, so every check can pass while this line reads `No WiFi address` |
 | **S5** | Does the machine return to a usable NextZXOS? | The ESP holds the listening socket, so the listener should survive normal use of the machine |
 
 **Photograph the screen.** It is the only artefact of S1-S5 and it costs nothing.
@@ -249,7 +257,9 @@ predictions. These are the results.**
 | tbblue does not checksum `enNextMf.rom` | inferred | **verified** — ours booted |
 | Inbound connection ids on real firmware | unverified | **verified indirectly: the first client gets id 0.** Not by observation — no PC-side check can see the ids — but by the failure it caused, which is only possible if the id was 0. See the divergence table at the top |
 | The `+IPD` id is read rather than assumed | emulator only | **verified on hardware** — H3, two simultaneous connections, each getting its own payload |
-| DZRP conformance | emulator only | **11 of 12 on hardware**, the one red being `CMD_PAUSE` (issue #8) |
+| DZRP conformance | emulator only | **11 of 12 on hardware**, the one red being `CMD_PAUSE` (issue #8, since fixed — not yet re-measured on a Next) |
+| The debuggee resumes | emulator only | **verified on hardware** — C10/C11 through H2's delegation |
+| The connect string shows a correct address | never read on hardware | **reported on hardware** — correct at **15 characters**, the length the parser used to refuse and one jnext cannot produce |
 
 **The throughput figure deserves reading carefully, because the obvious reading is wrong.** 8.0 KB/s
 sounds far below 115200 baud until you count what actually moved: a loopback carries the payload

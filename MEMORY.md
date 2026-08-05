@@ -5,6 +5,104 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-05 — A bench observes its emulator leave; the check is shared, not copied
+
+**Decided and built, issue #17.** The invariant is: **no bench may release the
+flock mutex while anything it started still holds port 11000**, and a bench that
+cannot confirm departure **fails loudly rather than exiting 0**. Every bench that
+starts jnext now confirms it, through one shared file, `test/bench-jnext.sh`.
+
+**The defect it closes is a lock that excludes correctly and still does not
+exclude.** Each bench records `jnext_pid=$!` from `timeout … "$JNEXT" … &` — the
+**wrapper's** pid — so `kill`/`wait` reap the wrapper and say nothing about the
+emulator or the port. `flock` serialises *scripts*; the thing that binds 11000 is
+a *process that can outlive one*. Observed 2026-08-05 with three agents all
+holding the lock: a jnext from a run that had already finished, by its artefact
+mtimes, alive on the port. ERRORS.md carries the incident.
+
+**SHARED, NOT COPIED, AND THAT IS THE DECISION WORTH RECORDING.** The fix already
+existed — in `run-client-status.sh`, written the day it was seen — and the other
+six benches never got it. That is *why* this was a repository-wide defect rather
+than a one-file one, so six more copies of forty lines of reasoning would be six
+more places for the next correction to miss. The helper **defines functions and
+does nothing else** — no `set`, no traps, no top-level assignments — so sourcing
+it cannot disturb a caller's `set -euo pipefail` or its own trap wiring, which
+ERRORS.md's `cp --reflink` entry spent four wrong mechanisms getting right.
+`run-client-status.sh` was converted to it too: leaving the original as a second
+implementation would have preserved exactly the drift being fixed.
+
+**Scoping the sweep is load-bearing and the issue says so: a bare `pkill jnext`
+would make this WORSE than the bug**, by killing a correctly serialised
+concurrent run. So a sweep only ever reaches jnext processes running **the
+bench's own SD image**.
+
+**And that comparison is by RESOLVED ABSOLUTE PATH, against each process's own
+`/proc/<pid>/cwd` — not by substring.** `$OUT` defaults to the relative `build`,
+so two agents running the same bench in two different **worktrees** both put
+`--sdcard build/sd-dzrp.img` on the command line: identical strings naming
+different files. A substring match would have swept the other worktree's
+emulator, which is the precise thing this exists to prevent. The reference
+implementation matched the substring; that is the one place this deviates from
+it, deliberately.
+
+**Two ordering details, each with a failure behind it.** The working image is
+unlinked **before** departure is confirmed, because the confirmation can `exit`
+and an exit that skipped the `rm` would reintroduce the abandoned-gigabyte leak
+ERRORS.md records. And a departure failure is reported **once**: the failing path
+reaches the check twice — where the run ends, and again from the EXIT trap the
+resulting `exit` fires — so the first version waited out a second ten-second
+budget and printed the same wall of text again, which reads as two faults.
+
+**THE PROPAGATION FAILURE WAS NEVER REPRODUCED, and the change is shaped for
+that.** It is not the repair of a known mechanism; it is a refusal to proceed on
+an assumption. Measured here, and the second measurement is new: killing the
+wrapper reaches jnext in well under 2 s, **and so does `kill -9` on the wrapper**
+— which `timeout` cannot forward at all. jnext was orphaned deliberately, twice,
+and died with its wrapper both times, with no `PR_SET_PDEATHSIG` anywhere in its
+source to explain it. So no available manoeuvre produces the orphan that was
+nonetheless *seen*. The survivor therefore has to be injected to be tested, and
+the injected condition is the observed one: a jnext belonging to a run that had
+already finished.
+
+**What the evidence is, and what it is not.** Demonstrated: a squatted port makes
+a bench refuse to start a run instead of reporting a verdict (`run-ip-boundary.sh`
+had **no** port check at all before, and with 11000 held it ran both checks and
+printed `0/2 checks passed` — a verdict about the parser from a stub that could
+not bind); an injected stale emulator is detected and killed by the escalation in
+2.22 s; one that will not die makes the bench print the surviving PID and exit 1
+with none of its six checks run; the same emulator is invisible to a sweep scoped
+to another image; an interrupted bench exits 143 without finishing and leaves
+nothing behind. **Not** demonstrated: an emulator actually outliving its script,
+for the reason above.
+
+**`run-headless.sh` and `run-mfselect.sh` get the check with a SMALLER claim
+attached, written into the scripts.** Neither passes `--esp`, so neither binds
+11000 and neither takes the lock; the "a survivor answers the next agent's
+client" failure cannot originate there. What can is an emulator left running
+after a `timeout` fired or an interrupt landed, competing for the machine and
+holding a gigabyte image open. Saying that in the script is cheaper than letting
+a reader infer the larger claim from the identical code.
+
+**Rejected.** A per-script copy of the teardown (defensible on the surgical-change
+rule, and it is what produced the issue); `pkill jnext` (kills other agents' runs
+— the issue names this); polling only the port (it cannot name a PID, cannot
+distinguish our listener from a foreign one, and says nothing about the two
+benches that bind no port); a helper that also removes the working images left by
+`run-headless.sh` and `run-mfselect.sh` (a real leak, recorded in ERRORS.md, and a
+different change); deriving the sweep from `$SD_IMAGE` for `run-unit-tests.sh`
+(it runs the **reference** image read-only and synchronously with `--no-esp`, so
+scoping to that basename would be the cross-run hazard this entry refuses — it is
+left uncovered, and this says so).
+
+**Test-only: no `src/` file and no `Makefile` change, so no `make bump`.** Checked
+rather than assumed — both ROMs hash identically to the branch point with
+`BUILD_TIME` pinned (`c21a73ba…` UART, `d3aa0e4e…` WiFi). All eight benches green
+afterwards: `test` 6/6, `test-esp` 5/5, `test-ip-boundary` 2/2,
+`test-tx-patience` 3/3, `test-dzrp-stub` 14/14 with W1-W5, `test-client-status`
+3/3, `test-no-hang` 4/4, `test-mfselect` 10/10.
+
+---
+
 ## 2026-08-05 — A wait that ends must end somewhere harmless; and a CRLF that could swallow a command
 
 **Decided and measured, issue #16.** Three changes plus one accident, and the

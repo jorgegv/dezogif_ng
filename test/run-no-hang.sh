@@ -207,6 +207,11 @@ LISTEN_TIMEOUT=90
 
 MF_ROM_PATH='::/machines/next/enNextMf.rom'
 
+# Shared jnext teardown — issue #17. Defines functions and nothing else, so it
+# cannot disturb the `set -euo pipefail` above or the traps below.
+# shellcheck source=test/bench-jnext.sh
+. "$(dirname "$0")/bench-jnext.sh"
+
 log()  { printf '%s\n' "$*"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
@@ -260,7 +265,12 @@ cleanup() {
         kill "$jnext_pid" 2>/dev/null || true
         wait "$jnext_pid" 2>/dev/null || true
     fi
+    # Unlinked BEFORE departure is confirmed: bench_await_departure can exit,
+    # and an exit that skipped this would reintroduce the abandoned-gigabyte
+    # leak the paragraph above is about.
     rm -f "$sd"
+    # And only now is the lock safe to drop — issue #17.
+    bench_await_departure "$sd"
 }
 trap cleanup EXIT
 # A handler that only RETURNS does not stop a bash script — the shell defers the
@@ -324,6 +334,12 @@ start_stub() {
     local keypress_args=()
     [ -n "${KEYPRESS:-}" ] && keypress_args=(--delayed-keypress-frames "$KEY_FRAMES" "$KEYPRESS")
     rm -f "$shotfile"
+
+    # Per run, not only at pre-flight: a foreign listener appearing between two
+    # of this script's own runs would answer the client we are about to start,
+    # and a contaminated run can come out GREEN (issue #17).
+    bench_require_port_free "$PORT" "before this run started"
+
     cp --reflink=auto -f "$SD_IMAGE" "$sd"
     mcopy -o -i "$sd@@$part_off" "$rom" "$MF_ROM_PATH"
 
@@ -356,6 +372,10 @@ sys.exit(0 if s.connect_ex(('127.0.0.1', $PORT)) == 0 else 1)
     return 1
 }
 
+# `jnext_pid` is the `timeout` WRAPPER's, so the kill and wait below say nothing
+# about jnext or about port 11000. bench_await_departure is what turns "the
+# wrapper is gone" into "the emulator is gone", and this bench must not drop the
+# lock — or start its next run — before that is true. Issue #17.
 stop_stub() {
     if [ -n "$jnext_pid" ] && kill -0 "$jnext_pid" 2>/dev/null; then
         kill "$jnext_pid" 2>/dev/null || true
@@ -363,6 +383,7 @@ stop_stub() {
     fi
     jnext_pid=""
     rm -f "$sd"
+    bench_await_departure "$sd"
 }
 
 # idle_run <rom> <log> <shot> — the N1/N2 body. Prints the client's output and

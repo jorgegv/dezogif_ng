@@ -136,6 +136,39 @@ mutex appears to have failed, suspect a leaked holder before suspecting a
 participant: the second explanation is easier to believe and was, here, a false
 accusation.
 
+**CLOSED, issue #17, and three things came out of the fixing that the paragraphs
+above did not know.**
+
+**1. The orphan could not be produced even by taking the forwarding away.** The
+entry above records that killing the `timeout` wrapper reaches jnext in under two
+seconds. It also survives the stronger test: **`kill -9` on the wrapper**, which
+`timeout` cannot forward at all, and jnext still died with it — twice, with no
+`PR_SET_PDEATHSIG` anywhere in jnext's source to explain it. So the state that
+was *observed* cannot be *staged* by any manoeuvre available here, and a survivor
+has to be **injected** to be tested at all. What is injected is the condition
+that was seen — a jnext belonging to a run that had already finished — and not a
+mechanism for it, because the check does not care how the survivor got there and
+neither does the invariant.
+
+**2. Fixing it in one script is what made it a repository-wide defect.** The
+teardown above was written into `run-client-status.sh` alone. Six other benches
+carried the same launch pattern and none of them got it, which is the whole of
+issue #17. It is now one sourced file, `test/bench-jnext.sh`, that every bench
+calls — because forty lines of reasoning copied seven times is seven places for
+the next correction to miss, and this entry is the evidence for that rather than
+the argument.
+
+**3. The scope of the sweep needed to be narrower than "the image path", and the
+reason is worktrees.** `$OUT` defaults to the relative `build`, so two agents
+running the same bench in two different worktrees both put
+`--sdcard build/sd-dzrp.img` on the command line: **identical strings naming
+different files**. A substring match — which is what the first implementation
+used — would have swept the other worktree's emulator, i.e. done precisely what
+`pkill jnext` was rejected for. The comparison is now against the **absolute**
+path, resolved per process from `/proc/<pid>/cwd`. The general form: when a
+pattern identifies "our" process by a path, ask whether that path is relative,
+and to *whose* directory.
+
 ---
 
 ## Clearing a flag in the obvious routine, which one caller bypasses
@@ -465,6 +498,24 @@ once by the reviewer and once here, which is why the hole survived a round.
 subshell, so the signal never reaches the script and its trap never runs. The
 run then completes normally and looks like a pass. Launch the script alone,
 take `$!`, and signal that.
+
+**THAT SAME FORM BIT AGAIN ON ISSUE #17, in a third way, and it faked a whole
+measurement.** `cd <worktree> && python3 squatter.py &` backgrounds the chain
+including the **`cd`**, so the shell never left its own directory — and the
+`make` and `./test/…` that followed ran in the **main repository checkout**
+rather than in the worktree under test. The bench being measured was therefore
+`main`'s copy of the script, not the branch's, and it duly behaved like code that
+had never been changed. Two hypotheses were offered for that before anything was
+traced (a `grep -E "\b"` portability doubt, then an errexit-suspension theory),
+both plausible, both wrong; what settled it in one step was `bash -x` and reading
+the *first twelve* trace lines, where the variables being set were visibly the
+old ones. **When a change appears to have no effect, prove which file ran before
+theorising about why it did not work** — `bash -x`, `md5sum`, or an echo of
+`$PWD` costs seconds. And put `cd` on a line of its own.
+
+The accident was not wasted: that run is the honest "before" control for the port
+check, since it *was* `main`'s script against a squatted port, and it reported a
+verdict rather than refusing.
 
 **And getting the signal to the right process still was not enough — a bash
 trap does not stop a script.** `trap cleanup EXIT INT TERM`, with a handler

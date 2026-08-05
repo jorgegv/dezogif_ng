@@ -158,14 +158,26 @@ discovered.**
 needs `AT+CIPCLOSE=<id>`, and jnext's `AT+CIPCLOSE` takes no argument and acts
 on the outbound slot only (`esp_at.cpp:124`, `cmd_cipclose`) — so the Z80 code
 would be unexecutable by any bench here, on a branch whose whole value is that
-its claims are checked. It goes back to the manager as its own issue, with a
-jnext issue behind it and this project as the demonstrated consumer (plan §8.2).
+its claims are checked. **Filed as dezogif_ng #19**, blocked on **jnext #211**
+(`AT+CIPCLOSE=<id>` for multiplexed connections, with this project named as the
+demonstrated consumer and sequenced as #210 was — the consumer exists and is
+blocked). #211 asks that the `<close_all>` refusal STAY refused: that refusal is
+what makes jnext's model honest, and it is the evidence this entry rests on.
 
 **What is counted is the decision, not the number.** The idle wait's expiry is
 deliberately **not** counted: it is indistinguishable from a client that is
-thinking, and a recovery closes connections, so counting it would let a healthy
-paused session be disconnected by its own debugger. That is what lets the limit
-be five rather than one.
+thinking, and a recovery is not free — it retires the listener and puts it back,
+refusing connections in between, clears `esp_conn_valid` so anything half-built
+is dropped, and pays an AT chain. Counting the expiry would make a healthy
+paused session buy all of that for nothing. That is what lets the limit be five
+rather than one.
+
+(An earlier version of this paragraph said "a recovery closes connections", which
+is the same false claim the entry corrects four paragraphs above — left standing
+six lines below its own correction, and phrased as the *reason*, which is the
+worst place for it. Caught in re-review. **A correction is not finished until
+the claim is gone from everywhere it was ever used as a premise**, and the
+enumeration is a grep, not a memory.)
 
 **NONE OF THIS IS A FIX FOR ISSUE #15, and the evidence points away from it.**
 The manager session drove four candidate triggers at a real Next on build 000B

@@ -8,7 +8,12 @@
 
 
 
-; The dezogif program version:
+; UPSTREAM's version, and the fork has never moved it. It is no longer on the
+; screen — that says `dezogif_ng <variant> build <nnnn>`, from the same two
+; symbols the identity block uses (IDENTITY_LINE in constants.asm, issue #12).
+; What is left of it is the program name CMD_INIT reports to the client
+; (PROGRAM_NAME, commands.asm), where it is still "dezogif v2.2.1" and where
+; changing it changes what DeZog displays. That is a separate decision.
  MACRO PRG_VERSION
     defb "v2.2.1"
  ENDM
@@ -65,12 +70,10 @@ INTRO_TEXT:
     ; distinguishable at a glance on a real machine: with the same title and
     ; the same body they were not, and finding out which ROM was installed cost
     ; a hardware session.
-    defb "ZX Next WiFi DeZog Interface"
+    IDENTITY_LINE
     defb AT, 0, 1*8
-    PRG_VERSION
-    defb " (DZRP v"
+    defb "DZRP v"
     defb DZRP_VERSION.MAJOR+'0', '.', DZRP_VERSION.MINOR+'0', '.', DZRP_VERSION.PATCH+'0'
-    defb ")"
     defb AT, 0, 2*8
     defb "Core: "
     defb AT, 0, 3*8
@@ -103,12 +106,10 @@ INTRO_TEXT:
 
 INTRO_TEXT:
     defb AT, 0, 0
-    defb "ZX Next UART DeZog Interface"
+    IDENTITY_LINE
     defb AT, 0, 1*8
-    PRG_VERSION
-    defb " (DZRP v"
+    defb "DZRP v"
     defb DZRP_VERSION.MAJOR+'0', '.', DZRP_VERSION.MINOR+'0', '.', DZRP_VERSION.PATCH+'0'
-    defb ")"
     defb AT, 0, 2*8
     defb "Core: "
     defb AT, 0, 3*8

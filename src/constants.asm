@@ -90,6 +90,34 @@ ROM_VARIANT:        equ ROM_VARIANT_UART
  ENDIF
 
 
+;===========================================================================
+; The same three facts as the identity block, for the debugger's own screen.
+;
+;   dezogif_ng WiFi build 0008          26 columns of the 32 there are
+;
+; IT LIVES HERE, BESIDE rom_magic's DEFINITION, ON PURPOSE. Both say which
+; fork, which transport and which build; a screen that disagreed with the
+; block mfselect reads would be worse than no screen at all (issue #12). The
+; only way to keep them in step is for both to be spelled from the same two
+; symbols — ROM_VARIANT and BUILD_NUMBER_HEX — in a place where changing one
+; and not the other is visibly wrong. Never introduce a second source for the
+; build number: that conflation is what issue #4 and ERRORS.md are about.
+;
+; It is a MACRO rather than a label because it is emitted inside INTRO_TEXT's
+; AT-terminated stream (data_const.asm), which has no room for a call.
+;===========================================================================
+    MACRO IDENTITY_LINE
+    defb "dezogif_ng "
+ IF ROM_VARIANT == ROM_VARIANT_WIFI
+    defb "WiFi"
+ ELSE
+    defb "UART"
+ ENDIF
+    defb " build "
+    defb BUILD_NUMBER_HEX               ; the identity block's number, not a copy
+    ENDM
+
+
 
 ; UART baudrate — UART MODE ONLY. This is the joy-port cable's rate, where both
 ; ends are ours to choose. It is NOT what WiFi mode runs the peripheral at; see

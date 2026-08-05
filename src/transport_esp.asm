@@ -91,6 +91,28 @@
 ;    point 3 cost a night to. See esp_query_address and esp_show_status, and
 ;    MEMORY.md 2026-08-05.
 ;
+; 7. THE MODULE GETS LONGER TO ANSWER A SEND THAN TO SAY ANYTHING ELSE, and
+;    those two budgets are deliberately not one number. Every read here goes
+;    through esp_try_read_raw, whose patience is the variable esp_rx_retries.
+;    One pass (~100 ms) is right for a SPECULATIVE read — main_loop's idle poll
+;    asks "is the module saying anything?" many times a second and must not
+;    stall — and it is wrong for the two reads where the module OWES an answer
+;    to a command it has already been given: AT+CIPSEND's '>' prompt, and the
+;    "SEND OK" that closes the chunk.
+;
+;    THIS ALSO COST A HARDWARE SESSION. With one budget for both, a real
+;    ESP-01 that took longer than 100 ms over an AT+CIPSEND made the stub
+;    abandon a send that was working: bench H3 failed three runs of three and
+;    H5 truncated a 4097-byte loopback at 236 bytes — about one ESP_TX_CHUNK
+;    delivered and then nothing — with "Last Error: TX Timeout" on the Next's
+;    screen. Issue #11. jnext answers instantly, so every bench here was green
+;    throughout, exactly as in point 3.
+;
+;    So esp_flush_chunk raises the budget around those two calls and lowers it
+;    immediately after. Raising it globally would have been one line and would
+;    have multiplied the idle poll's worst case by the same factor — see
+;    transport_byte_available on why that poll can stall at all.
+;
 ;---------------------------------------------------------------------------
 ; What this file does NOT do, deliberately
 ;---------------------------------------------------------------------------
@@ -182,9 +204,45 @@ ESP_RX_WAIT:    equ 40000
 ; pass for the rest of the session.
 ESP_INIT_PASSES:    equ 20
 
+; Passes of that poll while the module owes an answer to an AT+CIPSEND — the
+; '>' prompt, and the "SEND OK" that closes the chunk. See point 7 in the
+; header for why this is not the same number as the idle poll's.
+;
+; THE VALUE IS A JUDGEMENT CALL AND IS LABELLED AS ONE. Nothing we trust
+; documents a real ESP-01's AT+CIPSEND latency under load, and no bench here
+; can establish it: jnext answers at once, so the timeout path is never taken
+; in the emulator. What IS known from hardware is the negative — one pass
+; (~100 ms) is too short, measured as issue #11's H3 and H5 failures.
+;
+; Ten passes is ~1 s. The reasoning, such as it is: an order of magnitude more
+; than a budget hardware demonstrated to be insufficient; past a single
+; retransmit inside the module's own TCP stack, whose minimum RTO is a few
+; hundred ms; and still short enough that a genuinely dead module surfaces as
+; an error within a second rather than reading as a hang. Bring-up's 20 passes
+; would also have been defensible; this is deliberately the smaller of the two,
+; because unlike bring-up this budget can be paid once per chunk.
+;
+; What it costs when the module answers SEND FAIL rather than SEND OK: that
+; line never matches, so the wait runs to the end of the budget before
+; reporting TX Timeout — 1 s instead of 100 ms. A real failure reported a
+; second late is the right trade against a working send abandoned.
+ESP_TX_PASSES:      equ 10
+
 ; How long to wait for room in the TX FIFO. One byte at 115200 is ~87 us; this
 ; loop is ~24 T-states, so 10000 is ~8.5 ms at 28 MHz — two orders of magnitude
 ; of headroom over a single byte time, and still bounded.
+;
+; NOTE FOR ANYONE READING "TX Timeout" OFF THE SCREEN: this budget expiring and
+; esp_flush_chunk's RX budget expiring both report ERROR_TX_TIMEOUT, so the
+; screen alone does not tell them apart. They were told apart from the VHDL
+; instead. This one can only expire if the transmitter stops draining the FIFO,
+; and uart_tx.vhd:180 starts a frame on `i_Tx_en = '1' and (i_cts_n = '0' or
+; i_frame(5) = '0')` — bit 5 of the frame register is the hardware-flow-control
+; enable, esp_uart_init writes 00011000b, so CTS is ignored and the shifter is
+; never held off. 8.5 ms is ~98 byte times at that rate. So the "TX Timeout"
+; issue #11 saw was the module's silence, not the Next's own FIFO — which also
+; makes the plan's open question 4 (is CTS/RTR populated?) irrelevant to this
+; path, since nothing here consults it.
 ESP_TX_WAIT:    equ 10000
 
 ; The longest dotted quad, "255.255.255.255". Bounds the copy out of AT+CIFSR's
@@ -291,7 +349,12 @@ esp_conn_id:        defb 0
 ; point 3 in the header.
 esp_conn_valid:     defb 0
 
-; Outer passes of the RX poll; raised for bring-up, one for the rest.
+; Outer passes of the RX poll. One, except in the two windows where the module
+; has been asked something and owes an answer: the whole of bring-up
+; (ESP_INIT_PASSES) and each of esp_flush_chunk's two waits (ESP_TX_PASSES).
+; Everything else reads speculatively and must not stall — see point 7 in the
+; header. Whoever raises it lowers it again, and rxtx_error lowers it for the
+; paths that leave without getting the chance.
 esp_rx_retries:     defb 1
 esp_rx_pass:        defb 1
 
@@ -465,6 +528,24 @@ esp_read_raw:
 rx_timeout: ; The receive timeout handler
     ld a,ERROR_RX_TIMEOUT
 rxtx_error:
+    ; THE RX BUDGET MUST NOT ESCAPE THROUGH HERE RAISED, and this is the one
+    ; path on which it could. esp_flush_chunk pairs every esp_rx_budget_long
+    ; with an esp_rx_budget_short and calls nothing in between that returns
+    ; anywhere else — but esp_try_read_raw's overflow arm jumps straight to this
+    ; label from INSIDE those waits, and transport_init's bring-up window has
+    ; the same shape (esp_rx_retries is ESP_INIT_PASSES until .done, which an
+    ; overflow never reaches). Either would otherwise leave main_loop's idle
+    ; poll nursing a long budget for the rest of the power-on session, which is
+    ; precisely the regression the scoping exists to avoid — reintroduced
+    ; through the error path instead of the happy one.
+    ;
+    ; drain_main means "abandon this and go idle", and idle is exactly the state
+    ; that wants the short budget, so 1 is the right value and not merely a
+    ; restore. A carries the error code into drain_main and must survive.
+    push af
+    ld a,1
+    ld (esp_rx_retries),a
+    pop af
     jp drain_main
 
 
@@ -472,6 +553,29 @@ rxtx_error:
 tx_timeout: ; The transmit timeout handler
     ld a,ERROR_TX_TIMEOUT
     jr rxtx_error
+
+
+;===========================================================================
+; The RX budget, raised and lowered around the two reads where the module owes
+; an answer. See point 7 in the header and ESP_TX_PASSES.
+;
+; esp_rx_budget_short preserves A and the flags because its callers sit between
+; a wait and the test of that wait's result; esp_rx_budget_long does not need
+; to, because at both of its call sites A is dead.
+; Changes:
+;  AF (esp_rx_budget_long only)
+;===========================================================================
+esp_rx_budget_long:
+    ld a,ESP_TX_PASSES
+    ld (esp_rx_retries),a
+    ret
+
+esp_rx_budget_short:
+    push af
+    ld a,1
+    ld (esp_rx_retries),a
+    pop af
+    ret
 
 
 ;===========================================================================
@@ -1119,7 +1223,16 @@ esp_flush_chunk:
     ; answers ERROR, which here means the connection is gone rather than the
     ; module being broken. The two are told apart, because treating the first
     ; as the second wedges the debugger; see esp_wait_prompt and .no_client.
+    ;
+    ; It is owed one of those two, so it gets ESP_TX_PASSES rather than the idle
+    ; poll's single pass. The pair is tight ON PURPOSE: esp_wait_prompt is the
+    ; only thing called with the budget raised, and it always returns — the
+    ; sends either side of it can divert to tx_timeout, and they run at the
+    ; short budget. rxtx_error covers the one arm that can still leave from
+    ; inside (an RX overflow); see there.
+    call esp_rx_budget_long
     call esp_wait_prompt
+    call esp_rx_budget_short
     jr nc,.have_prompt
     or a
     jr nz,.timeout          ; A = 1: the module said nothing at all
@@ -1141,8 +1254,12 @@ esp_flush_chunk:
     xor a
     ld (esp_tx_len),a
 
+    ; Owed too, and slower than the prompt: the module only says this once its
+    ; TCP stack has taken the segment. Same tight pair, same reason.
     ld hl,esp_str_send_ok
+    call esp_rx_budget_long
     call esp_wait_string
+    call esp_rx_budget_short
     ret nc
 
 .timeout:

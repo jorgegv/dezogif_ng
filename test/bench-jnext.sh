@@ -135,6 +135,15 @@ bench_jnext_pids() {
 bench_await_departure() {
     [ "$#" -gt 0 ] || return 0
 
+    # Every caller of this is reached twice on the failing path — once where the
+    # run ends, and again from the EXIT trap that the resulting `exit` fires. A
+    # second full budget would double the wait and print the same wall of text
+    # twice, which reads as two faults. Report once, then refuse in one line.
+    if [ -n "${_bench_departure_failed:-}" ]; then
+        printf 'ERROR: still refusing to continue — see the departure failure above.\n' >&2
+        exit 1
+    fi
+
     command -v pgrep >/dev/null 2>&1 || bench_die \
         "pgrep is not available, so this bench cannot confirm its own emulator has exited. Refusing to report a verdict it cannot stand behind (issue #17)."
 
@@ -155,6 +164,7 @@ bench_await_departure() {
         sleep 0.25
     done
 
+    _bench_departure_failed=1
     bench_die "an emulator this bench started is STILL RUNNING after being killed (PIDs $(bench_jnext_pids "$@"); images: $*). Refusing to go on or to report a result: while it lives it can hold port 11000, and the next bench to take the lock would be answered by it. Kill it by hand and re-run."
 }
 

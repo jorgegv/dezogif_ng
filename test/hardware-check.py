@@ -81,11 +81,9 @@ WHAT THIS SCRIPT CANNOT SEE, and none of it is hidden:
     disproved it printed the false version underneath its own evidence.
 
     What that leaves genuinely untested is below.
-  * The stackless-NMI return ADDRESS, which the emulator does not cover either:
-    C10 sets PC itself, so save_nmi_return_address never runs. It needs an M1
-    press while the debuggee is RUNNING, and hardware is the natural place for
-    that — a human pressing the button has none of the frame-versus-wall-clock
-    race that makes it unschedulable under jnext.
+  * (The stackless-NMI return ADDRESS used to be listed here. It was closed on
+    2026-08-05 by a human pressing the M1 button during a real DeZog session,
+    which is still something neither this script nor jnext can do.)
   * AltROM on hardware. Exercised in jnext by C10's RST 0 breakpoint, which can
     only reach the debugger through the patched Alt ROM; never on silicon.
   * The UART build. It needs a joy-port cable and a USB serial adapter; the

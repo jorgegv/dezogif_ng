@@ -760,12 +760,23 @@ PATH IN THIS PROJECT.** It carries break reason **1**, `BREAK_REASON.MANUAL_BREA
 
 A `CMD_CONTINUE` with no breakpoint set the fixture running in its `jr $`; ten seconds later the
 **M1 button** was pressed; the stub broke in and reported it. `cmd_get_registers` reads from
-`backup.pc`, and for a press taken while `prgm_state` is `PRGM_RUNNING` that value can only have
-come from **`save_nmi_return_address` reading NR `0xC2`/`0xC3`** (`mf.asm:119`, `:165-193`). It
-returned `0x801C` — exactly where the debuggee was spinning — with SP `0x9F00`, the fixture's own
-stack.
+`backup.pc`; `mf_rom.asm`'s dispatch reaches `mf_nmi_button_pressed` only while `prgm_state` is
+`PRGM_RUNNING`; that path calls **`save_nmi_return_address`** unconditionally (`mf.asm:119`,
+`:165-193`); and the only other writer of `backup.pc` needs an `RST 0` that no breakpoint was
+planted for. So the value is that routine's and cannot be stale. It returned `0x801C` — exactly
+where the debuggee was spinning — with SP `0x9F00`, the fixture's own stack.
 
-**So the stackless-NMI return address is verified, on hardware.** §3.4 calls it the half that
+**Which of its two branches ran is NOT established, and saying so is the difference between a
+measurement and a story.** `save_nmi_return_address` reads NR `0xC2`/`0xC3` in stackless mode and
+the debuggee's own stack otherwise, and **both would have produced this same correct answer**.
+`doc/legacy/Design.md:378` and `:434` record that stackless is the *default* from core 03.01.10,
+this machine reports above that, and nothing in `src/` ever clears NR `0xC0` bit 3 — so stackless is
+a strong presumption, not an observation. Distinguishing them needs NR `0xC0` read back at the
+moment of the break, which nothing does.
+
+**What IS verified is the outcome, and it is what §3.4 actually cares about**: an NMI taken against
+a running debuggee returned a correct PC on an uncorrupted stack, so entering the debugger did not
+corrupt the program being debugged. §3.4 calls it the half that
 matters, because without it entering the debugger corrupts the program being debugged; §8.2 and
 Appendix A have carried it as unverified since the fork, and no test anywhere — emulator or
 silicon — had ever executed it. It needed a finger on a button, which is precisely why no bench
@@ -911,7 +922,7 @@ reason attached, is fine.
 | The debuggee's registers survive the round trip in both directions | same bench, C11: `BC`/`IX` read back out of memory where the *resumed program* stored them; `PC`/`SP`/`AF`/`BC`/`DE`/`HL`/`IX` from `CMD_GET_REGISTERS` afterwards | **verified** |
 | **The AltROM patch works** | C10: the breakpoint is an `RST 0`, which can only reach the debugger through the code `copy_altrom` installs at 0x0000/0x0066 — and while the debuggee runs slot 0 holds `ROM_BANK` (`main.asm:150`, restored `breakpoints.asm:192`) with the AltROM enabled (`altrom.asm:55`, the only enable, never disabled) | **verified**, in jnext and **on hardware** — C10 runs there too, through H2's delegation to the same suite |
 | C10 detects a stub that answers `CMD_CONTINUE` and does not resume | two controls: bench W3 (`--no-continue`) and a ROM whose `cmd_continue` returns to `cmd_loop` instead of `restore_registers` — C10/C11 red against both | **verified** |
-| The stackless-NMI **return address** (NR `0xC2`/`0xC3` → `save_nmi_return_address`) is correct | **a real DeZog session on a Next, 2026-08-05**: `CMD_CONTINUE` with no breakpoint set the fixture running in its `jr $`, the M1 button was pressed, and the `NTF_PAUSE` carried break reason 1 (`MANUAL_BREAK`) with `CMD_GET_REGISTERS` returning **PC `0x801C`, SP `0x9F00`** — where it was spinning, on its own stack. `backup.pc` can only come from that routine on a press taken while `prgm_state` is `PRGM_RUNNING` | **verified on hardware** — the last unexecuted path in the entry/exit choreography. It needed a finger on a button, which is why no bench could ever reach it |
+| **An NMI taken against a RUNNING debuggee returns a correct PC on an uncorrupted stack** — `save_nmi_return_address`'s outcome, §3.4's actual concern | **a real DeZog session on a Next, 2026-08-05**: `CMD_CONTINUE` with no breakpoint set the fixture running in its `jr $`, the M1 button was pressed, and the `NTF_PAUSE` carried break reason 1 (`MANUAL_BREAK`) with `CMD_GET_REGISTERS` returning **PC `0x801C`, SP `0x9F00`** — where it was spinning, on its own stack. `backup.pc` can only come from that routine on a press taken while `prgm_state` is `PRGM_RUNNING` | **verified on hardware** — the last unexecuted path in the entry/exit choreography. **Which branch of that routine ran is NOT distinguished**: stackless (NR `0xC2`/`0xC3`) and the stack read both give this answer, and `doc/legacy/Design.md:378,434` make stackless the presumption rather than an observation. It needed a finger on a button, which is why no bench could ever reach it |
 | `CMD_PAUSE` while stopped is answered with the Length=1 response | `make test-dzrp-stub` C12, measured green; `commands.asm` maps command 7 to `cmd_pause` | **verified** — issue #8. It got **no** response until then, a failure the serial build had always had |
 | DeZog's `cspect` remote really sends command 7 and blocks on it, while its `zxnext` remote never puts it on the wire | DeZog 3.7.4 `out/extension.js`: `CSpectRemote` has no `sendDzrpCmdPause` override and inherits `await this.sendDzrpCmd(7)`; `ZxNextSerialRemote`'s throws "use the yellow NMI button" | **verified** — why upstream never saw issue #8 |
 | dezogif declines a software MF NMI: `nmi66h` serves button causes only | `mf_rom.asm` `nmi66h`, `zxnext.vhd:3843-3848`; `make test` T4 | **verified** |

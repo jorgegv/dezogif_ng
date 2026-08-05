@@ -284,20 +284,28 @@ Stated here because the temptation to over-read the first hardware success will 
   delegates to `conformance.py`, and that suite carries C10/C11.** The claim was written from what
   the script does rather than what it runs, and the run that disproved it printed the false
   version underneath its own evidence. When a check delegates, its coverage is the delegate's too.
-- ~~**The stackless-NMI *return address*, in either place.**~~ **CLOSED on hardware, 2026-08-05**: a
-  `CMD_CONTINUE` with no breakpoint, the M1 button pressed, and the `NTF_PAUSE` came back with break
-  reason 1 and `CMD_GET_REGISTERS` reporting PC `0x801C` — where the debuggee was spinning. That PC
-  can only have come from `save_nmi_return_address`. The struck text follows, because it is the
-  reasoning that made it look unreachable and it was right about benches and wrong about people.
-  **The stackless-NMI return address, in either place.** This one survives the paragraph above
-  intact, and the distinction is narrow enough to be worth spelling out: C10 sets `PC` itself with
-  `CMD_SET_REGISTER`, so `backup.pc` never comes from `save_nmi_return_address`, the routine that
-  reads NR `0xC2`/`0xC3`. Reaching it needs an M1 press taken while the debuggee is *running* —
-  a second NMI landing after a `CMD_CONTINUE` — which no test anywhere performs. §3.4 of the plan
-  is clear that this is the half that matters, because without it entering the debugger corrupts
-  the program being debugged. **Hardware is the right place to close it**, because the timing race
-  that makes it unschedulable under a frame-counting emulator does not exist when a human presses
-  the button.
+- ~~**The stackless-NMI *return address*, in either place.**~~ **CLOSED on hardware, 2026-08-05, by
+  a human with a real DeZog session.** A `CMD_CONTINUE` carrying no breakpoint set a fixture running
+  in its `jr $`; the M1 button was pressed; the `NTF_PAUSE` came back with break reason 1
+  (`MANUAL_BREAK`) and `CMD_GET_REGISTERS` reported PC `0x801C`, SP `0x9F00` — where it was spinning,
+  on its own stack. `mf_rom.asm`'s dispatch reaches `mf_nmi_button_pressed` only while `prgm_state`
+  is `PRGM_RUNNING`, that path calls `save_nmi_return_address` unconditionally, and the only other
+  writer of `backup.pc` needs an `RST 0` that no breakpoint was planted for — so the value is that
+  routine's and cannot be stale.
+
+  **Which of its two branches ran is NOT established by this, and the difference matters enough to
+  say so.** `save_nmi_return_address` reads NR `0xC2`/`0xC3` in stackless mode and the debuggee's
+  own stack otherwise, and both would have produced this same correct answer.
+  `doc/legacy/Design.md:378` and `:434` say the stackless mode is the *default* from core 03.01.10,
+  and this machine reports above that with nothing in `src/` ever clearing NR `0xC0` bit 3 — so
+  stackless is the strong presumption, not an observation. **What is observed, and is what §3.4
+  actually cares about, is the outcome**: an NMI taken against a running debuggee returned a correct
+  PC on an uncorrupted stack. Distinguishing the branches needs NR `0xC0` read back at the moment of
+  the break, which nothing does.
+
+  It needed a finger on a button: `--delayed-nmi` counts emulated frames while a client counts wall
+  clock, so no bench here can schedule one. The reasoning that made it look unreachable was right
+  about benches and wrong about people.
 - ~~**AltROM on hardware.**~~ **Covered since 2026-08-05, and the struck line is kept because of
   how it was wrong.** It said the emulator exercised the patched ROM and "nothing has run under a
   patched ROM on a Next" — but H2 delegates to `conformance.py`, and C10 runs there too. The chain:

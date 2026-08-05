@@ -324,14 +324,13 @@ distinction is fine enough to be worth writing down rather than left to be infer
    frame rate collapses under DZRP traffic, so that is a race rather than a check. What C10 does
    prove is the half either way depends on: `restore_registers` really hands a machine back and
    the program really runs.
-2. **The M1 button has never broken a *running* debuggee.** Same missing press. Plan §4.3 calls
-   the button "always available"; nothing has demonstrated it against a debuggee that was ever
-   properly loaded.
-3. **The resume has never happened on hardware.** The stub itself has now run on a real Next —
-   it takes the M1 NMI and paints its UI (MEMORY.md, 2026-08-04) — but that press stops there.
-   No DZRP client has ever spoken to a Next, so every result on this page is jnext's, and jnext
-   models baud as timing only with a module that is permanently associated. `make test-hardware`
-   is where that gap gets closed, and it has not been.
+2. ~~**The M1 button has never broken a *running* debuggee.**~~ **Done on hardware, 2026-08-05**,
+   by a human during a real DeZog session — see the plan's M1. It remains true that **this suite**
+   cannot do it, for the reason in (1).
+3. ~~**The resume has never happened on hardware.**~~ **Done**: `make test-hardware` runs this suite
+   against a real Next and has been 12 of 12 and then 14 of 14, C10/C11 included. Struck rather
+   than deleted, because the sentence "every result on this page is jnext's" was true when written
+   and is the reason the hardware bench exists.
 
 ## Two things this established that were not obvious
 

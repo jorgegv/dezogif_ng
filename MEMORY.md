@@ -44,8 +44,23 @@ roughly a fifth of the stub's own budgets:
 **A DEAD BAND IN WHICH COMMANDS ARE SILENTLY SWALLOWED** is a hang, not a
 blemish, and it was nowhere in the first write-up. On hardware, where there is
 no emulator speed-up, the band is the stub's own budgets: **roughly 97-197 ms
-between commands**. That is a falsifiable prediction and it has not been tested
-on a Next.
+between commands**.
+
+**PREDICTED IN THE EMULATOR, THEN CONFIRMED ON SILICON — the strongest single
+result on this branch.** The manager session ran it on a real Next, build 000B,
+four trials per gap: **0 of 4 answered at 120 ms**, then 1/4, 2/4, 3/4 at 140,
+160 and 180 ms, and clean at 100 ms and at 250 ms. Predicted 97-197, **measured
+120-200**. A quantitative prediction derived from two constants and a swept
+emulator run, landing on hardware to within the width of the measurement — and
+it says the defect on `main` today is not cosmetic, it eats commands at
+inter-command gaps a real client produces.
+
+**The first hardware sweep reported a REFUTATION and was wrong**, which is worth
+recording because it nearly buried the result: the harness read a DZRP
+*response* length as payload-only where it counts from the sequence byte, so
+every trial died on its first command and the verdict logic scored that as
+"answered". A negative result from an instrument that never worked is not a
+negative result. The numbers above are the corrected run.
 
 **And it reconciles C10/C11, which is what the challenge was about.** A full
 14-check conformance run against the broken ROM costs **2** drains, not dozens,
@@ -115,6 +130,37 @@ is incremented by `rxtx_error` and cleared by `transport_init` and by a
 refused while one is running and a re-init without it would paint "ESP-01 setup
 failed" over a working module.
 
+**IT DOES NOT RECLAIM A WEDGED PEER'S SLOT, AND A FIRST VERSION OF THIS CLAIMED
+IT DID.** The comment asserted that `AT+CIPSERVER=0` closes established
+connections. It does not: jnext says so outright (`esp_at.cpp:619-621`,
+"Established connections are deliberately left alone: the guest asked to stop
+ACCEPTING"), and that is real ESP-AT behaviour rather than a jnext
+simplification — ESP-AT's own `AT+CIPSERVER=0,<close_all>` argument is
+**refused rather than ignored** (`esp_at.cpp:601-607`, test SRV-12) exactly so a
+caller cannot believe it asked for closure and quietly not get it. Caught by the
+independent reviewer, who also traced the `1,CLOSED` in N4's log to
+`note_peer_close` — the bench client hanging up its own socket — rather than to
+this command. **An assertion about the module, made without reading the
+module's model**, which is the first hard rule in CLAUDE.md pointed at ESP-AT
+instead of the VHDL.
+
+**So the residual is a slot leak and it is not small.** Four inbound slots
+(`esp_at.h:425`/`440`), connections past them dropped (`esp_at.cpp:830-838`,
+"Real firmware refuses past its own ceiling too"), and nothing in this program
+frees one. A peer that wedges rather than closing keeps its slot for the rest of
+the power-on session; four of them — which is what a user retrying a hang
+produces — and the module refuses every new client while `esp_recover` goes on
+reporting success. **Issue #16's claim that part C "subsumes the stale link
+slots problem" is FALSE and is contradicted here rather than left to be
+discovered.**
+
+**Deliberately NOT fixed on this branch.** Freeing a multiplexed connection
+needs `AT+CIPCLOSE=<id>`, and jnext's `AT+CIPCLOSE` takes no argument and acts
+on the outbound slot only (`esp_at.cpp:124`, `cmd_cipclose`) — so the Z80 code
+would be unexecutable by any bench here, on a branch whose whole value is that
+its claims are checked. It goes back to the manager as its own issue, with a
+jnext issue behind it and this project as the demonstrated consumer (plan §8.2).
+
 **What is counted is the decision, not the number.** The idle wait's expiry is
 deliberately **not** counted: it is indistinguishable from a client that is
 thinking, and a recovery closes connections, so counting it would let a healthy
@@ -158,7 +204,8 @@ for `esp_tx_fault` inside `esp_send_raw` rather than a bounded variant (the
 payload loop is the one caller that must not divert, and a global change would
 have moved every other call site's failure semantics).
 
-**NOT COVERED, and said plainly.** The **serial build's** half of A: identical
+**NOT COVERED, and said plainly.** A wedged peer's connection SLOT, above.
+The **serial build's** half of A: identical
 code, and nothing here can drive that transport headless — `make test`'s T6 runs
 the serial ROM but attaches no client, so it never reaches `cmd_loop`. C at its
 **shipped** limit, and C against a module that is actually broken. Anything at

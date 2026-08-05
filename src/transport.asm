@@ -76,7 +76,11 @@
 ;
 ;   cmd_loop            a command's response returns here, and an NTF_PAUSE is
 ;                       followed by `jp cmd_loop` (mf.asm, breakpoints.asm)
-;   main                CMD_CLOSE's response is followed by `jp main`
+;   main_redraw         CMD_CLOSE's response is followed by `jp main`, which
+;                       falls through to main_redraw where the macro now sits.
+;                       The border and joy-port keys enter at main_redraw
+;                       directly, and drain_main comes through main as before —
+;                       one macro still covers all three (issue #16).
 ;   main_loop.continue  CMD_LOOPBACK reaches NEITHER of the above: it ends
 ;                       `pop af` / `jp main_loop.continue`
 ;
@@ -85,6 +89,11 @@
 ; one DZRP check away from its cause — see ERRORS.md. If a new command handler
 ; leaves by some other route, it needs the macro too; the exits are worth
 ; enumerating with grep rather than from memory.
+;
+; THE FIFTH WAY OUT NEEDS NO MACRO, and the reason is worth stating so nobody
+; adds one: transport_wait_rx's bound expires to main_idle, which is BELOW
+; main_redraw, and it can only expire with the outgoing buffer already flushed
+; by the cmd_loop entry immediately above it. Nothing is pending there to send.
 ;
 ; The implementation is chosen at assembly time, defaulting to UART. See
 ; constants.asm for the switch and the Makefile for how it is driven; MEMORY.md

@@ -396,10 +396,11 @@ ESP_IP_MAX:     equ 15
 ; FIVE, AND THE NUMBER MATTERS LESS THAN WHAT IS COUNTED. Only rxtx_error
 ; increments it: a read or a send that failed while the module OWED an answer.
 ; cmd_loop's idle wait expiring does NOT, and must not — it is indistinguishable
-; from a client that is simply thinking, so counting it would let a healthy
-; session drive a recovery that closes its connection (see
-; TRANSPORT_WAIT_RX_SECONDS). A successful chunk clears the count, so five means
-; five faults with nothing having got through in between.
+; from a client that is simply thinking (see TRANSPORT_WAIT_RX_SECONDS), and a
+; recovery is not free: it retires the listener and puts it back, refusing
+; connections in between, clears esp_conn_valid so anything half-built is
+; dropped, and costs an AT chain. A successful chunk clears the count, so five
+; means five faults with nothing having got through in between.
 ;
 ; It is a backstop and it is not a fix for issue #15. That machine's symptom was
 ; a module still accepting TCP and no longer forwarding anything, which produces
@@ -1005,12 +1006,38 @@ tx_timeout: ; The transmit timeout handler
 ; make transport_init report a failure on a module that was fine and paint
 ; "ESP-01 setup failed" over a working listener.
 ;
-; IT COSTS THE OPEN CONNECTIONS, and that is accepted rather than overlooked.
-; AT+CIPSERVER=0 closes them, so a client is dropped and has to reconnect. The
-; counter is what makes that acceptable: five consecutive faults with nothing
-; acknowledged in between is not a session anybody is still using. This is why
-; the idle wait's expiry is kept out of the count — if it were in, a healthy
-; session that paused would eventually be disconnected by its own debugger.
+; IT DOES NOT FREE ANY ESTABLISHED CONNECTION, AND AN EARLIER VERSION OF THIS
+; COMMENT CLAIMED IT DID. `AT+CIPSERVER=0` retires the LISTENER and leaves live
+; connections alone — jnext says so in as many words (esp_at.cpp:619-621,
+; "Established connections are deliberately left alone: the guest asked to stop
+; ACCEPTING"), and that is real ESP-AT behaviour rather than a jnext
+; simplification: ESP-AT's own `AT+CIPSERVER=0,<close_all>` argument is
+; **refused rather than ignored** (esp_at.cpp:601-607, test SRV-12) precisely so
+; a caller cannot believe it asked for closure and silently not get it. jnext
+; flags its deliberate deviations; there is no flag here. The `1,CLOSED` line
+; that appears in N4's log is `note_peer_close` firing for the bench client
+; hanging up its own socket, not this command.
+;
+; SO THE RESIDUAL IS A SLOT LEAK, AND IT IS NOT SMALL. The module has four
+; inbound slots (MAX_CONNECTIONS 5 less the reserved outbound slot 0,
+; esp_at.h:425/440) and drops any connection past them (esp_at.cpp:830-838,
+; "Real firmware refuses past its own ceiling too"). Nothing in this program
+; frees one: a peer that has wedged rather than closed keeps its slot for the
+; rest of the power-on session, and recovery after recovery cannot reclaim it.
+; Four such peers — which is what a user retrying a hang produces — and the
+; module refuses every new client while this routine goes on reporting success.
+;
+; ISSUE #16 CLAIMS PART C "SUBSUMES THE STALE LINK SLOTS PROBLEM". IT DOES NOT,
+; and that is stated here rather than left for somebody to discover. Freeing a
+; multiplexed connection needs `AT+CIPCLOSE=<id>`, which jnext does not
+; implement at all — its `AT+CIPCLOSE` takes no argument and acts on the
+; outbound slot only (esp_at.cpp:124, cmd_cipclose) — so writing it here would
+; ship Z80 code no bench in this repository could ever execute. Filed separately
+; instead, with jnext as the dependency; see MEMORY.md and plan §8.2.
+;
+; WHAT THE RECOVERY DOES BUY is a listener that is definitely accepting again
+; and an AT chain known to be answering, which is what a module that has lost
+; its listener needs. A wedged PEER is a different fault and is not fixed here.
 ;
 ; Changes:
 ;  A, BC, DE, HL
@@ -2251,8 +2278,24 @@ esp_flush_chunk:
     push bc, hl
     ; esp_send_try, NOT esp_send_raw: a diverted send here would stop the frame
     ; half-written, which is the same defect one level down. Each byte still
-    ; gets its own bounded wait, so this cannot spin; a byte that could not be
-    ; written is lost, and the fault is reported once the frame is complete.
+    ; gets its own bounded wait, so this cannot spin, and the loop always runs
+    ; to its full DJNZ count.
+    ;
+    ; WHAT IT STILL CANNOT PROMISE, because no bounded loop can. A byte whose
+    ; ESP_TX_WAIT expires is NOT written — writing into a full FIFO loses it in
+    ; hardware — so the module receives fewer bytes than the length announced
+    ; and is left owed the difference: part B's own hazard, in miniature and
+    ; narrowed from "the rest of the frame" to "the bytes that individually
+    ; failed". The only way to close it completely is an unbounded wait for FIFO
+    ; room, which is the thing part A exists to remove, so the bound wins and
+    ; the residual is stated rather than hidden.
+    ;
+    ; It is also as close to unreachable as anything here: the wait is ~8.5 ms,
+    ; about 98 byte times at 115200, and uart_tx.vhd:180 starts a frame on
+    ; `i_Tx_en = '1' and (i_cts_n = '0' or i_frame(5) = '0')` — esp_uart_init
+    ; writes 00011000b, so hardware flow control is off and the shifter is never
+    ; held off by the module. It takes a transmitter that has stopped, and a
+    ; transmitter that has stopped will fail the next chunk too.
     call esp_send_try
     jr nc,.byte_sent
     ld a,1

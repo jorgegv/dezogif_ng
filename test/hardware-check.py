@@ -70,12 +70,17 @@ WHAT THIS SCRIPT CANNOT SEE, and none of it is hidden:
   * The Next's screen. Whether the stub drew its UI, whether the error area is
     clear, and what the core version reads are observations for the human at
     the machine. doc/HARDWARE-TESTING.md carries them as a checklist.
-  * The resume path ON HARDWARE. The stub does resume a debuggee in the
-    emulator — bench checks C10/C11 of make test-dzrp-stub — but no CMD_CONTINUE
-    has ever been sent to a Next. This script deliberately does not send one:
-    resuming needs a debuggee loaded and a breakpoint planted, and a bare
-    CMD_CONTINUE against an unloaded machine is a crash, not a test. Doing it
-    properly here is worth doing and is not done.
+  * THE RESUME PATH IS COVERED, and an earlier version of this comment said it
+    was not. This script sends no CMD_CONTINUE of its own — a bare one against
+    an unloaded machine is a crash, not a test — but H2 DELEGATES to
+    conformance.py, and that suite carries C10/C11, which load a fixture, plant
+    a temporary breakpoint and resume into it. So a passing H2 means the resume
+    path ran wherever this was pointed, hardware included. The claim that no
+    CMD_CONTINUE had reached a Next was written from what this file does and
+    not from what it runs. Kept here as the correction, since the run that
+    disproved it printed the false version underneath its own evidence.
+
+    What that leaves genuinely untested is below.
   * The stackless-NMI return ADDRESS, which the emulator does not cover either:
     C10 sets PC itself, so save_nmi_return_address never runs. It needs an M1
     press while the debuggee is RUNNING, and hardware is the natural place for
@@ -299,7 +304,15 @@ def h1_listener(host, port, timeout, results):
 # reading the program name until a NUL and ignoring the frame's length field.
 # That landed, C2 went green on its own, and the entry went with it, exactly as
 # the comment here said it would. The mechanism stays for the next one.
-KNOWN_RED = {}
+KNOWN_RED = {
+    "C12": {
+        "signature": "it swallowed the command and carried on",
+        "why": "issue #8 — CMD_PAUSE is routed to cmd_not_supported in src/commands.asm, so "
+               "the frame is consumed and nothing is sent where the spec requires a Length=1 "
+               "response. That jump-table entry dates to upstream's own 2023 commit, so both "
+               "builds have always done it",
+    },
+}
 
 
 def classify(fail_lines):
@@ -525,11 +538,9 @@ def h5_throughput(host, port, timeout, results, nbytes):
 UNCOVERED = """
 NOT COVERED BY THIS RUN, and none of it is incidental:
 
-  * The resume path ON HARDWARE. It works in the emulator (C10/C11 of
-    make test-dzrp-stub); no CMD_CONTINUE has ever reached a Next. Sending a
-    bare one here would crash the machine, not test it.
   * The stackless-NMI return ADDRESS, untested in either place: it needs an M1
     press taken while the debuggee is running, which nothing performs yet.
+    C10 sets PC itself, so save_nmi_return_address never runs.
   * AltROM on hardware. Exercised in jnext by C10's RST 0; never on silicon.
   * The Next's screen. Record it by hand — see doc/HARDWARE-TESTING.md.
   * The UART build, which needs a joy-port cable:

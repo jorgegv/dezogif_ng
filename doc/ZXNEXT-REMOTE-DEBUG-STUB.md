@@ -725,10 +725,32 @@ read as "no client" and used to discard every reply, and the 15-character addres
 emulator check stayed green through both. That is the standing argument for §6's hardware rung
 being a rung and not a formality.
 
-Still open in M1: **DeZog itself has never been pointed at it.** The evidence is our own
-conformance suite, not a debugging session, so stepping and breakpoints over WiFi are untried and
-open question 1 — whether the `cspect` remote makes assumptions above the wire — is still
-unanswered. That is the last item, and it needs a VS Code session rather than more code.
+**M1's last item closed, 2026-08-05: DeZog itself has now driven the stub on a real Next.** A
+session in VS Code with `remoteType: "cspect"` pointed at `<next-ip>:11000` attached, disassembled,
+read registers and memory, **single-stepped**, disconnected cleanly and reattached. Captured
+byte-for-byte through a logging TCP tap, so it is a record rather than a report:
+
+- `CMD_INIT` from `DeZog vv24.18.0`, answered `dezogif v2.2.1` / DZRP 2.1.0 / machine 4;
+- 69 `CMD_READ_MEM`, 14 `CMD_GET_REGISTERS`, 1 `CMD_LOOPBACK`;
+- **13 `CMD_CONTINUE` and 13 `NTF_PAUSE`**, each reporting break reason 0 at `0x801C` in bank 5 —
+  the `jr $` at the end of the conformance suite's own fixture, which the preceding
+  `make test-hardware` run had left in memory. Stepping a `jr $` lands on it again, which is why
+  every notification is identical;
+- shutdown is `CMD_PAUSE` then `CMD_CLOSE`, **both answered**, socket closed 1 ms later, and a
+  reattach 33 s afterwards worked.
+
+Each of those thirteen resumes exercised `CMD_CONTINUE`, the temporary-breakpoint patch,
+`restore_registers`, the AltROM `RST 0` path back in, and `send_ntf_pause` — the whole
+execution-control loop, driven by the real client rather than by our own suite.
+
+**That answers open question 1**: the `cspect` remote makes no assumption above the wire that this
+stub does not satisfy. It also retired issue #8 the hard way — DeZog's `CSpectRemote.disconnect()`
+really does send `CMD_PAUSE` and block on it, exactly as predicted from reading its source that
+morning, so before that fix every Shift+F5 would have hung the client.
+
+**What the same evening also found is a liveness fault**, twice, each needing a power cycle:
+issue #15, with the anti-hang design in issue #16. M1's functionality is complete; its
+*robustness* is not.
 
 ### M2 — Asynchronous break
 Add the Copper-driven periodic NMI poll (§4.3). Success: `CMD_PAUSE` from DeZog stops a freely
@@ -768,8 +790,11 @@ Named DeZog remote type; contribute the transport abstraction back to dezogif if
 
 ## 11. Open questions
 
-1. Does DeZog's `cspect` remote make CSpect-specific assumptions above the wire protocol?
-   (Answer at M1 — cheap.)
+1. ~~Does DeZog's `cspect` remote make CSpect-specific assumptions above the wire protocol?~~
+   **ANSWERED, 2026-08-05: no.** A real session attached, stepped, and disconnected against a Next
+   over WiFi — see M1. The one client-specific behaviour found was `CSpectRemote.disconnect()`
+   sending `CMD_PAUSE`, which the stub had never answered until issue #8; that is a gap in the
+   remote's coverage of the protocol rather than an assumption above it.
 2. Does the tbblue firmware checksum or otherwise validate `enNextMf.rom`? dezogif's existence
    strongly implies not, but confirm.
 3. Who made the "[Remote debugging via Wifi on the ZX Spectrum
@@ -886,6 +911,8 @@ reason attached, is fine.
 | **No scan in the ESP transport destroys an inbound `+IPD`** | issue #11. Bench W4 in jnext (red on `main`, red on the intermediate fix, green after); hardware bench H3, 3 runs of 3 green at build 000A, against 3 failures of 3 before it | **verified**, both places — and the two halves are covered in different places: jnext can only reach the `AT+CIPSEND` prompt window, hardware only the `SEND OK` one |
 | The `SEND OK` window on a real module is 20-50 ms wide | measured on a Next, 3 trials at each of 8 delays: lost at 0/2/5/10/20 ms, clean at 50/100/250 ms | **verified** — and note a nine-character `SEND OK` costs ~2 ms at 115200, so the window is not the transmission |
 | A single client that pipelines loses commands the same way | tested on a Next, one connection, 3 trials at each of 8 delays including 0 ms: never lost one | **disproved as stated** — the discriminator is a *second connection*, not the timing alone. The mechanism behind that is a reading, not a measurement |
+| **DeZog drives the stub on real hardware: attach, disassemble, registers, memory, single-step, clean disconnect, reattach** | a logging TCP tap between VS Code and a Next, 2026-08-05: `DeZog vv24.18.0` ↔ `dezogif v2.2.1`, 69 `CMD_READ_MEM`, 14 `CMD_GET_REGISTERS`, **13 `CMD_CONTINUE` each answered by an `NTF_PAUSE` at `0x801C` bank 5**, then `CMD_PAUSE` + `CMD_CLOSE` both answered | **verified** — the last item of M1, and the answer to open question 1 |
+| The stub can be left unable to serve anyone, recovered only by power-cycling | two occurrences in one evening; TCP still accepted (accept latency degraded 83 ms → 389 ms → timeout), no border flicker, screen intact. NOT caused by a clean disconnect — that was measured and is safe | **verified that it happens; the mechanism is a hypothesis** — issue #15, design in #16 |
 | The connect string draws a correct address on hardware | user's own machine, 2026-08-05, at a 15-character address | **reported on hardware** — one machine, one reporter, no re-runnable artefact |
 | NMI poll costs ~100-200 T-states/frame | arithmetic, not measured | **estimate** |
 | CTS/RTR populated on a given board | — | **unverified** |

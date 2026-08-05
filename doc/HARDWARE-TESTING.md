@@ -302,9 +302,14 @@ Stated here because the temptation to over-read the first hardware success will 
   the code `copy_altrom` installs at 0x0000. **C10 passed on a Next, so the patched AltROM
   executed on silicon.** Same mistake as the resume claim two bullets above: written from what the
   script does rather than from what it runs.
-- **DeZog itself.** The evidence is a conformance suite, not a debugging session. Stepping and
-  breakpoints over WiFi are untried; `remoteType: "cspect"` with `hostname` is the configuration to
-  try, and Appendix B of the plan carries the `launch.json`.
+- ~~**DeZog itself.**~~ **Done, 2026-08-05.** A VS Code session with `remoteType: "cspect"` and
+  `hostname` pointed at the Next attached, disassembled, read registers and memory, **single-stepped
+  thirteen times**, disconnected cleanly and reattached — captured through a logging TCP tap. See
+  the plan's M1. **Two cautions for whoever repeats it**: DeZog reads the **entire 64 KB** at attach
+  in two 32 KB `CMD_READ_MEM`s, which costs ~9 s at 115200 and looks like a hang if you do not
+  expect it; and the workspace's own `CSpect MF ROM` launch config is **not safe to point at
+  hardware** — it carries `loadObjs` of `enNextMf.rom` and an `execAddress`, so it would push the
+  stub's own image into the running machine. Use a minimal config with no `loadObjs`.
 - **The UART build**, which needs a joy-port cable and a USB serial adapter. The conformance suite
   reaches it directly when someone has that set up:
 

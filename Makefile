@@ -158,6 +158,22 @@ ifneq ($(WAIT_SECS),)
   VARIANT_FLAGS  += -DTRANSPORT_WAIT_RX_SECONDS=$(WAIT_SECS)
 endif
 
+# FAULT_LIMIT — the fourth bench seam, and the only way the self-recovery can be
+# made to fire inside a run. The shipped value is five CONSECUTIVE transport
+# faults, and no bench here can produce five: jnext's module answers everything
+# it is asked, so faults only appear one at a time from an injected budget and
+# a successful chunk clears the count between them. FAULT_LIMIT=1 makes the
+# first one trigger. See test/run-no-hang.sh's N4, and read its scope note
+# before believing it says more than it does.
+#
+# Same naming rule as the others: each probe ROM gets its own output name.
+FAULT_LIMIT ?=
+
+ifneq ($(FAULT_LIMIT),)
+  VARIANT_SUFFIX := $(VARIANT_SUFFIX)-fl$(FAULT_LIMIT)
+  VARIANT_FLAGS  += -DESP_FAULT_LIMIT=$(FAULT_LIMIT)
+endif
+
 
 # ---------------------------------------------------------------------------
 # Layout
@@ -460,14 +476,16 @@ test-tx-patience:
 # one constant. The probe ROMs get their own names via WAIT_SECS/RX_WAIT, so
 # none can be left where a shipped ROM is read from.
 #
-# Run the hang-safety bench (3 jnext runs; not part of `make test`)
+# Run the hang-safety bench (4 jnext runs; not part of `make test`)
 test-no-hang: $(ROM_WIFI)
 	@$(MAKE) --no-print-directory TRANSPORT=wifi WAIT_SECS=0 mf-rom
 	@$(MAKE) --no-print-directory TRANSPORT=wifi RX_WAIT=400 TX_PASSES=1 mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi RX_WAIT=400 TX_PASSES=1 FAULT_LIMIT=1 mf-rom
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
 	 ROM_UNBOUND="$(OUT)/enNextMf-wifi-wait0.rom" \
 	 ROM_BOUND="$(ROM_WIFI)" \
-	 ROM_SLOWPROMPT="$(OUT)/enNextMf-wifi-rxwait400-txp1.rom" $(TEST)/run-no-hang.sh
+	 ROM_SLOWPROMPT="$(OUT)/enNextMf-wifi-rxwait400-txp1.rom" \
+	 ROM_RECOVER="$(OUT)/enNextMf-wifi-rxwait400-txp1-fl1.rom" $(TEST)/run-no-hang.sh
 
 # Run the DZRP conformance suite against a remote (REMOTE=tcp:<host>:<port>)
 test-dzrp:

@@ -389,6 +389,26 @@ ESP_TX_WAIT:    equ 10000
 ESP_IP_MAX:     equ 15
  ENDIF
 
+; How many consecutive transport faults bring the AT chain back up — issue #16,
+; part C. drain_main never re-ran transport_init, so a module that had lost its
+; listener, or its mind, stayed lost until somebody power-cycled the Next.
+;
+; FIVE, AND THE NUMBER MATTERS LESS THAN WHAT IS COUNTED. Only rxtx_error
+; increments it: a read or a send that failed while the module OWED an answer.
+; cmd_loop's idle wait expiring does NOT, and must not — it is indistinguishable
+; from a client that is simply thinking, so counting it would let a healthy
+; session drive a recovery that closes its connection (see
+; TRANSPORT_WAIT_RX_SECONDS). A successful chunk clears the count, so five means
+; five faults with nothing having got through in between.
+;
+; It is a backstop and it is not a fix for issue #15. That machine's symptom was
+; a module still accepting TCP and no longer forwarding anything, which produces
+; no faults at all — nothing arrives to fail. What this covers is the family
+; where the module answers badly rather than not at all.
+ IFNDEF ESP_FAULT_LIMIT
+ESP_FAULT_LIMIT:    equ 5
+ ENDIF
+
 ; What the UI has to say about the link. Decided once, during bring-up, because
 ; show_ui is re-entered on every redraw and an AT round trip per redraw would
 ; buy nothing — the address cannot change while we hold the module.
@@ -456,6 +476,10 @@ esp_cmd_cipserver:  defb "AT+CIPSERVER=1,"
     STRINGIFY ESP_SERVER_PORT
     defb 13,10,0
 esp_cmd_cifsr:      defb "AT+CIFSR",13,10,0
+; Only esp_recover sends this. AT+CIPSERVER=1 is refused while a server is
+; already up (jnext esp_at.cpp:648, and real ESP-AT does the same), so a
+; re-init that skipped it would report a failure on a module that was working.
+esp_cmd_cipserver_off:  defb "AT+CIPSERVER=0",13,10,0
 
 esp_str_ok:         defb "OK",13,10,0
 esp_str_ipd:        defb "+IPD,",0
@@ -601,6 +625,19 @@ esp_rx_pass:        defb 1
 ; last_error after drain_main has cleared it. See transport_activate.
 esp_init_error:     defb 0
 
+; Consecutive transport faults since the last chunk the module acknowledged.
+; When it reaches ESP_FAULT_LIMIT the AT chain is run again — issue #16, part C.
+; Cleared by transport_init and by esp_flush_chunk's SEND OK, which together
+; mean "the whole path from here to the peer worked".
+esp_fault_count:    defb 0
+
+; Non-zero while esp_recover is running. Its own AT chain reads and writes the
+; module, so a fault inside it comes straight back to rxtx_error — and without
+; this the recovery would start another recovery, for ever. transport_init
+; zeroing the count is NOT enough on its own: it makes the very next fault the
+; first of a new run, which is exactly what re-triggers a limit of one.
+esp_recovering:     defb 0
+
 ; Which of the three status blocks below show_ui draws. NO_MODULE is the state
 ; before transport_init has run, so a UI drawn without a bring-up says "the
 ; module did not answer" rather than claiming an address it never asked for.
@@ -741,6 +778,10 @@ esp_tx_byte:        defb 0
 ; length and writing it (issue #16, part B). So the fault is remembered, the
 ; transaction is completed, and the report comes afterwards.
 esp_tx_fault:       defb 0
+
+; The error code rxtx_error is carrying into drain_main. In memory rather than
+; in A because the recovery it may run needs both A and a stack.
+esp_fault_error:    defb 0
 esp_tx_buffer:      defs ESP_TX_CHUNK
 esp_cmd_buffer:     defs 24
 
@@ -870,6 +911,17 @@ esp_read_raw:
 rx_timeout: ; The receive timeout handler
     ld a,ERROR_RX_TIMEOUT
 rxtx_error:
+    ; EVERY FAULT THAT REACHES HERE IS COUNTED, and after enough of them in a
+    ; row the module is brought back up rather than left as it is — issue #16,
+    ; part C. Only this label counts: a read or a send that failed while the
+    ; module owed us an answer. cmd_loop's idle wait expiring goes to main_idle
+    ; and never comes here, deliberately, because an idle client is not a fault
+    ; and a recovery driven by one would close a healthy session's connection.
+    ;
+    ; The error code is put in memory rather than kept in A, because the
+    ; recovery below needs a stack and A both, and because it may be replaced.
+    ld (esp_fault_error),a
+
     ; THE RX BUDGET MUST NOT ESCAPE THROUGH HERE RAISED, and this is the one
     ; path on which it could. esp_flush_chunk pairs every esp_rx_budget_long
     ; with an esp_rx_budget_short and calls nothing in between that returns
@@ -883,11 +935,41 @@ rxtx_error:
     ;
     ; drain_main means "abandon this and go idle", and idle is exactly the state
     ; that wants the short budget, so 1 is the right value and not merely a
-    ; restore. A carries the error code into drain_main and must survive.
-    push af
+    ; restore.
     ld a,1
     ld (esp_rx_retries),a
-    pop af
+
+    ld a,(esp_fault_count)
+    inc a
+    ld (esp_fault_count),a
+    cp ESP_FAULT_LIMIT
+    jr c,.report
+
+    ; A fault raised BY the recovery does not start another one.
+    ld a,(esp_recovering)
+    or a
+    jr nz,.report
+
+    ; ENOUGH IN A ROW: BRING THE MODULE BACK UP. The stack is reset FIRST — this
+    ; label is jumped to from any depth, and the recovery is the only thing here
+    ; that needs a stack of its own. drain_main resets it a moment later anyway,
+    ; so nothing below is being thrown away that was not already.
+    ld sp,debug_stack.top
+    call esp_recover
+    ; What the screen says is the recovery, not the fault that triggered it —
+    ; unless the recovery ITSELF failed, in which case transport_activate
+    ; overwrites this from esp_init_error on the way through main. Both are what
+    ; a user needs to see; neither is what the fifth timeout was.
+    ld a,ERROR_ESP_REINIT
+    ld (esp_fault_error),a
+
+.report:
+    ; Both ways out of a recovery reach here — its ordinary return above, and a
+    ; fault inside its own AT chain, which jumps to this label and never goes
+    ; back. So this is where the re-entry guard is released. See esp_recover.
+    xor a
+    ld (esp_recovering),a
+    ld a,(esp_fault_error)
     jp drain_main
 
 
@@ -895,6 +977,47 @@ rxtx_error:
 tx_timeout: ; The transmit timeout handler
     ld a,ERROR_TX_TIMEOUT
     jr rxtx_error
+
+
+;===========================================================================
+; Brings the ESP back up after ESP_FAULT_LIMIT consecutive faults.
+;
+; THE LISTENER IS STOPPED FIRST, and that is not optional: AT+CIPSERVER=1 is
+; answered ERROR while one is already running, so a re-init without this would
+; make transport_init report a failure on a module that was fine and paint
+; "ESP-01 setup failed" over a working listener.
+;
+; IT COSTS THE OPEN CONNECTIONS, and that is accepted rather than overlooked.
+; AT+CIPSERVER=0 closes them, so a client is dropped and has to reconnect. The
+; counter is what makes that acceptable: five consecutive faults with nothing
+; acknowledged in between is not a session anybody is still using. This is why
+; the idle wait's expiry is kept out of the count — if it were in, a healthy
+; session that paused would eventually be disconnected by its own debugger.
+;
+; Changes:
+;  A, BC, DE, HL
+;===========================================================================
+esp_recover:
+    ld a,1
+    ld (esp_recovering),a
+
+    ld hl,esp_cmd_cipserver_off
+    call esp_send_string
+    ; Read the answer away without caring what it was: OK if a server was
+    ; running, ERROR if not, and both are fine here. The drain also eats the
+    ; `<id>,CLOSED` lines that stopping the listener produces, and anything the
+    ; module was still owed from a send that never completed.
+    call transport_drain
+    ; Every connection the module had is gone with the listener.
+    xor a
+    ld (esp_conn_valid),a
+    ; esp_recovering is cleared by rxtx_error's .report, NOT here, because that
+    ; is the one place BOTH ways out of this pass through: the ordinary return
+    ; below, and a fault inside this chain that jumps to rxtx_error and never
+    ; comes back. Clearing it here would leave that second way out with the flag
+    ; set for the rest of the power-on session, and no recovery would ever run
+    ; again.
+    jp transport_init
 
 
 ;===========================================================================
@@ -2137,7 +2260,14 @@ esp_flush_chunk:
     call esp_rx_budget_long
     call esp_wait_string_hold
     call esp_rx_budget_short
-    ret nc
+    jr c,.timeout
+
+    ; THE WHOLE PATH WORKED — announced, taken, acknowledged — so whatever went
+    ; wrong before this is not consecutive any more. This and transport_init are
+    ; the only two places the count goes back to zero (issue #16, part C).
+    xor a
+    ld (esp_fault_count),a
+    ret
 
 .timeout:
     xor a
@@ -2196,6 +2326,12 @@ esp_flush_chunk:
 ;  A, BC, DE, HL
 ;===========================================================================
 transport_init:
+    ; A fresh chain: nothing before it is consecutive with anything after it.
+    ; Also stops a recovery that fails its own AT chain from immediately
+    ; recovering again — the count starts from zero either way.
+    xor a
+    ld (esp_fault_count),a
+
     call esp_uart_init
 
     ; A real ESP-AT boots with echo ON; jnext's power-on default is off. This

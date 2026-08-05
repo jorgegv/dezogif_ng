@@ -184,6 +184,12 @@ TEXT_CMD_NOT_SUPPORTED: ; Core not supported
 ; place a user of this program is trained to look for a fault.
 TEXT_ERROR_NO_WIFI_ADDRESS:
     defb "No WiFi address", 0
+
+; Not a fault report but a statement of what the stub did about one, in the
+; place the user is trained to look for a fault. Reconnecting is what it asks
+; for; saying so costs the whole 32-column row and one more.
+TEXT_ERROR_ESP_REINIT:
+    defb "ESP re-initialised: reconnect", 0
  ENDIF
 
 ERROR_TEXT_TABLE:
@@ -196,4 +202,5 @@ ERROR_TEXT_TABLE:
     defw TEXT_CMD_NOT_SUPPORTED
  IF ROM_VARIANT == ROM_VARIANT_WIFI
     defw TEXT_ERROR_NO_WIFI_ADDRESS
+    defw TEXT_ERROR_ESP_REINIT
  ENDIF

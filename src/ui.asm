@@ -24,6 +24,14 @@ ERROR_CMD_NOT_SUPPORTED:    equ 7
 ; WiFi mode only: the module answered, the listener is up, and it has no
 ; address to hand out. Raised by transport_init; see transport_esp.asm.
 ERROR_NO_WIFI_ADDRESS:      equ 8
+
+; WiFi mode only, and NOT a fault of its own: the stub met ESP_FAULT_LIMIT
+; transport faults in a row and ran the AT chain again by itself (issue #16,
+; part C). It replaces the fifth fault's own code, because "I have just
+; re-established the module, and any connection you had is gone" is the thing a
+; user needs to know — the fifth timeout is a symptom of it. A recovery that
+; then failed reports ITS failure instead, through transport_activate.
+ERROR_ESP_REINIT:           equ 9
  ENDIF
 
 

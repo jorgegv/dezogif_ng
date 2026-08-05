@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
-# WAITS THAT END, AND SENDS THAT ARE NOT ABANDONED — issue #16, parts A and B.
+# WAITS THAT END, SENDS THAT ARE NOT ABANDONED, AND A MODULE THE STUB CAN BRING
+# BACK UP BY ITSELF — issue #16, parts A, B and C.
 #
-# Invoked by `make test-no-hang`. Three headless jnext runs against WiFi ROMs
+# Invoked by `make test-no-hang`. Four headless jnext runs against WiFi ROMs
 # that differ from the shipped one only in build-time constants, in the same
 # shape as run-tx-patience.sh and run-ip-boundary.sh:
 #
@@ -19,6 +20,10 @@
 #                     <len> bytes it announced, or the module is left counting
 #                     them off against whatever it is told next. A SECOND client
 #                     is the judge.
+#   N4  the same,     the self-recovery, with the limit brought down to one
+#       FAULT_LIMIT=1 fault so a single injected timeout reaches it. The AT
+#                     chain must really run again, and the stub must still be
+#                     serving afterwards. READ ITS SCOPE NOTE BELOW.
 #
 # ---------------------------------------------------------------------------
 # WHAT N1/N2 MEASURE, AND WHAT THEY DELIBERATELY DO NOT
@@ -99,6 +104,28 @@
 # was #15's trigger, and nothing in this bench should be read as saying so.
 #
 # ---------------------------------------------------------------------------
+# WHAT N4 MEASURES, AND IT IS LESS THAN ITS NAME SUGGESTS
+# ---------------------------------------------------------------------------
+#
+# It shows the MECHANISM fires and leaves a working listener: the count reaches
+# its limit, esp_recover stops the server, the AT chain runs again, and a client
+# is served afterwards. Both halves are asserted — the re-run from the module's
+# own log (a second `AT+CIPSERVER=1,<port> — listening` that no ordinary run
+# produces), the serving from a client that gets an answer.
+#
+# IT DOES NOT SHOW THAT THE RECOVERY RECOVERS ANYTHING, and no run here can.
+# jnext offers no way to make the emulated module unresponsive, so there is no
+# broken state for the chain to repair; what it repairs in N4 is a module that
+# was never broken. The fault it counts is an injected send timeout, not a
+# module fault. So N4 is a check that a piece of code runs and does not make
+# things worse — worth having, because a recovery that silently failed to
+# re-listen would be worse than none, and nothing else would catch it.
+#
+# The FAULT_LIMIT=1 seam is what makes it reachable: the shipped limit is five
+# CONSECUTIVE faults, and a successful chunk clears the count, so five in a row
+# cannot be produced against a module that answers everything.
+#
+# ---------------------------------------------------------------------------
 # WHAT NOTHING HERE COVERS
 # ---------------------------------------------------------------------------
 #
@@ -106,9 +133,8 @@
 #   bench in this repository can drive that transport headless — `make test`'s
 #   T6 runs the serial ROM but attaches no client, so it never reaches cmd_loop
 #   at all. The serial half of part A is unexercised, by construction.
-# * The recovery in part C. Making the emulated module unresponsive is not
-#   something jnext offers, so the fault counter reaching its limit has no run
-#   behind it. See MEMORY.md and the comment on esp_recover.
+# * Part C at its SHIPPED limit, and part C against a module that is actually
+#   broken. See N4's scope above.
 # * Anything about a real ESP-01.
 #
 # Environment (all set by the Makefile, all overridable):
@@ -118,6 +144,7 @@
 #   ROM_UNBOUND   WiFi ROM, WAIT_SECS=0
 #   ROM_BOUND     the shipped WiFi ROM
 #   ROM_SLOWPROMPT WiFi ROM, RX_WAIT=400 TX_PASSES=1
+#   ROM_RECOVER   the same, plus FAULT_LIMIT=1
 
 set -euo pipefail
 
@@ -139,6 +166,7 @@ OUT=${OUT:-build}
 ROM_UNBOUND=${ROM_UNBOUND:-$OUT/enNextMf-wifi-wait0.rom}
 ROM_BOUND=${ROM_BOUND:-$OUT/enNextMf-wifi.rom}
 ROM_SLOWPROMPT=${ROM_SLOWPROMPT:-$OUT/enNextMf-wifi-rxwait400-txp1.rom}
+ROM_RECOVER=${ROM_RECOVER:-$OUT/enNextMf-wifi-rxwait400-txp1-fl1.rom}
 
 IDLE_CLIENT=$(dirname "$0")/dzrp/idle-client.py
 SEND_CLIENT=$(dirname "$0")/dzrp/abandoned-send-client.py
@@ -191,7 +219,7 @@ die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 python3 -c 'import PIL' 2>/dev/null || die "python3 Pillow is required to read the stub's screen"
 command -v mcopy >/dev/null || die "mtools (mcopy) is required to install the ROM into the SD image"
 
-for rom in "$ROM_UNBOUND" "$ROM_BOUND" "$ROM_SLOWPROMPT"; do
+for rom in "$ROM_UNBOUND" "$ROM_BOUND" "$ROM_SLOWPROMPT" "$ROM_RECOVER"; do
     [ -f "$rom" ] || die "not built: $rom (run 'make test-no-hang')"
     # The magic string issue #4 put at a fixed offset, used for what it is for:
     # a UART ROM here would boot, take the NMI, paint its UI and listen on
@@ -445,12 +473,48 @@ else
 fi
 
 log ""
+log "== N4: the self-recovery, with the limit brought down to one fault"
+
+shot4=$OUT/screenshots/no-hang-recover.png
+jlog4=$OUT/no-hang-recover.log
+rc=0
+if start_stub "$ROM_RECOVER" "$jlog4" "$shot4"; then
+    python3 "$SEND_CLIENT" --host 127.0.0.1 --port "$PORT" \
+        --timeout "$CLIENT_TIMEOUT" --after-shot "$shot4" \
+        --shot-timeout "$SHOT_TIMEOUT" | sed 's/^/  | /' || rc=$?
+    # The recovery really ran, from the module's own log. Bring-up listens once;
+    # every later one is an esp_recover, and AT+CIPSERVER=0 is sent by nothing
+    # else in this program at all.
+    # The COMMAND line, not the module's acknowledgement of it — jnext logs both
+    # and counting the pair would double every recovery.
+    stops=$(grep -c 'AT <- "AT+CIPSERVER=0"' "$jlog4" || true)
+    listens=$(grep -c 'AT+CIPSERVER=1,.* — listening' "$jlog4" || true)
+    stop_stub
+    if [ "$rc" -eq 2 ]; then
+        fail "N4 the client could not reach the stub at all, so nothing was tested"
+    elif [ "$rc" -eq 12 ] || [ "$rc" -eq 13 ]; then
+        fail "N4 no usable screenshot (client exit $rc)"
+    elif [ "${stops:-0}" -lt 1 ]; then
+        fail "N4 the recovery never ran — no AT+CIPSERVER=0 in $jlog4, and nothing but esp_recover sends one, so the fault counter never reached its limit"
+    elif [ "${listens:-0}" -lt $((stops + 1)) ]; then
+        fail "N4 the recovery ran $stops time(s) but the module listened only $listens time(s), where one bring-up plus one per recovery is $((stops + 1)) — a chain that did not come back up is worse than not recovering at all"
+    elif [ "$rc" -ne 0 ]; then
+        fail "N4 the recovery ran and re-listened ($stops recoveries, $listens listens) but a client was NOT served afterwards"
+    else
+        pass "N4 the count reached its limit, esp_recover stopped the listener and ran the chain again ($stops recoveries, $listens listens = 1 bring-up + 1 each), and a client was served afterwards — the MECHANISM works; it is not evidence that it repairs anything (see the header)"
+    fi
+else
+    stop_stub
+    fail "N4 the stub's listener never appeared — the run never got far enough to judge"
+fi
+
+log ""
 log "Diagnosis:"
-log "  jnext logs:   $OUT/no-hang-unbound.log  $OUT/no-hang-bound.log  $OUT/no-hang-slowprompt.log"
-log "  screenshots:  $shot1  $shot2  $shot3"
+log "  jnext logs:   $OUT/no-hang-unbound.log  $OUT/no-hang-bound.log  $OUT/no-hang-slowprompt.log  $jlog4"
+log "  screenshots:  $shot1  $shot2  $shot3  $shot4"
 log ""
 
-total=3
+total=4
 if [ "$failures" -eq 0 ]; then
     log "All $total checks passed."
     exit 0

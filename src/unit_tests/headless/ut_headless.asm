@@ -80,6 +80,10 @@ PRG_START:
 
 ; Required labels:
 main_loop.continue:     ret
+; transport_wait_rx jumps here when its bound expires (issue #16). No test
+; reaches it — nothing here calls that routine — so this exists to link, like
+; ut_uart.asm's drain_main.
+main_idle:              ret
 
     ; Initialization routine. Called by the runner before EVERY test.
     UNITTEST_INITIALIZE

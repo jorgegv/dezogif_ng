@@ -170,11 +170,13 @@ resume fault.
 Everything lives in 0x8000-0x9FFF, which `CMD_INIT` maps to bank 4, clear of the ROM and of the
 debugger's own slots 6 and 7.
 
-**Both negative controls were run, and both discriminate.** `--no-continue` (bench check W3, which
-withholds only the `CMD_CONTINUE`) turns C10 red. And so does a deliberately broken ROM whose
-`cmd_continue` **answers** the command and returns to `cmd_loop` instead of jumping to
-`restore_registers`: C10 and C11 both go red against it, which is the failure that matters — a stub
-that acknowledges the resume and does not perform it.
+**Both negative controls were run against the build 0006 tree, and both discriminate.**
+`--no-continue` (bench check W3, which withholds only the `CMD_CONTINUE`) turns C10 red. And so
+does a deliberately broken ROM whose `cmd_continue` **answers** the command and returns to
+`cmd_loop` instead of jumping to `restore_registers`: C10 and C11 both go red against it, which is
+the failure that matters — a stub that acknowledges the resume and does not perform it. In a
+narrower run of that control, C9 stayed **green** on the same sabotaged ROM, which is the useful
+part: the machine is healthy and answering, and only the resume is gone.
 
 ### C12: `CMD_PAUSE`, and what it does NOT test
 

@@ -5,34 +5,58 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
-## 2026-08-05 — A wait that ends must end somewhere harmless; and a spurious error after every single reply
+## 2026-08-05 — A wait that ends must end somewhere harmless; and a CRLF that could swallow a command
 
 **Decided and measured, issue #16.** Three changes plus one accident, and the
 accident is the largest of them.
 
-**THE ACCIDENT FIRST, because it was in front of everybody for a month.**
-`esp_flush_chunk` waited for `"SEND OK"` and the module answers
-`"\r\nSEND OK\r\n"`, so the trailing CRLF stayed in the RX FIFO. `cmd_loop`'s
-`transport_wait_rx` ends on **any** byte from the module, so it returned at
-once, `receive_bytes` asked for a command, `esp_sync_ipd` scanned two bytes of
-nothing and timed out — **a full `rx_timeout` into `drain_main` after every
-single response.** "Last Error: RX Timeout" on a healthy machine, `prgm_state`
-back to `PRGM_IDLE`, the backup fields re-initialised, ~100 ms of drain and a
-repaint. Every reply.
+**THE ACCIDENT FIRST, because it was in front of everybody for a month and it
+is worse than a cosmetic fault.** `esp_flush_chunk` waited for `"SEND OK"` and
+the module answers `"\r\nSEND OK\r\n"`, so the trailing CRLF stayed in the RX
+FIFO. `cmd_loop`'s `transport_wait_rx` ends on **any** byte from the module, so
+it returned at once and `receive_bytes` asked for a command that was not there.
 
-Measured rather than deduced: a WiFi ROM with `TRANSPORT_WAIT_RX_SECONDS=0` —
-a wait that *cannot* expire — still painted it after one `CMD_INIT` and thirty
-seconds of silence, which leaves nothing else it can be. Same ROM, same client:
-**848 bright-red pixels before, 0 after.** `esp_str_ok` already ended in CRLF;
-this one did not.
+**WHAT FOLLOWS DEPENDS ENTIRELY ON WHEN THE CLIENT SPEAKS AGAIN, and the first
+version of this entry said "after every single response", which is WRONG.**
+`esp_sync_ipd` does not fail on seeing `\r\n` — it keeps scanning for a full
+`ESP_RX_WAIT` pass, ~97 ms at 28 MHz — and `rx_timeout` then runs a 100 ms
+`transport_drain`, whose whole job is to empty the FIFO. Three regimes, not one:
 
-**Why nothing caught it, and this is the transferable part.** Every check in
-this repository judges the **reply**, and the reply is long gone by the time
-this happens — `make test-dzrp-stub` is 14/14 either way. It was found only
-because issue #16's *control* run misbehaved: the unbounded build could not be
-made to sit in the wait, because this bounced it out after every command. **A
-control that refuses to reproduce the old behaviour is evidence about the
-system, not a broken control.**
+| when the next command arrives | what happens |
+|---|---|
+| inside the ~97 ms scan | the scan finds it and answers it. Nothing lost, nothing reported |
+| after the scan, inside the 100 ms drain | **read off the wire and discarded.** The client is never answered and waits for ever |
+| after the drain | answered, but via `drain_main`: "RX Timeout" on a healthy machine, `prgm_state` back to `PRGM_IDLE`, the backup fields re-initialised |
+
+**Measured, not reasoned, and the instrument was built because the claim was
+challenged.** Two ROMs differing in that one string, both carrying a counter on
+`esp_next_wire_chunk`'s timeout rendered on the stub's own screen, ten
+`CMD_INIT`s at a fixed gap. Wall clock; headless jnext advances emulated time
+~5.5x faster than real (274-284 frames/s measured against 50), so these gaps are
+roughly a fifth of the stub's own budgets:
+
+| gap | without the CRLF | with it |
+|---|---|---|
+| 0, 5, 10, 20 ms | 10/10 answered, 1 drain | 10/10, **0** drains |
+| **25, 30, 40 ms** | **1/10 answered**, 1 drain | 10/10, **0** drains |
+| 60, 80, 100, 500 ms | 10/10 answered, **1 drain per command** | 10/10, **0** drains |
+
+**A DEAD BAND IN WHICH COMMANDS ARE SILENTLY SWALLOWED** is a hang, not a
+blemish, and it was nowhere in the first write-up. On hardware, where there is
+no emulator speed-up, the band is the stub's own budgets: **roughly 97-197 ms
+between commands**. That is a falsifiable prediction and it has not been tested
+on a Next.
+
+**And it reconciles C10/C11, which is what the challenge was about.** A full
+14-check conformance run against the broken ROM costs **2** drains, not dozens,
+with C10 and C11 green: the suite pipelines, so it lives in the first row of
+that table and `drain_main` almost never runs. The 848 bright-red pixels that
+started this stand unchanged — that probe sent one command and went silent for
+thirty seconds, which is the third row.
+
+**The lesson is the correction itself.** The pixels were real and the scope
+attached to them was invented. "After every response" was never measured; it
+was inferred from one client's behaviour and generalised. See ERRORS.md.
 
 **A — the bound, and where expiry goes is the whole decision.**
 `transport_wait_rx` was the only unbounded wait in either transport. BC and DE

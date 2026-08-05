@@ -22,28 +22,52 @@ turning knobs until the numbers looked right.
 **Cause, and it was a real defect in the stub.** `esp_flush_chunk` matched
 `"SEND OK"` where the module answers `"\r\nSEND OK\r\n"`, so two bytes were left
 in the RX FIFO after every reply. `transport_wait_rx` ends on **any** byte from
-the module, so it returned at once, `esp_sync_ipd` found no `+IPD` header in
-`"\r\n"`, and the stub took a full `rx_timeout` into `drain_main` — **after
-every single response**, unbounded wait or not. That is why the control could
-not hold the state: nothing could.
+the module, so it returned at once and `receive_bytes` asked for a command that
+was not there. That is why the control could not hold the state: nothing could.
 
 **How it was settled: by making the control's claim impossible to dodge.** A
 wait with `WAIT_SECS=0` *cannot* expire, so an "RX Timeout" on that ROM cannot
 be the wait. That left one candidate, and the CRLF fix took the same run from
 848 bright-red pixels to 0.
 
-**Why no test had ever seen it.** Every check in this repository judges the
-**reply**, and the reply is sent before this happens: `make test-dzrp-stub` is
-14/14 before and after. The stub was paying ~100 ms and a full state reset per
-command, in the open, for a month.
+**THEN A SECOND MISTAKE, ON TOP OF THE FIRST, AND IT IS THE ONE WORTH THE
+ENTRY.** The write-up said the defect cost a `drain_main` "after every single
+response". That was never measured — it was inferred from the one client that
+had exposed it, which sent a command and then went silent for thirty seconds.
+It is also flatly incompatible with C10/C11 passing, since `drain_main` resets
+`prgm_state`, and nobody noticed the contradiction until a reviewer asked how
+both could be true.
 
-**Lesson, and this file has the shape twice already in the other direction.**
-ERRORS.md keeps saying a fix untested by removing it is a correlation. This is
-the mirror image: **when the removal does not reproduce the old behaviour, that
-is a measurement, not a broken control.** Ask what else could be producing the
-symptom before adjusting the harness — the harness is the thing you have not
-yet questioned, but it is also the thing you are about to bend until it agrees
-with you.
+**Measured properly the second time**, with a counter on the timeout path drawn
+on the stub's own screen and the inter-command gap swept: **it depends on the
+gap, and there are three regimes** — the scan catches a fast follow-up and
+nothing happens at all; a follow-up landing in the 100 ms drain is **read off
+the wire and discarded**, which is a silent hang; a later one is answered but
+costs the reset. A full conformance run: **2** drains, not dozens. The full
+table is in MEMORY.md.
+
+So the original claim was wrong in the direction that flattered it, and the real
+finding — a band of inter-command gaps in which a command is swallowed — was
+strictly worse and had been missed entirely by asserting the scope instead of
+sweeping it.
+
+**Two lessons, and the second is the expensive one.**
+
+**When a REMOVAL does not reproduce the old behaviour, that is a measurement,
+not a broken control.** This file keeps saying a fix untested by removing it is
+a correlation; this is the mirror image. Ask what else could be producing the
+symptom before adjusting the harness — the harness is the thing you have not yet
+questioned, but it is also the thing you are about to bend until it agrees with
+you.
+
+**A measurement establishes its own scope and nothing wider.** 848 pixels from
+one client proves a fault occurred in that client's pattern. Turning it into
+"every response" needed a second variable — the gap between commands — that was
+never varied. **When a finding is stated as a frequency, ask what was swept to
+get it**; if the answer is "nothing", the honest claim is the single point that
+was actually observed. The correct answer here was not a frequency at all but a
+threshold, and it hid a silent command loss that the overstated version would
+never have led anyone to look for.
 
 ---
 

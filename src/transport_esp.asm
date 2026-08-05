@@ -484,23 +484,41 @@ esp_cmd_cipserver_off:  defb "AT+CIPSERVER=0",13,10,0
 esp_str_ok:         defb "OK",13,10,0
 esp_str_ipd:        defb "+IPD,",0
 esp_str_error:      defb "ERROR",0
-; THE CRLF IS PART OF THE PATTERN, AND LEAVING IT OUT COST A SPURIOUS ERROR
-; AFTER EVERY SINGLE RESPONSE. The module answers "\r\nSEND OK\r\n"; matching
-; only the seven characters left the trailing CRLF sitting in the RX FIFO, and
-; cmd_loop's next transport_wait_rx ends on ANY byte from the module — so it
-; returned at once, receive_bytes asked for a command, esp_sync_ipd scanned two
-; bytes of nothing and timed out, and the stub took a full rx_timeout into
-; drain_main. Every reply. "Last Error: RX Timeout" on a machine with nothing
-; wrong with it, `prgm_state` back to PRGM_IDLE, the backup fields
-; re-initialised, ~100 ms of drain and a repaint — and that is also exactly what
-; issue #15 photographed on the wedged Next and read as a leftover from an
-; earlier fault.
+; THE CRLF IS PART OF THE PATTERN, AND LEAVING IT OUT COULD SWALLOW A COMMAND.
+; The module answers "\r\nSEND OK\r\n"; matching only the seven characters left
+; the trailing CRLF in the RX FIFO, and cmd_loop's transport_wait_rx ends on ANY
+; byte from the module — so it returned at once and receive_bytes asked for a
+; command that was not there.
 ;
-; MEASURED, not deduced. Same ROM, same client, one CMD_INIT and then thirty
-; seconds of silence: the stub's own screen carried 848 bright-red pixels of
-; "Last Error: RX Timeout" before this CRLF and 0 after it. Nothing caught it
-; because every check in this repository judges the REPLY, and the reply is long
-; gone by the time this happens — `make test-dzrp-stub` is 14/14 either way.
+; WHAT HAPPENED NEXT DEPENDED ENTIRELY ON WHEN THE CLIENT SPOKE AGAIN, and that
+; is the part a first write-up of this got wrong by calling it "after every
+; response". esp_sync_ipd does not fail on seeing "\r\n": it keeps scanning for
+; a full ESP_RX_WAIT pass, ~97 ms at 28 MHz. So:
+;
+;   * a command arriving INSIDE that scan is found by it and answered normally.
+;     Nothing is lost and nothing is reported. This is the pipelined case, and
+;     it is why the conformance suite never saw any of this.
+;   * a command arriving AFTER the scan gives up but INSIDE the 100 ms
+;     transport_drain that rx_timeout then runs is READ OFF THE WIRE AND
+;     DISCARDED — the drain's whole job is to empty the FIFO. The client is
+;     never answered and waits for ever.
+;   * a command arriving after the drain has finished is answered, but the stub
+;     has been through drain_main: "Last Error: RX Timeout" on a healthy
+;     machine, prgm_state back to PRGM_IDLE, the backup fields re-initialised.
+;
+; MEASURED, on two ROMs differing only in this string, with a drain counter and
+; ten CMD_INITs at a fixed gap (wall clock; headless jnext advances emulated
+; time ~5.5x faster than real, so these are roughly a fifth of the stub's own
+; budgets):
+;
+;   gap    without the CRLF          with it
+;   0-20   10/10 answered, 1 drain   10/10, 0 drains
+;   25-40  1/10 ANSWERED, 1 drain    10/10, 0 drains
+;   60+    10/10 answered, 1 drain per command    10/10, 0 drains
+;
+; and a full 14-check conformance run — dozens of commands — cost 2 drains, not
+; dozens, with C10/C11 green throughout. That is the reconciliation: the suite
+; pipelines, so it lives in the first row.
 ;
 ; esp_str_ok already ends in CRLF, for the same reason. esp_str_error does not,
 ; and esp_wait_prompt's ERROR arm therefore leaves the same two bytes behind —

@@ -51,7 +51,7 @@ transport it was assembled against. **The UART ROM is byte-identical to
 `main`'s** — `ba860de1…`, `main_end` 0xF1DB unmoved, with `BUILD_TIME` and the
 build number pinned — which is the evidence that the seam held across a change
 to common code. WiFi: `d3804367…` → `ea850838…`, `main_end` 0xF7F5 → 0xF86C,
-**+119 bytes**, 1362 still free to the identity block.
+**+119 bytes**, 1588 still free to the identity block at 0xFEA0.
 
 **Neither macro repaints.** Both call sites already reach `show_ui` — `cmd_init`
 calls it, `cmd_close` leaves through `jp main` — so the line costs nothing per

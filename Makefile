@@ -6,7 +6,8 @@
 .DEFAULT_GOAL := help
 .PHONY: help all main unit-tests ut-headless mf-rom mf-rom-wifi mf-rom-sum mfselect test \
         test-unit test-mfselect \
-        test-esp test-dzrp test-dzrp-stub test-ip-boundary test-hardware bump check-reproducible \
+        test-esp test-dzrp test-dzrp-stub test-ip-boundary test-tx-patience \
+        test-hardware bump check-reproducible \
         check-reproducible-wifi clean
 
 # Show this help
@@ -113,6 +114,29 @@ IP_MAX ?=
 ifneq ($(IP_MAX),)
   VARIANT_SUFFIX := $(VARIANT_SUFFIX)-ipmax$(IP_MAX)
   VARIANT_FLAGS  += -DESP_IP_MAX=$(IP_MAX)
+endif
+
+# RX_WAIT / TX_PASSES — the second bench seam, and the only way the SEND
+# timeout path can be reached, for the same reason IP_MAX exists: jnext answers
+# an AT+CIPSEND at once, so the budget that a real ESP-01 overran is never
+# approached here. Shrinking one pass (RX_WAIT) down to the emulator's own
+# reply latency puts the boundary back inside reach, and TX_PASSES=1 restores
+# the single-budget behaviour that hardware broke, as the control.
+# See test/run-tx-patience.sh.
+#
+# Same naming rule as IP_MAX: each probe ROM gets its own output name, so no
+# probe can be left where a shipped ROM is read from.
+RX_WAIT   ?=
+TX_PASSES ?=
+
+ifneq ($(RX_WAIT),)
+  VARIANT_SUFFIX := $(VARIANT_SUFFIX)-rxwait$(RX_WAIT)
+  VARIANT_FLAGS  += -DESP_RX_WAIT=$(RX_WAIT)
+endif
+
+ifneq ($(TX_PASSES),)
+  VARIANT_SUFFIX := $(VARIANT_SUFFIX)-txp$(TX_PASSES)
+  VARIANT_FLAGS  += -DESP_TX_PASSES=$(TX_PASSES)
 endif
 
 
@@ -371,6 +395,27 @@ test-ip-boundary:
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
 	 ROM_OK="$(OUT)/enNextMf-wifi-ipmax12.rom" \
 	 ROM_TOOLONG="$(OUT)/enNextMf-wifi-ipmax11.rom" $(TEST)/run-ip-boundary.sh
+
+# The budget esp_flush_chunk gives the module to answer an AT+CIPSEND, which no
+# ordinary run can reach: jnext answers at once, so the timeout arm is dead code
+# in the emulator and was green throughout issue #11's hardware failure. This
+# moves the BUDGET instead of the module — same Z80 code, same emulator, two
+# constants different — and the third run is the control that makes removing the
+# fix a controlled removal rather than a correlation.
+# See test/run-tx-patience.sh.
+#
+# The three probe ROMs get their own names via RX_WAIT/TX_PASSES, so none can be
+# left where a shipped ROM is read from.
+#
+# Run the AT+CIPSEND send-wait budget bench (3 jnext runs; not part of `make test`)
+test-tx-patience:
+	@$(MAKE) --no-print-directory TRANSPORT=wifi RX_WAIT=1600 TX_PASSES=10 mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi RX_WAIT=1600 TX_PASSES=1  mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi TX_PASSES=1 mf-rom
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
+	 ROM_FIXED="$(OUT)/enNextMf-wifi-rxwait1600-txp10.rom" \
+	 ROM_PREFIX="$(OUT)/enNextMf-wifi-rxwait1600-txp1.rom" \
+	 ROM_CONTROL="$(OUT)/enNextMf-wifi-txp1.rom" $(TEST)/run-tx-patience.sh
 
 # Run the DZRP conformance suite against a remote (REMOTE=tcp:<host>:<port>)
 test-dzrp:

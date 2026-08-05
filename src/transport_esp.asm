@@ -196,7 +196,19 @@ ESP_TX_CHUNK:   equ 240
 ; 28 MHz (which is where the debugger runs — init_main_bank and enter_debugger
 ; both set RTM_28MHZ) 40000 is about 100 ms, matching the serial transport's
 ; per-byte timeout.
+;
+; OVERRIDABLE ON PURPOSE, for the same reason as ESP_IP_MAX below and with the
+; same shape of justification. The failure this and ESP_TX_PASSES exist to
+; prevent is "the module answered later than the budget allowed", and jnext
+; answers at once — so no run here can reach the timeout path unless the budget
+; is brought down to meet the emulator's own latency. Shrinking one pass to
+; roughly the time jnext takes to put its first reply byte on the wire makes a
+; single pass too short and several passes enough, which is the real shape of
+; the hardware failure on a machine that can be re-run. See
+; test/run-tx-patience.sh.
+ IFNDEF ESP_RX_WAIT
 ESP_RX_WAIT:    equ 40000
+ ENDIF
 
 ; Passes of that poll during bring-up. The module owes an answer to every
 ; command in the chain, but a real ESP-01 is slower to first light than an
@@ -226,7 +238,13 @@ ESP_INIT_PASSES:    equ 20
 ; line never matches, so the wait runs to the end of the budget before
 ; reporting TX Timeout — 1 s instead of 100 ms. A real failure reported a
 ; second late is the right trade against a working send abandoned.
+;
+; OVERRIDABLE, and 1 is the interesting override: it makes these two waits
+; behave exactly as they did before this scoping existed, so it is the control
+; run for test/run-tx-patience.sh rather than a tuning knob.
+ IFNDEF ESP_TX_PASSES
 ESP_TX_PASSES:      equ 10
+ ENDIF
 
 ; How long to wait for room in the TX FIFO. One byte at 115200 is ~87 us; this
 ; loop is ~24 T-states, so 10000 is ~8.5 ms at 28 MHz — two orders of magnitude

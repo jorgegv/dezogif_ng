@@ -869,6 +869,43 @@ CHECKS = [
 ]
 
 
+def leave_session_closed(args):
+    """Send a bare CMD_CLOSE last, so the remote is left saying so.
+
+    NOT a check, and deliberately cannot change the verdict — C15 already
+    asserts that CMD_CLOSE is answered and that the remote serves on. This
+    exists for the Next's SCREEN: issue #14's status line reports the last
+    session event it actually observed, so a run whose final act is C15's
+    follow-up CMD_INIT correctly leaves the machine reading "Session opened",
+    which is a confusing thing to walk up to after a completed test run.
+
+    Nothing may follow this. It closes the socket and sends no further command,
+    because a CMD_INIT afterwards would reopen the session it just closed —
+    which is exactly the mistake this teardown exists to stop making.
+
+    Failures are reported and swallowed. A remote that cannot be reached here
+    has already been measured by fifteen checks that could reach it, and
+    inventing a sixteenth verdict out of a teardown would be a check nobody
+    designed.
+    """
+    try:
+        transport = dzrp.open_remote(args.remote, timeout=args.timeout)
+    except (OSError, dzrp.DzrpError) as e:
+        print("  (teardown: could not reconnect to send CMD_CLOSE: %s)" % e)
+        return
+    try:
+        d = dzrp.Dzrp(transport, start_byte=args.start_byte,
+                      base_timeout=args.timeout)
+        d.command(dzrp.CMD_CLOSE)
+    except (OSError, dzrp.DzrpError) as e:
+        print("  (teardown: CMD_CLOSE was not answered: %s)" % e)
+    finally:
+        try:
+            transport.close()
+        except OSError:
+            pass
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -996,6 +1033,8 @@ def main():
             print("\033[K", end="")
         print("%s %s%s" % (paint(status), label, " — %s" % detail if detail else ""),
               flush=True)
+
+    leave_session_closed(args)
 
     print("")
     summary = "%d passed, %d failed, %d unsupported, of %d checks" % (

@@ -608,6 +608,34 @@ def h3_connection_id(host, port, timeout, results):
 # --------------------------------------------------------------------------
 
 
+def leave_session_closed(host, port, timeout):
+    """Send a bare CMD_CLOSE last, so the Next is left saying so.
+
+    NOT a check: it adds no row and cannot change the exit code. C15 in the
+    conformance suite already asserts that CMD_CLOSE is answered and that the
+    remote serves on afterwards.
+
+    This is for the machine's SCREEN. Issue #14's status line reports the last
+    session event the stub actually observed, so a bench whose final act is
+    H5's connection leaves a Next reading "Session opened (CMD_INIT)" after a
+    completed run — accurate, and confusing to walk up to.
+
+    Nothing may follow it: a later CMD_INIT would reopen the session this just
+    closed.
+    """
+    try:
+        d, _ = connect(host, port, timeout)
+    except (OSError, dzrp.DzrpError) as e:
+        print("  (teardown: could not reconnect to send CMD_CLOSE: %s)" % e)
+        return
+    try:
+        d.command(dzrp.CMD_CLOSE)
+    except (OSError, dzrp.DzrpError) as e:
+        print("  (teardown: CMD_CLOSE was not answered: %s)" % e)
+    finally:
+        d.close()
+
+
 def h4_latency(host, port, timeout, results, samples):
     """Round-trip time for a small CMD_LOOPBACK, reported as a distribution.
 
@@ -742,6 +770,12 @@ def main():
     h3_connection_id(args.host, args.port, args.timeout, results)
     h4_latency(args.host, args.port, args.timeout, results, args.latency_samples)
     h5_throughput(args.host, args.port, args.timeout, results, args.throughput_bytes)
+
+    # Leave the machine saying so. H3-H5 run AFTER the conformance delegation
+    # and each open connections of their own, so the suite's own teardown is
+    # not the last thing this bench does — without this, a completed hardware
+    # run leaves the Next reading "Session opened (CMD_INIT)".
+    leave_session_closed(args.host, args.port, args.timeout)
 
     total = len(results.rows)
     print("\n%d passed, %d failed, %d measured, %d skipped of %d" % (

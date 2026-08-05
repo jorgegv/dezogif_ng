@@ -243,13 +243,17 @@ strongest:
    and came back as it left them. **Still not covered**: the stackless-NMI *return address*
    (C10 sets `PC` itself, so `save_nmi_return_address` is never involved) and the M1 button
    breaking a *running* debuggee — both need a second NMI timed against live traffic.
-   **Result 2026-08-05: W1, W2 and W3 pass, 11 passed / 1 failed of 12.**
-   **C12 is the one red, and it is pre-existing**: `CMD_PAUSE` is mapped to
-   `cmd_not_supported`, which stores an error and jumps to `drain_main`, so the stub sends **no
-   response at all** where the spec requires one and a client would wait forever. Same shape as C2
-   was — common code the WiFi work never touched — so fixing it changes the serial ROM and needs
-   its own branch, and **the target therefore exits 1 until that branch lands**, exactly as it did
-   while C2 was red.
+   **Result 2026-08-05: W1, W2 and W3 pass, 12 passed / 0 failed of 12 — the target exits 0.**
+   **C12 was the last red and issue #8 closed it**: `CMD_PAUSE` was mapped to `cmd_not_supported`,
+   which stores an error and jumps to `drain_main`, so the stub sent **no response at all** where
+   the spec requires a Length=1 one and a client waited forever. Same shape as C2 — common code
+   the WiFi work never touched, upstream's own 2023 jump-table entry — so the fix changed both
+   ROMs' bytes and carried a bump. It is `cmd_pause`, and it acknowledges and does nothing else:
+   `cmd_loop` runs only while stopped, so there is nothing to pause, and writing `prgm_state`
+   would clobber `PRGM_LOADING` and break the next `cmd_continue`'s "loading finished" branch.
+   **Every check in this suite is now green in the emulator**, which is also why
+   `test/hardware-check.py`'s `KNOWN_RED` table is empty: a red on a real Next is now a hardware
+   finding by construction, with no known-red to hide behind.
    See `doc/DZRP-TESTING.md`. Like `test-esp`, not part of `make test`: it binds a host TCP port.
    **It says nothing about hardware.**
 4d. **`make test-unit`** — the Z80 unit tests under `src/unit_tests/`, headless (issue #3). One

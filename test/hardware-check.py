@@ -300,19 +300,18 @@ def h1_listener(host, port, timeout, results):
 # number alone, a hardware-only failure would be waved through as "already fails
 # in the emulator", which is the one thing this table must never do.
 #
-# IT IS EMPTY, AND THAT IS A RESULT. Its one entry was C2 — issue #7, cmd_init
-# reading the program name until a NUL and ignoring the frame's length field.
-# That landed, C2 went green on its own, and the entry went with it, exactly as
-# the comment here said it would. The mechanism stays for the next one.
-KNOWN_RED = {
-    "C12": {
-        "signature": "it swallowed the command and carried on",
-        "why": "issue #8 — CMD_PAUSE is routed to cmd_not_supported in src/commands.asm, so "
-               "the frame is consumed and nothing is sent where the spec requires a Length=1 "
-               "response. That jump-table entry dates to upstream's own 2023 commit, so both "
-               "builds have always done it",
-    },
-}
+# IT IS EMPTY, AND THAT IS A RESULT — TWICE OVER NOW. Its first entry was C2,
+# issue #7: cmd_init read the program name until a NUL and ignored the frame's
+# length field. Its second was C12, issue #8: CMD_PAUSE was routed to
+# cmd_not_supported, so the frame was consumed and nothing was sent where the
+# spec requires a Length=1 response. Both landed, both checks went green on
+# their own, and both entries went with them, exactly as this comment said they
+# would. The mechanism stays for the next one.
+#
+# With C12 fixed the emulator bench is 12/12, so ANY red on a Next is now a
+# hardware finding by construction — there is no longer a known-red to hide
+# behind. That is the state this table exists to make legible.
+KNOWN_RED = {}
 
 
 def classify(fail_lines):

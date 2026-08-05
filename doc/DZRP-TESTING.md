@@ -81,9 +81,18 @@ any CSpect result meant anything.
 
 ## Result against our own stub
 
-**2026-08-05, execution control added — `make test-dzrp-stub`: W1, W2 and W3 pass, and 11 passed,
-1 failed, 0 unsupported of 12.** The one red is **C12**, `CMD_PAUSE`, described below; it is a
-pre-existing stub behaviour that this suite is the first thing to look at, not a regression.
+**2026-08-05, `CMD_PAUSE` answered (issue #8) — `make test-dzrp-stub`: W1, W2 and W3 pass, and
+12 passed, 0 failed, 0 unsupported of 12. The target exits 0 for the first time.** Every check
+this suite has is green against our own stub in the emulator.
+
+That matters beyond the tally: **a red on real hardware is now a hardware finding by
+construction.** `test/hardware-check.py`'s `KNOWN_RED` table is empty, so there is no longer a
+known-red for a bench-top failure to hide behind — which is exactly what that table was built to
+make legible.
+
+The immediately preceding result, kept because it is what the entries below were written against:
+**11 passed, 1 failed of 12**, the red being **C12**, `CMD_PAUSE` — a pre-existing stub behaviour
+this suite was the first thing to look at, not a regression.
 
 **The headline is C10 and C11: the stub resumes a debuggee, and the debuggee runs.** That had
 never been shown anywhere in this project — not on hardware, not in the emulator — and until it
@@ -187,18 +196,31 @@ be received at all. No check can pass that until M2 changes it, and none is writ
 
 What C12 asks is the narrow protocol question that *is* answerable today: the specification gives
 `CMD_PAUSE` a Length=1 response — the sequence number alone — with no exemption for a remote that
-is already stopped. **Our stub sends nothing.** `commands.asm`'s jump table maps command 7 to
-`cmd_not_supported`, which stores an error and jumps to `drain_main`, so the frame is consumed,
-the stub returns to `main` and repaints, and the client waits forever. Measured, not read off the
-source: the check times out and a second connection confirms the stub is still serving.
+is already stopped. **It is answered since issue #8, and C12 is green.** `cmd_pause`
+(`src/commands.asm`) sends that response and returns to `cmd_loop`.
 
-Two things keep this in proportion. It is **pre-existing**: the `cmd_jump_table` entry for
-command 7 is upstream's, untouched by the WiFi work and untouched by issue #7's `cmd_init` fix,
-and this change touches no `src/` file at all — so the serial build has always done it. And
-its practical reach is bounded by the paragraph above: DeZog offers Pause only while the program
-is running, which is the state in which the command cannot arrive anyway. It is still a
-conformance failure, and silence is a worse way to refuse a command than CSpect's — closing the
-connection at least tells the client something.
+**It was red until then, and the shape of the defect is worth keeping.** `commands.asm`'s jump
+table mapped command 7 to `cmd_not_supported`, which stores an error and jumps to `drain_main`, so
+the frame was consumed, the stub returned to `main` and repainted, and the client waited forever.
+Measured rather than read off the source: the check timed out and a second connection confirmed
+the stub was still serving. It was **pre-existing** — that jump-table entry is upstream's, dated to
+its own 2023 commit and untouched by the WiFi work or by issue #7 — so both builds had always done
+it, and fixing it moved both ROMs' bytes.
+
+**Acknowledging is the whole of the fix, deliberately.** `cmd_loop` runs only while the debugger is
+stopped, so command 7 cannot arrive in any other state and there is nothing to stop. It must not
+touch `prgm_state`: DeZog sends `CMD_PAUSE` right after `CMD_INIT`, i.e. in `PRGM_LOADING`, and
+overwriting that with `PRGM_STOPPED` would make the next `cmd_continue` skip its "loading finished"
+branch and leave the flashing border on. Nor does it send an `NTF_PAUSE` — that notification
+reports a *transition* into the stopped state and there is none here. CSpect's plugin does the
+same: `Pause()` stops the CPU and calls `SendResponse()`, and the notification is emitted later
+and only if the state actually changed.
+
+**Why upstream never saw it.** DeZog's `ZxNextSerialRemote` overrides `sendDzrpCmdPause()` to throw
+*"To pause execution use the yellow NMI button of the ZX Next"*, so over the serial remote command
+7 never reaches the wire. WiFi mode is driven by the `cspect` remote, which does **not** override
+it and inherits `DzrpRemote`'s `await this.sendDzrpCmd(7)` — it sends the command and blocks on the
+response. Verified against the installed DeZog 3.7.4.
 
 **C5's sizes straddle a transport boundary, and that is the point of three of them.** jnext frames
 inbound TCP into `+IPD` chunks of at most **2048** bytes

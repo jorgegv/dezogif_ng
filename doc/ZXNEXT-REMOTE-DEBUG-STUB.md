@@ -687,12 +687,13 @@ here.*
 **Status 2026-08-05 — BOTH halves are done in the emulator.**
 `src/transport_esp.asm` exists, `make TRANSPORT=wifi` builds it, and `make test-dzrp-stub` runs the
 DZRP conformance suite against it inside jnext: the stub brings the ESP up, listens on 11000, and
-answers every check but one. The first eight were green when the transport landed; C2 was a
-pre-existing `cmd_init` behaviour shared with the serial build, fixed separately as issue #7
-(which also added C9 — see `doc/DZRP-TESTING.md`). The UART build was byte-identical to the one
-before the transport change, so the interface did not leak; issue #7 then changed both ROMs
-deliberately, being common code. The standing red is **C12**, `CMD_PAUSE`, which the stub does
-not answer at all — pre-existing in the same sense C2 was, and fixable only on its own branch.
+**answers every check — 12 of 12, with W1/W2/W3 green and the target exiting 0.** The first eight
+were green when the transport landed; C2 was a pre-existing `cmd_init` behaviour shared with the
+serial build, fixed separately as issue #7 (which also added C9 — see `doc/DZRP-TESTING.md`). The
+UART build was byte-identical to the one before the transport change, so the interface did not
+leak; issue #7 then changed both ROMs deliberately, being common code. The last red was **C12**,
+`CMD_PAUSE`, which the stub did not answer at all — pre-existing in the same sense C2 was, and
+closed on its own branch as **issue #8**, again moving both ROMs.
 
 **Including, since 2026-08-05, the resume**: C10/C11 load a fixture over DZRP, `CMD_CONTINUE` it
 onto a temporary breakpoint, and get the `NTF_PAUSE` back with the registers intact. So "registers
@@ -845,7 +846,8 @@ reason attached, is fine.
 | **The AltROM patch works** | same bench, C10: the breakpoint is an `RST 0`, which can only reach the debugger through the code `copy_altrom` installs at 0x0000/0x0066 | **verified for jnext** |
 | C10 detects a stub that answers `CMD_CONTINUE` and does not resume | two controls: bench W3 (`--no-continue`) and a ROM whose `cmd_continue` returns to `cmd_loop` instead of `restore_registers` — C10/C11 red against both | **verified** |
 | The stackless-NMI **return address** (NR `0xC2`/`0xC3` → `save_nmi_return_address`) is correct | — | **unverified** — C10 sets `PC` itself, so the routine never runs; reaching it needs an M1 press against a *running* debuggee, §8.2 |
-| `CMD_PAUSE` gets no response at all from the stub | `make test-dzrp-stub` C12, measured; `commands.asm` maps command 7 to `cmd_not_supported` → `drain_main` | **verified** — a conformance failure the serial build has always had |
+| `CMD_PAUSE` while stopped is answered with the Length=1 response | `make test-dzrp-stub` C12, measured green; `commands.asm` maps command 7 to `cmd_pause` | **verified** — issue #8. It got **no** response until then, a failure the serial build had always had |
+| DeZog's `cspect` remote really sends command 7 and blocks on it, while its `zxnext` remote never puts it on the wire | DeZog 3.7.4 `out/extension.js`: `CSpectRemote` has no `sendDzrpCmdPause` override and inherits `await this.sendDzrpCmd(7)`; `ZxNextSerialRemote`'s throws "use the yellow NMI button" | **verified** — why upstream never saw issue #8 |
 | dezogif declines a software MF NMI: `nmi66h` serves button causes only | `mf_rom.asm` `nmi66h`, `zxnext.vhd:3843-3848`; `make test` T4 | **verified** |
 | I/O trap on `0x2FFD`/`0x3FFD` generates MF NMI | `zxnext.vhd:3835` | **verified** |
 | Prescaler formula and width | `ports.txt` (`0x143B`), `uart.h` | **verified** |

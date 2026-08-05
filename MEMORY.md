@@ -5,6 +5,105 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-05 — `CMD_PAUSE` is acknowledged and nothing more; the suite is 12/12
+
+**Decided and measured, issue #8** — the last open issue, and the one that turns
+`make test-dzrp-stub` fully green: **W1/W2/W3 pass and 12 passed / 0 failed of
+12, exit 0.** Every check this project's strongest gate has is now green against
+our own stub in the emulator.
+
+**The defect.** `commands.asm`'s jump table routed command 7 to
+`cmd_not_supported`, which stores an error and jumps to `drain_main`: the frame
+was consumed, the stub repainted, and **nothing was sent**. The DZRP
+specification gives `CMD_PAUSE` a Length=1 response — the sequence number alone
+— with no exemption for a remote that is already stopped, so a client waited
+forever. Pre-existing: `git blame` dates that entry to upstream's own 2023
+commit, so both builds had always done it.
+
+**The decision worth recording is what the handler does NOT do.** `cmd_pause` is
+six bytes — `ld de,1` / `jp send_length_and_seqno` — and acknowledging is the
+whole of it. Three reasons, and the second is the one that would have caused a
+real regression:
+
+1. **There is nothing to pause.** The handler is reachable only from `cmd_loop`,
+   which runs only while the debugger is stopped, so the command cannot arrive
+   in any other state.
+2. **Writing `prgm_state` would break `cmd_continue`.** DeZog sends `CMD_PAUSE`
+   right after `CMD_INIT`, i.e. in `PRGM_LOADING`. Overwriting that with
+   `PRGM_STOPPED` — the obvious "mark ourselves stopped" move — makes the next
+   `cmd_continue` skip its `cp PRGM_LOADING` branch, so the border colour is
+   never restored and the flashing border is never disabled. The correct side
+   effect is **none**.
+3. **No `NTF_PAUSE`.** That notification reports a *transition* into the stopped
+   state, and no transition happens here; DeZog is not awaiting one, and
+   `send_ntf_pause` would set `PRGM_STOPPED` anyway, i.e. reason 2 again.
+
+**CSpect agrees, and it was checked rather than assumed.** Its plugin's
+`Pause()` stops the CPU and calls `SendResponse()` with no data; the
+notification is emitted later by `CheckIfBreakpointHit()` and only when the
+state actually changed. Same division: the response acknowledges, the
+notification reports a transition.
+
+**Why upstream never saw this, which is the transferable part.** DeZog's
+`ZxNextSerialRemote` overrides `sendDzrpCmdPause()` to throw *"To pause
+execution use the yellow NMI button of the ZX Next"* — over the serial remote,
+command 7 never reaches the wire, so upstream's silent handler could not be
+observed by upstream's only client. WiFi mode is driven by the `cspect` remote
+(plan §7), which has **no such override** and inherits `DzrpRemote`'s
+`await this.sendDzrpCmd(7)`: it sends the command and blocks. Verified in the
+installed DeZog 3.7.4 by locating both classes' bodies in `out/extension.js`.
+**Adopting a new client re-exposes defects the old client hid**, and this is the
+second one this project has met — issue #7's `cmd_init` was the first.
+
+**Scope, stated because it is the thing most likely to be over-read.** This is
+**not** PC-initiated break. Breaking into a *freely running* debuggee is M2:
+`nmi66h` serves button NMIs only and bench T4 asserts that decline deliberately.
+`nmi66h` was not touched, no poll was added, and the Copper was not gone near.
+
+**Cost and the gate.** Exactly **+6 bytes** in each build (`main_end` UART
+0xF1B5→0xF1BB, WiFi 0xF5B0→0xF5B6), leaving 3301 and 2282 bytes to the identity
+block. **Both ROMs moved, which is correct for common code**: UART
+`a9d1de1c…`→`14ea485e…`, WiFi `f5a88f18…`→`e0e2d8fb…` with `BUILD_TIME` and
+`BUILD_NUMBER` pinned. The byte-identity gate is *expected* to break here, as it
+did for issue #7, and the merge carries a `make bump`.
+
+**`test/hardware-check.py`'s `KNOWN_RED` is now empty again**, and that is a
+result rather than housekeeping: with the emulator bench at 12/12 there is no
+known-red left for a bench-top failure to hide behind, so **any red on a real
+Next is a hardware finding by construction.**
+
+**Rejected.** Sending an `NTF_PAUSE` as well (no transition to report; CSpect
+does not); setting `prgm_state` (reason 2 above — actively harmful); folding
+`cmd_pause` into `cmd_set_register`'s identical `ld de,1` / `jp
+send_length_and_seqno` tail to save three bytes (a false economy that couples
+two unrelated handlers, with ~3.3 KB free); and draining
+`receive_buffer.length` the way issue #7 taught `cmd_init` to — `CMD_PAUSE` is
+specified Length=0, and every other zero-payload handler here (`cmd_close`,
+`cmd_get_registers`) ignores the field, so inventing a different rule for this
+one would be the inconsistency, not the fix.
+
+**Noted, not fixed — `cmd_not_supported` is a class, and #8 was one instance.**
+Three jump-table entries still route there (0 reserved, 18 `CMD_GET_SPRITES`,
+19 `CMD_GET_SPRITE_PATTERNS`), as does every out-of-range command including
+`ADD_BREAKPOINT`/`REMOVE_BREAKPOINT` (40/41), the watchpoints (42/43) and
+`READ_STATE`/`WRITE_STATE` (50/51). **All of them are silent in exactly the same
+way**, and DZRP has no generic error response to send instead.
+
+**18 and 19 are not theoretical — they are #8 again, verified in the same
+place.** `ZxNextSerialRemote` throws locally on both ("The sprite attributes
+can't be read on a ZX Next unfortunately"), so upstream is protected exactly as
+it was for `CMD_PAUSE`. `CSpectRemote` overrides neither, and inherits
+`sendDzrpCmdGetSprites` → `await this.sendDzrpCmd(18,…)` and
+`sendDzrpCmdGetSpritePatterns` → `await this.sendDzrpCmd(19,…)`. So opening
+DeZog's sprite view against our WiFi build will hang the client on a command the
+stub silently swallows — the identical mechanism, the identical cause, and
+already reachable. **Deliberately not fixed here** (this change is scoped to
+issue #8) and it should get its own issue; the fix is not another
+`ld de,1`, because both commands have real payload-bearing responses and
+"refuse audibly" has to be designed rather than copied.
+
+---
+
 ## 2026-08-05 — The stub resumes a debuggee. Measured, and controlled twice
 
 **Measured, not decided**, and it is the largest claim this project has ever

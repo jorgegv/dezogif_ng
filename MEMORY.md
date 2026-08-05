@@ -5,6 +5,72 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-05 — The screen names the fork, the transport and the build; upstream's version leaves it
+
+**Decided, issue #12.** The banner is now
+
+    dezogif_ng WiFi build 0008
+    DZRP v2.1.0
+    Core: 03.02.03
+
+where it read `ZX Next WiFi DeZog Interface` over `v2.2.1`. Three facts, and
+the reason for each is different.
+
+**The build number, which is the one that cost time.** It was already in the
+ROM — `BUILD_NUMBER_HEX`, in the identity block at `0xFEA0` — and not on the
+screen, so "did the new ROM take?" meant booting **mfselect** to read it,
+repeatedly, during the 2026-08-05 hardware session, with the debugger's own
+screen in front of you.
+
+**One source, and it is structural rather than a promise.** `IDENTITY_LINE`
+lives in `constants.asm` **beside `rom_magic`'s definition**, and both are
+spelled from `ROM_VARIANT` and `BUILD_NUMBER_HEX`. They are emitted by the same
+assembler pass, so within a build they cannot disagree; and changing one
+without the other is visible in the diff. A second source for that number is
+exactly the conflation issue #4 and [[ERRORS.md]] are about — there the CRC was
+made to answer identity, and the guard it defeated destroyed a user's backup.
+
+**`v2.2.1` is upstream's and leaves the screen rather than staying with a
+label.** It has not moved since the fork and names nothing this project
+versions. The screen answers *what is running*; the fork point is a fact about
+the repository, and `NOTICE` is where it belongs. **It is still on the wire**,
+as `CMD_INIT`'s `PROGRAM_NAME` (`dezogif v2.2.1`) — untouched here, because
+changing that changes what DeZog displays to the user and is a separate
+decision with a separate blast radius.
+
+**Both ROMs move, and that is correct.** `data_const.asm` and `constants.asm`
+are common code, so the UART byte-identity gate is *expected* to differ — the
+third time this has been true on purpose, after issues #7 and #8. Pinned:
+UART `b8b499be`→`240e4348`, WIFI `48cb7aea`→`00e4108a`. Each build is **11
+bytes smaller**, because the line replaced is shorter than the two it replaced.
+
+**The 32-column bound is an `ASSERT`, watched to fail** at both call sites.
+The first version held it in a comment and the reviewer objected, correctly:
+`rom_magic` six lines below bounds itself with an `ASSERT`, `esp_connect_address`
+with two, and ERRORS.md carries three entries about bounds that nothing
+checked. It costs no bytes.
+
+**A measurement lesson worth more than the change.** The first pinned "before"
+hash quoted for the WiFi ROM was wrong, because `make BUILD_TIME=… mf-rom` does
+**nothing** when the output is already newer than its prerequisites — it hashed
+an image built at the *unpinned* time. Delete the outputs before any pinned
+comparison; `make check-reproducible` does its own build and is not affected.
+
+**Rejected.** Keeping `v2.2.1` with a label such as "fork of" (32 columns, and
+a fork point is not a runtime fact); putting the build number on its own row
+(a whole row for four characters, when six columns were free on row 0);
+deriving it from `BUILD_TIME` or the git hash (`make check-reproducible` must
+keep passing); changing `PROGRAM_NAME` in the same commit (out of scope, and it
+is what a client shows its user).
+
+**Noted, not fixed.** The UART build's row 3 still reads `ESP UART Baudrate:`
+— upstream's wording for the joy-port cable's rate, in the build that has
+nothing to do with the ESP. WiFi mode's half of that was fixed on 2026-08-05;
+this half is cosmetic, in common text, and was left out of a change already
+moving both ROMs.
+
+---
+
 ## 2026-08-05 — The send waits get their own RX budget; the idle poll keeps the short one
 
 **Decided and measured, issue #11** — the first defect in this project found on

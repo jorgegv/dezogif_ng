@@ -443,9 +443,9 @@ run_to_menu "$img5" "$shots/mfselect-skew.png"
 skew=$OUT/mfselect-skew-original.rom
 rm -f "$skew"
 if get_file "$img5" ::/mfselect/original.rom "$skew"; then
-    fail "M6 GUARD BREACHED ON A VERSION SKEW: our ROM was captured as the original ($(python3 "$ROMSUM" "$skew")) — identity is checksum-dependent again"
+    fail "M6 GUARD BREACHED ON A VERSION SKEW: our ROM was captured as the original ($(python3 "$ROMSUM" "$skew"))"
 else
-    pass "M6 guard held with mismatched .sums: identity comes from the ROM's magic, not its checksum"
+    pass "M6 guard held with mismatched .sums: identity comes from the magic, not the checksum"
 fi
 
 # --- run 6: stock installed, capture, then install the UART ROM ------------

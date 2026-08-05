@@ -225,9 +225,9 @@ elif [ "$rc" -eq 2 ]; then
 else
     red=$(bright_red "$OUT/screenshots/ip-boundary-ok.png")
     if [ "$red" -gt 0 ]; then
-        fail "B1 an address of exactly the bound was REFUSED ($red bright-red pixels — the stub is showing 'No WiFi address'). The parser's bound counts read passes instead of stored characters, so the closing quote is never reached after a maximum-length address"
+        fail "B1 an address of exactly ESP_IP_MAX was REFUSED ($red bright-red pixels of 'No WiFi address')"
     else
-        pass "B1 an address of exactly ESP_IP_MAX characters is accepted — no error on the stub's screen"
+        pass "B1 an address of exactly ESP_IP_MAX characters is accepted, with no error on the screen"
     fi
 fi
 log ""
@@ -243,7 +243,7 @@ elif [ "$rc" -eq 2 ]; then
 else
     red=$(bright_red "$OUT/screenshots/ip-boundary-toolong.png")
     if [ "$red" -eq 0 ]; then
-        fail "B2 an address one over the bound was ACCEPTED — the stub reports no error, so the parser is not bounding the copy at all"
+        fail "B2 an address one over ESP_IP_MAX was ACCEPTED: the parser is not bounding the copy at all"
     else
         pass "B2 an address one over ESP_IP_MAX is refused and reported ($red bright-red pixels)"
     fi

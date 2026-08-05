@@ -391,6 +391,13 @@ stop_stub
 # Its own emulator run, for two reasons: it deliberately crashes the debuggee
 # (see test/dzrp/orphan-notify.py), and its verdict is read off the stub's
 # SCREEN, which the conformance suite would have repainted.
+#
+# WHAT A RED W2 MEANS, since the verdict line no longer says it: bright red on
+# that screen is "Last Error: TX Timeout", and the way this run produces it is
+# esp_conn_valid not being cleared when the peer went — so the stub addressed an
+# AT+CIPSEND to a dead cid, got ERROR, waited for a '>' that could not come, and
+# reported a fault on a machine with nothing wrong with it. Pre-fix: 824 pixels.
+# MEMORY.md 2026-08-04 and 2026-08-05 carry the whole history.
 # ===========================================================================
 
 log ""
@@ -419,6 +426,10 @@ else
     # stub, which comes out GREEN. orphan-notify.py makes exactly 2
     # connections; a few more is retry margin, and 14 was the observed
     # signature of a second agent's suite running at the same time.
+    #
+    # The recovery, which the one-line verdict below no longer spells out: re-run
+    # with no other jnext alive (`pgrep -x jnext`, not `pgrep -f`, which matches
+    # its own command line). The same applies to W3, W4 and W5.
     connects=$(grep -c "accepted as cid" "$jlog2" || true)
 
     # The precondition, asserted rather than assumed: the stub really did try to
@@ -427,9 +438,9 @@ else
     refused=$(grep -c "which is not open — answering ERROR" "$jlog2" || true)
 
     if [ "$connects" -gt 6 ]; then
-        fail "W2 CONTAMINATED — $connects connections in $jlog2 where this fixture makes 2. Another bench run reached our stub, so this verdict means nothing in either direction. Re-run with no other jnext alive (pgrep jnext)."
+        fail "W2 CONTAMINATED: $connects connections in $jlog2 where this fixture makes 2, so this verdict means nothing"
     elif [ "$refused" -lt 1 ]; then
-        fail "W2 the precondition never happened — no AT+CIPSEND was refused in $jlog2, so nothing was tested"
+        fail "W2 the precondition never happened: no AT+CIPSEND was refused in $jlog2, so nothing was tested"
     elif [ "$orphan_rc" -ne 0 ]; then
         fail "W2 the stub did not serve a client after the orphaned notification (see $jlog2)"
     elif [ ! -s "$shot2" ]; then
@@ -437,9 +448,9 @@ else
     else
         red=$(bright_red "$shot2")
         if [ "$red" -gt 0 ]; then
-            fail "W2 the stub reported a transport error after the orphaned notification ($red bright-red pixels in $shot2 — it is 'Last Error: TX Timeout'); esp_conn_valid was not cleared when the peer went"
+            fail "W2 the stub reported a transport error after the orphaned notification ($red bright-red pixels of 'TX Timeout')"
         else
-            pass "W2 an unprompted notification to a departed client ($refused AT+CIPSEND refused) leaves the stub quiet — no error on screen — and still serving"
+            pass "W2 an unprompted notification to a departed client ($refused AT+CIPSEND refused) leaves the stub quiet and still serving"
         fi
     fi
 fi
@@ -478,13 +489,13 @@ else
     w3_connects=$(grep -c "accepted as cid" "$jlog3" || true)
 
     if [ "$w3_connects" -gt 6 ]; then
-        fail "W3 CONTAMINATED — $w3_connects connections in $jlog3 where this control makes 2. Another bench run reached our stub, so the control proves nothing. Re-run with no other jnext alive (pgrep jnext)."
+        fail "W3 CONTAMINATED: $w3_connects connections in $jlog3 where this control makes 2, so it proves nothing"
     elif [ "$control_rc" -eq 0 ]; then
-        fail "W3 the control run PASSED with no CMD_CONTINUE sent — C10 is not measuring the resume"
+        fail "W3 the control PASSED with no CMD_CONTINUE sent: C10 is not measuring the resume"
     elif ! printf '%s' "$control_out" | grep -q '^FAIL  C10 '; then
-        fail "W3 the control run failed, but not at C10 — it did not reach the check it is controlling"
+        fail "W3 the control failed, but not at C10 — it never reached the check it controls"
     else
-        pass "W3 with the CMD_CONTINUE withheld C10 goes red, so C10's green result is about the resume"
+        pass "W3 with the CMD_CONTINUE withheld C10 goes red, so C10's green is about the resume"
     fi
 fi
 
@@ -524,13 +535,13 @@ else
                END { print hit + 0 }')
 
     if [ "$q_connects" -gt 6 ]; then
-        fail "W4 CONTAMINATED — $q_connects connections in $jlog4 where this fixture makes 3. Another bench run reached our stub, so this verdict means nothing in either direction."
+        fail "W4 CONTAMINATED: $q_connects connections in $jlog4 where this fixture makes 3, so this verdict means nothing"
     elif [ "$collided" -lt 1 ]; then
-        fail "W4 the precondition never happened — no two +IPD frames were emitted back to back in $jlog4, so the collision was not tested"
+        fail "W4 the precondition never happened: no two +IPD frames back to back in $jlog4, so nothing was tested"
     elif [ "$queued_rc" -ne 0 ]; then
-        fail "W4 a command that arrived while the stub was answering another was LOST (issue #11) — see the lines above and $jlog4"
+        fail "W4 a command that arrived while the stub was answering another was LOST (issue #11); see $jlog4"
     else
-        pass "W4 two commands queued back to back are both answered ($collided collision(s) in the module's log), so no scan discarded an inbound frame"
+        pass "W4 two commands queued back to back are both answered ($collided collision(s) in the module's log)"
     fi
 fi
 
@@ -581,13 +592,13 @@ EOF
 )
 
     if [ "$s_connects" -gt 8 ]; then
-        fail "W5 CONTAMINATED — $s_connects connections in $jlog5 where this fixture makes 3. Another bench run reached our stub, so this verdict means nothing in either direction."
+        fail "W5 CONTAMINATED: $s_connects connections in $jlog5 where this fixture makes 3, so this verdict means nothing"
     elif [ -z "$split_ok" ]; then
-        fail "W5 the precondition never happened — $jlog5 has no 6/15/1 run of +IPD frames with the middle one from another connection, so the split was never tested"
+        fail "W5 the precondition never happened: no 6/15/1 run of +IPD frames from two connections in $jlog5"
     elif [ "$split_rc" -ne 0 ]; then
-        fail "W5 a command split across +IPD frames was answered on the wrong connection or from the wrong payload (issue #13) — see the lines above and $jlog5"
+        fail "W5 a split command was answered on the wrong connection or from the wrong payload (issue #13)"
     else
-        pass "W5 a split command (frames cid $split_ok, 6/15/1) is answered on its own connection with its own payload, and the other client's command is answered too"
+        pass "W5 a split command (cid $split_ok) got its own connection and payload, and the other client was answered too"
     fi
 fi
 

@@ -133,7 +133,7 @@ n_run=$(grep -c '^UT-RUN ' "$report" || true)
 if [ "$n_run" -eq 1 ]; then
     pass "U1 the runner started exactly once"
 elif [ "$n_run" -eq 0 ]; then
-    fail "U1 the runner never started — no UT-RUN line. The image did not run at all; see $raw"
+    fail "U1 the runner never started: no UT-RUN line, so the image did not run at all"
 else
     fail "U1 the runner started $n_run times — the machine reset mid-suite, so the results below are duplicated"
 fi
@@ -173,7 +173,7 @@ count_ok=1
 if [ "$count_ok" -eq 1 ]; then
     pass "U3 counts as pinned: $UT_EXPECTED_TESTS cases, $UT_EXPECTED_RUN run, $UT_EXPECTED_SKIPPED excluded"
 else
-    fail "U3 counts do NOT match the pins: image declares $declared_dec cases (expected $UT_EXPECTED_TESTS), $((n_pass + n_fail)) ran (expected $UT_EXPECTED_RUN), $n_skip excluded (expected $UT_EXPECTED_SKIPPED)"
+    fail "U3 counts do NOT match the pins: $declared_dec cases / $((n_pass + n_fail)) run / $n_skip excluded, pinned $UT_EXPECTED_TESTS/$UT_EXPECTED_RUN/$UT_EXPECTED_SKIPPED"
 fi
 
 # The generator's own manifest is a third statement of the same numbers, from

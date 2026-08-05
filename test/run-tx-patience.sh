@@ -312,11 +312,11 @@ if [ "$rc" -eq 10 ]; then
 elif [ "$rc" -eq 11 ]; then
     fail "P1 no screenshot was written, so the error area could not be checked"
 elif [ "$rc" -ne 0 ]; then
-    fail "P1 the exchange did not complete with ESP_TX_PASSES=10 — the raised budget is not enough for even the emulator, so this bench's injected module is too slow to be a fair test of it"
+    fail "P1 the exchange did not complete at ESP_TX_PASSES=10: the injected module is too slow to be a fair test"
 else
     red=$(bright_red "$OUT/screenshots/tx-patience-fixed.png")
     if [ "$red" -ne 0 ]; then
-        fail "P1 the exchange completed but the stub reports a fault ($red bright-red pixels) — something else went wrong in the same run"
+        fail "P1 the exchange completed but the stub reports a fault ($red bright-red pixels)"
     else
         pass "P1 CMD_INIT and a ${LOOPBACK_SIZE}-byte loopback both completed, and the stub reports no error"
     fi
@@ -333,13 +333,13 @@ if [ "$rc" -eq 10 ]; then
 elif [ "$rc" -eq 11 ]; then
     fail "P2 no screenshot was written, so the error area could not be checked"
 elif [ "$rc" -eq 0 ]; then
-    fail "P2 the exchange COMPLETED with the pre-fix budget — the injection is not reaching the send waits, so P1 proves nothing"
+    fail "P2 the exchange COMPLETED with the pre-fix budget: the injection misses the send waits, so P1 proves nothing"
 else
     red=$(bright_red "$OUT/screenshots/tx-patience-prefix.png")
     if [ "$red" -eq 0 ]; then
-        fail "P2 a reply was lost but the stub reports NO error — the loss is not the TX timeout this bench is about"
+        fail "P2 a reply was lost but the stub reports NO error, so it is not this bench's TX timeout"
     else
-        pass "P2 a reply was lost and the stub reports a transport error ($red bright-red pixels — it is 'Last Error: TX Timeout'), which is issue #11's symptom"
+        pass "P2 a reply was lost and the stub reports 'Last Error: TX Timeout' ($red bright-red pixels), issue #11's symptom"
     fi
 fi
 
@@ -354,13 +354,13 @@ if [ "$rc" -eq 10 ]; then
 elif [ "$rc" -eq 11 ]; then
     fail "P3 no screenshot was written, so the error area could not be checked"
 elif [ "$rc" -ne 0 ]; then
-    fail "P3 the exchange did not complete even at the shipped ESP_RX_WAIT — so P2's failure cannot be attributed to the injected budget, and this bench is measuring something else"
+    fail "P3 the exchange did not complete even at the shipped ESP_RX_WAIT, so P2's red is not the injected budget"
 else
     red=$(bright_red "$OUT/screenshots/tx-patience-control.png")
     if [ "$red" -ne 0 ]; then
         fail "P3 the exchange completed but the stub reports a fault ($red bright-red pixels)"
     else
-        pass "P3 at the shipped ESP_RX_WAIT the same build is fine, so P2's red is the injected budget and not ESP_TX_PASSES=1 by itself"
+        pass "P3 the same build at the shipped ESP_RX_WAIT is fine: P2's red is the budget, not TX_PASSES=1"
     fi
 fi
 

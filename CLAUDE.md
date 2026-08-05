@@ -392,6 +392,31 @@ strongest:
 6. **Real hardware** — the only truth for ESP timing, WiFi behaviour and anything the emulator
    models rather than is.
 
+**A verdict line is one short sentence; the reasoning lives here and in the script's own header.**
+Every `PASS`/`FAIL` line a bench prints is **at most twenty words** (user, 2026-08-05), across all
+nine `test/run-*.sh` benches and the two Python ones. That is a rule about *output*, not about
+evidence: the substance did not go anywhere, it moved into the block comment above each assertion,
+into these §Testing entries, and into `doc/DZRP-TESTING.md`, `doc/HARDWARE-TESTING.md`,
+`doc/MFSELECT.md` and `doc/UNIT-TESTS.md`. A caveat that scrolls past at the end of every run is
+read once; a document can be revised, cited and diffed.
+
+Two things the shortening may **never** touch, because they are interface rather than prose:
+
+- **The check id.** `T1`-`T6`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W5`, `C1`-`C15`, `B1`-`B2`,
+  `P1`-`P3`, `N1`-`N4`, `H1`-`H5` are cited by every document and issue, and two things match on
+  them: `run-dzrp-stub.sh`'s W3 greps `^FAIL  C10 `, and `test/hardware-check.py` takes the code
+  from field 2 of every `FAIL` line. Shorten the prose after the id; never the id, and never
+  renumber.
+- **A clause a reviewer put there to stop the line overclaiming.** Some of these lines are long
+  precisely because an earlier version said more than the run had shown. Where the clause still
+  fits it stays on the line — `test-no-hang`'s N4 says the *mechanism* fired and calls it "not a
+  repair"; `test-client-status`'s reader failure says the session line was **not judged**, so a
+  broken reader is not reported as a wrong screen. Where it does not fit it moves into the comment
+  above the assertion and is not deleted — W2-W5's contamination lines no longer spell out that a
+  contaminated run is worthless *in either direction* (it can come out **green**), and that,
+  with the `pgrep -x jnext` recovery, is now three lines above them in `run-dzrp-stub.sh`. If a
+  clause cannot survive either move, keep the long line and say so out loud.
+
 **Why T4 expects a decline, and what M2 has to change.** `mf_rom.asm`'s `nmi66h` reads NR `0x02`
 on entry, masks `00011100b` and returns immediately unless the result is zero — it serves *button*
 NMIs only. NR `0x02` bit 3 reads back as `nr_02_generate_mf_nmi`, which `zxnext.vhd:3843-3848`

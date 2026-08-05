@@ -410,9 +410,9 @@ idle_run "$ROM_UNBOUND" "$OUT/no-hang-unbound.log" "$shot1" || rc=$?
 if [ "$rc" -eq 10 ]; then
     fail "N1 the stub's listener never appeared — the run never got far enough to judge"
 elif [ "$rc" -eq 1 ]; then
-    fail "N1 the first CMD_INIT was never answered, so the stub was never put into the wait this check is about"
+    fail "N1 the first CMD_INIT was never answered, so the stub never entered the wait this check is about"
 elif [ "$rc" -eq 12 ]; then
-    fail "N1 the screenshot was taken BEFORE the exchange — the border there says nothing about the silence, so this run is void (lower SHOT_FRAMES)"
+    fail "N1 the screenshot was taken BEFORE the exchange, so this run is void (lower SHOT_FRAMES)"
 elif [ "$rc" -eq 13 ]; then
     fail "N1 no screenshot was written, so the screen could not be checked"
 elif [ "$rc" -ne 0 ]; then
@@ -420,9 +420,9 @@ elif [ "$rc" -ne 0 ]; then
 else
     border1=$(border_rgb "$shot1") || { fail "N1 $border1"; border1=; }
     if [ -n "$border1" ] && [ "$border1" != "$BORDER_YELLOW" ]; then
-        fail "N1 the border is $border1, not the yellow ($BORDER_YELLOW) transport_read_byte leaves — something in the unbounded build DID reach main_loop, so N2's black would prove nothing about the bound"
+        fail "N1 the border is $border1, not yellow ($BORDER_YELLOW): the unbounded build reached main_loop, so N2 would prove nothing"
     elif [ -n "$border1" ]; then
-        pass "N1 with no bound the stub sat in cmd_loop's wait through the whole silence: 'B' was never polled and the border is still yellow ($border1)"
+        pass "N1 with no bound the stub sat in cmd_loop's wait: 'B' was never polled, border still yellow ($border1)"
     fi
 fi
 
@@ -435,7 +435,7 @@ idle_run "$ROM_BOUND" "$OUT/no-hang-bound.log" "$shot2" || rc=$?
 if [ "$rc" -eq 10 ]; then
     fail "N2 the stub's listener never appeared — the run never got far enough to judge"
 elif [ "$rc" -eq 1 ]; then
-    fail "N2 the first CMD_INIT was never answered, so the stub was never put into the wait this check is about"
+    fail "N2 the first CMD_INIT was never answered, so the stub never entered the wait this check is about"
 elif [ "$rc" -eq 12 ]; then
     fail "N2 the screenshot was taken BEFORE the exchange, so this run is void (lower SHOT_FRAMES)"
 elif [ "$rc" -eq 13 ]; then
@@ -445,11 +445,11 @@ elif [ "$rc" -ne 0 ]; then
 else
     border2=$(border_rgb "$shot2") || { fail "N2 $border2"; border2=; }
     if [ -n "$border2" ] && [ "$border2" = "$BORDER_YELLOW" ]; then
-        fail "N2 the border is still yellow — 'B' was never polled, so the bound did not expire and the stub never left cmd_loop's wait"
+        fail "N2 the border is still yellow: 'B' was never polled, so the bound never expired"
     elif [ -n "$border2" ] && [ "$border2" != "$BORDER_BLACK" ]; then
-        fail "N2 the border is $border2 — neither the yellow of a stub still waiting nor the black of one that handled 'B'. Most likely the keypress landed before the exchange; see KEY_FRAMES"
+        fail "N2 the border is $border2, neither yellow nor black — the keypress probably landed early; see KEY_FRAMES"
     elif [ -n "$border2" ]; then
-        pass "N2 the bound expired and the stub went back to its idle loop: 'B' was polled and the border is black ($border2)"
+        pass "N2 the bound expired and the stub went back to main_loop: 'B' was polled, border black ($border2)"
     fi
 fi
 
@@ -480,13 +480,13 @@ if start_stub "$ROM_SLOWPROMPT" "$OUT/no-hang-slowprompt.log" "$shot3"; then
     elif [ "$rc" -eq 12 ] || [ "$rc" -eq 13 ]; then
         fail "N3 no usable screenshot (client exit $rc), so the precondition could not be read"
     elif [ "${sends:-0}" -lt 1 ]; then
-        fail "N3 the precondition never happened — no AT+CIPSEND accepted in $OUT/no-hang-slowprompt.log, so the module was never put in the state this check is about"
+        fail "N3 the precondition never happened: no AT+CIPSEND accepted in $OUT/no-hang-slowprompt.log, so nothing was tested"
     elif [ "$red" -eq 0 ]; then
-        fail "N3 the stub reports NO transport fault ($shot3 has no bright red), so the injected budget was never actually reached — the prompt arrived in time and this run tested nothing"
+        fail "N3 the stub reports NO transport fault, so the injected budget was never reached and nothing was tested"
     elif [ "$rc" -ne 0 ]; then
-        fail "N3 a SECOND client went unanswered after the first send missed its prompt ($sends announced, $red bright-red pixels of 'TX Timeout') — the module is still counting off payload it was promised"
+        fail "N3 a SECOND client went unanswered after a send missed its prompt ($sends announced): the module is still owed"
     else
-        pass "N3 the first send missed its prompt ($sends announced, $red bright-red pixels of 'TX Timeout') and a second client was still answered — the module was not left owed"
+        pass "N3 a send missed its prompt ($sends announced) yet a second client was answered: not left owed"
     fi
 else
     stop_stub
@@ -516,13 +516,13 @@ if start_stub "$ROM_RECOVER" "$jlog4" "$shot4"; then
     elif [ "$rc" -eq 12 ] || [ "$rc" -eq 13 ]; then
         fail "N4 no usable screenshot (client exit $rc)"
     elif [ "${stops:-0}" -lt 1 ]; then
-        fail "N4 the recovery never ran — no AT+CIPSERVER=0 in $jlog4, and nothing but esp_recover sends one, so the fault counter never reached its limit"
+        fail "N4 the recovery never ran: no AT+CIPSERVER=0 in $jlog4, so the fault count never reached its limit"
     elif [ "${listens:-0}" -lt $((stops + 1)) ]; then
-        fail "N4 the recovery ran $stops time(s) but the module listened only $listens time(s), where one bring-up plus one per recovery is $((stops + 1)) — a chain that did not come back up is worse than not recovering at all"
+        fail "N4 the recovery ran $stops time(s) but the module listened only $listens, where $((stops + 1)) was owed"
     elif [ "$rc" -ne 0 ]; then
         fail "N4 the recovery ran and re-listened ($stops recoveries, $listens listens) but a client was NOT served afterwards"
     else
-        pass "N4 the count reached its limit, esp_recover stopped the listener and ran the chain again ($stops recoveries, $listens listens = 1 bring-up + 1 each), and a client was served afterwards — the MECHANISM works; it is not evidence that it repairs anything (see the header)"
+        pass "N4 esp_recover re-ran the chain ($stops recoveries, $listens listens) and a client was served: the MECHANISM, not a repair"
     fi
 else
     stop_stub

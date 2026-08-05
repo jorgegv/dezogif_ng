@@ -219,15 +219,15 @@ fi
 if cmp -s "$SHOTS/boot-stock.png" "$SHOTS/boot-ours.png"; then
     pass "T2 our enNextMf.rom does not perturb the NextZXOS boot (0.00% of pixels differ)"
 else
-    fail "T2 boot differs with our ROM installed ($(diff_pct "$SHOTS/boot-stock.png" "$SHOTS/boot-ours.png")% of pixels; see $SHOTS/boot-{stock,ours}.png)"
+    fail "T2 boot differs with our ROM installed ($(diff_pct "$SHOTS/boot-stock.png" "$SHOTS/boot-ours.png")% of pixels; see boot-{stock,ours}.png)"
 fi
 
 # T3 — control for T4.
 stock_pct=$(diff_pct "$SHOTS/boot-stock.png" "$SHOTS/nmi-stock.png")
 if took_over "$stock_pct"; then
-    pass "T3 CONTROL: the NMI fixture fires the Multiface NMI (stock MF ROM repaints $stock_pct% of the screen)"
+    pass "T3 CONTROL: the NMI fixture fires the Multiface NMI (stock MF ROM repaints $stock_pct%)"
 else
-    fail "T3 CONTROL: the NMI fixture did not fire the Multiface NMI (only $stock_pct% changed) — the bench is broken and T4 below is meaningless"
+    fail "T3 CONTROL: the NMI fixture did not fire the Multiface NMI ($stock_pct%): T4 below means nothing"
 fi
 
 # T4 — the actual subject.
@@ -254,17 +254,17 @@ fi
 # assertion becomes took_over and the message becomes a takeover.
 ours_pct=$(diff_pct "$SHOTS/boot-ours.png" "$SHOTS/nmi-ours.png")
 if took_over "$ours_pct"; then
-    fail "T4 our stub took the screen on a NON-BUTTON NMI ($ours_pct%) — nmi66h's cause check has changed; if that was deliberate (M2), invert this assertion"
+    fail "T4 our stub took the screen on a NON-BUTTON NMI ($ours_pct%): nmi66h's cause check has changed"
 else
-    pass "T4 our stub declines a non-button NMI and leaves the screen alone ($ours_pct% changed), as nmi66h's cause check intends"
+    pass "T4 our stub declines a non-button NMI and leaves the screen alone ($ours_pct% changed)"
 fi
 
 # T5 — the Copper NMI, M2's mechanism.
 copper_pct=$(diff_pct "$SHOTS/boot-stock.png" "$SHOTS/copper-stock.png")
 if took_over "$copper_pct"; then
-    pass "T5 a two-instruction Copper list raises the Multiface NMI ($copper_pct% repainted) — M2's break mechanism works headless"
+    pass "T5 a two-instruction Copper list raises the Multiface NMI ($copper_pct% repainted)"
 else
-    fail "T5 the Copper did not raise the Multiface NMI (only $copper_pct% changed; see $SHOTS/copper-stock.png)"
+    fail "T5 the Copper did not raise the Multiface NMI ($copper_pct% changed; see copper-stock.png)"
 fi
 
 # T6 — the stub is ALIVE.
@@ -307,11 +307,11 @@ fi
 button_pct=$(diff_pct "$SHOTS/boot-ours.png" "$SHOTS/button-ours.png")
 vs_stock_pct=$(diff_pct "$SHOTS/nmi-stock.png" "$SHOTS/button-ours.png")
 if ! took_over "$button_pct"; then
-    fail "T6 our stub did NOT take over on an M1 button NMI (only $button_pct% changed; see $SHOTS/button-ours.png) — nmi66h, the relocation or show_ui is broken"
+    fail "T6 our stub did NOT take over on an M1 button NMI ($button_pct%): nmi66h, the relocation or show_ui broke"
 elif ! took_over "$vs_stock_pct"; then
-    fail "T6 something took over, but it looks like the STOCK Multiface monitor (only $vs_stock_pct% differs from $SHOTS/nmi-stock.png) — is our ROM really installed on the working image?"
+    fail "T6 something took over but it looks like the STOCK Multiface monitor ($vs_stock_pct% unlike it): is our ROM installed?"
 else
-    pass "T6 our stub takes over on a real M1 button NMI ($button_pct% repainted, $vs_stock_pct% unlike the stock monitor) — the stub is alive"
+    pass "T6 the stub is ALIVE: it takes over on a real M1 button NMI ($button_pct% repainted, $vs_stock_pct% unlike stock)"
 fi
 
 log ""

@@ -316,7 +316,7 @@ one_run() {
     local shot_at
     shot_at=$(stat -c %Y "$shot")
     if [ "$(printf '%.0f' "$done_at")" -gt "$shot_at" ]; then
-        fail "$name the capture ($shot_at) came BEFORE the client set the state ($done_at) — this is the bench, not the stub: raise SHOT_FRAMES"
+        fail "$name the capture ($shot_at) came BEFORE the client's state ($done_at): the bench, not the stub — raise SHOT_FRAMES"
         return
     fi
 
@@ -327,7 +327,7 @@ one_run() {
     local control
     control=$(read_row "$shot" "$CONTROL_ROW" || true)
     if [ "$control" != "$CONTROL_TEXT" ]; then
-        fail "$name the screen reader is not reading this image: row $CONTROL_ROW should be '$CONTROL_TEXT' and reads '$control'. The session line was NOT judged."
+        fail "$name the reader failed: row $CONTROL_ROW should read '$CONTROL_TEXT', reads '$control' — session line NOT judged"
         return
     fi
 

@@ -80,6 +80,47 @@ answers instantly so there is no window to land in; on a real Next it is **20-50
 measured, and it is hardware bench **H3**. One fix covers both; only one half of it has a check on
 this side of the line.
 
+A **fifth** run is check **W5**, the other two-client check, and its subject is issue #13: a
+command whose payload does **not** all arrive in one `+IPD` frame, while a second client speaks.
+`cmd_get_tbblue_reg`, `cmd_set_breakpoints` and `cmd_restore_mem` all send their response header
+and **then** read payload, so those reads reach `esp_require_payload`, which used to take the next
+frame off the wire whoever it belonged to — and write `esp_conn_id` on the way past.
+
+Connection A writes the six header bytes of a `CMD_GET_TBBLUE_REG` and stops; connection B writes a
+whole `CMD_LOOPBACK`; A then writes the one byte it withheld, the register number.
+`CMD_GET_TBBLUE_REG` is the reproducer because it makes both failures observable in one byte: its
+payload is a register **number** and its answer is that register's **value**, so a spliced payload
+comes back on the wire as the wrong register's value rather than corrupting something out of sight.
+The byte B's frame would supply is B's own length LSB, which the fixture chooses and reads cleanly
+beforehand — so the two possible answers are known in advance and are asserted to differ.
+
+**It was shown red on two ROMs, and the two failure modes are separately visible:**
+
+| ROM | W5 |
+|---|---|
+| `main` | **FAIL** — *"connection A … was never answered"* and *"connection B received a reply carrying connection A's sequence number"* |
+| the latch alone (`esp_tx_conn_id`, no ownership) | **FAIL** — A is answered on its own connection, *"with NextREG 0x09's value instead of 0x00's"*, and B's own command is eaten |
+| the fix as merged | **PASS** — `AT+CIPSEND=2,6` to A and `AT+CIPSEND=1,14` to B, in that order |
+
+The middle row is the one that matters: **the latch fixes addressing and does nothing at all for
+payload adoption**, and a check that only asserted "the reply reached the right socket" would have
+been green over a debuggee still being patched with breakpoint addresses built from two clients'
+bytes.
+
+**W5 asserts its own precondition from the module's log**, as W2 and W4 do: three `+IPD` frames of
+6, 15 and 1 bytes, consecutive, with the middle one from a different connection. The three writes
+are **8 ms** apart and that number is bounded on both sides, measured rather than chosen — below
+~2 ms the module frames A's header and A's payload as one `+IPD` and there is no split left to
+test; above ~20 ms the stub's own RX budget expires while it waits (`ESP_RX_WAIT` is ~100 ms of
+*emulated* time, and this emulator runs several times faster than real time). Drifting out of that
+window fails the precondition rather than passing vacuously.
+
+**What W5 does not reach.** The hold buffer holds one frame, so a *third* client speaking inside
+the same window still loses its command — framed and dropped rather than spliced, which is
+`esp_hold_frame`'s existing documented loss. And nothing here is evidence about hardware: real TCP
+segmentation is not jnext's chunking, and DeZog itself opens one connection and is strictly
+request/response, so no client this project has can reach any of this.
+
 Extra arguments go through `DZRP_ARGS`:
 
     make test-dzrp REMOTE=tcp:127.0.0.1:11000 \
@@ -120,6 +161,10 @@ fixture is written for the memory map `cmd_init` leaves on a Next and would need
 any CSpect result meant anything.
 
 ## Result against our own stub
+
+**2026-08-05, a reply belongs to one connection and a command to one connection's frames (issue
+#13) — `make test-dzrp-stub`: W1-W5 pass, and 14 passed, 0 failed, 0 unsupported of 14.** W5 is
+new and was red on `main`'s ROM and red again on a ROM carrying only half the fix.
 
 **Since 2026-08-05 every run of this bench settles two seconds between the listener appearing and
 the first client connecting** (issue #10). The port exists as soon as `AT+CIPSERVER` is accepted,

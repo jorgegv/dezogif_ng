@@ -5,7 +5,98 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
-## 2026-08-05 — DeZog drives the stub on a Next, and an NMI against a RUNNING debuggee returns correctly
+## 2026-08-05 — A reply belongs to one connection; a command belongs to one connection's frames
+
+**Decided and measured, issue #13.** Two separate rules, because the defect was
+two defects sharing a trigger, and **the obvious fix covers only one of them.**
+
+**The trigger.** `cmd_get_tbblue_reg`, `cmd_set_breakpoints` and
+`cmd_restore_mem` send their response header and **then** read payload. If the
+command's payload does not all arrive in one `+IPD`, those reads reach
+`esp_require_payload`, which takes the next frame — from anywhere — and writes
+`esp_conn_id` on the way past. So: the reply went to whoever spoke last, **and**
+the command's remaining bytes came out of that other client's frame. For
+`cmd_set_breakpoints` the second one is breakpoint addresses assembled from two
+clients and then written into the debuggee as `RST 0`.
+
+**Rule 1, the latch.** `TRANSPORT_MESSAGE_START` — already at the first byte of
+every response and every notification, and already the transport's own — now
+snapshots `esp_conn_id`/`esp_conn_valid` into `esp_tx_conn_id`/`esp_tx_conn_valid`,
+and `esp_flush_chunk` sends to the snapshot. A message cannot be redirected once
+begun, whatever arrives. That is the issue's stated acceptance criterion, and it
+is the whole of the addressing fix.
+
+**Rule 2, ownership, and it is NOT redundant with rule 1.** `esp_cmd_id` names
+the connection whose command is being received; a frame from anywhere else is
+**parked** in the hold buffer (or dropped framed, when the buffer is busy)
+rather than spliced, and served as the next command afterwards. Measured, not
+argued: with only the latch, the split command is answered **on its own
+connection with the wrong register's value**, and the other client's command is
+eaten. A check asserting only "the reply reached the right socket" would have
+been green over a debuggee still being patched with two clients' bytes.
+
+**Where ownership is released is the subtle part, and the obvious place is
+wrong.** `transport_flush` is NOT "the message ended" — `transport_write_byte`
+calls it every `ESP_TX_CHUNK` bytes, mid-message. So `TRANSPORT_END_MESSAGE`
+grew a routine of its own, `transport_end_message`, which clears
+`esp_cmd_active` and falls into the flush. Those three sites (`cmd_loop`,
+`main`, `main_loop.continue`) are the transport's only marker for "the debugger
+is idle", and `transport.asm` already enumerates them for issue #11's reasons.
+
+**Claiming has to happen at the first byte READ, not when a chunk is synced.**
+`main_loop`'s poll calls `esp_sync_ipd` directly and `cmd_loop`'s
+`TRANSPORT_END_MESSAGE` runs *after* it, so a claim made at sync time would be
+cleared before the command it belongs to had been read — and the guard would
+then be silently inert. It is claimed in `esp_require_payload` instead, which
+every payload byte passes through. Reasoned first, then confirmed by the bench
+going green rather than by the diff looking right.
+
+**Parking rather than dropping, and rather than refusing.** Dropping the other
+client's frame would have been ~20 bytes and is what a full hold buffer still
+does. Parking costs nothing extra — `esp_capture_ipd`'s copy became
+`esp_hold_frame`, taking an already-parsed header — and it keeps the other
+client's command alive, so both are answered. Refusing to continue at all (an
+RX timeout) was rejected: it turns two legitimate clients into a reported error.
+
+**esp_conn_id is deliberately NOT restored after a park.** It names the
+connection of the current chunk, and after a park there is no current chunk; the
+next sync overwrites it. What the message being written depends on is the latch,
+which is the point of having one.
+
+**Evidence — red on TWO ROMs first**, bench check **W5**, run 5 of
+`make test-dzrp-stub`:
+
+| ROM | W5 |
+|---|---|
+| `main` | A never answered; **B received a reply carrying A's sequence number** |
+| latch only | A answered correctly addressed, **with NextREG 0x09's value instead of 0x00's**; B's command eaten |
+| as merged | `AT+CIPSEND=2,6` to A, `AT+CIPSEND=1,14` to B, in that order |
+
+The precondition is asserted from jnext's own log — three `+IPD` frames, 6/15/1,
+the middle from another connection — and the three client writes are **8 ms**
+apart, a number bounded on both sides by measurement: below ~2 ms the module
+frames the split command as one `+IPD` and there is nothing to test; above
+~20 ms the stub's own RX budget expires first. Both edges were run.
+
+**Cost: +110 bytes, WiFi only** — `main_end` 0xF7F5 → 0xF863, 1597 free to the
+identity block. **The UART ROM is byte-identical** (`ba860de1…` pinned, before
+and after), which is what says nothing shared moved: both macros are the
+transport's own, so `message.asm` and `main.asm` did not change a byte.
+
+**NOT COVERED, and none of it is hidden.** A **third** client speaking inside
+the same window still loses its command — one hold buffer, one frame, which is
+`esp_hold_frame`'s existing documented loss. Nothing here is evidence about
+**hardware**: real TCP segmentation is not jnext's chunking. And the whole class
+is **unreachable by DeZog**, which opens one connection and is strictly
+request/response — so this is a latent defect closed, not a symptom cured.
+
+**Rejected.** Reading the whole payload before answering in the three handlers
+(the issue's own third option): it fixes the instances rather than the class,
+the next handler written in that shape brings it back — and, more decisively, it
+does not fix mode 2 at all, since a command's payload can span frames however it
+is read. A "reserved" connection id to mean no-owner (the same reservation
+mistake `esp_conn_valid` exists to have stopped, ERRORS.md). Clearing ownership
+in `transport_flush` (mid-message, see above).
 
 **Measured, not decided**, and it closes both M1's last item and the oldest
 unverified claim in the project. A VS Code session, `remoteType: "cspect"`,

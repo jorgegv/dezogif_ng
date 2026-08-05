@@ -5,6 +5,56 @@ attempting similar logic.
 
 ---
 
+## A correctly-held mutex that does not exclude, because the emulator outlived it
+
+**Symptom.** Mid-session, with three agents working in parallel, a bench run
+taken **inside** `flock $HOME/tmp/dezogif_ng-bench.lock` found a foreign jnext
+alive and holding `127.0.0.1:11000`. Every bench here is wrapped in that lock
+precisely so that cannot happen, and a run answered by somebody else's stub can
+come out **green** — the failure this project already has an entry for.
+
+**The first diagnosis was wrong, and it was the comfortable one.** "The other
+agent skipped the lock." It had not: its script carries the same flock block,
+above anything that copies an image or starts an emulator, and both of its
+invocations used the outer `BENCH_LOCK_HELD=1 flock …`. The exclusion was in
+place the whole time.
+
+**The actual cause is in the shared bench scripts.** `run-dzrp-stub.sh` launches
+
+```sh
+timeout "$RUN_TIMEOUT" "$JNEXT" … &
+jnext_pid=$!
+```
+
+so `jnext_pid` is the **`timeout` wrapper's** pid, not the emulator's. Teardown
+kills and `wait`s on the wrapper and then declares the run over, with **no check
+that jnext itself has exited and released the port**. A bench can therefore drop
+the flock while its emulator is still bound to 11000, and the next lock holder
+inherits it. `run-tx-patience.sh`, `run-esp.sh` and `run-ip-boundary.sh` share
+the pattern.
+
+**That is the worst shape this failure has**: the mutex is held correctly by
+everyone and still does not exclude, because the contaminating process belongs
+to a run that has already finished. No amount of discipline at the lock fixes
+it.
+
+**Working practice until the scripts are fixed** (filed separately; deliberately
+not patched from a branch, because three agents were in those files at once):
+check `pgrep -x jnext` **and** `ss -ltn | grep ':11000'` **before and after**
+every bench run, not only before, and kill and wait for anything that survives.
+Note `pgrep -f jnext` matches its own command line and will lie to you.
+
+**Lesson, and it generalises past this repository.** A lock protects a critical
+section; it does not protect a **resource** that a process can still hold after
+leaving the section. When the thing being excluded is a port, a file or a
+device, the release has to be *observed* — the resource seen to be free — and
+not inferred from the fact that the code that took it has returned. And when a
+mutex appears to have failed, suspect a leaked holder before suspecting a
+participant: the second explanation is easier to believe and was, here, a false
+accusation.
+
+---
+
 ## Clearing a flag in the obvious routine, which one caller bypasses
 
 **Symptom.** Issue #11's fix, first version: two commands queued back to back

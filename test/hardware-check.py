@@ -415,6 +415,59 @@ def h2_conformance(remote, results, extra_args):
 # --------------------------------------------------------------------------
 
 
+def find_stray(conns, missing_index, payload, seconds=3.0):
+    """Where did connection `missing_index`'s reply actually go?
+
+    Called only when a connection got no answer. It asks every OTHER open
+    connection whether something is sitting unread on it, and says which of two
+    different bugs that indicates:
+
+      * ANOTHER CONNECTION HAS IT — the stub sent the reply to the wrong
+        connection id. The `+IPD` header was parsed but the id was not carried
+        through to the `AT+CIPSEND`, or was overwritten between the two.
+      * NOBODY HAS IT — the stub never produced a reply at all, so the command
+        did not reach the handler. The `+IPD` for it was lost, or consumed as
+        payload belonging to the previous frame.
+
+    Both look identical from the connection that asked, which is why this
+    existed as a gap: H3 could report the symptom and never distinguish the
+    cause. On hardware, 2026-08-05, it reported "no reply" three runs running
+    and could say nothing more.
+
+    Deliberately read-only and best-effort: a probe that cannot answer must not
+    turn a clear FAIL into an exception. Every failure path here returns a
+    sentence rather than raising.
+    """
+    findings = []
+    for j, other in enumerate(conns):
+        if j == missing_index:
+            continue
+        try:
+            other.t.set_timeout(seconds)
+            seq, body = other._read_frame()
+        except Exception as e:                      # noqa: BLE001 — diagnosis only
+            findings.append("connection %d had nothing unread (%s)"
+                            % (j + 1, type(e).__name__))
+            continue
+        if body == payload:
+            findings.append("*** connection %d IS HOLDING IT *** — %d bytes, seq %d, "
+                            "byte-identical to what connection %d asked for. The reply was "
+                            "addressed to the wrong connection id"
+                            % (j + 1, len(body), seq, missing_index + 1))
+        else:
+            findings.append("connection %d had an unexpected %d-byte frame, seq %d, which is "
+                            "NOT the missing payload" % (j + 1, len(body), seq))
+
+    if not findings:
+        return "no other connection to ask."
+
+    joined = "; ".join(findings)
+    if "IS HOLDING IT" in joined:
+        return joined
+    return (joined + ". So the reply was not merely misaddressed — nothing was sent at all, "
+            "which points at the command never reaching the handler rather than at the id")
+
+
 def h3_connection_id(host, port, timeout, results):
     """Two connections open at once, each given its own distinct payload.
 
@@ -459,9 +512,15 @@ def h3_connection_id(host, port, timeout, results):
             try:
                 body = d.command(dzrp.CMD_LOOPBACK, payload)
             except dzrp.DzrpError as e:
-                results.add("H3", FAIL, "connection %d got no usable reply (%s) — a reply "
-                                        "addressed to the wrong id looks exactly like this"
-                                        % (i + 1, e))
+                # FOLLOW THE MISSING REPLY. "No reply" is where this check used
+                # to stop, and it is one observation short of a diagnosis: it
+                # cannot tell "the answer went to the wrong connection" from
+                # "the command was never processed". Those are different bugs
+                # in different code. Ask the other connections whether they are
+                # holding it.
+                elsewhere = find_stray(conns, i, payload)
+                results.add("H3", FAIL, "connection %d got no usable reply (%s). %s"
+                                        % (i + 1, e, elsewhere))
                 return
             if body != payload:
                 results.add("H3", FAIL, "connection %d got %d bytes back, and they are not "

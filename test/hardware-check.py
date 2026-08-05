@@ -84,11 +84,19 @@ WHAT THIS SCRIPT CANNOT SEE, and none of it is hidden:
   * (The stackless-NMI return ADDRESS used to be listed here. It was closed on
     2026-08-05 by a human pressing the M1 button during a real DeZog session,
     which is still something neither this script nor jnext can do.)
-  * AltROM on hardware. Exercised in jnext by C10's RST 0 breakpoint, which can
-    only reach the debugger through the patched Alt ROM; never on silicon.
+  * (AltROM on hardware used to be listed here too, and that became untrue by
+    the same delegation. C10's temporary breakpoint is an RST 0; while the
+    debuggee runs slot 0 holds ROM_BANK with the AltROM enabled and nothing
+    disables it, so that RST 0 can only reach the debugger through the code
+    copy_altrom installs at 0x0000. C10 has passed on a Next, so the patched
+    AltROM executed there.)
   * The UART build. It needs a joy-port cable and a USB serial adapter; the
     conformance suite reaches it as serial:<dev>:<baud> when someone has that
     hardware set up, and this script does not pretend to.
+
+The full list of what a green run does NOT establish is doc/HARDWARE-TESTING.md,
+which is where the UNCOVERED block this script used to print after every summary
+now lives.
 """
 
 import argparse
@@ -291,9 +299,8 @@ def h1_listener(host, port, timeout, results):
             host, port, time.monotonic() - started, e))
         return False
     sock.close()
-    results.add("H1", PASS, "connected to %s:%d in %.0f ms — the stub's own "
-                            "AT+CIPSERVER listener is up" % (
-                                host, port, (time.monotonic() - started) * 1000))
+    results.add("H1", PASS, "connected to %s:%d in %.0f ms" % (
+        host, port, (time.monotonic() - started) * 1000))
     return True
 
 
@@ -327,10 +334,16 @@ def h1_listener(host, port, timeout, results):
 # their own, and both entries went with them, exactly as this comment said they
 # would. The mechanism stays for the next one.
 #
-# With C12 fixed the emulator bench is 12/12, so ANY red on a Next is now a
-# hardware finding by construction — there is no longer a known-red to hide
+# With those fixed the emulator bench is green in full, so ANY red on a Next is
+# now a hardware finding by construction — there is no longer a known-red to hide
 # behind. That is the state this table exists to make legible.
+#
+# THE SENTINEL BELOW IS LOAD-BEARING. main() decides whether a non-zero exit
+# deserves its "nothing here is the hardware's fault" note by looking for
+# KNOWN_RED_NOTE in every FAIL detail. Change the string in one place only.
 KNOWN_RED = {}
+
+KNOWN_RED_NOTE = "not a hardware finding"
 
 
 def classify(fail_lines):
@@ -382,10 +395,10 @@ def h2_conformance(remote, results, extra_args):
     print("--- end conformance.py ---\n", flush=True)
 
     if proc.returncode == 0:
-        results.add("H2", PASS, "DZRP conformance suite passed in full")
+        results.add("H2", PASS, "the DZRP conformance suite passed in full")
         return
     if proc.returncode == 2:
-        results.add("H2", FAIL, "the conformance suite could not talk to the remote at all")
+        results.add("H2", FAIL, "the suite could not talk to the remote at all")
         return
 
     fail_lines = [strip_ansi(line) for line in captured
@@ -393,19 +406,14 @@ def h2_conformance(remote, results, extra_args):
     known, novel = classify(fail_lines)
 
     if known and not novel:
-        results.add("H2", FAIL, "%s failed, and %s ALREADY fails against the emulator in "
-                                "exactly this way: %s. Nothing here is a hardware finding" % (
-                                    ", ".join(known),
-                                    "it" if len(known) == 1 else "they all",
-                                    "; ".join(KNOWN_RED[c]["why"] for c in known)))
+        results.add("H2", FAIL, "%s already red in the emulator (see KNOWN_RED) — %s"
+                                % (", ".join(known), KNOWN_RED_NOTE))
     elif novel:
-        results.add("H2", FAIL, "%s failed, of which %s %s NOT known-red — that is new on this "
-                                "remote and is the part worth investigating" % (
-                                    ", ".join(known + novel), ", ".join(novel),
-                                    "is" if len(novel) == 1 else "are"))
+        results.add("H2", FAIL, "%s failed; %s not known-red, so new on this remote"
+                                % (", ".join(known + novel), ", ".join(novel)))
     else:
-        results.add("H2", FAIL, "the conformance suite exited %d — its own output above is "
-                                "the detail" % proc.returncode)
+        results.add("H2", FAIL, "the suite exited %d; its own output above is the detail"
+                                % proc.returncode)
 
 
 # --------------------------------------------------------------------------
@@ -444,26 +452,21 @@ def find_stray(conns, missing_index, payload, seconds=3.0):
             other.t.set_timeout(seconds)
             seq, body = other._read_frame()
         except Exception as e:                      # noqa: BLE001 — diagnosis only
-            findings.append("connection %d had nothing unread (%s)"
-                            % (j + 1, type(e).__name__))
+            findings.append("connection %d had nothing unread" % (j + 1))
             continue
         if body == payload:
-            findings.append("*** connection %d IS HOLDING IT *** — %d bytes, seq %d, "
-                            "byte-identical to what connection %d asked for. The reply was "
-                            "addressed to the wrong connection id"
-                            % (j + 1, len(body), seq, missing_index + 1))
+            findings.append("connection %d IS HOLDING IT (%d bytes): wrong id"
+                            % (j + 1, len(body)))
         else:
-            findings.append("connection %d had an unexpected %d-byte frame, seq %d, which is "
-                            "NOT the missing payload" % (j + 1, len(body), seq))
+            findings.append("connection %d held an unrelated %d-byte frame" % (j + 1, len(body)))
 
     if not findings:
-        return "no other connection to ask."
+        return "no other connection to ask"
 
     joined = "; ".join(findings)
     if "IS HOLDING IT" in joined:
         return joined
-    return (joined + ". So the reply was not merely misaddressed — nothing was sent at all, "
-            "which points at the command never reaching the handler rather than at the id")
+    return joined + ", so nothing was sent at all"
 
 
 # How long to pause before the second exchange when the first attempt failed.
@@ -485,14 +488,15 @@ def h3_attempt(conns, delay):
             time.sleep(delay)
         try:
             body = d.command(dzrp.CMD_LOOPBACK, payload)
-        except dzrp.DzrpError as e:
-            return False, ("connection %d got no usable reply (%s). %s"
-                           % (i + 1, e, find_stray(conns, i, payload)))
+        except dzrp.DzrpError:
+            # The exception text is dropped on purpose: find_stray below says
+            # which of the two bugs this is, which is the part worth the words.
+            return False, ("connection %d got no reply; %s"
+                           % (i + 1, find_stray(conns, i, payload)))
         if body != payload:
-            return False, ("connection %d got %d bytes back, and they are not its own "
-                           "payload — the id was assumed, not read" % (i + 1, len(body)))
-    return True, ("two simultaneous connections each got their own payload back — the "
-                  "+IPD id is read from the header, not assumed")
+            return False, ("connection %d got %d bytes back, not its own payload"
+                           % (i + 1, len(body)))
+    return True, "two simultaneous connections each got their own payload back"
 
 
 def h3_connection_id(host, port, timeout, results):
@@ -529,9 +533,7 @@ def h3_connection_id(host, port, timeout, results):
                 conns.append(d)
                 retries += r
         except (OSError, dzrp.DzrpError) as e:
-            results.add("H3", FAIL, "could not open two simultaneous connections: %s. On "
-                                    "hardware this may also mean the module accepted fewer "
-                                    "connections than AT+CIPMUX=1 allows" % e)
+            results.add("H3", FAIL, "could not open two simultaneous connections: %s" % e)
             return
 
         ok, detail = h3_attempt(conns, 0.0)
@@ -565,23 +567,22 @@ def h3_connection_id(host, port, timeout, results):
                 d, _r = connect(host, port, timeout)
                 conns.append(d)
         except (OSError, dzrp.DzrpError) as e:
-            results.add("H3", FAIL, "%s — and the delayed retry could not reconnect (%s), so "
-                                    "the timing question is unanswered" % (first, e))
+            results.add("H3", FAIL, "%s; the delayed retry could not reconnect (%s)"
+                                    % (first, e))
             return
 
-        ok2, detail2 = h3_attempt(conns, H3_DELAY)
+        # The second attempt's own detail is not printed: with the delay in
+        # place the interesting fact is simply whether it worked, and the three
+        # outcomes below say which. doc/HARDWARE-TESTING.md carries the
+        # mechanism (esp_flush_chunk's SEND OK window) that used to be inlined
+        # into this string.
+        ok2, _detail2 = h3_attempt(conns, H3_DELAY)
         if ok2:
-            results.add("H3", FAIL, "%s BUT THE SAME EXCHANGE SUCCEEDS WITH A %.1fs PAUSE "
-                                    "before it. That is issue #11 confirmed as a TIMING "
-                                    "WINDOW, not a logic error: a +IPD arriving while the "
-                                    "stub is inside esp_wait_string waiting for SEND OK is "
-                                    "discarded, because that routine throws away every byte "
-                                    "that is not its pattern. Nothing is wrong with the id "
-                                    "handling" % (first, H3_DELAY))
+            results.add("H3", FAIL, "%s; but a %.1fs pause fixes it — a timing window"
+                                    % (first, H3_DELAY))
         else:
-            results.add("H3", FAIL, "%s — and it STILL fails with a %.1fs pause (%s), so the "
-                                    "SEND OK window is NOT the cause and issue #11's "
-                                    "hypothesis is wrong" % (first, H3_DELAY, detail2))
+            results.add("H3", FAIL, "%s; and a %.1fs pause does not fix it"
+                                    % (first, H3_DELAY))
     finally:
         for d in conns:
             try:
@@ -619,15 +620,13 @@ def h4_latency(host, port, timeout, results, samples):
                 results.add("H4", SKIP, "loopback failed after %d samples: %s" % (len(times), e))
                 return
             if body != payload:
-                results.add("H4", SKIP, "loopback returned wrong data; H2 is the check that "
-                                        "should be read for that")
+                results.add("H4", SKIP, "loopback returned wrong data; read H2 for that")
                 return
             times.append((time.monotonic() - started) * 1000.0)
 
-        results.add("H4", MEASURED, "round trip over %d samples: min %.1f ms, median %.1f ms, "
-                                    "max %.1f ms%s" % (len(times), min(times),
-                                                       statistics.median(times), max(times),
-                                                       retry_note(retries)))
+        results.add("H4", MEASURED, "%d samples: min %.1f, median %.1f, max %.1f ms%s"
+                                    % (len(times), min(times), statistics.median(times),
+                                       max(times), retry_note(retries)))
     finally:
         d.close()
 
@@ -663,20 +662,18 @@ def h5_throughput(host, port, timeout, results, nbytes):
         elapsed = time.monotonic() - started
 
         if body != payload:
-            results.add("H5", FAIL, "%d bytes did not survive the round trip — %d came back. "
-                                    "This is the reassembly path meeting real ESP framing"
+            results.add("H5", FAIL, "%d bytes did not survive the round trip; %d came back"
                                     % (nbytes, len(body)))
             return
         if elapsed <= 0:
             results.add("H5", SKIP, "elapsed time too small to divide by")
             return
 
-        results.add("H5", MEASURED, "%d bytes round-tripped in %.2f s — %.1f KB/s round trip, "
-                                    "%.1f KB/s one way%s" % (
-                                        nbytes, elapsed,
-                                        (nbytes * 2) / elapsed / 1024.0,
-                                        nbytes / elapsed / 1024.0,
-                                        retry_note(retries)))
+        results.add("H5", MEASURED, "%d bytes in %.2f s: %.1f KB/s round trip, %.1f KB/s "
+                                    "one way%s" % (nbytes, elapsed,
+                                                   (nbytes * 2) / elapsed / 1024.0,
+                                                   nbytes / elapsed / 1024.0,
+                                                   retry_note(retries)))
     finally:
         d.close()
 
@@ -684,43 +681,11 @@ def h5_throughput(host, port, timeout, results, nbytes):
 # --------------------------------------------------------------------------
 
 
-UNCOVERED = """
-NOT COVERED BY THIS RUN, and none of it is incidental:
-
-  * The stackless-NMI return address is NO LONGER on this list. It was closed on
-    2026-08-05 by a human with a real DeZog session: CMD_CONTINUE with no
-    breakpoint, the M1 button pressed while the debuggee spun in a jr $, and the
-    NTF_PAUSE came back with break reason 1 while CMD_GET_REGISTERS reported
-    PC=0x801C — where it was spinning. That value can only come from
-    save_nmi_return_address reading NR 0xC2/0xC3. This bench still cannot do it,
-    and neither can jnext, where --delayed-nmi counts frames and a client counts
-    wall clock. It needed a finger.
-  * The Next's screen — but only for as long as nobody reads it over the wire.
-    While the debugger is stopped cmd_init maps 8K banks 10 and 11 at 0x4000
-    (commands.asm), which is 128K bank 5, the display file the ULA is showing
-    and the one ula.print_char writes to. So CMD_READ_MEM 0x4000,6912 fetches
-    the stub's own screen, and the S1-S5 observations below could be assertions
-    instead of a photograph. Until then: record them by hand, see
-    doc/HARDWARE-TESTING.md.
-  * The UART build, which needs a joy-port cable and a USB serial adapter:
-        make test-dzrp REMOTE=serial:/dev/ttyUSB0:921600
-    Worth knowing that this gap has GROWN. The serial path's only guard has been
-    byte-identity — "the UART ROM did not change" — and issues #7, #8, #9 and
-    #12 each changed it deliberately, so that guard has answered nothing four
-    times running. Nothing has ever executed the serial transport end to end.
-  * A reply flushed to the WRONG connection when two commands interleave, which
-    is issue #13 and is a defect rather than a caveat: three handlers answer
-    before reading their payload, and the reads can move esp_conn_id. Needs a
-    payload split across +IPD frames plus a second client, so DeZog cannot
-    reach it and every bench here stays green.
-
-WHAT THIS LIST NO LONGER SAYS, because it became untrue: "AltROM on hardware,
-never on silicon". C10's temporary breakpoint is an RST 0; while the debuggee
-runs slot 0 holds ROM_BANK (main.asm) with the AltROM enabled (altrom.asm, and
-nothing disables it), so that RST 0 can only reach the debugger through the code
-copy_altrom installed at 0x0000. C10 passing here means the patched AltROM
-executed on the machine.
-"""
+# WHAT A GREEN RUN OF THIS BENCH DOES NOT ESTABLISH used to be printed here, as
+# a thirty-line UNCOVERED block after the summary. It is documentation, not
+# harness output, and it now lives in doc/HARDWARE-TESTING.md under "What a green
+# run does NOT establish" — where it can be read, revised and cited, instead of
+# being scrolled past at the end of every run.
 
 
 def main():
@@ -773,13 +738,15 @@ def main():
 
     # A non-zero exit whose only cause is a defect that reproduces in the
     # emulator would otherwise read, at a bench-top, as "the hardware failed".
-    if results.failed() and all("Nothing here is a hardware finding" in d
+    #
+    # THE SENTINEL IS KNOWN_RED_NOTE, not a copy of the wording. h2_conformance
+    # builds that detail from the same constant, so shortening one cannot
+    # silently detach it from the other — which is what a literal string here
+    # would have allowed the moment the detail was reworded.
+    if results.failed() and all(KNOWN_RED_NOTE in d
                                 for _, s, d in results.rows if s == FAIL):
-        print("\nThe only failure is one that ALREADY fails in the emulator, so this run "
-              "found nothing wrong with the hardware. The exit code is still non-zero, "
-              "deliberately: the check is labelled, not suppressed.")
-
-    print(UNCOVERED)
+        print("\nThe only failure already fails in the emulator: nothing here is wrong with "
+              "the hardware. The exit code stays non-zero — labelled, not suppressed.")
 
     return 1 if results.failed() else 0
 

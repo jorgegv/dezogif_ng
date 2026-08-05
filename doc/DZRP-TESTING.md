@@ -162,6 +162,41 @@ any CSpect result meant anything.
 
 ## Result against our own stub
 
+**2026-08-05, `CMD_CLOSE` gets a check — `make test-dzrp-stub`: W1-W5 pass, and 15 passed, 0 failed,
+0 unsupported of 15.** C15 is new. **No ROM byte moved**: this is a test-only change, so both ROMs
+hash the same as `main`'s with `BUILD_TIME` pinned, and there is no `make bump`.
+
+**C15 was shown able to fail, twice, against deliberately broken scratch ROMs** — neither committed,
+both built from `main`'s sources with one edit:
+
+1. **`cmd_close` routed to `cmd_not_supported`** (the jump-table shape issue #8 fixed for
+   `CMD_PAUSE`): C15 red on the *first* assertion, `no response within 25s; the remote is still
+   serving`. That is the pre-#8 defect reproduced on a different command.
+2. **`cmd_close` answering and then never returning to service** — `TRANSPORT_END_MESSAGE`
+   followed by `jr $` in place of `jp main`, so the response really is flushed and the stub then
+   goes nowhere: C15 red on the *second* assertion, the one that matters, with
+   `answered, but the next command on that connection was not; and it stopped answering afterwards`.
+   A stub that acknowledges a close it did not complete is exactly what a green C15 must not
+   tolerate — the same shape as C10's `ret`-instead-of-resume control (MEMORY.md, 2026-08-05).
+
+**A third variant was run and C15 PASSED it, which is reported because it bounds the check.**
+With `jp main` replaced by `jp cmd_loop` the stub answers `CMD_CLOSE` and goes on serving without
+ever running `main`'s prologue — and C15 cannot tell. That is the limitation stated in its
+docstring, measured rather than asserted: **C15 sees "answered, and still serving", not "the session
+state was reset"**, because `prgm_state` and the backup fields are not observable over a socket.
+
+**One consequence of the WiFi transport is worth knowing before reading control 1.** In WiFi mode
+`cmd_close`'s response is *buffered*, and the `TRANSPORT_END_MESSAGE` that flushes it lives at
+`main_redraw` — so on that build the response reaches the wire **because of** `jp main`. The two
+assertions are therefore not independent there, which is why control 2 has to flush explicitly
+before hanging: without that it would go red on the response and prove nothing about serving on.
+
+**Not yet asserted: `--require CLOSE`.** `test/run-dzrp-stub.sh` passes `--require CONTINUE` so that
+a stub which started *refusing* the resume could not be excused as a partial remote. The same
+argument applies to `CMD_CLOSE` and the flag is not passed, so a stub that began closing the socket
+on command 2 would report `UNSUP` and the target would still exit 0. Left alone deliberately: that
+file was being edited for issue #17 at the time.
+
 **2026-08-05, a reply belongs to one connection and a command to one connection's frames (issue
 #13) — `make test-dzrp-stub`: W1-W5 pass, and 14 passed, 0 failed, 0 unsupported of 14.** W5 is
 new and was red on `main`'s ROM and red again on a ROM carrying only half the fix.
@@ -264,6 +299,28 @@ running it, so the shell kills itself — this cost two aborted commands before 
 | C10 | **`CMD_CONTINUE` resumes the debuggee and it runs**, stopping on a temporary breakpoint that raises `NTF_PAUSE` |
 | C11 | **the debuggee's state survives the resume**, in both directions — see below |
 | C12 | `CMD_PAUSE` while stopped is answered — see below |
+| C13 | `CMD_GET_SPRITES` is answered at `count*5` bytes, the length DeZog asserts client-side — see below |
+| C14 | `CMD_GET_SPRITE_PATTERNS` is answered at `count*256` bytes, likewise |
+| C15 | **`CMD_CLOSE` is answered, and the remote goes on serving afterwards** — see below |
+
+### A verdict line is one sentence; this file is where the reasoning is
+
+Every check prints **one short line — id, label and detail together, about twenty words.** That is
+a deliberate change (2026-08-05, at the user's request) from details that ran to three and four
+clauses each. The substance was not deleted: it is in each check's **docstring**, which is
+documentation that happens to live in the source, and in this file.
+
+Two conventions follow from it and both are load-bearing:
+
+- **The id never changes.** `test/run-dzrp-stub.sh`'s W3 asserts its negative control with
+  `grep '^FAIL  C10 '`, and `test/hardware-check.py`'s `classify()` takes the code from field 2 of
+  every `FAIL` line. Shorten the prose after the id; never the id.
+- **A silence still says which kind it was.** C12, C13, C14 and C15 all report a missing answer as
+  `no response within Ns; <liveness>`, where the tail is one of three: *the remote is still serving*
+  — it swallowed the command and carried on, so a client blocks for ever, which is issue #8's shape;
+  *and it stopped answering afterwards* — this run cannot separate "no reply" from "the command
+  killed it"; *and liveness was not probed*. Collapsing those three into "no response" would be a
+  check failing for a reason outside its own subject, which ERRORS.md says has to be said out loud.
 
 ### C10 and C11: the execution-control fixture
 
@@ -333,6 +390,50 @@ and only if the state actually changed.
 it and inherits `DzrpRemote`'s `await this.sendDzrpCmd(7)` — it sends the command and blocks on the
 response. Verified against the installed DeZog 3.7.4.
 
+### C15: `CMD_CLOSE`, and the destructive prologue behind it
+
+**Nothing in this suite sent command 2 until 2026-08-05.** C1-C14 each take a fresh connection and
+simply drop it, which is a TCP event and not a DZRP one — the remote is never told the session
+ended, so the one command DeZog uses to say so had no coverage at all.
+
+**Two assertions, and the second is the reason this is a check rather than a teardown.**
+
+The response first. The specification gives `CMD_CLOSE` a **Length=1 response** — the sequence
+number and nothing else, exactly as `CMD_PAUSE` has — and DeZog's `DzrpRemote` awaits it:
+`sendDzrpCmdClose()` is `await this.sendDzrpCmd(2, undefined, this.initCloseRespTimeoutTime)` in the
+installed 3.7.4. Silence there blocks the client, which is issue #8's shape exactly.
+
+Then that the remote is **still there**. `CMD_CLOSE` is the only command our stub answers and then
+leaves through **`jp main`** (`src/commands.asm`), and `main`'s prologue is destructive by design:
+`prgm_state` to `PRGM_IDLE`, `backup.speed`, `backup.interrupt_state` and `slot_backup.slot0` all
+reset, then `transport_activate` and `show_ui`, and only then `main_loop` again. **The response is
+written before all of that and therefore proves none of it.** Only a further command, answered,
+shows the stub came out of the other side.
+
+**The follow-up is `CMD_INIT`, for two reasons.** It is what DeZog's own driver does — the first
+entry of its stress `cmdList` is `sendDzrpCmdClose()` immediately followed by `sendDzrpCmdInit()`,
+on the same remote — and no remote is entitled to refuse it, so a failure there cannot be a
+capability difference wearing this check's name.
+
+**It is sent without `talk()`, deliberately.** `talk()` maps a closed connection onto `Unsupported`,
+and this check's command name is `CLOSE`; a remote that answered `CMD_CLOSE` perfectly and then hung
+up would otherwise be reported as *not implementing the command it had just implemented*. The
+hang-up gets its own verdict instead — DZRP is silent on whether the transport survives `CMD_CLOSE`,
+so it is reported as the distinct observation it is rather than folded into "no answer".
+
+**What C15 deliberately does not claim.** Not that any of that state was actually reset:
+`prgm_state` and the backup fields are **not observable over a socket**, and all C15 sees is that
+the remote answers again. Not the repaint either — that `CMD_CLOSE` redraws the screen is
+`test/run-client-status.sh`'s **N3**, read off the Next's own display, and the ordering argument
+there (`cmd_close` answers *first* and reaches `show_ui` afterwards, so only a later command proves
+the repaint) is the same one this check rests on.
+
+**It runs last, and must stay last**, because it is the one check that deliberately resets the
+debugger. Anything below it would be talking to a re-initialised stub — a different subject from the
+one it thinks it is testing. The suite runs `CHECKS` strictly in order and never in parallel, and
+`--only C15` works standalone: the check opens its own connection and sends its own `CMD_INIT`
+first, like every other.
+
 **C5's sizes straddle a transport boundary, and that is the point of three of them.** jnext frames
 inbound TCP into `+IPD` chunks of at most **2048** bytes
 (`src/esp01/include/esp01/esp_at.h:448`), so anything larger reaches the remote as *several*
@@ -376,6 +477,12 @@ distinction is fine enough to be worth writing down rather than left to be infer
    against a real Next and has been 12 of 12 and then 14 of 14, C10/C11 included. Struck rather
    than deleted, because the sentence "every result on this page is jnext's" was true when written
    and is the reason the hardware bench exists.
+4. **C15 has not run on hardware.** It is expected to pass there — `cmd_close` is common code and
+   `test/hardware-check.py`'s `KNOWN_RED` table is deliberately empty, so nothing excuses it — but
+   the next hardware run is 15 checks, not 14, and that is where it gets measured. Note what the
+   real client does with this command: DeZog's `CSpectRemote.disconnect()` sends `CMD_PAUSE` and
+   `CMD_CLOSE`, and the 2026-08-05 tap shows **both answered** on a Next, so the response half has
+   in fact been seen there — by a person watching a session, not by a check.
 
 ## Two things this established that were not obvious
 

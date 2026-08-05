@@ -8,6 +8,12 @@ checks on hardware** — including resuming a debuggee — and survives a comman
 answering another, which is the one thing it demonstrably could not do this morning. The results
 are at the bottom of this page, with the numbers.
 
+**That "12" is the count the suite had on the day, and it has grown since**: C13/C14 (issue #9) and
+C15 (`CMD_CLOSE`) were added afterwards, so H2 now delegates **15** checks. The added ones have
+never run on silicon. Read every conformance total on this page as a record of the run that
+produced it, not as the size of the suite today — `python3 test/dzrp/conformance.py --help` lists
+what it actually carries.
+
 This page is the procedure for repeating that, and `test/hardware-check.py` is the part a PC can
 do by itself. Read it end to end before starting: much of it is about what to *observe*, because
 a good deal of what hardware can tell us is not reachable over a socket.
@@ -273,6 +279,14 @@ anything the screen said.
 
 Stated here because the temptation to over-read the first hardware success will be considerable.
 
+**This list used to be PRINTED by the bench**, as an `UNCOVERED` block after every summary. It was
+moved here on 2026-08-05 at the user's request, and the reasoning generalises: a caveat that scrolls
+past at the end of every run is read once and then never again, where a document can be revised,
+cited and diffed. The same move shortened every verdict line the two Python benches emit to one
+sentence — **the check says what happened, this file says what it means.** Nothing was dropped in
+either direction; if a line here contradicts a line the harness prints, this file is the one that
+was written to be read.
+
 - ~~**The stub has never resumed a debuggee ON HARDWARE.**~~ **It has, 2026-08-05.** C10 and C11
   passed against a real Next: a fixture loaded over DZRP, `CMD_CONTINUE` onto a temporary
   breakpoint, `NTF_PAUSE` back at `0x8016` with the registers as the program left them. So
@@ -323,15 +337,31 @@ Stated here because the temptation to over-read the first hardware success will 
   expect it; and the workspace's own `CSpect MF ROM` launch config is **not safe to point at
   hardware** — it carries `loadObjs` of `enNextMf.rom` and an `execAddress`, so it would push the
   stub's own image into the running machine. Use a minimal config with no `loadObjs`.
+- **The Next's own screen — but only for as long as nobody reads it over the wire.** While the
+  debugger is stopped `cmd_init` maps 8K banks 10 and 11 at 0x4000 (`commands.asm`), which is 128K
+  bank 5: the display file the ULA is showing, and the one `ula.print_char` writes to. So
+  **`CMD_READ_MEM 0x4000,6912` fetches the stub's own screen**, and the S1-S5 observations in step 3
+  could be assertions in this bench instead of a photograph and a human. Nobody has written that.
+  Until somebody does, S1-S5 are recorded by hand and the photograph is their only artefact.
 - **The UART build**, which needs a joy-port cable and a USB serial adapter. The conformance suite
   reaches it directly when someone has that set up:
 
       make test-dzrp REMOTE=serial:/dev/ttyUSB0:921600
 
-- **Interleaved commands.** H3's two exchanges are sequential. Whether a reply can be flushed to
-  the *wrong* connection because a second command arrived and moved `esp_conn_id` first is a
-  property of our own buffering, not a hardware fact, and this bench deliberately does not conflate
-  the two.
+  **This gap has GROWN, and that is worth saying plainly.** The serial path's only standing guard
+  has been byte-identity — "the UART ROM did not change" — and issues **#7, #8, #9 and #12 each
+  changed it deliberately**, so that guard has answered nothing four times running. **Nothing has
+  ever executed the serial transport end to end**, in an emulator or on a machine.
+- **Interleaved commands, on hardware.** H3's two exchanges are sequential, deliberately:
+  interleaving them asks whether a reply can be flushed to the *wrong* connection because a second
+  command arrived and moved `esp_conn_id` first, which is a property of our own buffering rather
+  than a hardware fact, and this bench does not conflate the two.
+
+  **That was issue #13 and it is FIXED** — merged 2026-08-05, build 000C — with the emulator suite's
+  **W5** as its standing check: a command split across `+IPD` frames, with a second client speaking
+  into the middle of it, answered on its own connection from its own payload. So the caveat is no
+  longer "an open defect nothing can see"; it is the narrower and permanent one that **W5 proves it
+  in jnext and no check here proves it on silicon.**
 - **A client that reconnects but has not yet sent anything is invisible**, because only an inbound
   `+IPD` refreshes the connection id. Known, deferred to M3's reconnect work.
 - **Anything about a second power cycle**, unless you do one.

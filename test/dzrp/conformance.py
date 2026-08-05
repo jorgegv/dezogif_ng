@@ -99,6 +99,7 @@ def paint(status):
 # Command names, for --require and for reporting.
 NAMES = {
     "INIT": dzrp.CMD_INIT,
+    "CLOSE": dzrp.CMD_CLOSE,
     "LOOPBACK": dzrp.CMD_LOOPBACK,
     "GET_REGISTERS": dzrp.CMD_GET_REGISTERS,
     "SET_REGISTER": dzrp.CMD_SET_REGISTER,
@@ -168,7 +169,7 @@ def chk_init(d):
     """Version negotiation: the first command DeZog itself sends."""
     body = talk(d, dzrp.CMD_INIT, dzrp.init_payload())
     if len(body) < 6:
-        return FAIL, "response too short for error+version+machine+name: %d bytes" % len(body)
+        return FAIL, "response is %d bytes, too short to decode" % len(body)
     err = body[0]
     ver = "%d.%d.%d" % (body[1], body[2], body[3])
     machine = body[4]
@@ -211,17 +212,14 @@ def chk_length_convention(d):
     try:
         got_seq, _ = d._read_frame()
     except dzrp.Timeout:
-        return PASS, ("silent for %.0fs after an over-long length — the remote is still "
-                      "waiting for bytes it was promised" % wait)
+        return PASS, "silent for %.0fs after an over-long length" % wait
     except dzrp.DzrpError as e:
-        return PASS, "remote refused an over-long length outright (%s)" % e
+        return PASS, "refused an over-long length outright (%s)" % e
     if got_seq == seq:
-        return FAIL, ("the remote answered a command whose length counted seq+cmd too, "
-                      "so the convention is not payload-only as documented")
+        return FAIL, "answered a length that counted seq and cmd too"
     # Something arrived that was neither our response nor silence. Say what it
     # was rather than quietly counting it as proof.
-    return FAIL, ("expected silence, got a frame with seq %d — cannot conclude anything "
-                  "about the length convention from this" % got_seq)
+    return FAIL, "expected silence, got a frame with seq %d" % got_seq
 
 
 def chk_preamble(d, expect):
@@ -241,10 +239,10 @@ def chk_preamble(d, expect):
     seen = d.observed_start_byte
     desc = "0xA5" if seen == dzrp.START_BYTE else "none"
     if expect == "report":
-        return PASS, "preamble: %s (recorded, not asserted)" % desc
+        return PASS, "%s (recorded, not asserted)" % desc
     want = dzrp.START_BYTE if expect == "a5" else None
     if seen == want:
-        return PASS, "preamble is %s, as expected" % desc
+        return PASS, "%s, as expected" % desc
     return FAIL, "expected %s, observed %s" % (expect, desc)
 
 
@@ -275,18 +273,17 @@ def chk_init_consumes_payload(d):
     payload = dzrp.init_payload() + b"\xEE" * 4
     body = talk(d, dzrp.CMD_INIT, payload)
     if len(body) < 6:
-        return FAIL, "response too short for error+version+machine+name: %d bytes" % len(body)
+        return FAIL, "response is %d bytes, too short to decode" % len(body)
     if body[0] != 0:
-        return FAIL, "error code %d on a frame whose length was correct" % body[0]
+        return FAIL, "error code %d on a correct length" % body[0]
     # The real assertion. A remote still standing four bytes back reads this
     # command's header out of the leftovers and answers the wrong thing, or
     # nothing at all — either way not a response carrying this sequence number.
     again = talk(d, dzrp.CMD_INIT, dzrp.init_payload())
     if len(again) < 6 or again[0] != 0:
-        return FAIL, ("the command after a padded CMD_INIT was not answered correctly "
-                      "(%d bytes, error %s)" % (len(again), again[0] if again else "?"))
-    return PASS, ("4 bytes past the name's NUL were consumed with the frame, and the next "
-                  "command was answered in sync")
+        return FAIL, ("the command after the padded one came back as %d bytes"
+                      % len(again))
+    return PASS, "4 bytes past the NUL consumed, next command in sync"
 
 
 def chk_loopback(d):
@@ -329,7 +326,8 @@ def chk_loopback_sizes(d):
         got = talk(d, dzrp.CMD_LOOPBACK, payload)
         if got != payload:
             return FAIL, "%d bytes came back as %d and differ" % (n, len(got))
-    return PASS, "exact at " + ", ".join(str(n) for n in LOOPBACK_SIZES) + " bytes"
+    return PASS, "%d sizes from %d to %d bytes, all exact" % (
+        len(LOOPBACK_SIZES), LOOPBACK_SIZES[0], LOOPBACK_SIZES[-1])
 
 
 def chk_sequence(d):
@@ -338,7 +336,7 @@ def chk_sequence(d):
     assertion."""
     for _ in range(5):
         talk(d, dzrp.CMD_INIT, dzrp.init_payload())
-    return PASS, "5 consecutive commands, sequence numbers echoed correctly"
+    return PASS, "5 consecutive commands, every sequence number echoed"
 
 
 def chk_registers(d):
@@ -472,8 +470,8 @@ REGISTER_ORDER = ("PC", "SP", "AF", "BC", "DE", "HL",
 def decode_registers(body):
     """The 12 words, then R, I, IM, reserved. Slots follow and are ignored."""
     if len(body) < 28:
-        raise Precondition(
-            "the register block is %d bytes, too short to index" % len(body))
+        raise Precondition("the register block is %d bytes, too short to index"
+                           % len(body))
     regs = dict(zip(REGISTER_ORDER, struct.unpack("<12H", body[:24])))
     regs["R"], regs["I"], regs["IM"] = body[24], body[25], body[26]
     return regs
@@ -506,16 +504,12 @@ def load_debuggee(d):
 
     back = _read_mem(d, DBG_CODE, len(DEBUGGEE))
     if back != DEBUGGEE:
-        raise Precondition(
-            "the fixture did not land at 0x%04X (wrote %d bytes, read back %d "
-            "and they differ) — a memory fault, not a resume fault"
-            % (DBG_CODE, len(DEBUGGEE), len(back)))
+        raise Precondition("the fixture did not land at 0x%04X (%d bytes back, "
+                           "not %d)" % (DBG_CODE, len(back), len(DEBUGGEE)))
     mark = _read_mem(d, DBG_MARK, MARK_LEN)
     if mark != bytes(MARK_LEN):
-        raise Precondition(
-            "the marker area at 0x%04X did not clear (%s) — every later "
-            "assertion about it would be meaningless"
-            % (DBG_MARK, mark.hex()))
+        raise Precondition("the marker area at 0x%04X did not clear (%s)"
+                           % (DBG_MARK, mark.hex()))
 
     _set_reg(d, REG_PC, DBG_CODE)
     _set_reg(d, REG_SP, DBG_STACK)
@@ -566,46 +560,58 @@ def _remote_still_answers():
         probe.close()
 
 
+def _liveness():
+    """A few words saying which kind of silence this was.
+
+    "No reply" has three quite different meanings and a verdict line that
+    collapses them is a check failing for a reason outside its own subject
+    (ERRORS.md). Still serving = the command was swallowed and the client would
+    block for ever; stopped answering = the run cannot separate "no reply" from
+    "the command killed it"; not probed = we do not know, and say so. The
+    reasoning behind each is in doc/DZRP-TESTING.md, not in the line.
+    """
+    alive = _remote_still_answers()
+    if alive is True:
+        return "the remote is still serving"
+    if alive is False:
+        return "and it stopped answering afterwards"
+    return "and liveness was not probed"
+
+
 def chk_continue_resumes(d):
     """THE ONE THAT MATTERS: does CMD_CONTINUE actually restart the debuggee?"""
     load_debuggee(d)
     ntf = resume_to_trap(d)
     if ntf is None:
-        return FAIL, (
-            "no NTF_PAUSE within %.0fs — either the debuggee was never resumed, "
-            "or it was resumed and never reached the temporary breakpoint at "
-            "0x%04X" % (d.base_timeout, DBG_TRAP))
+        return FAIL, ("no NTF_PAUSE within %.0fs: not resumed, or never reached "
+                      "0x%04X" % (d.base_timeout, DBG_TRAP))
     if len(ntf) < 6:
         return FAIL, "notification is %d bytes, too short for NTF_PAUSE" % len(ntf)
     if ntf[0] != dzrp.NTF_PAUSE:
-        return FAIL, ("notification id is %d, expected %d (NTF_PAUSE)"
-                      % (ntf[0], dzrp.NTF_PAUSE))
+        return FAIL, "notification id is %d, expected %d" % (ntf[0], dzrp.NTF_PAUSE)
 
     reason, addr, bank = ntf[1], int.from_bytes(ntf[2:4], "little"), ntf[4]
     mark = _read_mem(d, DBG_MARK, MARK_LEN)
 
     problems = []
     if addr != DBG_TRAP:
-        problems.append("broke at 0x%04X, not at the temporary breakpoint 0x%04X"
-                        % (addr, DBG_TRAP))
+        problems.append("broke at 0x%04X, not 0x%04X" % (addr, DBG_TRAP))
     if mark[4] != RUN_A:
-        problems.append(
-            "the progress marker at 0x%04X is 0x%02X and not 0x%02X, so the "
-            "debuggee never executed" % (DBG_MARK + 4, mark[4], RUN_A))
+        problems.append("marker 0x%04X is 0x%02X: the debuggee never executed"
+                        % (DBG_MARK + 4, mark[4]))
     if mark[5] != 0:
-        problems.append(
-            "0x%04X is 0x%02X, so execution ran PAST the breakpoint instead of "
-            "stopping on it" % (DBG_MARK + 5, mark[5]))
+        problems.append("0x%04X is 0x%02X: it ran past the breakpoint"
+                        % (DBG_MARK + 5, mark[5]))
     # The break reason is REPORTED, not asserted. The specification allows
     # 0/1/2/3/4/255 and DeZog does not require a particular one here; our stub
     # answers 0 (no reason) for a temporary breakpoint, which is what a step
     # is. Asserting a value would encode one remote's choice as the protocol.
     if reason not in (0, 1, 2, 3, 4, 255):
-        problems.append("break reason %d is not one the specification lists" % reason)
+        problems.append("break reason %d is not in the specification" % reason)
     if problems:
         return FAIL, "; ".join(problems)
-    return PASS, ("the debuggee ran and stopped on the temporary breakpoint at "
-                  "0x%04X (NTF_PAUSE reason %d, bank %d)" % (addr, reason, bank))
+    return PASS, ("stopped on the breakpoint at 0x%04X (reason %d, bank %d)"
+                  % (addr, reason, bank))
 
 
 def chk_continue_state(d):
@@ -621,9 +627,7 @@ def chk_continue_state(d):
     load_debuggee(d)
     ntf = resume_to_trap(d)
     if ntf is None:
-        return FAIL, ("no NTF_PAUSE, so nothing about state can be read from this "
-                      "run at all — see the C10 line for whether the resume "
-                      "happened")
+        return FAIL, "no NTF_PAUSE, so no state can be read; see the C10 line"
 
     mark = _read_mem(d, DBG_MARK, MARK_LEN)
     regs = decode_registers(talk(d, dzrp.CMD_GET_REGISTERS))
@@ -633,8 +637,8 @@ def chk_continue_state(d):
             ("BC", int.from_bytes(mark[0:2], "little"), PRESET_BC),
             ("IX", int.from_bytes(mark[2:4], "little"), PRESET_IX)):
         if got != want:
-            problems.append("the resumed debuggee saw %s = 0x%04X, not the "
-                            "0x%04X CMD_SET_REGISTER gave it" % (name, got, want))
+            problems.append("the debuggee saw %s = 0x%04X, not 0x%04X"
+                            % (name, got, want))
     for name, want in (("PC", DBG_TRAP), ("SP", DBG_STACK), ("HL", RUN_HL),
                        ("DE", RUN_DE), ("BC", RUN_BC), ("IX", PRESET_IX)):
         if regs[name] != want:
@@ -645,8 +649,7 @@ def chk_continue_state(d):
                         % (regs["AF"] >> 8, RUN_A))
     if problems:
         return FAIL, "; ".join(problems)
-    return PASS, ("BC/IX reached the debuggee as set, and PC/SP/AF/BC/DE/HL/IX "
-                  "came back as the program left them")
+    return PASS, "BC/IX reached the debuggee, and PC/SP/AF/BC/DE/HL/IX came back as left"
 
 
 def chk_pause_while_stopped(d):
@@ -670,20 +673,9 @@ def chk_pause_while_stopped(d):
     try:
         body = talk(d, dzrp.CMD_PAUSE)
     except dzrp.Timeout:
-        alive = _remote_still_answers()
-        if alive is True:
-            state = ("the remote is still serving — it swallowed the command and "
-                     "carried on, so DeZog would wait for a response that never "
-                     "comes")
-        elif alive is False:
-            state = ("and the remote stopped answering afterwards, so this run "
-                     "cannot separate 'no reply' from 'the command killed it'")
-        else:
-            state = "and liveness afterwards was not probed"
-        return FAIL, ("no response within %.0fs: %s" % (d.base_timeout, state))
+        return FAIL, "no response within %.0fs; %s" % (d.base_timeout, _liveness())
     if body:
-        return FAIL, ("answered, but with a %d-byte payload; the specification's "
-                      "response is the sequence number alone" % len(body))
+        return FAIL, "answered, but with a %d-byte payload" % len(body)
     return PASS, "answered with the sequence number and an empty payload"
 
 
@@ -719,22 +711,12 @@ def _chk_sprite_family(d, cmd, per_item, name):
     try:
         body = talk(d, cmd, bytes([0, SPRITE_COUNT]))
     except dzrp.Timeout:
-        alive = _remote_still_answers()
-        if alive is True:
-            state = ("the remote is still serving, so it swallowed the command "
-                     "and carried on — DeZog blocks for ever on a response that "
-                     "never comes")
-        elif alive is False:
-            state = "and the remote stopped answering afterwards"
-        else:
-            state = "and liveness afterwards was not probed"
-        return FAIL, ("no response within %.0fs: %s" % (d.base_timeout, state))
+        return FAIL, "no response within %.0fs; %s" % (d.base_timeout, _liveness())
 
     want = SPRITE_COUNT * per_item
     if len(body) != want:
-        return FAIL, ("answered with %d payload bytes where the client asserts "
-                      "%d for a count of %d — a length DeZog rejects is a "
-                      "desync, not a refusal" % (len(body), want, SPRITE_COUNT))
+        return FAIL, ("answered with %d bytes, not the %d the client asserts"
+                      % (len(body), want))
 
     # The session must survive it. The handler this replaces reached drain_main,
     # which re-initialises the debugger, so "answered" alone is not the whole
@@ -742,19 +724,14 @@ def _chk_sprite_family(d, cmd, per_item, name):
     try:
         regs = talk(d, dzrp.CMD_GET_REGISTERS)
     except (dzrp.DzrpError, OSError) as e:
-        return FAIL, ("answered with the right length, but the next command on "
-                      "the same connection failed (%s) — the session did not "
-                      "survive it" % e)
+        return FAIL, "right length, but the next command failed (%s)" % e
     if len(regs) < 28:
-        return FAIL, ("answered, but the following CMD_GET_REGISTERS came back "
-                      "as %d bytes, so the stream is out of step" % len(regs))
+        return FAIL, ("right length, but the next command came back as %d bytes"
+                      % len(regs))
 
-    zeros = not any(body)
-    return PASS, ("%d %s came back as %d bytes%s, and the next command was "
-                  "answered in sync"
+    return PASS, ("%d %s, %d bytes%s, next command in sync"
                   % (SPRITE_COUNT, name, len(body),
-                     " of zeros — no data to give, which is what a Next can say"
-                     if zeros else " with data, so this remote can read them"))
+                     " of zeros" if not any(body) else " with data"))
 
 
 def chk_get_sprites(d):
@@ -766,9 +743,88 @@ def chk_get_sprite_patterns(d):
                               "sprite patterns")
 
 
+def chk_close(d):
+    """CMD_CLOSE is answered, and the remote goes on serving afterwards.
+
+    NOTHING ELSE IN THIS SUITE SENDS COMMAND 2. Every check above takes a fresh
+    connection and simply drops it, which is a TCP event and not a DZRP one: the
+    remote is never told the session ended, so the one command DeZog uses to say
+    so had no coverage at all.
+
+    TWO ASSERTIONS, AND THE SECOND IS THE INTERESTING ONE.
+
+    The response first. The specification gives CMD_CLOSE a Length=1 response —
+    the sequence number and nothing else, exactly as CMD_PAUSE has — and DeZog's
+    DzrpRemote awaits it: `sendDzrpCmdClose()` is
+    `await this.sendDzrpCmd(2, undefined, this.initCloseRespTimeoutTime)` in the
+    installed 3.7.4. Silence there blocks the client, which is issue #8's shape.
+
+    Then that the remote is still there. This is the only command our stub
+    answers and then LEAVES through `jp main` (src/commands.asm), which runs
+    main's destructive prologue — `prgm_state` to `PRGM_IDLE`, `backup.speed`,
+    `backup.interrupt_state`, `slot_backup.slot0` — and then `transport_activate`
+    and `show_ui` before reaching `main_loop` again. So the response is written
+    BEFORE all of that and proves none of it; only a further command, answered,
+    shows the stub came out of the other side.
+
+    CMD_INIT is the follow-up, for two reasons. It is what DeZog's own driver
+    does — the first entry of its stress `cmdList` is `sendDzrpCmdClose()`
+    immediately followed by `sendDzrpCmdInit()`, on the same remote — and no
+    remote is entitled to refuse it, so a failure there cannot be a capability
+    difference wearing this check's name.
+
+    IT IS SENT WITHOUT talk(), DELIBERATELY. talk() maps a closed connection onto
+    Unsupported, and this check's cmd_name is CLOSE — so a remote that answered
+    CMD_CLOSE perfectly and then hung up would be reported as not implementing
+    the command it had just implemented. The closed case gets its own verdict
+    below instead.
+
+    WHAT IT DELIBERATELY DOES NOT CLAIM. Not that any of that state was reset:
+    `prgm_state` and the backup fields are not observable over a socket, and all
+    this sees is that the remote answers again. Not the repaint either — that
+    CMD_CLOSE redraws the screen is bench run-client-status.sh's N3, read off the
+    Next's own display. And not the socket's fate: DZRP is silent on whether the
+    transport survives CMD_CLOSE, so a remote that hangs up is reported as its
+    own observation rather than folded into "no answer".
+
+    IT RUNS LAST because it resets the debugger. Anything after it would be
+    talking to a re-initialised stub.
+    """
+    talk(d, dzrp.CMD_INIT, dzrp.init_payload())
+    try:
+        body = talk(d, dzrp.CMD_CLOSE)
+    except dzrp.Timeout:
+        return FAIL, "no response within %.0fs; %s" % (d.base_timeout, _liveness())
+    if body:
+        return FAIL, "answered, but with a %d-byte payload" % len(body)
+
+    try:
+        again = d.command(dzrp.CMD_INIT, dzrp.init_payload())
+    except dzrp.Timeout:
+        return FAIL, ("answered, but the next command on that connection was not; %s"
+                      % _liveness())
+    except dzrp.DzrpError as e:
+        if "closed" in str(e):
+            return FAIL, "answered, then hung up: it does not serve on that connection"
+        raise
+    if len(again) < 6 or again[0] != 0:
+        return FAIL, "answered, but the CMD_INIT after it came back as %d bytes" % len(again)
+    return PASS, "Length=1 response, and a CMD_INIT after it answered in sync"
+
+
+# A CHECK'S PRINTED LINE IS ONE SHORT SENTENCE — id, label and detail together
+# no longer than about twenty words. The reasoning behind each check lives in its
+# docstring and in doc/DZRP-TESTING.md, which is where a reader can afford to
+# read it; a verdict a reviewer has to scroll is a verdict nobody reads.
+#
+# THE ID IS PART OF THE INTERFACE AND NEVER CHANGES. test/run-dzrp-stub.sh's W3
+# asserts its negative control with `grep '^FAIL  C10 '`, hardware-check.py's
+# classify() takes the code from field 2 of every FAIL line, and every document
+# and issue refers to these by number. Shorten the prose after the id, never the
+# id itself.
 CHECKS = [
     ("C1 CMD_INIT negotiates a version", chk_init, "INIT"),
-    ("C2 length conventions are as specified", chk_length_convention, "INIT"),
+    ("C2 a command's length counts payload only", chk_length_convention, "INIT"),
     ("C3 frame preamble", None, "INIT"),            # needs the expect argument
     ("C4 CMD_LOOPBACK round-trips", chk_loopback, "LOOPBACK"),
     ("C5 CMD_LOOPBACK is exact at size boundaries", chk_loopback_sizes, "LOOPBACK"),
@@ -781,16 +837,22 @@ CHECKS = [
     # with a second CMD_INIT on the same connection, so the checks below can
     # follow it — and each of those opens its own connection regardless. If C9
     # ever goes red again, read the reds under it as suspect until it is green.
-    ("C9 CMD_INIT consumes exactly the declared payload", chk_init_consumes_payload, "INIT"),
+    ("C9 CMD_INIT consumes the declared payload", chk_init_consumes_payload, "INIT"),
     ("C10 CMD_CONTINUE resumes the debuggee and it runs", chk_continue_resumes,
      "CONTINUE"),
     ("C11 the debuggee's state survives the resume", chk_continue_state,
      "CONTINUE"),
     ("C12 CMD_PAUSE while stopped is answered", chk_pause_while_stopped, "PAUSE"),
-    ("C13 CMD_GET_SPRITES is answered at the length the client asserts",
+    ("C13 CMD_GET_SPRITES is answered at the asserted length",
      chk_get_sprites, "GET_SPRITES"),
-    ("C14 CMD_GET_SPRITE_PATTERNS is answered at the length the client asserts",
+    ("C14 CMD_GET_SPRITE_PATTERNS is answered at the asserted length",
      chk_get_sprite_patterns, "GET_SPRITE_PATTERNS"),
+    # C15 IS LAST, AND MUST STAY LAST. It is the only check that deliberately
+    # resets the remote: CMD_CLOSE leaves our stub through `jp main`, which
+    # re-initialises prgm_state and the debuggee's saved state. Anything below it
+    # would be running against a re-initialised stub, which is a different
+    # subject from the one it thinks it is testing.
+    ("C15 CMD_CLOSE is answered and the remote serves on", chk_close, "CLOSE"),
 ]
 
 

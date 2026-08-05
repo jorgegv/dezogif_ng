@@ -255,7 +255,17 @@ strongest:
    and came back as it left them. **Still not covered**: the stackless-NMI *return address*
    (C10 sets `PC` itself, so `save_nmi_return_address` is never involved) and the M1 button
    breaking a *running* debuggee — both need a second NMI timed against live traffic.
-   **Result 2026-08-05: W1-W4 pass, 14 passed / 0 failed of 14 — the target exits 0.**
+   **C15 is the only check that sends `CMD_CLOSE`** — every other one takes a fresh connection and
+   simply drops it, which is a TCP event and not a DZRP one. It asserts the Length=1 response
+   **and** that a `CMD_INIT` after it is answered, because `cmd_close` answers first and only then
+   leaves through `jp main`, whose prologue resets `prgm_state` and the debuggee's saved state: the
+   response is written before all of that and proves none of it. It runs **last**, and must, since
+   it re-initialises the stub. What it cannot see is that any of that state really was reset —
+   `prgm_state` is not observable over a socket.
+   **Every check prints one short line, about twenty words**; the reasoning is in each check's
+   docstring and in `doc/DZRP-TESTING.md`. The **id** is interface, not prose: `run-dzrp-stub.sh`'s
+   W3 greps `^FAIL  C10 ` and `hardware-check.py` takes the code from field 2 of every `FAIL` line.
+   **Result 2026-08-05: W1-W5 pass, 15 passed / 0 failed of 15 — the target exits 0.**
    **C12 was the last red and issue #8 closed it**: `CMD_PAUSE` was mapped to `cmd_not_supported`,
    which stores an error and jumps to `drain_main`, so the stub sent **no response at all** where
    the spec requires a Length=1 one and a client waited forever. Same shape as C2 — common code

@@ -2,7 +2,7 @@
 #
 # The DZRP conformance suite, pointed at OUR OWN STUB.
 #
-# Invoked by `make test-dzrp-stub`. Four headless jnext runs with the WiFi ROM
+# Invoked by `make test-dzrp-stub`. Five headless jnext runs with the WiFi ROM
 # installed as the Multiface ROM and an emulated M1 button press to bring the
 # debugger up, with a TCP client talking to the emulated ESP-01.
 #
@@ -48,6 +48,15 @@
 #          The same defect's OTHER window, the wait for SEND OK, is
 #          unreachable here because jnext answers instantly; that one is
 #          hardware bench H3.
+#
+#   run 5
+#     W5   A COMMAND SPLIT ACROSS +IPD FRAMES IS ANSWERED ON ITS OWN
+#          CONNECTION, WITH ITS OWN PAYLOAD (issue #13). cmd_get_tbblue_reg,
+#          cmd_set_breakpoints and cmd_restore_mem all send their response
+#          header BEFORE reading payload, so a second client speaking in that
+#          window used to supply the missing bytes and receive the reply. Its
+#          precondition — three frames, from two connections, in the order that
+#          makes the collision — is asserted from the module's log, as W4's is.
 #
 # WHAT IT DOES NOT COVER. Real hardware, where the ESP has to be associated
 # first and answers at whatever baud it was last left at (doc/WIFI-SETUP.md).
@@ -132,6 +141,7 @@ MF_ROM_PATH='::/machines/next/enNextMf.rom'
 CONFORMANCE=$(dirname "$0")/dzrp/conformance.py
 ORPHAN=$(dirname "$0")/dzrp/orphan-notify.py
 QUEUED=$(dirname "$0")/dzrp/queued-commands.py
+SPLIT=$(dirname "$0")/dzrp/split-command.py
 
 # Longer than the suite's own 5 s default. The loopback sweep now goes to 4096
 # bytes, which is ~8 KB over a 115200 link plus seventeen AT+CIPSEND round
@@ -160,6 +170,7 @@ die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [ -f "$CONFORMANCE" ]|| die "conformance suite not found: $CONFORMANCE"
 [ -f "$ORPHAN" ]     || die "W2 fixture not found: $ORPHAN"
 [ -f "$QUEUED" ]     || die "W4 fixture not found: $QUEUED"
+[ -f "$SPLIT" ]      || die "W5 fixture not found: $SPLIT"
 python3 -c 'import PIL' 2>/dev/null || die "python3 Pillow is required for W2's screen check"
 command -v mcopy >/dev/null || die "mtools (mcopy) is required to install the ROM into the SD image"
 
@@ -207,10 +218,12 @@ jlog=$OUT/dzrp-stub.log
 jlog2=$OUT/dzrp-stub-w2.log
 jlog3=$OUT/dzrp-stub-w3.log
 jlog4=$OUT/dzrp-stub-w4.log
+jlog5=$OUT/dzrp-stub-w5.log
 shot=$OUT/screenshots/dzrp-stub.png
 shot2=$OUT/screenshots/dzrp-stub-w2.png
 shot3=$OUT/screenshots/dzrp-stub-w3.png
 shot4=$OUT/screenshots/dzrp-stub-w4.png
+shot5=$OUT/screenshots/dzrp-stub-w5.png
 
 jnext_pid=""
 cleanup() {
@@ -498,14 +511,71 @@ else
 fi
 
 # ===========================================================================
+# Run 5 — W5: a command split across +IPD frames while a second client speaks
+#
+# Its own emulator run for W4's reasons: a stub that has not been resumed or
+# crashed by the runs above, and a clean log to read the precondition from.
+# ===========================================================================
+
+log ""
+log "== run 5: a command split across frames while another connection speaks"
+
+if ! start_stub "$jlog5" "$shot5"; then
+    fail "W5 the stub never listened on 127.0.0.1:$PORT for the split-command run"
+else
+    set +e
+    split_out=$(DZRP_PORT="$PORT" DZRP_TIMEOUT="$CONTROL_TIMEOUT" python3 "$SPLIT" 2>&1)
+    split_rc=$?
+    set -e
+    stop_stub
+    printf '%s\n' "$split_out" | sed 's/^/  | /'
+
+    s_connects=$(grep -c "accepted as cid" "$jlog5" || true)
+
+    # THE PRECONDITION, from the module's own log rather than assumed: the three
+    # frames really were emitted, from two different connections, in the order
+    # that puts somebody else's command exactly where the split command's
+    # payload should have been.
+    #
+    # The lengths are the fixture's and must be read with it: 6 = a DZRP command
+    # header, 15 = the other client's whole CMD_LOOPBACK, 1 = the register
+    # number that was withheld. Change B_PAYLOAD in split-command.py and this
+    # line has to change with it — which is the point of asserting the exact
+    # shape rather than "some frames interleaved".
+    split_ok=$(python3 - "$jlog5" <<'EOF'
+import re, sys
+frames = re.findall(r'\+IPD,(\d+),(\d+)', open(sys.argv[1], errors='replace').read())
+frames = [(int(c), int(n)) for c, n in frames]
+for i in range(len(frames) - 2):
+    (c1, n1), (c2, n2), (c3, n3) = frames[i:i + 3]
+    if (n1, n2, n3) == (6, 15, 1) and c1 == c3 and c2 != c1:
+        print("%d,%d" % (c1, c2))
+        break
+else:
+    print("")
+EOF
+)
+
+    if [ "$s_connects" -gt 8 ]; then
+        fail "W5 CONTAMINATED — $s_connects connections in $jlog5 where this fixture makes 3. Another bench run reached our stub, so this verdict means nothing in either direction."
+    elif [ -z "$split_ok" ]; then
+        fail "W5 the precondition never happened — $jlog5 has no 6/15/1 run of +IPD frames with the middle one from another connection, so the split was never tested"
+    elif [ "$split_rc" -ne 0 ]; then
+        fail "W5 a command split across +IPD frames was answered on the wrong connection or from the wrong payload (issue #13) — see the lines above and $jlog5"
+    else
+        pass "W5 a split command (frames cid $split_ok, 6/15/1) is answered on its own connection with its own payload, and the other client's command is answered too"
+    fi
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 
 log ""
 if [ "$failures" -ne 0 ]; then
     log "Diagnosis:"
-    log "  jnext logs:   $jlog  $jlog2  $jlog3  $jlog4"
-    log "  screenshots:  $shot  $shot2  $shot3  $shot4"
+    log "  jnext logs:   $jlog  $jlog2  $jlog3  $jlog4  $jlog5"
+    log "  screenshots:  $shot  $shot2  $shot3  $shot4  $shot5"
 fi
 
 exit "$((failures > 0 ? 1 : 0))"

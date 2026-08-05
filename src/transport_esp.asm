@@ -146,6 +146,33 @@
 ;    connecting inside bring-up's one AT+CIFSR exchange can still lose its
 ;    first command.
 ;
+; 9. A MESSAGE BELONGS TO ONE CONNECTION AND A COMMAND IS ASSEMBLED FROM ONE
+;    CONNECTION'S FRAMES, and neither used to be true. Issue #13.
+;
+;    Three handlers send their response header and THEN read payload bytes —
+;    cmd_get_tbblue_reg, cmd_set_breakpoints, cmd_restore_mem. If the command's
+;    payload does not all arrive in one `+IPD`, those reads reach
+;    esp_require_payload, which takes the next frame off the wire or out of the
+;    hold and writes esp_conn_id on the way past. Two separate things then go
+;    wrong, and one fix does not cover both:
+;
+;      * THE REPLY GOES TO WHOEVER SPOKE LAST. transport_flush is reached after
+;        the reads, so the AT+CIPSEND carries the new id. Fixed by LATCHING:
+;        TRANSPORT_MESSAGE_START snapshots the connection into esp_tx_conn_id /
+;        esp_tx_conn_valid, and the flush uses the snapshot, so a response
+;        cannot be redirected once its first byte has been written.
+;      * THE PAYLOAD IS READ OUT OF SOMEBODY ELSE'S FRAME. The latch does
+;        nothing for this — the correctly-addressed reply just carries the
+;        wrong answer, and for cmd_set_breakpoints it is breakpoint addresses
+;        built from two clients' bytes and then written into the debuggee as
+;        RST 0. Fixed by OWNERSHIP: esp_cmd_id names the connection whose
+;        command is being received, and esp_require_payload will not continue
+;        it with a frame from anywhere else — see there.
+;
+;    NEITHER IS REACHABLE BY DeZog, which opens one connection and is strictly
+;    request/response. It takes a second client and a command split across
+;    frames, which is bench check W5.
+;
 ;---------------------------------------------------------------------------
 ; What this file does NOT do, deliberately
 ;---------------------------------------------------------------------------
@@ -175,10 +202,15 @@
 ;===========================================================================
 ; TRANSPORT_MESSAGE_START — emitted before every response and notification.
 ;
-; Nothing here. See point 1 in the header: the 0xA5 preamble is required in
+; No preamble byte. See point 1 in the header: the 0xA5 preamble is required in
 ; UART mode and must be ABSENT in WiFi mode.
+;
+; What it does instead is LATCH THE CONNECTION this message is going to. See
+; point 9 in the header for why a reply could otherwise be redirected between
+; its first byte and its last.
 ;===========================================================================
     MACRO TRANSPORT_MESSAGE_START
+    call esp_latch_tx
     ENDM
 
 
@@ -186,10 +218,13 @@
 ; TRANSPORT_END_MESSAGE — a complete message has been written.
 ;
 ; The serial transport writes bytes straight out and expands this to nothing.
-; Here it is what turns the buffer into an AT+CIPSEND.
+; Here it is what turns the buffer into an AT+CIPSEND — and, since issue #13,
+; also the one marker the transport has for "the debugger is idle", which is
+; what releases the connection that owned the command just finished. See
+; transport_end_message and point 9 in the header.
 ;===========================================================================
     MACRO TRANSPORT_END_MESSAGE
-    call transport_flush
+    call transport_end_message
     ENDM
 
 
@@ -446,6 +481,38 @@ esp_conn_id:        defb 0
 ; the debugger unusable on real hardware, where the first client gets id 0. See
 ; point 3 in the header.
 esp_conn_valid:     defb 0
+
+;---------------------------------------------------------------------------
+; Where the message BEING WRITTEN is going — issue #13, point 9 in the header.
+;
+; A snapshot of the pair above, taken by TRANSPORT_MESSAGE_START, i.e. before
+; the first byte of any response or notification. esp_flush_chunk sends to this
+; and never to the live pair, so a command that arrives while the response is
+; still being assembled cannot redirect it. The live pair goes on tracking
+; whatever is inbound, which is what it is for.
+;---------------------------------------------------------------------------
+esp_tx_conn_id:     defb 0
+esp_tx_conn_valid:  defb 0
+
+;---------------------------------------------------------------------------
+; Which connection's command is being received — issue #13, point 9.
+;
+; A DZRP command may span several `+IPD` frames, and with two clients the next
+; frame on the wire is not necessarily the next frame OF THIS COMMAND. These
+; two say whose bytes may continue it:
+;
+;   esp_cmd_active == 0    the debugger is idle; the next frame, from any
+;                          connection, starts a command and becomes its owner
+;   esp_cmd_active != 0    esp_cmd_id owns the command being received, and only
+;                          its frames may continue it
+;
+; Claimed in esp_require_payload, released by transport_end_message and by
+; transport_drain — the three places the debugger goes idle or gives up. It is
+; NOT released by transport_flush, which is also called mid-message whenever
+; ESP_TX_CHUNK bytes have piled up.
+;---------------------------------------------------------------------------
+esp_cmd_id:         defb 0
+esp_cmd_active:     defb 0
 
 ; Outer passes of the RX poll. One, except in the two windows where the module
 ; has been asked something and owes an answer: the whole of bring-up
@@ -809,9 +876,32 @@ esp_capture_ipd:
     call esp_read_decimal
     pop bc                      ; B = the id
     ret c
+    ; Flow through
 
-    ; HL = the payload length. Hold it only if the buffer is free AND big
-    ; enough; otherwise read it away, which keeps the stream framed.
+
+;===========================================================================
+; Holds a frame whose header has already been read, or reads its payload away.
+;
+; Parameters:
+;  B = the connection id, HL = the payload length, the payload still on the
+;  wire.
+;
+; ALWAYS RETURNS. A frame it cannot hold — the buffer is busy, or the frame is
+; longer than ESP_HOLD_MAX — is read off the wire and dropped: the command is
+; lost, but the stream stays framed, where consuming an unknown number of bytes
+; would leave the next scan matching its pattern inside somebody's payload.
+;
+; It does NOT touch esp_conn_id or esp_conn_valid; see esp_hold_id.
+;
+; TWO CALLERS, and the second is not a capture. esp_capture_ipd falls in here
+; from inside a scan; esp_require_payload calls it to park a frame that belongs
+; to a different connection from the command it is assembling (issue #13).
+; Changes:
+;  AF, BC, DE, HL
+;===========================================================================
+esp_hold_frame:
+    ; Hold it only if the buffer is free AND big enough; otherwise read it away,
+    ; which keeps the stream framed.
     ld a,(esp_rx_from_hold)
     or a
     jr nz,.drop
@@ -1183,39 +1273,79 @@ esp_require_payload:
     ld hl,(esp_rx_remaining)
     ld a,h
     or l
-    ret nz
+    jr nz,.claim_if_idle        ; the current chunk still owes bytes
+
+    ; ONE COMMAND, ONE CONNECTION — issue #13, point 9 in the header. If a
+    ; command is already being received, only frames from ITS connection may
+    ; continue it. Splicing another client's bytes into a half-read command is
+    ; silent corruption: for cmd_set_breakpoints it is a breakpoint address
+    ; assembled from two clients and then written into the debuggee as RST 0.
+    ld a,(esp_cmd_active)
+    or a
+    jr z,.any                   ; idle: whoever speaks next starts a command
 
     ; A HELD FRAME COMES BEFORE ANYTHING STILL ON THE WIRE, because it arrived
     ; first — it was taken off the wire by a scan that would otherwise have
-    ; destroyed it (esp_capture_ipd). This is where it becomes the current
-    ; chunk, and where its connection becomes the one replies go to: nothing
-    ; before this point touches esp_conn_id, so a response being flushed cannot
-    ; be redirected halfway through by a command arriving from somewhere else.
+    ; destroyed it (esp_capture_ipd). But only if it is ours; if it is not, it
+    ; STAYS HELD and the wire is asked instead, so it is still served, as the
+    ; next command, once this one is finished.
+    ld hl,(esp_hold_len)
+    ld a,h
+    or l
+    jr z,.wire
+    ld a,(esp_hold_id)
+    ld hl,esp_cmd_id
+    cp (hl)
+    jr z,.adopt_held
+
+.wire:
+    call esp_next_wire_chunk
+    ld a,(esp_conn_id)
+    ld hl,esp_cmd_id
+    cp (hl)
+    ret z
+
+    ; Somebody else's command, arriving mid-command. Park it if the hold buffer
+    ; is free and drop it framed if not — esp_hold_frame decides — and then go
+    ; on looking for our own continuation. Parking is what keeps the other
+    ; client's command alive; the losses are esp_hold_frame's documented ones.
+    ;
+    ; esp_conn_id is left naming that frame until the next sync overwrites it.
+    ; It is only ever read while a chunk is current, and after this there is
+    ; none; the message being written is protected by the latch, not by it.
+    ld a,(esp_conn_id)
+    ld b,a
+    ld hl,(esp_rx_remaining)
+    ld de,0
+    ld (esp_rx_remaining),de
+    call esp_hold_frame
+    jr .wire
+
+.any:
     ld hl,(esp_hold_len)
     ld a,h
     or l
     jr nz,.adopt_held
+    call esp_next_wire_chunk
+    ; Flow through
 
-    ; Nothing held: the next chunk comes off the wire. esp_sync_ipd is what
-    ; releases the buffer, because it is also reachable from
-    ; transport_byte_available.
-    call esp_sync_ipd
-    jr c,.timeout
-    ; A zero-length chunk would loop here forever. jnext never frames one
-    ; ("the datagram is dropped rather than framed as an empty +IPD"), so this
-    ; is a guard, not a case.
-    ld hl,(esp_rx_remaining)
-    ld a,h
-    or l
+.claim_if_idle:
+    ; The first byte of a command fixes whose command it is, for as long as it
+    ; takes to receive and answer. Released by transport_end_message.
+    ld a,(esp_cmd_active)
+    or a
     ret nz
-.timeout:
-    nop ; LOGPOINT esp_require_payload: ERROR=TIMEOUT
-    jp rx_timeout   ; ASSERTION
+    ld a,(esp_conn_id)
+    ld (esp_cmd_id),a
+    ld a,1
+    ld (esp_cmd_active),a
+    ret
 
 .adopt_held:
-    ; HL = the held length. The hold's own length goes to zero here and
-    ; esp_rx_from_hold takes over as "the buffer is busy", so a capture during
-    ; the response to THIS command cannot overwrite what is still being read.
+    ; The hold's own length goes to zero here and esp_rx_from_hold takes over as
+    ; "the buffer is busy", so a capture during the response to THIS command
+    ; cannot overwrite what is still being read.
+    ld hl,(esp_hold_len)
     ld (esp_rx_remaining),hl
     ld hl,0
     ld (esp_hold_len),hl
@@ -1226,7 +1356,30 @@ esp_require_payload:
     ld a,1
     ld (esp_conn_valid),a
     ld (esp_rx_from_hold),a
-    ret
+    jr .claim_if_idle
+
+
+;===========================================================================
+; Synchronises to the next `+IPD` on the wire and makes it the current chunk.
+; Does not return on failure — see esp_read_raw.
+; Changes:
+;  AF, BC, DE, HL
+;===========================================================================
+esp_next_wire_chunk:
+    ; esp_sync_ipd is what releases the hold buffer, because it is also
+    ; reachable from transport_byte_available.
+    call esp_sync_ipd
+    jr c,.timeout
+    ; A zero-length chunk would loop the caller here forever. jnext never frames
+    ; one ("the datagram is dropped rather than framed as an empty +IPD"), so
+    ; this is a guard, not a case.
+    ld hl,(esp_rx_remaining)
+    ld a,h
+    or l
+    ret nz
+.timeout:
+    nop ; LOGPOINT esp_require_payload: ERROR=TIMEOUT
+    jp rx_timeout   ; ASSERTION
 
 
 ;===========================================================================
@@ -1255,6 +1408,11 @@ transport_drain_with_timeout:
     ld (esp_hold_len),a
     ld (esp_hold_len+1),a
     ld (esp_rx_from_hold),a
+    ; And with the half-received command abandoned, nobody owns the next one:
+    ; idle is exactly the state esp_cmd_active == 0 describes. Leaving it set
+    ; would make the next client's first frame look like a foreign continuation
+    ; of a command that no longer exists.
+    ld (esp_cmd_active),a
     ld (esp_tx_len),a
     ld bc,UART_TX
 
@@ -1540,19 +1698,62 @@ transport_write_byte:
 
 
 ;===========================================================================
+; Latches the connection the message about to be written is going to.
+;
+; Invoked by TRANSPORT_MESSAGE_START, which sits before the first byte of every
+; response (send_4bytes_length_and_seqno) and every notification
+; (send_ntf_pause). See point 9 in the header.
+;
+; A is dead at both call sites — the response path loads it from E immediately
+; afterwards, the notification path has just written prgm_state — so nothing is
+; saved here. DE and HL are live at both and are not touched.
+; Changes:
+;  AF
+;===========================================================================
+esp_latch_tx:
+    ld a,(esp_conn_id)
+    ld (esp_tx_conn_id),a
+    ld a,(esp_conn_valid)
+    ld (esp_tx_conn_valid),a
+    ret
+
+
+;===========================================================================
+; A complete message has been written and the debugger is going idle.
+;
+; Invoked by TRANSPORT_END_MESSAGE, which sits at the three places a finished
+; message can end up: cmd_loop, main, and main_loop.continue (transport.asm
+; enumerates them and why there are three).
+;
+; RELEASING THE COMMAND'S CONNECTION IS THE HALF transport_flush CANNOT DO, and
+; that is why this entry point exists at all. transport_flush is also called
+; from transport_write_byte every ESP_TX_CHUNK bytes, i.e. in the middle of a
+; message, so it is not a marker for "idle" — releasing there would let the
+; three handlers that read payload after answering (issue #13) take the rest of
+; their command from whoever spoke next.
+; Changes:
+;  AF, BC, DE, HL
+;===========================================================================
+transport_end_message:
+    xor a
+    ld (esp_cmd_active),a
+    ; Flow through
+
+
+;===========================================================================
 ; Sends everything queued and waits until the module has taken it.
 ;
 ; With no client there is nowhere to send, so the buffer is dropped rather than
 ; aimed at a connection that is not open — which is what keeps a button NMI with
 ; no debugger attached from parking on a TX timeout.
 ;
-; The question asked here is esp_conn_valid, NOT the value of esp_conn_id: on
-; real hardware the first client is id 0, so no id can answer it.
+; The question asked here is esp_tx_conn_valid, NOT the value of esp_tx_conn_id:
+; on real hardware the first client is id 0, so no id can answer it.
 ; Changes:
 ;  AF, BC, DE, HL
 ;===========================================================================
 transport_flush:
-    ld a,(esp_conn_valid)
+    ld a,(esp_tx_conn_valid)
     or a
     jr nz,.have_client
     ; No client: drop it.
@@ -1566,13 +1767,17 @@ transport_flush:
     ; Flow through
 
 ;===========================================================================
-; Sends the buffered bytes as one AT+CIPSEND on the connection the last +IPD
-; arrived on, and clears the buffer.
+; Sends the buffered bytes as one AT+CIPSEND on the connection LATCHED when the
+; message started, and clears the buffer.
 ; Must only be called with esp_tx_len != 0: AT+CIPSEND with a length of 0 is
-; answered ERROR (jnext esp_at.cpp, begin_send). And only with esp_conn_valid
-; set — esp_conn_id is read here without being questioned, because every value
+; answered ERROR (jnext esp_at.cpp, begin_send). And only with esp_tx_conn_valid
+; set — esp_tx_conn_id is read here without being questioned, because every value
 ; it can hold is a real connection. transport_flush is the only way in and it
 ; checks both; there is no `call esp_flush_chunk` anywhere.
+;
+; THE LATCHED PAIR AND NOT THE LIVE ONE, which is issue #13: a long response is
+; flushed in chunks, and three handlers read payload between chunks, so the live
+; id can change under a message that has already begun. See point 9.
 ; Changes:
 ;  AF, BC, DE, HL
 ;===========================================================================
@@ -1581,7 +1786,7 @@ esp_flush_chunk:
     ld hl,esp_str_cipsend
     ld de,esp_cmd_buffer
     call esp_copy_string
-    ld a,(esp_conn_id)
+    ld a,(esp_tx_conn_id)
     call esp_put_decimal
     ld a,','
     ld (de),a
@@ -1671,8 +1876,15 @@ esp_flush_chunk:
     ; an unprompted notification in that window still goes nowhere. Closing that
     ; means tracking `<id>,CONNECT` as well, which belongs with M3's reconnect
     ; work rather than here.
+    ;
+    ; BOTH VALIDITY FLAGS, and the latched one is not optional. Its own chunk is
+    ; already lost; clearing it is what stops the REST of the same message
+    ; re-announcing itself to a connection that has just been refused, once per
+    ; chunk. transport_flush reads the latched flag, so leaving it set would
+    ; make a long response pay the whole ERROR round trip again and again.
     xor a
     ld (esp_conn_valid),a
+    ld (esp_tx_conn_valid),a
     ld (esp_tx_len),a
     ret
 

@@ -468,6 +468,35 @@ def find_stray(conns, missing_index, payload, seconds=3.0):
             "which points at the command never reaching the handler rather than at the id")
 
 
+# How long to pause before the second exchange when the first attempt failed.
+# Long enough to outlast a SEND OK round trip on the UART by a wide margin,
+# short enough that a run does not drag. Only ever paid on the failing path.
+H3_DELAY = 1.0
+
+
+def h3_attempt(conns, delay):
+    """One pass of the two-connection exchange. Returns (ok, detail).
+
+    `delay` is inserted BEFORE the second connection's exchange. At 0 this is
+    the adversarial ordering that fails on hardware; non-zero is the control
+    that says whether the failure is a timing window.
+    """
+    payloads = [bytes([0x11]) * 24, bytes([0x22]) * 24]
+    for i, (d, payload) in enumerate(zip(conns, payloads)):
+        if i and delay:
+            time.sleep(delay)
+        try:
+            body = d.command(dzrp.CMD_LOOPBACK, payload)
+        except dzrp.DzrpError as e:
+            return False, ("connection %d got no usable reply (%s). %s"
+                           % (i + 1, e, find_stray(conns, i, payload)))
+        if body != payload:
+            return False, ("connection %d got %d bytes back, and they are not its own "
+                           "payload — the id was assumed, not read" % (i + 1, len(body)))
+    return True, ("two simultaneous connections each got their own payload back — the "
+                  "+IPD id is read from the header, not assumed")
+
+
 def h3_connection_id(host, port, timeout, results):
     """Two connections open at once, each given its own distinct payload.
 
@@ -507,30 +536,54 @@ def h3_connection_id(host, port, timeout, results):
                                     "connections than AT+CIPMUX=1 allows" % e)
             return
 
-        payloads = [bytes([0x11]) * 24, bytes([0x22]) * 24]
-        for i, (d, payload) in enumerate(zip(conns, payloads)):
-            try:
-                body = d.command(dzrp.CMD_LOOPBACK, payload)
-            except dzrp.DzrpError as e:
-                # FOLLOW THE MISSING REPLY. "No reply" is where this check used
-                # to stop, and it is one observation short of a diagnosis: it
-                # cannot tell "the answer went to the wrong connection" from
-                # "the command was never processed". Those are different bugs
-                # in different code. Ask the other connections whether they are
-                # holding it.
-                elsewhere = find_stray(conns, i, payload)
-                results.add("H3", FAIL, "connection %d got no usable reply (%s). %s"
-                                        % (i + 1, e, elsewhere))
-                return
-            if body != payload:
-                results.add("H3", FAIL, "connection %d got %d bytes back, and they are not "
-                                        "its own payload — the id was assumed, not read"
-                                        % (i + 1, len(body)))
-                return
+        ok, detail = h3_attempt(conns, 0.0)
+        if ok:
+            results.add("H3", PASS, detail + retry_note(retries))
+            return
 
-        results.add("H3", PASS, "two simultaneous connections each got their own payload "
-                                "back — the +IPD id is read from the header, not assumed"
-                                + retry_note(retries))
+        # IT FAILED. Now find out WHY, in the same run, because "no reply" on
+        # its own has already cost this project five hypotheses.
+        #
+        # The suspicion (issue #11) is a timing window rather than a logic
+        # error: esp_flush_chunk sends the reply and then waits for the
+        # module's SEND OK, and esp_wait_string DISCARDS every byte that is not
+        # part of the pattern it is scanning for. A +IPD arriving in that
+        # window is destroyed — no error, nothing sent, and the other
+        # connection holding nothing.
+        #
+        # If that is the cause, then simply WAITING before the second exchange
+        # must make it work: the window closes once SEND OK has been consumed.
+        # So retry on fresh connections with a pause, and let the difference
+        # between the two attempts be the evidence.
+        first = detail
+        for d in conns:
+            try:
+                d.close()
+            except Exception:
+                pass
+        conns = []
+        try:
+            for _ in range(2):
+                d, _r = connect(host, port, timeout)
+                conns.append(d)
+        except (OSError, dzrp.DzrpError) as e:
+            results.add("H3", FAIL, "%s — and the delayed retry could not reconnect (%s), so "
+                                    "the timing question is unanswered" % (first, e))
+            return
+
+        ok2, detail2 = h3_attempt(conns, H3_DELAY)
+        if ok2:
+            results.add("H3", FAIL, "%s BUT THE SAME EXCHANGE SUCCEEDS WITH A %.1fs PAUSE "
+                                    "before it. That is issue #11 confirmed as a TIMING "
+                                    "WINDOW, not a logic error: a +IPD arriving while the "
+                                    "stub is inside esp_wait_string waiting for SEND OK is "
+                                    "discarded, because that routine throws away every byte "
+                                    "that is not its pattern. Nothing is wrong with the id "
+                                    "handling" % (first, H3_DELAY))
+        else:
+            results.add("H3", FAIL, "%s — and it STILL fails with a %.1fs pause (%s), so the "
+                                    "SEND OK window is NOT the cause and issue #11's "
+                                    "hypothesis is wrong" % (first, H3_DELAY, detail2))
     finally:
         for d in conns:
             try:

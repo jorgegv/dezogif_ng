@@ -332,11 +332,11 @@ probe B stages. Read the paragraph above as the state a Next built before that f
 
 **So the hypothesis is that #15 IS #19**, and these probes measure what it rests on.
 
-**BOTH ISSUES ARE NOW CLOSED, AND NEITHER WAS CLOSED BY DEMONSTRATING THAT LINK** — #15 by the
-user on 2026-08-06 before probe B had ever run, #19 as **WONTFIX** after it did. The probes and
-their readings stay because the hypothesis was never refuted either, and because what they measure
-— the module's ceiling, and what it costs to strand a peer — is the same whatever the label. See
-"Why issue #19 is closed as WONTFIX" below for what would reopen it.
+**#15 WAS CLOSED WITHOUT DEMONSTRATING THAT LINK** — by the user on 2026-08-06, before probe B had
+ever run. The probes and their readings stay because the hypothesis was never refuted either, and
+because what they measure — the module's ceiling, and what it costs to strand a peer — is the same
+whatever the label. See "Issue #19's residual" below for what is and is not known about how often
+it can happen.
 
 What does *not* contradict it: #15's own E-C control, 12 rounds of connect + abortive RST on build
 000B, found accept latency flat at 4-12 ms and no leak. **An RST frees the slot**, and so does a
@@ -476,51 +476,77 @@ running, which it still would be. So the re-init fails at its own AT chain and p
 "ESP-01 setup failed". A power cycle is therefore not merely the simplest answer to the terminal
 state, it is the only one the machine currently offers.
 
-#### Why issue #19 is closed as WONTFIX, and what would reopen it
+#### Issue #19's residual: what it takes to leak a slot, and what is NOT known
 
-Decided by the user, 2026-08-06, after the run above. The residual is real, it is documented here
-rather than in a closed issue nobody will read, and **the reason it is not worth more code is that
-almost nothing produces it.**
+Written after probe B's hardware run, and **rewritten after an independent review rejected the
+first version for overclaiming** — three of its findings were contradictions with this document's
+own text, which is the failure this project keeps paying for. What follows is what is traceable.
 
-**What does NOT leak a slot — every one of these measured on a real Next, not reasoned:**
+**What does NOT leak a slot:**
 
-| | |
+| | evidence |
 |---|---|
-| a **clean close** (FIN) | probe A reclaimed 2 of 2 after closing 5 |
-| an **abortive close** (RST) | #15's own E-C control: 12 rounds of connect + RST, accept latency flat at 4-12 ms, no leak |
-| a **client killed mid-command** | the next connection was answered in **4 ms** |
-| DeZog quitting, Shift+F5, a crash, a dropped socket | all of the above are FIN or RST |
+| an **abortive close** (RST) | #15's E-C control on build 000B: 12 rounds of connect + RST, accept latency flat at 4-12 ms, no leak. **Hardware, in this tree** |
+| a **clean close** (FIN) | probe A's reclaim phase served 2 of 2 fresh clients after closing 5. **Hardware, but recorded in the 2026-08-06 session handover and not in this tree** — quoted with that provenance rather than as a re-runnable artefact |
+| a **client killed mid-command** | the next connection was answered in 4 ms (MEMORY.md, 2026-08-05, build 000B). **Read narrowly**: it shows the stub kept serving, i.e. that a slot was free — it does **not** show the killed connection's own slot was reclaimed, since the module had spare slots anyway. That measurement was taken for issue #16 and answers a liveness question, not a slot-accounting one |
 
-**What leaks is one thing only: a peer that goes away sending NEITHER a FIN NOR an RST.** The
-sharpest evidence for how unusual that is comes from the probe that stages it —
-`test/run-vanished-peer.sh` **needs root**, because *no client can produce this state from
-userspace at all*. The kernel sends something whenever a process dies or a socket closes. For a
-slot to leak, the peer's whole host must lose the ability to transmit: a hard crash or power cut, a
-VM destroyed, or a network partition that outlasts the kernel's FIN retransmissions *and* whose
-client process is gone by the time it heals. A laptop suspend does **not** qualify — on resume it
-either continues or RSTs.
+So the ordinary endings — DeZog quitting, Shift+F5, a crash, a killed process — all send a FIN or
+an RST, and the first two rows say those free the slot.
 
-**And it must happen FIVE times between two power-ons of the Next**, because a power cycle clears
-every slot and the ceiling is 5 (measured). Each occurrence is uncommon on its own; five with no
-power cycle in between, on a machine that gets power-cycled constantly, is deep in the tail.
+**What leaks is one thing: a peer that goes away sending NEITHER.** Two separate questions follow,
+and the first version of this section ran them together:
 
-**What the shipped fix does cover.** `esp_recover`'s sweep reclaims slots whenever the leak
-coincides with transport faults — which is the more plausible real-world pairing, since a partition
-that strands a peer tends also to make the stub fail reads. The uncovered residual is narrower than
-issue #19 as written: leaks accumulating on a stub that never once faults.
+* **Staging it deliberately needs root.** `test/run-vanished-peer.sh` uses a firewall rule because
+  a process cannot make its own kernel stop transmitting. That is a fact about the *probe*.
+* **What produces it in the field is NOT known**, and this document says so three sections down:
+  *"a real client crashing, a laptop sleeping or a WiFi drop would produce it differently."* A hard
+  crash or power cut on the PC does it. So, plausibly, does **a laptop suspended mid-session and
+  resumed on a different network** — the socket's retransmissions never reach the Next again, and
+  no RST ever arrives — which is an entirely ordinary thing to do and needs no root at all. An
+  earlier version of this section claimed suspend "does not qualify". That was asserted without
+  measurement and contradicted the line above; it is withdrawn.
 
-**WHAT WOULD REOPEN IT**, stated so a future session does not re-litigate this from a hunch, and so
-that a real recurrence is not dismissed by pointing at this paragraph:
+**The five-times compounding is real but the events are NOT independent.** A power cycle clears
+every slot and the ceiling is 5 (measured), so five leaks must accumulate between two power-ons.
+But one persistent cause — a flaky link, a router that reboots nightly, a laptop routinely
+suspended mid-session — can strand several without being five separate rare events. And the Next is
+not necessarily power-cycled often: Appendix B.2 of the plan describes a machine left running with
+the listener alive across normal use. **The real-world rate is unknown.** Nothing here measures it,
+and "deep in the tail" — which the first version of this section said — is not supported.
 
-* a Next **refusing every new connection** while its screen is **clean** (no error area, `Core:`
-  line intact) — the signature measured above;
-* **no power cycle since boot**, since one would have cleared the slots;
-* and `make probe-slots` finding a **ceiling below 5** on that machine, which is the discriminating
-  reading — it says the slots are gone rather than the stub being wedged.
+**What the shipped fix covers.** `esp_recover`'s sweep reclaims slots when a recovery runs, and a
+recovery needs `ESP_FAULT_LIMIT` consecutive faults. A vanished peer **generates no faults itself**
+— that is traced above and is structural, not probabilistic — so the sweep helps only when some
+**independent** fault source is active at the same time. Whether that combination is common is
+**not known**; an earlier version called it "the more plausible real-world pairing", which was
+asserted rather than measured and contradicted the traced paragraph above it.
 
-All three together are this issue. Any one of them alone is not, and the first two on their own are
-also what a wedged stub looks like from outside — which is the confusion that cost this project a
-day, and is why the third is on the list.
+#### What would reopen it, and the one place the instruments cannot help
+
+Stated so a future session neither re-litigates this from a hunch nor dismisses a real recurrence
+by pointing at this section:
+
+* a Next **refusing every new connection**, with its screen **clean** — no error area, `Core:` line
+  intact — and **no power cycle since boot**.
+
+**`make probe-slots` is NOT a discriminator in that state, and the first version of this section
+wrongly said it was.** Its A1 check asks whether an *earlier* connection still answers, and
+`test/slot-ceiling-probe.py` only runs that when at least one connection was served
+(`first_bad and held`). A module with every slot leaked serves none, so the probe takes the
+`elif first_bad` branch and prints exactly what it can honestly say: *"the very first connection was
+not served, so there is no earlier one to ask."* The tool admits it cannot tell slot exhaustion
+from a wedged stub in precisely the case this criterion describes.
+
+**So the discriminator is at the machine, not on the PC.** A stub that is alive draws a clean
+screen, answers its own keyboard (`B` toggles the border, `R` resets) and shows no error text; a
+wedged one does not. That is the "AT THE MACHINE" protocol this page already carries, and in this
+one state it is the only reading available — every PC-side instrument needs a connection, which is
+the thing that cannot be had. Photograph the screen and try the keys **before** power-cycling,
+because the power cycle destroys the evidence.
+
+**The decision to leave this unfixed is a cost judgement against an unmeasured rate**, not a
+finding that it will not happen. Closing the criterion properly needs a sweep reachable from a
+quiet stub — periodic, or at connect time — which is a separate change.
 
 ### `make probe-jnext` FIRST, always
 

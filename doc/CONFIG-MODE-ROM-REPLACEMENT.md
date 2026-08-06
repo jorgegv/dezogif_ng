@@ -95,9 +95,23 @@ A **dotcommand runs through esxDOS**, which is DivMMC, and re-enters automap on 
 this is not a remote edge case for the intended caller: if DivMMC ROM is mapped at the moment of the
 write, the write lands on a read-only path and does nothing, silently.
 
-**None of this is an argument against the mechanism** — `tbblue.fw` uses it successfully. It is an
-argument that the dotcommand must control its own memory state deliberately, and that a write which
-appears to do nothing has three separate explanations before "the VHDL is wrong".
+**AND THEY DO NOT ALL FAIL THE SAME WAY. Two of them are silent CORRUPTION, not a no-op**, which the
+first two versions of this document got wrong in the more dangerous direction:
+
+| branch | line | `rdonly` | what a misdirected `LDIR` does |
+|---|---|---|---|
+| Multiface overlay, ROM half | `:3035` | `1` | **nothing** — the write is discarded |
+| **MMU RAM page in slot 0/1** | `:3042` | **`0`** | **writes into whatever page is actually mapped there** — NextZXOS working RAM, system variables, anything |
+| DivMMC ROM | `:3089` | `1` | **nothing** |
+| **DivMMC RAM** | `:3097` | `divmmc_rdonly` | **conditionally writes** into DivMMC RAM |
+| **Layer 2 write-map** | `:3105` | **`0`** | **writes into Layer 2 graphics memory** |
+
+So "the write silently does nothing" is true of exactly two of the five, and a caller who assumes
+inertness for the others has already destroyed something by the time they notice. **The dotcommand
+must establish its memory state deliberately** — not rely on the write failing safely if it has not.
+
+**None of this is an argument against the mechanism**; `tbblue.fw` uses it successfully. It is an
+argument that the window has to be entered from a known state.
 
 ### 1.3 Entering and leaving config mode — both Discord accounts are wrong as stated
 
@@ -158,7 +172,8 @@ anything doing this earlier in boot needs to know.
     ;    MF memory must not be paged in, slot 0/1 must not hold an MMU RAM page,
     ;    and DivMMC ROM must not be mapped, or the write silently does nothing.
 
-    di                           ; see the interrupt hazard below - NOT optional
+    di                           ; closes the MASKABLE half - not optional.
+                                 ; NMI needs nothing: config mode suppresses it (below)
     NEXTREG 3,7                  ; enter config mode (bits 2:0 = 111)
     NEXTREG 4,5                  ; 16 KB config bank 5 at 0x0000-0x3FFF, writable
     LDIR                         ; 8 KB image -> 0x0000, the MF ROM half
@@ -167,18 +182,36 @@ anything doing this earlier in boot needs to know.
     NEXTREG 2,1                  ; soft reset - reportedly required; see 3.1
 ```
 
-**THE INTERRUPT WINDOW IS THE DANGEROUS PART, and the first version of this document did not mention
-it at all.** Config mode remaps the whole of `0x0000-0x3FFF`, not merely the 8 KB being written — the
-branch is gated on `cpu_a(15 downto 14) = "00"`. That range holds the **IM1 vector at `0x0038`**, the
-**NMI vector at `0x0066`**, and every `RST` vector, and during the copy they are being served out of
-the half-written image. An interrupt taken inside the `LDIR` fetches its handler from that.
+**THE INTERRUPT WINDOW, AND IT IS NARROWER THAN THIS DOCUMENT FIRST SAID.** Config mode remaps the
+whole of `0x0000-0x3FFF`, not merely the 8 KB being written — the branch is gated on
+`cpu_a(15 downto 14) = "00"`. That range holds the **IM1 vector at `0x0038`**, the **NMI vector at
+`0x0066`** and every `RST` vector, and during the copy they are served out of the half-written image.
+An interrupt taken inside the `LDIR` fetches its handler from that. **`di` is what closes that**, and
+it is not optional.
 
-`di` closes the maskable half. **It does not close the NMI half, and nothing can**: the Multiface M1
-button asserts through `nmi_assert_mf` (`zxnext.vhd:2090`), gated only by NR `0x06` bit 3 — which
-this project has measured NextZXOS to leave **set** (MEMORY.md, 2026-08-04, bench T5's control). So a
-button press during the window is a real hazard, and the mitigations available are: clear NR `0x06`
-bit 3 for the duration and restore it afterwards, which this project's own code already knows how to
-do; or accept the race and document it. **A dotcommand should do the former.**
+**NMI needs nothing, because config mode already suppresses it** — and a previous version of this
+document said the opposite, "nothing can", having read `nmi_assert_mf`'s combinational definition at
+`zxnext.vhd:2090` and stopped twelve lines short of the clause that governs it. `zxnext.vhd:2102-2105`:
+
+```vhdl
+elsif nr_03_config_mode = '1' or nmi_state = S_NMI_END then
+   nmi_mf     <= '0';
+   nmi_divmmc <= '0';
+   nmi_expbus <= '0';
+```
+
+That clear is **continuously re-asserted for as long as config mode is set**, so no new Multiface,
+DivMMC or expansion-bus NMI can latch during the window at all. Clearing NR `0x06` bit 3 by hand —
+which an earlier version of this document recommended — is therefore redundant.
+
+**What remains is an entry race of a few clock cycles, and no software closes it.** `nmi_generate_n`
+(`:2168`) fires on `nmi_state = S_NMI_IDLE and nmi_activated = '1'` **or** on
+`nmi_state = S_NMI_FETCH`. The second term does not consult `nmi_activated`, so an NMI whose state
+machine has already reached `S_NMI_FETCH` in the cycle or two before `NEXTREG 3,7` takes effect will
+complete its fetch of `0x0066` from the newly remapped bank. Neither `di` nor NR `0x06` reaches it,
+because both act on the *assertion* and this transition is already under way. It is a genuine hazard
+and it is a vanishingly small target; the honest handling is to know it exists rather than to defend
+against it with something that does not work.
 
 **There is no `NEXTREG 4,<previous>` step, deliberately, and an earlier version of this document had
 one.** NR `0x04` is **write-only**: `nextreg.txt:85-90` documents no `(R)` section, and the VHDL's
@@ -273,7 +306,9 @@ not make.
 | Config mode is THIRD in priority: the Multiface overlay AND an MMU-mapped RAM page in slot 0/1 both beat it | `zxnext.vhd:3029-3052`, a four-way `if`/`elsif` | **verified** — the first version of this document said two-way |
 | A second arbiter after it can still override, DivMMC and Layer 2 being left eligible by config mode's own `"110"` | `zxnext.vhd:3050`, `:3084`, `:3100` | **verified** |
 | Config mode remaps the WHOLE of `0x0000-0x3FFF`, so the IM1, NMI and RST vectors are served from the bank being written | `zxnext.vhd:3029` (`cpu_a(15 downto 14) = "00"`) | **verified** |
-| NMI cannot be masked by `di`; the M1 button is gated only by NR `0x06` bit 3, which NextZXOS leaves set | `zxnext.vhd:2090`; MEMORY.md 2026-08-04 for the measurement | **verified** |
+| **Config mode itself suppresses new NMI latching** for the whole window — `nmi_mf`/`nmi_divmmc`/`nmi_expbus` are cleared continuously while it is set | `zxnext.vhd:2102-2105` | **verified** — an earlier version of this document said nothing could mask NMI, having read `:2090` and stopped short of this |
+| A residual entry race remains: an NMI already at `S_NMI_FETCH` completes its fetch from the remapped bank, and no software action closes it | `zxnext.vhd:2168`, the second term | **verified** |
+| Of the five paths that can beat or override config mode, only two discard the write; three can corrupt what is actually mapped | `zxnext.vhd:3035`, `:3042`, `:3089`, `:3097`, `:3105` | **verified** — earlier versions called them all no-ops |
 | **NR `0x04` is WRITE-ONLY** — it cannot be saved and restored | `nextreg.txt:85-90` has no `(R)` section; `zxnext.vhd:5893-5896` goes `X"03"` → `X"05"` with no `when X"04"`, falling to `when others => 0x00` | **verified** — the first version of this document instructed a restore that cannot be written |
 | `nr_04_romram_bank` is consulted only inside the config-mode branch, so it need not be restored | `zxnext.vhd:3045`, sole reference | **verified** |
 | `111` enters config mode; other non-zero leaves; `000` is a no-op | `zxnext.vhd:5147-5151` | **verified** — corrects both Discord accounts |

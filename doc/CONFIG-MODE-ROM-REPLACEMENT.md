@@ -173,8 +173,8 @@ anything doing this earlier in boot needs to know.
     ;    and DivMMC ROM must not be mapped, or the write silently does nothing.
 
     di                           ; closes the MASKABLE half - not optional.
-                                 ; config mode suppresses NEW NMIs by itself; an edge
-                                 ; latched just before this is still serviced - see below
+                                 ; config mode suppresses the M1 button and DivMMC by
+                                 ; itself; NR 0x81 bit 5 is the one that can still fire
     NEXTREG 3,7                  ; enter config mode (bits 2:0 = 111)
     NEXTREG 4,5                  ; 16 KB config bank 5 at 0x0000-0x3FFF, writable
     LDIR                         ; 8 KB image -> 0x0000, the MF ROM half
@@ -226,16 +226,46 @@ service at an instruction boundary (`:1765`, `if NMI_s = '1' and Prefix = "00"`)
 behaviour, faithfully modelled. So an edge latched in the instruction *before* `NEXTREG 3,7` is
 **still serviced**, whatever the FPGA does with its request line afterwards.
 
-**Where that lands is the useful part, and it is not the `LDIR`.** Service happens at the next
-instruction boundary — which, in the §1.5 sequence, is before `NEXTREG 4,5` and before the copy. The
-fetch therefore reads a bank that has not been written yet. What it means instead is that **the
-Multiface NMI handler can begin executing with config mode active**, a state this stub has never
-been designed for or run in.
+**Where that lands took two more traces, and the answer is not the simple one.** `LDIR` is **not**
+atomic in this core, which an earlier version of this document implicitly assumed. `LDI`/`LDD`/
+`LDIR`/`LDDR` share one microcode block with `MCycles <= "100"` set unconditionally
+(`cpu/t80n_mcode.vhd:2095-2101`), and the branch that resets `MCycle` and runs the `NMI_s` check is
+an **OR**: `elsif (MCycle = MCycles) or No_BTR = '1' or …` (`t80n.vhd:1757-1766`). The first term is
+true at the end of *every* four-M-cycle pass, whether the loop is terminating or not — so **`LDIR`
+re-fetches its own opcode and re-checks `NMI_s` on every single byte it moves.**
 
-**Status of that last paragraph: reasoned from the three sources above, not observed.** Nobody has
-run it. It is the one place in this document where the conclusion is a deduction across two files
-rather than a reading of one, and a dotcommand author should treat it as the thing to test first
-rather than as a settled fact.
+So if an edge can be latched during the copy, it is serviced within a few T-states, with config mode
+active and bank 5 half written. **The question is therefore whether an edge can be latched during
+the copy at all**, and that is decided by what drives the CPU's `/NMI`:
+
+```vhdl
+z80_nmi_n <= nmi_generate_n;                                            -- :1841, the only driver
+nmi_generate_n <= '0' when (nmi_state = S_NMI_IDLE and nmi_activated = '1')
+                        or nmi_state = S_NMI_FETCH
+                        or (nr_81_expbus_nmi_debounce_disable = '1' and nmi_assert_expbus = '1')
+                  else '1';                                             -- :2168
+```
+
+**THREE terms, and the third is the one that matters.** The first two are suppressed throughout
+config mode by `:2102-2105` and `:2156-2157`, so **the M1 button, DivMMC and an ordinary
+expansion-bus NMI cannot produce a falling edge during the window at all** — no new `NMI_s`, nothing
+to service. But the third term is gated on **neither** `nmi_state` **nor** `nmi_activated`: it reads
+`nmi_assert_expbus`, the combinational assert, not the latch config mode clears. So an
+**expansion-bus NMI, with NR `0x81` bit 5 (debounce disable) set**, still drives `/NMI` low during
+config mode, latches `NMI_s`, and is serviced at the next `LDIR` iteration — reading `0x0066` out of
+a bank that is partway through being overwritten.
+
+**So the hazard is real, it spans the whole copy, and it has a name.** It is not the M1 button, which
+config mode genuinely does suppress. It is an expansion-bus NMI with debounce disabled — NR `0x81`
+bit 5, whose power-on default is `'0'` (`:1222`), i.e. **off unless something has deliberately turned
+it on.** A dotcommand that wants the window to be safe should ensure that bit is clear, which unlike
+the NR `0x06` idea an earlier version of this document proposed, is aimed at the mechanism that can
+actually fire.
+
+*(Three rounds of review to get here, and the last two were the interesting ones: the reviewer traced
+`LDIR`'s per-iteration interruptibility, which refuted this document's implicit assumption; that
+trace then pointed at the M1 button, which the driver above rules out; and the third term is what
+survives. Neither trace alone gives the right answer.)*
 
 **There is no `NEXTREG 4,<previous>` step, deliberately, and an earlier version of this document had
 one.** NR `0x04` is **write-only**: `nextreg.txt:85-90` documents no `(R)` section, and the VHDL's
@@ -333,7 +363,11 @@ not make.
 | **Config mode itself suppresses new NMI latching** for the whole window — `nmi_mf`/`nmi_divmmc`/`nmi_expbus` are cleared continuously while it is set | `zxnext.vhd:2102-2105` | **verified** — an earlier version of this document said nothing could mask NMI, having read `:2090` and stopped short of this |
 | `nmi_state` is ALSO forced to `S_NMI_IDLE` while config mode is set, so both terms of `nmi_generate_n` are false — the FPGA withdraws its own request | `zxnext.vhd:2156-2157` against `:2168` | **verified** — an earlier version of this document cited `:2168` alone and called the race unclosable |
 | The T80 core latches the `/NMI` falling edge in `NMI_s`, cleared only by the NMI cycle itself, so an edge taken before config mode is still serviced | `cpu/t80n.vhd:1663-1669`, `:1765` | **verified** — in the CPU core's source, not in `zxnext.vhd` |
-| That service lands before the copy begins, so it reads an unwritten bank — but the Multiface handler then runs WITH config mode active | deduced from the three rows above | **inferred, and the weakest claim in this document.** Two files reasoned across; nothing run |
+| `LDIR` re-fetches its opcode and re-checks `NMI_s` every iteration, so it is interruptible throughout | `cpu/t80n_mcode.vhd:2095-2101`, `t80n.vhd:1757-1766` | **verified** — refutes an implicit assumption of an earlier version |
+| `z80_nmi_n` has exactly one driver, and `nmi_generate_n` has THREE terms | `zxnext.vhd:1841`, `:2168` | **verified** |
+| The M1 button, DivMMC and an ordinary expansion-bus NMI cannot latch during config mode; **an expansion-bus NMI with NR `0x81` bit 5 set still can**, and would be serviced mid-copy | the two rows above plus `:2102-2105`, `:2156-2157` | **verified** — the third term is gated on neither `nmi_state` nor `nmi_activated` |
+| NR `0x81` bit 5 defaults to `'0'` | `zxnext.vhd:1222` | **verified** |
+| What the Multiface handler does if it ever runs with config mode active | — | **unverified.** Nothing has run |
 | Of the five paths that can beat or override config mode, only two discard the write; three can corrupt what is actually mapped | `zxnext.vhd:3035`, `:3042`, `:3089`, `:3097`, `:3105` | **verified** — earlier versions called them all no-ops |
 | **NR `0x04` is WRITE-ONLY** — it cannot be saved and restored | `nextreg.txt:85-90` has no `(R)` section; `zxnext.vhd:5893-5896` goes `X"03"` → `X"05"` with no `when X"04"`, falling to `when others => 0x00` | **verified** — the first version of this document instructed a restore that cannot be written |
 | `nr_04_romram_bank` is consulted only inside the config-mode branch, so it need not be restored | `zxnext.vhd:3045`, sole reference | **verified** |

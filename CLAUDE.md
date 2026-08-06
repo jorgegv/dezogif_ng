@@ -53,6 +53,10 @@ to work.
   for the serial variant; everything except the transport still applies.
 - **`doc/legacy/` is upstream's documentation, frozen — `doc/` is ours.** Don't edit `doc/legacy/`
   to reflect our changes; record those in `doc/` or in the code.
+- **@doc/CONFIG-MODE-ROM-REPLACEMENT.md** — issue #21: writing the Multiface ROM at run time
+  through config mode (NR `0x03`/`0x04`) instead of swapping the file on the SD card, as input to a
+  dotcommand design. VHDL-verified mechanism, and it corrects both of the contradictory third-party
+  accounts the issue was filed from. Nothing in it has been run.
 - DZRP spec: https://github.com/maziac/DeZog/blob/main/design/DeZogProtocol.md
 - FPGA VHDL source (authoritative hardware spec):
   `/home/jorgegv/src/spectrum/ZX_Spectrum_Next_FPGA/cores/zxnext/src/`

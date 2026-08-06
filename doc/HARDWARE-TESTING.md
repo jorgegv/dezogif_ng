@@ -332,6 +332,12 @@ probe B stages. Read the paragraph above as the state a Next built before that f
 
 **So the hypothesis is that #15 IS #19**, and these probes measure what it rests on.
 
+**BOTH ISSUES ARE NOW CLOSED, AND NEITHER WAS CLOSED BY DEMONSTRATING THAT LINK** — #15 by the
+user on 2026-08-06 before probe B had ever run, #19 as **WONTFIX** after it did. The probes and
+their readings stay because the hypothesis was never refuted either, and because what they measure
+— the module's ceiling, and what it costs to strand a peer — is the same whatever the label. See
+"Why issue #19 is closed as WONTFIX" below for what would reopen it.
+
 What does *not* contradict it: #15's own E-C control, 12 rounds of connect + abortive RST on build
 000B, found accept latency flat at 4-12 ms and no leak. **An RST frees the slot**, and so does a
 FIN. The leak needs a peer that goes away with **neither** — which is probe B's whole mechanism.
@@ -469,6 +475,52 @@ the thing a user would reach for before the power switch. It does not run the sw
 running, which it still would be. So the re-init fails at its own AT chain and paints
 "ESP-01 setup failed". A power cycle is therefore not merely the simplest answer to the terminal
 state, it is the only one the machine currently offers.
+
+#### Why issue #19 is closed as WONTFIX, and what would reopen it
+
+Decided by the user, 2026-08-06, after the run above. The residual is real, it is documented here
+rather than in a closed issue nobody will read, and **the reason it is not worth more code is that
+almost nothing produces it.**
+
+**What does NOT leak a slot — every one of these measured on a real Next, not reasoned:**
+
+| | |
+|---|---|
+| a **clean close** (FIN) | probe A reclaimed 2 of 2 after closing 5 |
+| an **abortive close** (RST) | #15's own E-C control: 12 rounds of connect + RST, accept latency flat at 4-12 ms, no leak |
+| a **client killed mid-command** | the next connection was answered in **4 ms** |
+| DeZog quitting, Shift+F5, a crash, a dropped socket | all of the above are FIN or RST |
+
+**What leaks is one thing only: a peer that goes away sending NEITHER a FIN NOR an RST.** The
+sharpest evidence for how unusual that is comes from the probe that stages it —
+`test/run-vanished-peer.sh` **needs root**, because *no client can produce this state from
+userspace at all*. The kernel sends something whenever a process dies or a socket closes. For a
+slot to leak, the peer's whole host must lose the ability to transmit: a hard crash or power cut, a
+VM destroyed, or a network partition that outlasts the kernel's FIN retransmissions *and* whose
+client process is gone by the time it heals. A laptop suspend does **not** qualify — on resume it
+either continues or RSTs.
+
+**And it must happen FIVE times between two power-ons of the Next**, because a power cycle clears
+every slot and the ceiling is 5 (measured). Each occurrence is uncommon on its own; five with no
+power cycle in between, on a machine that gets power-cycled constantly, is deep in the tail.
+
+**What the shipped fix does cover.** `esp_recover`'s sweep reclaims slots whenever the leak
+coincides with transport faults — which is the more plausible real-world pairing, since a partition
+that strands a peer tends also to make the stub fail reads. The uncovered residual is narrower than
+issue #19 as written: leaks accumulating on a stub that never once faults.
+
+**WHAT WOULD REOPEN IT**, stated so a future session does not re-litigate this from a hunch, and so
+that a real recurrence is not dismissed by pointing at this paragraph:
+
+* a Next **refusing every new connection** while its screen is **clean** (no error area, `Core:`
+  line intact) — the signature measured above;
+* **no power cycle since boot**, since one would have cleared the slots;
+* and `make probe-slots` finding a **ceiling below 5** on that machine, which is the discriminating
+  reading — it says the slots are gone rather than the stub being wedged.
+
+All three together are this issue. Any one of them alone is not, and the first two on their own are
+also what a wedged stub looks like from outside — which is the confusion that cost this project a
+day, and is why the third is on the list.
 
 ### `make probe-jnext` FIRST, always
 

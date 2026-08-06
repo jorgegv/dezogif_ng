@@ -193,7 +193,7 @@ endif
 # LINK_IDS — the fifth bench seam, and the only way the state issue #19 fixed can
 # be assembled again. The shipped value sweeps every link id with AT+CIPCLOSE on
 # a recovery; LINK_IDS=0 leaves the sweep out, which is esp_recover exactly as it
-# was, and is what test/run-slot-recovery.sh's S2 needs to be red against. A
+# was, and is what test/run-slot-recovery.sh's S3 needs to be red against. A
 # scratch tree would have shown the same thing once; a seam shows it on every
 # run, which is the difference between a claim and a check.
 #

@@ -83,8 +83,15 @@ drain per id — five drains — paid only on a recovery, which already runs the
 whole AT chain at bring-up budgets. And **a healthy client's connection goes
 with the wedged ones**. That is deliberate: `ESP_FAULT_LIMIT` consecutive faults
 means nothing got through in between, so a connection surviving that is not a
-session worth preserving, and DeZog reconnects. Sparing it would need per-id
-state the program does not have.
+session worth preserving. Sparing it would need per-id state the program does
+not have.
+
+**A first version of that said "and DeZog reconnects", and the reviewer asked
+for a citation. There is none, because it is FALSE**: DeZog 3.7.4 has no
+reconnect logic at all — no `reconnect` symbol anywhere in its bundle, and
+`CSpectRemote`'s socket close handler only logs. The session ends and the user
+starts another. The trade is unchanged and is arguably clearer stated honestly:
+one recovery now costs what a power cycle used to.
 
 **Answers are DRAINED, not matched**, which is why the routine is nine lines
 rather than a scan. The caller has no decision to make either way: an id that

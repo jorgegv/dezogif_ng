@@ -1052,11 +1052,11 @@ tx_timeout: ; The transmit timeout handler
 ;
 ; IT DOES NOT FREE ANY ESTABLISHED CONNECTION, AND AN EARLIER VERSION OF THIS
 ; COMMENT CLAIMED IT DID. `AT+CIPSERVER=0` retires the LISTENER and leaves live
-; connections alone — jnext says so in as many words (esp_at.cpp:619-621,
+; connections alone — jnext says so in as many words (esp_at.cpp:683,
 ; "Established connections are deliberately left alone: the guest asked to stop
 ; ACCEPTING"), and that is real ESP-AT behaviour rather than a jnext
 ; simplification: ESP-AT's own `AT+CIPSERVER=0,<close_all>` argument is
-; **refused rather than ignored** (esp_at.cpp:601-607, test SRV-12) precisely so
+; **refused rather than ignored** (esp_at.cpp:665, test SRV-12) precisely so
 ; a caller cannot believe it asked for closure and silently not get it. jnext
 ; flags its deliberate deviations; there is no flag here. The `1,CLOSED` line
 ; that appears in N4's log is `note_peer_close` firing for the bench client
@@ -1092,9 +1092,15 @@ tx_timeout: ; The transmit timeout handler
 ; which is already an AT chain at bring-up budgets — and a healthy client's
 ; connection, which is closed along with the wedged ones. That is deliberate:
 ; ESP_FAULT_LIMIT consecutive faults means nothing has got through in between,
-; so a connection surviving that is not a session worth preserving, and DeZog
-; reconnects. Distinguishing them would need per-id state this program does not
-; have (ESP_LINK_IDS).
+; so a connection surviving that is not a session worth preserving.
+;
+; WHAT THE CLIENT DOES NEXT IS NOT ASSUMED, and an earlier version of this
+; comment asserted it: it said "and DeZog reconnects", which is FALSE. DeZog
+; 3.7.4 has no reconnect logic at all — no `reconnect` symbol anywhere in its
+; bundle, and CSpectRemote's socket close handler only logs. So the session ends
+; and the user starts another, which is what a power cycle cost before this and
+; is now the price of one recovery. Distinguishing a healthy connection from a
+; wedged one would need per-id state this program does not have (ESP_LINK_IDS).
 ;
 ; Changes:
 ;  A, BC, DE, HL

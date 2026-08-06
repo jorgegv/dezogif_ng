@@ -49,6 +49,10 @@ to work.
   start of every session; add to it after any architecture/logic/format decision.
 - **@ERRORS.md** — approaches that failed and the fix. Check it before attempting anything it
   covers; add to it whenever something takes more than two attempts to work.
+- **@KNOWN-ISSUES.md** — faults that are real, reproduced, understood and deliberately **WONTFIX**,
+  each with what causes it, what does *not*, what to do about it, and what would reopen it. Read it
+  before investigating odd behaviour on hardware: two of the states it describes look exactly like
+  a wedged stub from the PC side and are not one.
 - Upstream design: `doc/legacy/Design.md` — memory choreography, AltROM, breakpoints. Written
   for the serial variant; everything except the transport still applies.
 - **`doc/legacy/` is upstream's documentation, frozen — `doc/` is ours.** Don't edit `doc/legacy/`

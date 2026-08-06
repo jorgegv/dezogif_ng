@@ -175,6 +175,10 @@ anything doing this earlier in boot needs to know.
     di                           ; closes the MASKABLE half - not optional.
                                  ; config mode suppresses the M1 button and DivMMC by
                                  ; itself; NR 0x81 bit 5 is the one that can still fire
+    ; read NR 0x81, clear bit 5, write it back   ; belt and braces: the bit defaults to 0,
+                                 ; but this is the ONE NMI path that survives config mode.
+                                 ; NR 0x81 IS readable (zxnext.vhd:6126), unlike NR 0x04,
+                                 ; so a read-modify-write and a restore are implementable
     NEXTREG 3,7                  ; enter config mode (bits 2:0 = 111)
     NEXTREG 4,5                  ; 16 KB config bank 5 at 0x0000-0x3FFF, writable
     LDIR                         ; 8 KB image -> 0x0000, the MF ROM half
@@ -190,8 +194,9 @@ whole of `0x0000-0x3FFF`, not merely the 8 KB being written — the branch is ga
 An interrupt taken inside the `LDIR` fetches its handler from that. **`di` is what closes that**, and
 it is not optional.
 
-**NMI needs nothing, because config mode already suppresses it** — and a previous version of this
-document said the opposite, "nothing can", having read `nmi_assert_mf`'s combinational definition at
+**Config mode makes the FPGA withdraw its own NMI request — which is most of the story but not all
+of it; read to the end of this subsection before concluding anything.** A previous version of this
+document said "nothing can" mask NMI, having read `nmi_assert_mf`'s combinational definition at
 `zxnext.vhd:2090` and stopped twelve lines short of the clause that governs it. `zxnext.vhd:2102-2105`:
 
 ```vhdl

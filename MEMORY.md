@@ -167,9 +167,20 @@ arithmetic. The definition now leads the rule in `conformance.py` and in
 *(One supporting claim in that adjudication does not survive checking, and it is
 recorded because the conclusion stands without it: the suggestion that "several
 routine lines already breach" under the label+detail reading. Measured — **no**
-`PASS` line exceeds 20 that way and exactly one sits at 20. Only two lines
-breached at all, both the REQUIRED-refusal FAIL at 22. The decision rests on the
-H3 rendering and the 3-to-9-word label spread, which do hold.)*
+`PASS` line exceeds 20 that way, and **three** sit at exactly 20: C13, C14 and
+C15. Only two lines breached at all, both the REQUIRED-refusal FAIL at 22. The
+decision rests on the H3 rendering and the 3-to-9-word label spread, which do
+hold.*
+
+*That count read "exactly one" when this footnote was written — **a figure
+asserted without measurement, inside the footnote about figures asserted without
+measurement**, and the fourth uncorroborated number in this chain caught by
+someone other than its author. The mechanism is the instrument, not the
+arithmetic: the enumerating script substitutes a **one-word** token for every
+`%s`, and C13/C14's detail interpolates `"sprite attributes"` and `" of zeros"`
+— multi-word values — so it scored them 17 where the literal strings are 20.
+**A representative value is an approximation, and an approximation cannot settle
+a boundary case.** Caught by a reviewer measuring against the real strings.)*
 
 **H3's exception stands unchanged.** `hardware-check.py`'s H3 *failure*
 composite runs to ~25 words, because it joins which connection got no reply,

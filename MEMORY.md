@@ -5,6 +5,94 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-06 — The build number is stored once and rendered twice; and a row that was already exactly full
+
+**Decided (user) and built, issue #20.** `version.yaml` holds four uppercase hex
+digits, quoted; everywhere a **person** reads the number it is `NN.NN` — high
+byte, dot, low byte; and `make bump-major` moves the high byte, resetting the
+low one to `00`.
+
+**THE MAGIC STRING DOES NOT CHANGE, and the rest hangs off that.** The identity
+block at ROM offset `0x1FE0` still reads `DeZoGiFnG_UART_000E`, four bare digits.
+Its format is a contract `tools/mfselect/mfselect.c` parses (issue #4), it is not
+what a user reads, and the dot is a *rendering*. So there is **one stored form
+and one display transform**, rather than two stored forms with a convention about
+keeping them equal — which is the conflation issue #4 was about, one field along.
+
+**Where the transform lives is what keeps it single-source.** The Makefile
+derives `BUILD_NUMBER_SHOWN` from `BUILD_NUMBER_HEX` **on the line below it**, by
+a textual `sed 's/../&./'`, and hands both to sjasmplus. `IDENTITY_LINE` takes
+the dotted one and `rom_magic` the bare one, so both spellings are emitted by one
+assembler pass from one value and cannot disagree within a build. A second
+`$(shell awk …)` reading `version.yaml` again would have been two sources with a
+rule between them.
+
+**Why the split is not done in the assembler, which would have needed no second
+`-D`.** sjasmplus has no substring operator for a `-D` string:
+`-DBUILD_NUMBER_HEX="000E"` is a textual token and `defb BUILD_NUMBER_HEX`
+becomes `defb "000E"`. Splitting it means passing the number as an *integer* and
+rendering four hex digits with per-nibble assembler arithmetic — more code, in
+the language with the least room, to avoid one `-D`.
+
+**`make bump` DOES NOT CARRY INTO THE HIGH BYTE**, and that is a decision the
+issue left open rather than one it made. At `xx.FF` it refuses and names
+`bump-major`. The stated acceptance criterion is only that both stay inside
+`0000`-`FFFF`, which a carry satisfies — but the reason the high byte exists is
+that it says *series*, moved deliberately for a release or a milestone, and a
+256th merge silently minting `01.00` would assert a decision nobody made. Both
+targets also reject a `version.yaml` that is not four hex digits, **including the
+decimal value this change replaces**, so a half-migrated tree fails loudly
+instead of bumping `14` to `15`.
+
+**THE FINDING THE ISSUE DID NOT ANTICIPATE: mfselect's status row was already
+exactly full.** `Installed: ` at column 1, a 15-character name at 12, a space,
+four digits at 28 — columns 1 to 31, nothing to spare, and the source comment
+said as much. The dotted number is **one character wider**, and `print_at()`
+clips at column 32, so the fifth character would have been dropped **in
+silence**: the row would have read `00.0` and nothing anywhere would have
+complained. The row now starts at column 0, where the title and footer bars
+already do, and `Installed: dezogif_ng UART 00.0E` is exactly the 32 columns
+there are — **read back off the screenshot** with `test/screen-text.py`, not
+inferred from the source.
+
+That moved M9/M10's status field from columns 23-26 to 22-25. The bench is what
+would have caught a silent shift and is also the thing that had to move with it.
+Rejected: shortening `Installed:` or the ROM names to buy the column — both
+change what the screen says to pay for a rendering detail, and the names are
+exactly what M9 matches against the menu's own copy of them.
+
+**The 32-column `ASSERT` was watched to fail, and at the boundary as well.** Both
+branches of `INTRO_TEXT`: five characters injected makes the line exactly 32 and
+it assembles; six makes it 33 and `src/data_const.asm(118)` (UART) and `(79)`
+(WiFi) both go red. The real line is 27 of 32. This file's neighbours carry three
+entries about bounds nothing checked, and an assertion nobody has watched fire is
+a comment with a keyword in front of it.
+
+**Both ROMs move by exactly one byte, and that is correct for common code** — the
+banner is shared, so the UART byte-identity gate is *expected* to differ, as it
+was for issues #7, #8, #9 and #12. `main_end` UART `0xF1FF` → `0xF200`, WiFi
+`0xF995` → `0xF996`; 3232 and 1290 bytes still free to the identity block. Pinned
+at `BUILD_TIME=1700000000`: UART `49d92c15…` → `57b88fd3…`, WiFi `fb9b5e92…` →
+`e6b45d9f…`, with `build/*.bin` deleted before each pinned build — the trap
+[[ERRORS.md]] records, since make would otherwise reuse intermediates assembled at
+an unpinned time.
+
+**Evidence: `make test-mfselect` 10/10, `make test` 6/6, `make test-dzrp-stub`
+15/15 with W1-W5, and both variants `check-reproducible`.** T6's repaint moved
+90.28% → 90.31%, which is the extra character and nothing else.
+
+**Rejected.** Putting the dot in the block (above); a `bump` that carries
+(above); a bench check that the two renderings agree — they come from one symbol
+in one assembler pass, so there is nothing there for a test to observe that the
+build has not already settled.
+
+**Not touched, deliberately:** the historical `build 000A` / `build 0006`
+references in this file and under `doc/`. They record what was measured on
+particular builds, and respelling them would be editing evidence to match a new
+format. New entries use the dotted form.
+
+---
+
 ## 2026-08-06 — The verdict rule reaches the shell benches; and a fourth count of the same thing
 
 **Decided (user, 2026-08-05) and built.** The twenty-word verdict rule now

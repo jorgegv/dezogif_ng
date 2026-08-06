@@ -15,7 +15,9 @@
 #
 # Bump it with `make bump` (the low byte) or `make bump-major` (the high one,
 # which resets the low byte to 00) — never by editing this file by hand,
-# because the Makefile is what validates the range. The house rule is one bump
+# because the Makefile is what validates the range. `bump` does not carry: at
+# xx.FF it refuses and says to use bump-major, because a new series is a
+# decision and not an overflow. The house rule is one bump
 # per merge to main THAT CHANGES A ROM; a merge touching only docs or tests
 # leaves every ROM byte identical, and bumping there would assert a difference
 # that does not exist. See CLAUDE.md for the mechanical check.

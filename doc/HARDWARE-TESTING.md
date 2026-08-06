@@ -417,6 +417,41 @@ machine keeps working.
 module: that is news arriving from outside. A fresh client being served afterwards says the slot
 comes back once the module is **told**, never that the module heals on its own.
 
+#### RUN ON A REAL NEXT, 2026-08-06 — a vanished peer's slot is never given back
+
+The measurement this probe was written for, on the user's Next at build `00.0F`. Until this it was
+an inference from jnext's source; it is now a reading from silicon.
+
+| | |
+|---|---|
+| B0 baseline | an ordinary client served, connect **58 ms** |
+| V1-V4 | each peer vanished, a fresh client **still served** — 3, 3, 4, 4 ms |
+| **V5** | the fifth peer vanished; a fresh client **never completed the handshake, 10009 ms** |
+| B3 | blackhole lifted, 20 s later a fresh client served in **71 ms** |
+| B4 | the stub's error area **CLEAN — 0 bright-red pixels** |
+
+**Five vanished peers exhaust the module exactly, and that cross-checks.** Probe A measured the
+inbound ceiling on the same machine at **5** (against jnext's 4). Here, four vanished peers are
+survivable and the fifth is not — one slot consumed **permanently** per peer, with nothing giving
+one back. `AT+CIPSERVER=0` does not, and before issue #19 nothing in the stub did.
+
+**The terminal symptom is a TIMEOUT, not a refusal** — 10009 ms, the same signature probe A read at
+the ceiling the day before. And **B4 says the stub was healthy the whole time**: a clean error area
+while the module was answering nobody. Module refusing, screen intact, stub fine, recoverable only
+from outside — that is issue #15's reported shape, produced deliberately.
+
+**IT DOES NOT SHOW THAT THIS IS WHAT HAPPENED ON 2026-08-05**, and #15 must not be re-argued from
+it. What it shows is what a vanished peer **costs**. Nothing here says what made a peer vanish in
+the field, and B3's recovery is the module being *told*, not healing.
+
+**THE UNCOMFORTABLE HALF, AND IT IS ABOUT OUR OWN FIX.** Issue #19's sweep runs from
+`esp_recover`, which fires after `ESP_FAULT_LIMIT` **consecutive faults** — and in this run the stub
+never faulted at all, which B4's clean error area is the evidence for. **So the fix would not have
+rescued this exact case.** It reclaims slots when the stub is already failing; a healthy stub with
+leaked slots stays leaked until something makes it fault five times, or the machine is
+power-cycled. That is a real limit on what #19 buys, it was measured rather than reasoned, and it
+is written here rather than left for somebody to discover.
+
 ### `make probe-jnext` FIRST, always
 
 **A probe that never worked reports a negative result indistinguishable from a real one.** This

@@ -151,13 +151,37 @@ between the sweep and the re-listen); sweeping *after* `transport_init` (the
 re-listen would land on a module still full); a scratch tree instead of the
 `LINK_IDS` seam (a red nobody can re-run).
 
-**NOT COVERED, and none of it is hidden.** A **real ESP-01**: its ceiling is
-five where jnext's is four, and no run here can check the sweep was right not to
-care. **Which ids were freed** — no PC-side check can see them, so S2 counts
-commands. A genuinely **wedged** peer: these are answered and then silent, which
-occupies a slot the same way but is not the same thing. And the sweep at its
-**shipped** `ESP_FAULT_LIMIT` of five, since jnext cannot produce five
-consecutive faults.
+**MEASURED ON A REAL NEXT THE SAME DAY, AND IT CONFIRMS THE PREMISE WHILE
+LIMITING THE FIX.** `make probe-vanished` against the user's machine at build
+`00.0F`: four vanished peers are survivable, **the fifth stops the module
+serving anyone** — one slot consumed permanently per peer, nothing giving one
+back, which cross-checks against probe A's hardware ceiling of 5. The terminal
+symptom is a **timeout at 10009 ms**, not a refusal, and the stub's error area
+was **clean throughout**. So the leak this fixes is real on silicon and was an
+inference from jnext's source until now.
+
+**And the same run says the fix would NOT have rescued that case.** The sweep
+runs from `esp_recover`, which fires on `ESP_FAULT_LIMIT` consecutive faults, and
+in that run the stub never faulted — the clean error area is the evidence.
+**A healthy stub with leaked slots stays leaked** until something makes it fail
+five times in a row, or the machine is power-cycled. The fix reclaims slots when
+the transport is already in trouble, which is the case a user retrying a hang
+produces; it is not a general reclaim. Recorded in
+[doc/HARDWARE-TESTING.md] under probe B.
+
+**NOT COVERED, and none of it is hidden.** The case above — a healthy stub that
+never faults. **Which ids were freed** — no PC-side check can see them, so S2
+counts commands. A genuinely **wedged** peer in the bench: those are answered and
+then silent, which occupies a slot the same way but is not the same thing. The
+sweep at its **shipped** `ESP_FAULT_LIMIT` of five, since jnext cannot produce
+five consecutive faults. And a fault raised **inside** the sweep aborts it and
+leaves `esp_fault_count` unreset — so the next single fault triggers another
+recovery rather than needing five. That is the pre-existing shape of
+`esp_recover` rather than something #19 introduces (`AT+CIPSERVER=0` could
+already fail the same way), and the reviewer and I agree it is worth recording
+rather than fixing here.
+
+[doc/HARDWARE-TESTING.md]: doc/HARDWARE-TESTING.md
 
 **Regression, on the merged branch: `test-dzrp-stub` 15/15 with W1-W5,
 `test-no-hang` 4/4, `make test` 6/6, `test-unit` 5/5, both variants

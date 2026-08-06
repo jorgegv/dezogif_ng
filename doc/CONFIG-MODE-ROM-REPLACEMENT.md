@@ -12,6 +12,13 @@ user turns it on and off.
 project's first hard rule, and the reason the two contradictory Discord accounts in #21 are both
 corrected rather than picked between. The status of every claim is in the table at the end.
 
+**The first version of this document was rejected in review for three defects of its own**, all
+found by reading the same VHDL more carefully: it described the priority contest as two-way when it
+is four-way, it did not mention that config mode remaps the interrupt vectors along with everything
+else, and it instructed the caller to save and restore a register that cannot be read. Those are
+corrected below and called out where they were wrong, because a reader of a document like this needs
+to know which parts have been contested.
+
 ---
 
 ## 1. The mechanism, verified
@@ -57,9 +64,40 @@ So in config mode, `0x0000-0x3FFF` is served from SRAM at **NR `0x04` as the 16 
 with A13 from the CPU as before — and **`rdonly` is `0`**. The same 16 KB the Multiface occupies
 becomes ordinary writable memory when `NR 0x04 = 5`.
 
-**The two branches are `if`/`elsif`, and the Multiface wins.** If `mf_mem_en = '1'` the config-mode
-branch is never reached, and the write lands on the read-only path instead. A dotcommand running
-under NextZXOS is not in that state, but anything doing this from inside the NMI handler would be.
+### 1.2b Config mode is THIRD in priority, and there is a second arbiter after it
+
+The first version of this document said the contest was two-way — Multiface versus config mode — and
+that was wrong in a way that matters. `zxnext.vhd:3029-3052` is **four-way**:
+
+```vhdl
+if cpu_a(15 downto 14) = "00" then
+   if    mf_mem_en = '1'          then   -- Multiface overlay, ROM half read-only
+   elsif mmu_A21_A13(8) = '0'     then   -- an ordinary MMU-mapped RAM page in slot 0/1
+   elsif nr_03_config_mode = '1'  then   -- config mode, writable
+   else                                  -- the normal ROM serving path
+```
+
+So **two** things beat config mode, not one. The second is the ordinary MMU: if slot 0 or 1 currently
+holds a RAM page rather than a ROM mapping, that branch serves it and config mode never runs. Nothing
+here establishes what a dotcommand's MMU state is at the moment of the write, and it must be
+established rather than assumed.
+
+**And a second arbiter runs afterwards**, `zxnext.vhd:3084-3132`, which can override the address the
+branch above just computed. Config mode sets `sram_pre_override <= "110"` (`:3050`), which
+deliberately **leaves DivMMC and Layer 2 eligible**:
+
+```vhdl
+if sram_pre_override(2) = '1' and divmmc_rom_en = '1' then   -- :3084, and rdonly
+elsif sram_layer2_map_en = '1' then                          -- :3100
+```
+
+A **dotcommand runs through esxDOS**, which is DivMMC, and re-enters automap on every `RST 8`. So
+this is not a remote edge case for the intended caller: if DivMMC ROM is mapped at the moment of the
+write, the write lands on a read-only path and does nothing, silently.
+
+**None of this is an argument against the mechanism** — `tbblue.fw` uses it successfully. It is an
+argument that the dotcommand must control its own memory state deliberately, and that a write which
+appears to do nothing has three separate explanations before "the VHDL is wrong".
 
 ### 1.3 Entering and leaving config mode — both Discord accounts are wrong as stated
 
@@ -89,10 +127,13 @@ end if;
 ```
 
 That is evaluated on the **pre-write** value of `config_mode`, in the same clocked process. So one
-write of `011` while in config mode **sets machine type to +3 and leaves config mode**. Leaving
-therefore *always* writes a machine type, and the caller must write back the one it wants — which is
-exactly why taylorza's "restore NR `0x04`, then NR `0x03`" ordering works, and why `000` would not
-have.
+write of `011` while in config mode **sets machine type to +3 and leaves config mode**.
+
+**The exit values split into two groups, and an earlier version of this document missed that.** The
+type case covers `001`-`100`; the exit condition is `/= "000"`. So `101` and `110` **leave config
+mode without touching the machine type**, while `001`-`100` leave *and* set it. Either is a
+legitimate exit; the caller must know which it is doing. Writing back the machine type you want is
+the safe habit, and it is why taylorza's "restore NR `0x04`, then NR `0x03`" ordering works.
 
 ### 1.4 Three traps in the same handler
 
@@ -102,19 +143,49 @@ have.
 | **any write clears `bootrom_en`** | `:5122` | unconditional, before anything else in the handler |
 | **bit 7 gates the machine TIMING case** | `:5124-5133` | with bits 6:4 selecting, and only while `user_dt_lock` is clear |
 
-A plain `NEXTREG 3,7` is safe on all three: bits 3 and 7 are clear, so neither the lock nor the
-timing moves, and the machine type is untouched because `111` is not in the type case.
+A plain `NEXTREG 3,7` avoids **two** of the three: bits 3 and 7 are clear, so neither the lock nor
+the timing moves, and the machine type is untouched because `111` is not in the type case.
+
+**It does not avoid the third, and cannot.** Clearing `bootrom_en` is unconditional on every write to
+NR `0x03`. That is expected to be harmless in the intended context — a dotcommand runs long after
+boot, so the boot ROM overlay is already disabled — but "harmless here" is not "avoided", and
+anything doing this earlier in boot needs to know.
 
 ### 1.5 The sequence that follows from all of the above
 
 ```
+    ; -- establish the memory state first: config mode is THIRD in priority (1.2b)
+    ;    MF memory must not be paged in, slot 0/1 must not hold an MMU RAM page,
+    ;    and DivMMC ROM must not be mapped, or the write silently does nothing.
+
+    di                           ; see the interrupt hazard below - NOT optional
     NEXTREG 3,7                  ; enter config mode (bits 2:0 = 111)
     NEXTREG 4,5                  ; 16 KB config bank 5 at 0x0000-0x3FFF, writable
     LDIR                         ; 8 KB image -> 0x0000, the MF ROM half
-    NEXTREG 4,<previous>         ; restore the paging register
-    NEXTREG 3,<machine type>     ; leave: 001-100, NOT 000 - see 1.3
+    NEXTREG 3,<machine type>     ; leave: 001-100 sets the type too, 101/110 do not
+    ei
     NEXTREG 2,1                  ; soft reset - reportedly required; see 3.1
 ```
+
+**THE INTERRUPT WINDOW IS THE DANGEROUS PART, and the first version of this document did not mention
+it at all.** Config mode remaps the whole of `0x0000-0x3FFF`, not merely the 8 KB being written — the
+branch is gated on `cpu_a(15 downto 14) = "00"`. That range holds the **IM1 vector at `0x0038`**, the
+**NMI vector at `0x0066`**, and every `RST` vector, and during the copy they are being served out of
+the half-written image. An interrupt taken inside the `LDIR` fetches its handler from that.
+
+`di` closes the maskable half. **It does not close the NMI half, and nothing can**: the Multiface M1
+button asserts through `nmi_assert_mf` (`zxnext.vhd:2090`), gated only by NR `0x06` bit 3 — which
+this project has measured NextZXOS to leave **set** (MEMORY.md, 2026-08-04, bench T5's control). So a
+button press during the window is a real hazard, and the mitigations available are: clear NR `0x06`
+bit 3 for the duration and restore it afterwards, which this project's own code already knows how to
+do; or accept the race and document it. **A dotcommand should do the former.**
+
+**There is no `NEXTREG 4,<previous>` step, deliberately, and an earlier version of this document had
+one.** NR `0x04` is **write-only**: `nextreg.txt:85-90` documents no `(R)` section, and the VHDL's
+register-read multiplexer has no `when X"04"` case at all — `X"03"` is followed directly by `X"05"`
+(`zxnext.vhd:5893-5896`), so a read falls into `when others` and returns `0x00`. The value cannot be
+saved and restored. It also does not need to be: `nr_04_romram_bank` is consulted **only** inside the
+`nr_03_config_mode = '1'` branch, so once config mode is left it has no effect on anything.
 
 **This has not been run**, here or anywhere in this project. It is what the VHDL says should work.
 
@@ -199,9 +270,14 @@ not make.
 | MF ROM is the bottom 8 KB of 16 KB bank 5; MF RAM the top | `zxnext.vhd:3029-3035` | **verified** |
 | The MF path serves the ROM half read-only | same, `sram_pre_rdonly <= not cpu_a(13)` | **verified** |
 | Config mode maps NR `0x04`'s bank to `0x0000-0x3FFF`, writable | `zxnext.vhd:3044-3050` | **verified** |
-| The Multiface overlay takes priority over config mode | same, `if`/`elsif` ordering | **verified** |
+| Config mode is THIRD in priority: the Multiface overlay AND an MMU-mapped RAM page in slot 0/1 both beat it | `zxnext.vhd:3029-3052`, a four-way `if`/`elsif` | **verified** — the first version of this document said two-way |
+| A second arbiter after it can still override, DivMMC and Layer 2 being left eligible by config mode's own `"110"` | `zxnext.vhd:3050`, `:3084`, `:3100` | **verified** |
+| Config mode remaps the WHOLE of `0x0000-0x3FFF`, so the IM1, NMI and RST vectors are served from the bank being written | `zxnext.vhd:3029` (`cpu_a(15 downto 14) = "00"`) | **verified** |
+| NMI cannot be masked by `di`; the M1 button is gated only by NR `0x06` bit 3, which NextZXOS leaves set | `zxnext.vhd:2090`; MEMORY.md 2026-08-04 for the measurement | **verified** |
+| **NR `0x04` is WRITE-ONLY** — it cannot be saved and restored | `nextreg.txt:85-90` has no `(R)` section; `zxnext.vhd:5893-5896` goes `X"03"` → `X"05"` with no `when X"04"`, falling to `when others => 0x00` | **verified** — the first version of this document instructed a restore that cannot be written |
+| `nr_04_romram_bank` is consulted only inside the config-mode branch, so it need not be restored | `zxnext.vhd:3045`, sole reference | **verified** |
 | `111` enters config mode; other non-zero leaves; `000` is a no-op | `zxnext.vhd:5147-5151` | **verified** — corrects both Discord accounts |
-| Leaving config mode also writes the machine type | `zxnext.vhd:5137-5145` | **verified** |
+| Leaving config mode with `001`-`100` also writes the machine type; `101`/`110` leave without touching it | `zxnext.vhd:5137-5145` against `:5147-5151` | **verified** — an earlier version said "always", which is false for two of the six exit values |
 | Bit 3 toggles `user_dt_lock`; any write clears `bootrom_en` | `zxnext.vhd:5122`, `:5135` | **verified** |
 | jnext models config mode including the writable path | jnext `src/memory/mmu.h:164-171`, `src/port/nextreg.*` | **verified**, in jnext's source |
 | A soft reset is NOT enough for the **file-swap** method | hardware, 2026-08-04 (MEMORY.md) | **verified on hardware** |

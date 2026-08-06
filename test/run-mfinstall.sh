@@ -5,9 +5,10 @@
 #
 #   I1  `.mfinstall --load wifi` succeeds, and the identity block read back
 #       THROUGH CONFIG MODE says WIFI — asserted in two halves, because the two
-#       are different claims: the run says "Live now", and a SECOND invocation
-#       reads 0x1FE0 out of the live ROM and names the variant and build it
-#       finds there. Only the second half is evidence about the ROM.
+#       are different claims: the run says "Live now", and a run whose LAST act
+#       was an install reads 0x1FE0 back out of the live ROM and names the
+#       variant and build it finds there. Only the second half is evidence
+#       about the ROM.
 #   I2  after I1, an M1 button NMI brings up THE STUB'S OWN SCREEN and not the
 #       stock Multiface monitor. THE STRONGEST CHECK HERE, and it answers issue
 #       #21's open question 3 in the emulator: taylorza reported needing a soft
@@ -24,6 +25,10 @@
 #       is byte-identical afterwards. Without it every check above is equally
 #       satisfied by a tool that simply wrote the file, which is mfselect's job
 #       and not this one's. This is what says the mechanism was CONFIG MODE.
+#   I7  THE CONTROL THAT ATTRIBUTES THE FIX TO ONE CONSTANT: a probe built with
+#       DIVMMC_OFF=0 — DivMMC left mapped for the window, which is the ordinary
+#       context a dot command runs in — must report the write BLOCKED, and an
+#       NMI after it must bring up the stock monitor rather than the stub.
 #
 # WHY THE STUB'S SCREEN CARRIES AN ESP ERROR IN I2 AND I5, and why that is not
 # the subject: no --esp is passed, so there is no emulated module and the WiFi
@@ -51,6 +56,7 @@ ROM_UART=${ROM_UART:-$OUT/enNextMf.rom}
 SUM_UART=${SUM_UART:-$OUT/dezouart.sum}
 ROM_WIFI=${ROM_WIFI:-$OUT/enNextMf-wifi.rom}
 SUM_WIFI=${SUM_WIFI:-$OUT/dezowifi.sum}
+DOT_DMOFF0=${DOT_DMOFF0:-$OUT/mfinstall-dmoff0}
 ROMSUM=${ROMSUM:-tools/romsum.py}
 SCREENDIFF=${SCREENDIFF:-test/screen-diff.py}
 SCREENTEXT=${SCREENTEXT:-test/screen-text.py}
@@ -145,6 +151,7 @@ die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [ -x "$JNEXT" ]    || die "jnext binary not found or not executable: $JNEXT"
 [ -f "$SD_IMAGE" ] || die "SD card image not found: $SD_IMAGE"
 [ -s "$DOT" ]      || die "mfinstall not built: $DOT (run 'make mfinstall')"
+[ -s "$DOT_DMOFF0" ] || die "the DIVMMC_OFF=0 probe is not built: $DOT_DMOFF0 (run 'make test-mfinstall')"
 [ -f "$ROM_UART" ] || die "UART ROM not built: $ROM_UART (run 'make mfinstall')"
 [ -f "$SUM_UART" ] || die "UART checksum not built: $SUM_UART (run 'make mfinstall')"
 [ -f "$ROM_WIFI" ] || die "WiFi ROM not built: $ROM_WIFI (run 'make mfinstall')"
@@ -213,7 +220,7 @@ type_keys() {
 # the state a real user is in. machines/next/enNextMf.rom is left exactly as the
 # reference image has it, which is what makes I6 meaningful.
 prepare_image() {
-    local image=$1 yml=${2:-}
+    local image=$1 yml=${2:-} dot=${3:-$DOT}
     # Registered BEFORE the copy, for the reason the trap is armed before it: an
     # interrupt during the copy is the case that once left a 777 MB partial image
     # behind, and a name recorded afterwards is a name a handler firing during
@@ -227,7 +234,7 @@ prepare_image() {
     mcopy -o -i "$image@@$part_off" "$SUM_UART" ::/mfselect/dezouart.sum
     mcopy -o -i "$image@@$part_off" "$stock"    ::/mfselect/original.rom
     mcopy -o -i "$image@@$part_off" "$OUT/mfinstall-stock.sum" ::/mfselect/original.sum
-    mcopy -o -i "$image@@$part_off" "$DOT"      ::/dot/mfinstall
+    mcopy -o -i "$image@@$part_off" "$dot"      ::/dot/mfinstall
     if [ -n "$yml" ]; then
         printf 'install: %s\n' "$yml" > "$OUT/mfinstall-conf.yml"
         mcopy -o -i "$image@@$part_off" "$OUT/mfinstall-conf.yml" ::/mfselect/mfinstall.yml
@@ -302,7 +309,7 @@ screen_has() {
     return 1
 }
 
-log "== mfinstall bench (8 headless runs, ~5min)"
+log "== mfinstall bench (10 headless runs, ~5min)"
 log "   stock MF ROM CRC $stock_sum, dezogif_ng WiFi $wifi_sum"
 
 # --- run 1: the command line, with no NMI. The baseline the stock monitor is
@@ -347,6 +354,19 @@ img8=$OUT/sd-mfinstall-8.img
 prepare_image "$img8" none
 run_dot "$img8" "$shots/mfinstall-auto-none.png" yes ".mfinstall --auto"
 
+# --- runs 9 and 10: the DIVMMC_OFF=0 probe, once for each half of I7 -------
+#
+# Two runs and not one, because the two halves cannot be read off one picture:
+# the message is printed to the command line and the M1 button then paints over
+# it. Both use the probe binary and are otherwise identical to runs 3 and 4.
+img9=$OUT/sd-mfinstall-9.img
+prepare_image "$img9" "" "$DOT_DMOFF0"
+run_dot "$img9" "$shots/mfinstall-dmoff0.png" no ".mfinstall --load wifi"
+
+img10=$OUT/sd-mfinstall-10.img
+prepare_image "$img10" "" "$DOT_DMOFF0"
+run_dot "$img10" "$shots/mfinstall-dmoff0-nmi.png" yes ".mfinstall --load wifi"
+
 log ""
 
 cmdline=$shots/mfinstall-cmdline.png
@@ -357,15 +377,24 @@ twice=$shots/mfinstall-twice.png
 unloadnmi=$shots/mfinstall-unload-nmi.png
 autowifi=$shots/mfinstall-auto-wifi.png
 autonone=$shots/mfinstall-auto-none.png
+dmoff0=$shots/mfinstall-dmoff0.png
+dmoff0nmi=$shots/mfinstall-dmoff0-nmi.png
 
 # --- I1 --------------------------------------------------------------------
 #
 # TWO HALVES, because "the tool said it worked" and "the ROM says so" are
 # different claims and only the second is about the ROM. The first is run 3's
-# own report. The second is run 5's SECOND invocation, which reads 0x1FE0 out of
-# the LIVE Multiface ROM through a read-only config-mode pass — the only way
-# that block can be read at all, since outside the window 0x1FE0 is the DivMMC
-# ROM. It names the variant and the build it found there.
+# own report. The second is read out of run 5, whose second invocation reads
+# 0x1FE0 from the LIVE Multiface ROM through a read-only config-mode pass — the
+# only way that block can be read at all, since outside the window 0x1FE0 is the
+# DivMMC ROM.
+#
+# THE TOOL READS IT AFTER THE INSTALL, NOT BEFORE, so the line reports what is
+# live NOW. It has to: load_rom borrows the display file for its buffer and
+# blanks it afterwards, so anything printed beforehand is erased. A first version
+# printed it first and the line vanished — caught by this check going red, which
+# is the argument for reading the screen back as text rather than comparing it
+# with another picture.
 i1=0
 screen_has "$loadwifi" "Live now" \
     || { i1=1; log "      run 3: the install did not report success"; }
@@ -416,8 +445,15 @@ else
 fi
 
 # --- I4 --------------------------------------------------------------------
-if screen_has "$twice" "Nothing to do"; then
-    pass "I4 a second --load wifi is a no-op and says so"
+#
+# ITS MEANING IS UNCHANGED AND ITS MECHANISM IS NOT. The tool used to decide
+# this by matching the identity block's variant field; it now COMPARES ALL 8192
+# BYTES against what is live, inside the same window, and writes only what
+# differs. So this check went from "it recognised a WiFi ROM" to "it found the
+# bytes already there", which is the stronger claim and the one that keeps a
+# locally rebuilt stub — same identity, different bytes — from being skipped.
+if screen_has "$twice" "Already loaded"; then
+    pass "I4 a second --load wifi finds the bytes already there and writes nothing"
 else
     fail "I4 a second --load wifi did not report itself a no-op"
 fi
@@ -456,6 +492,46 @@ if mcopy -o -n -i "$img4@@$part_off" "$MF_PATH" "$card_mf" 2>/dev/null; then
     fi
 else
     fail "I6 no enNextMf.rom on the card after the run"
+fi
+
+# --- I7 --------------------------------------------------------------------
+#
+# THE CONTROL THAT ATTRIBUTES THE WHOLE FIX TO ONE ASSEMBLER CONSTANT, and
+# without it this bench shows only that the tool works — never WHY.
+#
+# `DIVMMC_OFF=0` builds mfwin.asm with the two instructions that take DivMMC
+# away removed, and NOTHING else: same relocation to 0x5000, same MMU0, same
+# layer-2 clear, same NR 0x81, same config-mode entry and exit, same compare and
+# the same verify. That is the ORDINARY context a dot command runs in — DivMMC
+# page0 and page1 are enabled together (divmmc.vhd:94-95), so the DivMMC ROM is
+# necessarily at 0x0000, where it is read-only (:100) — and config mode's own
+# override value "110" (zxnext.vhd:3050) deliberately leaves DivMMC eligible in
+# the second arbiter (:3084). The write is therefore SILENTLY DISCARDED.
+#
+# So this asserts both halves, and neither implies the other:
+#
+#   - the tool NOTICES. The window compares what it wrote against what it meant
+#     to write, still inside config mode, and reports "Write blocked". Without
+#     that read-back a discarded write is indistinguishable from a successful
+#     one, which is precisely how a naive dot command reports success for doing
+#     nothing at all. A bench that only checked the screen would pass a tool
+#     that lied.
+#   - and the ROM really did not change: the M1 button brings up the STOCK
+#     monitor. This is the half that cannot be faked by a message.
+#
+# Judged against the same stock reference I3 uses, so a probe that somehow DID
+# install would show up as the stub exactly as run 4 does.
+i7=0
+screen_has "$dmoff0" "Write blocked" \
+    || { i7=1; log "      run 9: the probe did not report the write as blocked"; }
+i7_pct=$(diff_pct "$stocknmi" "$dmoff0nmi")
+if over "$i7_pct" "$MENU_PCT"; then
+    i7=1; log "      run 10: something other than the stock monitor came up ($i7_pct%)"
+fi
+if [ "$i7" -eq 0 ]; then
+    pass "I7 with DivMMC left on the write is blocked, reported, and the stub does not come up"
+else
+    fail "I7 the DIVMMC_OFF=0 probe did not behave as a blocked write ($i7_pct% unlike stock)"
 fi
 
 log ""

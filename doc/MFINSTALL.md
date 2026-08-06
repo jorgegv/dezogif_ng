@@ -39,7 +39,7 @@ this path does not write files at all.
 ## Building
 
     make mfinstall           # build/mfinstall + BOTH ROMs + both .sum files
-    make test-mfinstall      # the headless bench, 8 runs, 6 checks
+    make test-mfinstall      # the headless bench, 10 runs, 7 checks
 
 `make mfinstall` depends on `make mfselect`, because it installs the same ROMs from the same
 directory by a different means and a card with the command but not the ROMs is useless. Like
@@ -117,21 +117,26 @@ That is the whole of it, and it is why this exists. Xalior's objection to a file
 that it is a **ROM change**, where an `AUTOEXEC.BAS` change can be undone by holding the key that
 skips `AUTOEXEC.BAS` — no card in a PC, no file to remember replacing.
 
-`--auto` is safe to run at every boot. It reads the identity block out of the **live** Multiface
-ROM first and does nothing if the requested variant is already there.
+### `--auto` is safe to run at every boot, and it is idempotent by construction
 
-### One consequence of that idempotence, stated plainly
+Not by a rule that could be wrong about your ROM: **it compares the bytes**. Each 4 KB pass is
+checked against what is already live, inside the same config-mode window, and written only if it
+differs. Run it twice and the second run says `Already loaded; nothing written.`
 
-The "already installed?" test matches the ROM's **variant**, not its build number — that is issue
-#4's rule and it exists because a per-build check goes stale the moment you rebuild. The
-consequence:
+**That is why a locally rebuilt stub still installs.** An earlier version keyed the decision off the
+identity block's *variant* field, which answers "is a WiFi ROM live" — a different question from "are
+these the bytes". Rebuild the stub without a `make bump` and it is a new ROM wearing the same
+`DeZoGiFnG_WIFI_0010`; the old test would have skipped it, and the person running this repeatedly is
+exactly the person rebuilding the stub. Comparing bytes cannot make that mistake.
 
-> **Rebuild the stub, run `.mfinstall --load wifi` again in the same session, and the new build is
-> NOT installed.** The old one is still "the WiFi ROM" as far as the check is concerned.
+The identity block is still read, for the job [issue #4](https://github.com/jorgegv/dezogif_ng/issues/4)
+says it is for: **telling you what is live**. Every run that gets that far prints it —
+`Live ROM: dezogif_ng WiFi 00.10`, or `Live ROM: not ours` — and nothing is decided on it.
 
-Power-cycle, or `.mfinstall --unload` first, and then load. It is not a problem at boot, where the
-SRAM has just been reloaded from the card and nothing of ours is ever live. The message tells you
-which build it found — `Already: dezogif_ng WiFi 00.10` — so the situation is at least visible.
+It is read **after** the work rather than before, so it names what is live *now* rather than what
+used to be. It has to be: the install borrows the display file for its buffer and blanks it
+afterwards, so a line printed beforehand is erased. A first version printed it first and the line
+vanished — caught by the bench reading the screen back as text.
 
 ## How it works, and why it is shaped like that
 
@@ -174,20 +179,25 @@ The full VHDL reasoning, with line citations, is in
 
 ## What the bench checks
 
-`make test-mfinstall` — 8 headless jnext runs, 6 checks, no VS Code and no hardware.
+`make test-mfinstall` — 10 headless jnext runs, 7 checks, no VS Code and no hardware.
 
 | | |
 |---|---|
 | **I1** | `--load wifi` reports success, and a second invocation reads the identity block back **through config mode** and finds `WIFI` |
 | **I2** | after that, an M1 button NMI brings up **the stub's own screen** and not the stock Multiface monitor — with no soft reset |
 | **I3** | `--unload` restores the original: the same NMI brings up the stock monitor. Its second clause is the control that the button fires at all |
-| **I4** | a second `--load wifi` is a no-op and says so |
+| **I4** | a second `--load wifi` finds all 8192 bytes already there and writes nothing |
 | **I5** | `--auto` obeys `mfinstall.yml`: `wifi` installs the stub, `none` installs nothing |
 | **I6** | **the control for the whole bench** — the card's `enNextMf.rom` is byte-identical afterwards, so the mechanism really was config mode and not a file write |
+| **I7** | **the control that attributes the fix to one constant** — a probe built with `DIVMMC_OFF=0`, DivMMC left mapped and nothing else changed, reports the write blocked, and an NMI after it brings up the stock monitor |
 
-**I2 is the strongest check here** and it is the one that answers issue #21's open question 3. I6
-is the one that makes the others mean what they say: without it, every check above is equally
-satisfied by a tool that just wrote the file.
+**I2 is the strongest check here** and it is the one that answers issue #21's open question 3. **I6
+and I7 are the two that make the others mean what they say**: without I6, every check is equally
+satisfied by a tool that just wrote the file; without I7, the bench shows that the tool works and
+never *why*, since `DIVMMC_OFF` is the one constant the whole mechanism turns on. `DIVMMC_OFF` is a
+build seam of the same shape as `IP_MAX`, `RX_WAIT`, `TX_PASSES`, `WAIT_SECS`, `FAULT_LIMIT` and
+`LINK_IDS`, and for their reason: a state a check must be shown red against has to be reachable by a
+build, or the red is a story about a scratch tree nobody can re-run.
 
 **It says nothing about hardware.** jnext's config-mode model cites the same VHDL lines this design
 was read from, so agreement between them is not independent evidence — and this project has twice
@@ -199,9 +209,11 @@ been bitten by an emulator whose values sat on the safe side of ours (a connecti
 
 - **It does not capture the stock ROM.** mfselect does that, with a guard; see above.
 - **It does not survive a power cycle**, by construction.
-- **It does not tell the stock Multiface ROM from any other third-party one.** `--unload` reports
-  "nothing to do" when what is live carries no dezogif_ng magic — which is a true statement about
-  what *we* installed, and not a claim about what is there.
+- **`--unload` needs `/mfselect/original.rom` even when there is nothing to undo.** It takes the same
+  path as a load — compare the bytes, write what differs — so it has no way to say "nothing of ours is
+  live" without reading the file it would put back. If mfselect has never captured the original it
+  reports that it cannot open the ROM file, rather than quietly succeeding. That is the price of
+  having one code path instead of two, and a power cycle does the same job.
 - **It cannot roll back a failed second pass.** If the write fails halfway the previous contents are
   already gone and there is nothing to restore them from — SRAM has no rename. It says so, and a
   power cycle always fixes it.

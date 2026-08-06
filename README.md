@@ -85,9 +85,11 @@ and taken again rather than trusted. It is not part of `make test`.
 make test-mfinstall
 ~~~
 
-runs the `.mfinstall` bench: eight headless jnext runs, six checks. `.mfinstall` writes a ROM into
+runs the `.mfinstall` bench: ten headless jnext runs, seven checks. `.mfinstall` writes a ROM into
 Multiface **SRAM** through the Next's config mode, so the change is live at the next NMI press and
-the SD card is never written at all — which is what its last check asserts, byte for byte. Its
+the SD card is never written at all — which is what one of its two control checks asserts, byte for
+byte. The other builds the same code with DivMMC left mapped, one assembler constant apart, and
+requires the write to be blocked — which is what attributes the mechanism to that constant. Its
 strongest check presses the M1 button straight after an install and requires the stub's own screen,
 with no soft reset. Also not part of `make test`. See [doc/MFINSTALL.md](doc/MFINSTALL.md).
 

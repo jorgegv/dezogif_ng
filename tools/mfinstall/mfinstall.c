@@ -160,9 +160,11 @@
 #define W_ID        0x20        /* MAGIC_READ */
 
 #define OP_READ_ID  0
-#define OP_WRITE    1
+#define OP_SYNC     1
 
-#define RES_OK      0
+#define RES_OK      0       /* differed; written and verified */
+#define RES_VERIFY  1       /* written, and the read-back disagrees */
+#define RES_SAME    2       /* already identical; nothing written */
 
 /* The display file's pixel area, which this program borrows wholesale. */
 #define PIXELS      ((uint8_t *)0x4000)
@@ -196,7 +198,7 @@
 #define M_CHECK   "Checking the source ROM..."
 #define M_WRITING "Writing the Multiface ROM..."
 #define M_LIVE    "Live now. Press NMI to enter."
-#define M_NOTHING "Nothing to do."
+#define M_SAME    "Already loaded; nothing written."
 #define M_AUTONO  "mfinstall.yml says: none."
 
 #define E_ARGS    "Bad arguments; try --help"
@@ -216,17 +218,25 @@ FITS(u5,  M_U5);  FITS(u6,  M_U6);  FITS(u7,  M_U7);  FITS(u8,  M_U8);
 FITS(u9,  M_U9);  FITS(u10, M_U10);
 FITS(loadw,   M_LOADW);   FITS(loadu,  M_LOADU);   FITS(unload, M_UNLOAD);
 FITS(check,   M_CHECK);   FITS(writing, M_WRITING); FITS(live,  M_LIVE);
-FITS(nothing, M_NOTHING); FITS(autono, M_AUTONO);
+FITS(same,    M_SAME);    FITS(autono,  M_AUTONO);
 FITS(eargs,   E_ARGS);    FITS(enosum, E_NOSUM);   FITS(eopen,  E_OPEN);
 FITS(esize,   E_SIZE);    FITS(ecrc,   E_CRC);     FITS(eread,  E_READ);
 FITS(ereloc,  E_RELOC);   FITS(eblocked, E_BLOCKED);
 FITS(enoconf, E_NOCONF);  FITS(econfbad, E_CONFBAD);
 
-/* "Already live: " + the longest name ("dezogif_ng WiFi", 15) + ' ' + "00.10"
- * is 14 + 15 + 1 + 5 = 35, which does NOT fit. So the composed line uses a
- * shorter lead and is bounded at 32 by say_id() regardless. */
-#define M_ALREADY "Already: "
-FITS(already, M_ALREADY);
+/* The lead of the line that REPORTS which ROM is live. It is reporting and
+ * nothing else: since the compare became the idempotence test (see load_rom),
+ * no decision is taken on the identity block at all, which is what issue #4
+ * says that block is not for.
+ *
+ * "Live ROM: " is 10, the longest name ("dezogif_ng WiFi") is 15, plus a space
+ * and the five of "00.10" — 31, inside the 32 columns there are. app() bounds
+ * it at 32 regardless, so this arithmetic is a check on the design and not the
+ * thing keeping the line short. (An earlier comment here did the sum for a
+ * 14-character lead against a 9-character string and got 35; the arithmetic was
+ * stale, not the bound.) */
+#define M_LIVEIS "Live ROM: "
+FITS(liveis, M_LIVEIS);
 
 /* ------------------------------------------------------------------ */
 /* state                                                              */
@@ -400,8 +410,8 @@ static void build_str(const uint8_t *blk, char *out)
     out[BUILD_SHOWN_N] = 0;
 }
 
-/* "Already: dezogif_ng WiFi 00.10" — bounded at 32 by app(), so the arithmetic
- * in the comment above M_ALREADY does not have to be trusted at run time. */
+/* "Live ROM: dezogif_ng WiFi 00.10" — bounded at 32 by app(), so the arithmetic
+ * in the comment above M_LIVEIS does not have to be trusted at run time. */
 static void say_id(const char *lead, int8_t id, const uint8_t *blk)
 {
     char b[BUILD_SHOWN_N + 1];
@@ -450,7 +460,11 @@ static int8_t win_call(uint8_t op, uint16_t dst, uint16_t len)
      * CALLER's stack, which the routine saves and restores. */
     ((void (*)(void))CODE_ORG)();
 
-    return (VARS[W_RES] == RES_OK) ? 0 : 1;
+    /* The window's own RES_*, passed through rather than flattened: the caller
+     * has to tell "wrote it" from "it was already there", and that distinction
+     * IS the idempotence. -1 above is the one thing the window never reports,
+     * because it never ran. */
+    return (int8_t)VARS[W_RES];
 }
 
 /* Blank the pixels we borrowed. NOT a restore — there is nowhere to keep 6144
@@ -468,7 +482,21 @@ static void blank_pixels(void)
 /* the install                                                        */
 /* ------------------------------------------------------------------ */
 
-/* Copy a ROM file into Multiface ROM SRAM, in two 4 KB passes.
+/* Make Multiface ROM SRAM equal a ROM file, in two 4 KB passes, and say whether
+ * anything actually had to change.
+ *
+ * IDEMPOTENCE LIVES HERE, and that is the point of doing it this way. Each pass
+ * is COMPARED against what is live before it is written, inside the same window
+ * — the bytes are already in the buffer, so it costs one extra scan of 4 KB and
+ * no extra window entry. If every pass matches, nothing is written at all.
+ *
+ * IT REPLACED AN IDENTITY MATCH, and the difference is not academic. The old
+ * test asked the identity block whether a WiFi ROM was live, which is a
+ * different question from whether THESE bytes are: a locally rebuilt stub is a
+ * new ROM wearing the same `DeZoGiFnG_WIFI_0010`, and would not have been
+ * installed until someone remembered to bump. The person running this
+ * repeatedly is the person rebuilding the stub. The identity block is still
+ * read, for what issue #4 says it is for — telling the user which ROM is live.
  *
  * TWO PASSES BECAUSE 8192 BYTES DO NOT FIT. The buffer, the routine, its
  * variables and its stack must ALL live above 0x4000, and the display file's
@@ -478,18 +506,21 @@ static void blank_pixels(void)
  *
  * NOTHING IS PRINTED INSIDE A PASS. The buffer is the screen.
  *
- * Returns 0, or a message. The ROM is left partially written on a failure in the
- * second pass, and that is deliberate rather than overlooked: there is nothing
- * to roll back TO — the previous contents were overwritten by the first pass and
- * are not stored anywhere. The failure is reported plainly and the ROM is dead
- * until another install or a power cycle, which is a state a power cycle always
- * fixes. mfselect's temporary-file-and-rename dance has no analogue here because
- * SRAM has no rename.
+ * Returns 0, or a message; *changed is set when any pass was written. The ROM is
+ * left partially written on a failure in the second pass, and that is deliberate
+ * rather than overlooked: there is nothing to roll back TO — the previous
+ * contents were overwritten by the first pass and are not stored anywhere. The
+ * failure is reported plainly and the ROM is dead until another install or a
+ * power cycle, which is a state a power cycle always fixes. mfselect's
+ * temporary-file-and-rename dance has no analogue here because SRAM has no
+ * rename.
  */
-static const char *load_rom(const char *path)
+static const char *load_rom(const char *path, uint8_t *changed)
 {
     uint8_t  h;
     uint16_t pass, off, got;
+
+    *changed = 0;
 
     h = esx_f_open(path, ESX_MODE_R | ESX_MODE_OPEN_EXIST);
     if (h == BAD_HANDLE)
@@ -506,17 +537,21 @@ static const char *load_rom(const char *path)
             }
         }
 
-        switch (win_call(OP_WRITE, (uint16_t)(pass * BUF_LEN), BUF_LEN)) {
-        case 0:
+        switch (win_call(OP_SYNC, (uint16_t)(pass * BUF_LEN), BUF_LEN)) {
+        case RES_SAME:
+            break;                      /* already these bytes; nothing done */
+        case RES_OK:
+            *changed = 1;
             break;
         case -1:
             esx_f_close(h);
             return E_RELOC;
         default:
-            /* The window read back something other than what it wrote. On the
-             * evidence of issue #21's first probe the overwhelmingly likely
-             * cause is that the write was discarded — DivMMC, or an MMU RAM page
-             * in slot 0, winning the arbitration. */
+            /* RES_VERIFY: the window read back something other than what it
+             * wrote. On the evidence of issue #21's first probe the
+             * overwhelmingly likely cause is that the write was DISCARDED —
+             * DivMMC, or an MMU RAM page in slot 0, winning the arbitration.
+             * Bench check I7 builds exactly that state on purpose. */
             esx_f_close(h);
             return E_BLOCKED;
         }
@@ -636,6 +671,7 @@ int main(int argc, char **argv)
     uint8_t  act = ACT_HELP;
     int8_t   want = ID_NOT_OURS;    /* which variant --load/--auto asked for */
     int8_t   liveid;
+    uint8_t  changed = 0;
     uint16_t want_crc, got_crc;
     const char *rom = 0, *sum = 0, *why = 0;
     const char *doing = 0;
@@ -699,50 +735,13 @@ int main(int argc, char **argv)
 
     say(doing);
 
-    /* --- is it already live? ------------------------------------------
-     *
-     * IDEMPOTENCE IS WHAT DEFUSES THE BOOT LOOP: `--auto` runs from
-     * AUTOEXEC.BAS on every boot, and a tool that rewrites 8 KB and announces
-     * itself every time is one people turn off.
-     *
-     * The question is asked of the LIVE ROM, through a read-only pass of the
-     * same window — which is the only way to ask it, since outside the window
-     * 0x1FE0 is somebody else's memory.
-     *
-     * IT KEYS OFF THE VARIANT AND NOT THE BUILD NUMBER, per issue #4's rule,
-     * AND THAT HAS A CONSEQUENCE WORTH STATING OUT LOUD: rebuild the stub, run
-     * `--load wifi` again in the SAME session, and the new build is NOT
-     * installed — the old one is still "the WiFi ROM". Power-cycle, or
-     * `--unload` first. It is not a problem at boot, where SRAM has just been
-     * reloaded from the card and nothing of ours is ever live. See
-     * doc/MFINSTALL.md, which says so where a user will read it.
-     */
-    if (win_call(OP_READ_ID, 0, 0) < 0) {
-        /* The copy dirtied the screen before it failed, so clear up even here.
-         * A machine whose 0x5000 is not RAM has larger problems, but leaving
-         * half a routine painted across the display is not one to add. */
-        blank_pixels();
-        return fail(E_RELOC);
-    }
-    memcpy(live_id, VARS + W_ID, MAGIC_READ);
-    blank_pixels();
-
-    liveid = id_of(live_id);
-    say_id(M_ALREADY, liveid, live_id);
-
-    if (act == ACT_UNLOAD) {
-        /* Nothing of ours is live, so there is nothing of ours to remove. This
-         * cannot tell the stock ROM from any other third-party Multiface ROM,
-         * and neither can mfselect's guard; what it can say is that we did not
-         * put whatever is there. */
-        if (liveid == ID_NOT_OURS) {
-            say(M_NOTHING);
-            return 0;
-        }
-    } else if (liveid == want) {
-        say(M_NOTHING);
-        return 0;
-    }
+    /* THERE IS NO "IS IT ALREADY THERE?" TEST HERE, and `--unload` gets no case
+     * of its own. Every path asks load_rom the same question — do these bytes
+     * differ — so "nothing to do" is an OUTCOME rather than a rule, and
+     * `--unload` on a machine where nothing of ours is live simply finds the
+     * original already in place and writes nothing. The cost is that `--unload`
+     * needs /mfselect/original.rom to exist even then, and says so rather than
+     * silently succeeding; mfselect is what captures it. */
 
     /* --- verify the source before writing anything --------------------
      *
@@ -757,12 +756,45 @@ int main(int argc, char **argv)
     if (got_crc != want_crc)
         return fail(E_CRC);
 
-    /* --- and write it -------------------------------------------------- */
+    /* --- and make the ROM match it ------------------------------------- */
     say(M_WRITING);
-    why = load_rom(rom);
-    blank_pixels();
-    if (why)
+    why = load_rom(rom, &changed);
+    if (why) {
+        blank_pixels();
         return fail(why);
+    }
+
+    /* --- which ROM is live? --------------------------------------------
+     *
+     * REPORTING ONLY, and read AFTERWARDS rather than before, which is both
+     * more useful and the only order that works.
+     *
+     * More useful because "Live ROM:" then says what is live NOW — the thing
+     * just installed — instead of what used to be. It can afford to: nothing is
+     * decided on it any more (that is load_rom's byte compare), so there is no
+     * reason for it to happen first.
+     *
+     * And the only order that works because load_rom BLANKS THE SCREEN — it
+     * borrows the display file for its buffer — so anything printed before it
+     * is wiped. A first version read and printed this beforehand, and the line
+     * was erased by the very operation it introduced. Caught by the bench,
+     * which reads the screen back as text, and not by reading the diff.
+     *
+     * The block can only be read HERE, through a read-only pass of the same
+     * window: outside it, 0x1FE0 is somebody else's memory entirely.
+     */
+    if (win_call(OP_READ_ID, 0, 0) < 0) {
+        /* The copy dirtied the screen before it failed, so clear up even here.
+         * A machine whose 0x5000 is not RAM has larger problems, but leaving
+         * half a routine painted across the display is not one to add. */
+        blank_pixels();
+        return fail(E_RELOC);
+    }
+    memcpy(live_id, VARS + W_ID, MAGIC_READ);
+    blank_pixels();
+
+    liveid = id_of(live_id);
+    say_id(M_LIVEIS, liveid, live_id);
 
     /* NO SOFT RESET IS ISSUED, deliberately. taylorza reported needing
      * `NEXTREG 2,1` for a config-mode replacement to take effect; issue #21's
@@ -771,6 +803,6 @@ int main(int argc, char **argv)
      * answers it. Adding a reset "just in case" would destroy the user's BASIC
      * session to work around something that may not be true, and would make the
      * check unable to answer the question at all. */
-    say(M_LIVE);
+    say(changed ? M_LIVE : M_SAME);
     return 0;
 }

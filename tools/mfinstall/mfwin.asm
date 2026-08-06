@@ -68,14 +68,36 @@ v_mach          EQU     VARS+0x10       ; 1  NR 0x03 & 7 — the config-mode exi
 w_id            EQU     VARS+0x20       ; MAGIC_READ bytes
 
 OP_READ_ID      EQU     0               ; read the live ROM's identity block
-OP_WRITE        EQU     1               ; copy w_len bytes to w_dst, then VERIFY
+OP_SYNC         EQU     1               ; make w_len bytes at w_dst equal BUF —
+                                        ; COMPARE first, write only if they
+                                        ; differ, and verify what was written
 
-RES_OK          EQU     0
-RES_VERIFY      EQU     1               ; the bytes read back are not the bytes
-                                        ; written — see the note at .verify
+RES_OK          EQU     0               ; the bytes differed; written and verified
+RES_VERIFY      EQU     1               ; written, and the read-back disagrees —
+                                        ; see the note at .verify
+RES_SAME        EQU     2               ; already identical; NOTHING was written
 
 MAGIC_OFF       EQU     0x1FE0          ; the identity block (issue #4), which is
 MAGIC_READ      EQU     20              ; at the END of the 8 KB image on purpose
+
+; DIVMMC_OFF — A BENCH SEAM, and the only way the blocked-write path can be
+; reached. It is the sixth of its shape in this repository, after IP_MAX,
+; RX_WAIT, TX_PASSES, WAIT_SECS, FAULT_LIMIT and LINK_IDS, and it exists for
+; their reason: the state a check must be shown red against has to be reachable
+; by a BUILD, or the red is a story about a scratch tree nobody can re-run.
+;
+;   1  (shipped) turn DivMMC off for the window
+;   0  do NOT touch NR 0x0A or port 0xE3 at all — relocation alone
+;
+; Everything else — the relocation, MMU0, layer 2, NR 0x81, config mode, the op,
+; the exit and every other restore — is identical between the two. That is what
+; makes the difference attributable: `DIVMMC_OFF=0` reproduces the blocked write
+; measured from a dot command's ORDINARY context, from a different code
+; location, so relocating above 0x4000 is not what fixes this and turning DivMMC
+; off is. Bench check I7.
+        IFNDEF DIVMMC_OFF
+DIVMMC_OFF      EQU     1
+        ENDIF
 
 ; ---- border stage marks ----------------------------------------------------
 ; THE ONLY INSTRUMENT THAT SURVIVES A HANG. If the routine never returns, the
@@ -136,6 +158,7 @@ window:
         inc     b
         in      a,(c)
         ld      (v_0a),a
+        IF DIVMMC_OFF = 1
         and     0xEF
         out     (c),a
 
@@ -144,6 +167,7 @@ window:
         ;    because DivMMC is off either way once CONMEM and automap are.
         xor     a
         out     (0xE3),a
+        ENDIF
 
         ld      a,ST_DIVMMC_OFF
         ld      (w_stage),a
@@ -237,8 +261,8 @@ window:
         ; 0x0000-0x1FFF = the Multiface ROM, writable.
         ;---------------------------------------------------------------------
         ld      a,(w_op)
-        cp      OP_WRITE
-        jr      z,.write
+        cp      OP_SYNC
+        jr      z,.sync
 
         ; -- OP_READ_ID: the live ROM's identity block ------------------------
         ; This is what makes the tool idempotent, and it can only be done HERE:
@@ -254,8 +278,27 @@ window:
         ldir
         jr      .op_done
 
-.write:
-        ; -- OP_WRITE: copy, then READ BACK AND COMPARE, still inside ---------
+.sync:
+        ; -- OP_SYNC: COMPARE, write only if different, then verify -----------
+        ;
+        ; THE COMPARE IS WHAT MAKES THE TOOL IDEMPOTENT, and it is idempotent BY
+        ; CONSTRUCTION rather than by rule. The caller used to decide whether to
+        ; write by matching the identity block's variant field — which answers
+        ; "is a WiFi ROM live", not "are these the bytes". A stub rebuilt without
+        ; a version bump is a different ROM wearing the same identity, and its
+        ; developer is exactly who runs this repeatedly. So the question asked
+        ; here is the only one that cannot be wrong: do the bytes differ?
+        ;
+        ; It costs one extra pass over 4 KB and no extra window entry, because
+        ; the caller has already put the bytes in BUF in order to write them.
+        call    .compare
+        jr      nz,.differs
+
+        ld      a,RES_SAME
+        ld      (w_res),a
+        jr      .op_done
+
+.differs:
         ; The LDIR writes THROUGH 0x0000, 0x0008, 0x0038 and 0x0066 — every
         ; DivMMC automap entry point — because it is copying an image over them.
         ; That cannot re-trigger automap: automap_hold only updates on
@@ -277,21 +320,12 @@ window:
         ; mode — it is what a naive dot command does, every time — so a tool that
         ; reported success on having reached the end of a routine would report
         ; success on doing nothing at all.
-        ld      hl,BUF
-        ld      de,(w_dst)
-        ld      bc,(w_len)
-.vloop:
-        ld      a,(de)
-        cp      (hl)
-        jr      nz,.vbad
-        inc     hl
-        inc     de
-        dec     bc
-        ld      a,b
-        or      c
-        jr      nz,.vloop
-        jr      .op_done
-.vbad:
+        ;
+        ; It is the SAME routine the compare above uses, deliberately: two copies
+        ; of one loop is two places for a later correction to miss, and the
+        ; second call is what turns "we wrote" into "it is there".
+        call    .compare
+        jr      z,.op_done
         ld      a,RES_VERIFY
         ld      (w_res),a
 
@@ -332,12 +366,14 @@ window:
         ld      a,(v_81)
         out     (c),a
 
+        IF DIVMMC_OFF = 1
         dec     b
         ld      a,0x0A
         out     (c),a
         inc     b
         ld      a,(v_0a)
         out     (c),a
+        ENDIF
 
         ld      bc,0x123B
         ld      a,(v_123b)
@@ -367,6 +403,7 @@ window:
         ; from AUTOEXEC.BAS is a different invocation path that was not measured.
         ; If one is ever automapped with CONMEM = 0, the exact restore alone puts
         ; DivMMC back OFF and the return to 0x2000 lands nowhere. Six bytes.
+        IF DIVMMC_OFF = 1
         ld      a,(v_e3)
         or      0x80                    ; CONMEM on, original MAPRAM and bank
         out     (0xE3),a
@@ -382,6 +419,7 @@ window:
 
         ld      a,(v_e3)                ; exact restore of CONMEM/MAPRAM/bank
         out     (0xE3),a
+        ENDIF
 
         ld      a,ST_DONE
         ld      (w_stage),a
@@ -390,6 +428,31 @@ window:
         ld      sp,(v_sp)               ; the caller's stack is mapped again
         ei
         ret
+
+;-----------------------------------------------------------------------------
+; .compare — Z when the w_len bytes at BUF equal the w_len bytes at w_dst.
+;
+; CALLed, which is safe and is worth saying once: the stack is at STACK_TOP in
+; high RAM, and config mode remaps only 0x0000-0x3FFF (:3029), so a return
+; address pushed inside the window is still there when it is popped.
+;
+; Only ever reached with the window open, so it reads the Multiface ROM.
+;-----------------------------------------------------------------------------
+.compare:
+        ld      hl,BUF
+        ld      de,(w_dst)
+        ld      bc,(w_len)
+.cmp_loop:
+        ld      a,(de)
+        cp      (hl)
+        ret     nz                      ; differ: NZ, and BC/DE/HL say where
+        inc     hl
+        inc     de
+        dec     bc
+        ld      a,b
+        or      c
+        jr      nz,.cmp_loop
+        ret                             ; equal: `or c` left Z set
 
 window_end:
 

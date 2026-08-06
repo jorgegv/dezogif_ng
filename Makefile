@@ -323,9 +323,34 @@ DEPLOY       = $(OUT)/deploy
 # IT IS THE ONE FILE ON THE CARD THAT DOES NOT GO IN /mfselect/. Dot commands
 # are looked up in /dot/ — checked on the reference SD image — while its ROMs
 # stay where mfselect already puts them. The deploy listing below labels it.
-MFWIN_BIN     = $(OUT)/mfwin.bin
-MFWIN_H       = $(OUT)/mfwin_bin.h
-MFINSTALL_DOT = $(OUT)/mfinstall
+#
+# DIVMMC_OFF — the seam, and the only way the blocked-write path can be reached.
+# Same shape and same justification as IP_MAX, RX_WAIT/TX_PASSES, WAIT_SECS,
+# FAULT_LIMIT and LINK_IDS above: the state a check must be shown red against
+# has to be reachable by a BUILD. `DIVMMC_OFF=0` leaves DivMMC mapped for the
+# window, which is the ordinary context a dot command runs in and in which every
+# config-mode write to bank 5 is silently discarded.
+#
+# IT GETS ITS OWN OUTPUT NAMES, all three of them, for the reason IP_MAX does: a
+# probe left where a shipped one is read from is a wrong-file bug make cannot
+# see, because nothing here depends on the flag's value. The generated header
+# keeps its FILENAME — mfinstall.c includes "mfwin_bin.h" — and moves to a
+# directory of its own instead, which is what -I selects between.
+DIVMMC_OFF ?=
+
+ifeq ($(DIVMMC_OFF),)
+  MFWIN_SUFFIX  =
+  MFWIN_FLAGS   =
+  MFWIN_INCDIR  = $(OUT)
+else
+  MFWIN_SUFFIX  = -dmoff$(DIVMMC_OFF)
+  MFWIN_FLAGS   = -DDIVMMC_OFF=$(DIVMMC_OFF)
+  MFWIN_INCDIR  = $(OUT)/mfwin$(MFWIN_SUFFIX)
+endif
+
+MFWIN_BIN     = $(OUT)/mfwin$(MFWIN_SUFFIX).bin
+MFWIN_H       = $(MFWIN_INCDIR)/mfwin_bin.h
+MFINSTALL_DOT = $(OUT)/mfinstall$(MFWIN_SUFFIX)
 
 # The pair for whichever variant this invocation selected. Equal to SUM_UART
 # with TRANSPORT=uart and to SUM_WIFI with TRANSPORT=wifi, so one rule text
@@ -511,9 +536,11 @@ test-mfselect: mfselect
 # '# ' line before a target as its description.
 #
 
-# Run the mfinstall headless bench (8 jnext runs, 6 checks; not part of `make test`)
+# Run the mfinstall headless bench (10 jnext runs, 7 checks; not part of `make test`)
 test-mfinstall: mfinstall
-	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" DOT="$(MFINSTALL_DOT)" \
+	@$(MAKE) --no-print-directory DIVMMC_OFF=0 $(OUT)/mfinstall-dmoff0
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" DOT="$(OUT)/mfinstall" \
+	 DOT_DMOFF0="$(OUT)/mfinstall-dmoff0" \
 	 ROM_UART="$(ROM_UART)" SUM_UART="$(SUM_UART)" \
 	 ROM_WIFI="$(ROM_WIFI)" SUM_WIFI="$(SUM_WIFI)" \
 	 ROMSUM="$(ROMSUM)" SCREENDIFF="$(TEST)/screen-diff.py" \
@@ -885,17 +912,18 @@ $(MFSELECT_NEX): $(MFSELECT_C) Makefile | $(OUT)
 # output path is a -D as it is for every other fixture here, so nothing is
 # written into the source tree.
 $(MFWIN_BIN): $(MFWIN_ASM) Makefile | $(OUT)
-	$(SJASMPLUS) -DMFWIN_BIN=\"$@\" $(MFWIN_ASM)
+	$(SJASMPLUS) -DMFWIN_BIN=\"$@\" $(MFWIN_FLAGS) $(MFWIN_ASM)
 
 # ... and the same bytes as a C array. `xxd -i` derives the array's name from
 # the FILE's name, so the binary is copied to `mfwin_bin` first; patching the
 # symbol afterwards would be a sed expression that has to keep matching xxd's
 # output format.
 $(MFWIN_H): $(MFWIN_BIN) Makefile | $(OUT)
-	@cp -f $(MFWIN_BIN) $(OUT)/mfwin_bin
-	xxd -i -n mfwin_bin $(OUT)/mfwin_bin > $@
+	@mkdir -p $(MFWIN_INCDIR)
+	@cp -f $(MFWIN_BIN) $(MFWIN_INCDIR)/mfwin_bin
+	xxd -i -n mfwin_bin $(MFWIN_INCDIR)/mfwin_bin > $@
 	@echo '#define MFWIN_BIN_LEN mfwin_bin_len' >> $@
-	@rm -f $(OUT)/mfwin_bin
+	@rm -f $(MFWIN_INCDIR)/mfwin_bin
 
 # The dot command. -I finds the generated header; zcc leaves its intermediates
 # beside the -o basename, which is $(OUT), for the same reason mfselect's rule
@@ -914,9 +942,9 @@ $(MFWIN_H): $(MFWIN_BIN) Makefile | $(OUT)
 # ceiling nearer 7 KB under stock esxdos. Over that it does not fail to build —
 # it fails to LOAD, on the machine, with an error that says nothing about size.
 $(MFINSTALL_DOT): $(MFINSTALL_C) $(MFWIN_H) Makefile | $(OUT)
-	$(ZCC) $(ZCCDOTFLAGS) -I$(OUT) $(MFINSTALL_C) -o $(OUT)/mfinstall-app
-	@bin=$(OUT)/mfinstall-app_CODE.bin; \
-	[ -s "$$bin" ] || bin=$(OUT)/mfinstall-app; \
+	$(ZCC) $(ZCCDOTFLAGS) -I$(MFWIN_INCDIR) $(MFINSTALL_C) -o $(OUT)/mfinstall-app$(MFWIN_SUFFIX)
+	@bin=$(OUT)/mfinstall-app$(MFWIN_SUFFIX)_CODE.bin; \
+	[ -s "$$bin" ] || bin=$(OUT)/mfinstall-app$(MFWIN_SUFFIX); \
 	if [ ! -s "$$bin" ]; then \
 	  echo "ERROR: zcc produced no dot command binary for $(MFINSTALL_C)" >&2; exit 1; \
 	fi; \

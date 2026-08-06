@@ -97,9 +97,13 @@ if cpu_a(15 downto 14) = "00" then
 ```
 
 So **two** things beat config mode, not one. The second is the ordinary MMU: if slot 0 or 1 currently
-holds a RAM page rather than a ROM mapping, that branch serves it and config mode never runs. Nothing
-here establishes what a dotcommand's MMU state is at the moment of the write, and it must be
-established rather than assumed.
+holds a RAM page rather than a ROM mapping, that branch serves it and config mode never runs.
+
+**MEASURED SINCE: a dot command's MMU0 and MMU1 are both `0xFF`**, the ROM mapping, so this branch is
+not the one that wins — §1.2c, where it mattered because it is what excludes the MMU as the cause of
+the blocked write. `tools/mfinstall/mfwin.asm` forces MMU0 to `0xFF` anyway and restores it, because a
+value that happens to be right is not a value that was checked, and nothing here says what the MMU
+holds on a machine set up differently.
 
 **And a second arbiter runs afterwards**, `zxnext.vhd:3084-3132`, which can override the address the
 branch above just computed. Config mode sets `sram_pre_override <= "110"` (`:3050`), which
@@ -445,8 +449,6 @@ register-read multiplexer has no `when X"04"` case at all — `X"03"` is followe
 saved and restored. It also does not need to be: `nr_04_romram_bank` is consulted **only** inside the
 `nr_03_config_mode = '1'` branch, so once config mode is left it has no effect on anything.
 
-**This has not been run**, here or anywhere in this project. It is what the VHDL says should work.
-
 ---
 
 ## 2. It is testable headless, which is what unblocks it
@@ -542,11 +544,17 @@ really the stock ROM, and a second implementation of that decision is a second p
 data-loss bug in `ERRORS.md` to come back. So `--unload` needs mfselect to have been run once, and
 says so when it has not.
 
-One thing the identity machinery is used for here that mfselect does not need: **idempotence**.
-`--auto` reads the block out of the **live** ROM through a read-only config-mode pass and does
-nothing if the requested variant is already there. Matching on variant and not on build number is
-issue #4's rule, and its consequence is written down in [MFINSTALL.md](MFINSTALL.md) rather than left
-to be discovered: a rebuilt ROM of the same variant is not re-installed within one session.
+**AND THE IDENTITY BLOCK IS USED FOR NOTHING ELSE HERE — deliberately, after a first version used it
+for more.** `.mfinstall` reads it through a read-only config-mode pass and *reports* which ROM is
+live; it decides nothing on it. Whether to write is settled by **comparing all 8192 bytes** against
+what is live, one 4 KB pass at a time, inside the same window that would do the writing.
+
+That is a stronger property than it looks, and the first version got it wrong in the direction that
+matters. A variant match answers "is a WiFi ROM live", which is not "are these the bytes": a stub
+rebuilt without a `make bump` is a different ROM wearing the same `DeZoGiFnG_WIFI_0010`, and would
+have been skipped — by the one person who runs this tool repeatedly, its developer. So `--auto` is
+idempotent **by construction** rather than by a rule that can be wrong, and the block is left doing
+the job issue #4 says it is for.
 
 ### 3.4 Open, and not investigated here
 
@@ -623,6 +631,7 @@ here has run on a real Next.
 | Bit 3 toggles `user_dt_lock`; any write clears `bootrom_en` | `zxnext.vhd:5122`, `:5135` | **verified** |
 | jnext models config mode including the writable path | jnext `src/memory/mmu.h:164-171`, `src/port/nextreg.*` | **verified**, in jnext's source |
 | A soft reset is NOT enough for the **file-swap** method | hardware, 2026-08-04 (MEMORY.md) | **verified on hardware** |
-| A soft reset IS enough for the **config-mode** method, and is required | taylorza, Discord | **reported by a third party** — not tested here |
-| Config mode is re-enterable | SevenFFF, Discord; consistent with `:5147` having no one-way guard | **inferred** — the VHDL shows no latch preventing re-entry, but nothing has run |
-| The sequence in §1.5 works | — | **unverified.** No code has been written and nothing has been run |
+| A soft reset is **required** for the config-mode method | taylorza, Discord | **DISPROVED in jnext** — bench I2 presses the M1 button after an install with no reset of any kind and gets the stub's screen. Untested on silicon, which is where taylorza's report comes from |
+| A soft reset is **enough** for it, i.e. the replacement survives one | taylorza, Discord | **reported by a third party** — not tested here, and not by anything this bench does: no run issues `NEXTREG 2,1` at all |
+| Config mode is re-enterable | `.mfinstall` enters and leaves it THREE times per install — one identity read plus two 4 KB passes — and the bench's run 5 does two installs in one session, six entries, without a reset between them | **measured in jnext** — was **inferred** from `:5147` having no one-way guard, and is now exercised on every run of `make test-mfinstall` |
+| The sequence in §1.5 works | it IS `tools/mfinstall/mfwin.asm`; bench `make test-mfinstall` I1 and I2 | **measured in jnext** — 8192 bytes installed in two passes, verified inside the window, and live on the next M1 press |

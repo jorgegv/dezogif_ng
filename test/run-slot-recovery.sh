@@ -122,9 +122,12 @@ done
 
 # The whole bench rests on this command existing in the emulator — it is why
 # #19 waited on jnext#211 rather than shipping unexecutable Z80.
-"$JNEXT" --help 2>&1 | grep -q -- '--esp-listen-address' \
+bench_jnext_supports "$JNEXT" '--esp-listen-address' \
     || die "this jnext has no --esp-listen-address (need >= 0.99.118); rebuild it"
-strings "$JNEXT" 2>/dev/null | grep -q 'AT+CIPCLOSE=' \
+# `grep -c`, not `grep -q`: -q exits at the first match and the SIGPIPE that
+# gives `strings` comes back as 141 under pipefail, which is the defect the
+# previous commit removed from nine benches. -c reads to EOF.
+[ "$(strings "$JNEXT" 2>/dev/null | grep -c 'AT+CIPCLOSE=' || true)" -gt 0 ] \
     || die "this jnext has no AT+CIPCLOSE=<id> (need jnext#211, >= 0.99.127); rebuild it"
 
 if command -v ss >/dev/null 2>&1; then

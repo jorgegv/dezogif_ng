@@ -70,9 +70,10 @@ dies with **141**; and `set -o pipefail` — which every one of these scripts se
 correctly — carries that 141 out as the pipeline's status.
 
 So `|| die` fired on a pipeline whose grep had **succeeded**, and it fired
-precisely when the flag was PRESENT and not in the final chunk of output. Absent flags were reported correctly — `grep -q`
-must read to EOF to conclude "no match", so it never closes the pipe early —
-which is why the check looked sound for months.
+precisely when the flag was PRESENT and not in the final chunk of output. Absent
+flags were reported correctly — `grep -q` must read to EOF to conclude "no
+match", so it never closes the pipe early — which is why the check looked sound
+for months.
 
 *(An earlier version of this entry said the help was written "a line at a time".
 A reviewer straced it and it is wrong: **three writes of 4096, 4096 and 1765

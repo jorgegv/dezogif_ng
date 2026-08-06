@@ -131,7 +131,13 @@ bench_jnext_supports "$JNEXT" '--esp-listen-address' \
     || die "this jnext has no AT+CIPCLOSE=<id> (need jnext#211, >= 0.99.127); rebuild it"
 
 if command -v ss >/dev/null 2>&1; then
-    ! ss -ltn 2>/dev/null | grep -qE "127\.0\.0\.1:$PORT\b" \
+    # `grep -c` and not `-q`. -q exits at its first match, and the SIGPIPE that
+    # would give `ss` comes back as 141 under pipefail — which `!` then reads as
+    # "free", starting a run against an occupied port. -c cannot do that: it must
+    # read to EOF to count, so there is no early close to signal.
+    # THE `|| true` IS FOR SOMETHING ELSE, and not for that: `grep -c` exits 1
+    # when the count is 0, which is the ORDINARY case here.
+    [ "$(ss -ltn 2>/dev/null | grep -cE "127\.0\.0\.1:$PORT\b" || true)" -eq 0 ] \
         || die "something is already listening on 127.0.0.1:$PORT — stop it first (CSpect, a stale jnext?)"
 fi
 

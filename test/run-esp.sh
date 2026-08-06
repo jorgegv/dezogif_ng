@@ -101,12 +101,16 @@ die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 # without it AT+CIPMUX=1 is answered ERROR and the fixture parks at border 2 —
 # a failure that looks like a fixture bug and is not one.
 bench_jnext_supports "$JNEXT" '--esp-listen-address' \
-    || die "this jnext has no --esp-listen-address (need >= 0.99.118, found: $("$JNEXT" --help 2>&1 | grep -oE 'jnext [0-9.]+' | head -1)); rebuild it — the ESP server bench cannot run without it"
+    || die "this jnext has no --esp-listen-address (need >= 0.99.118, found: $("$JNEXT" --help 2>&1 | grep -oE 'jnext [0-9.]+' | tail -1)); rebuild it — the ESP server bench cannot run without it"
 
 # A port already in use would make E1 connect to somebody else's listener and
 # then fail the echo, which reads as a fixture bug. Say so up front instead.
 if command -v ss >/dev/null 2>&1; then
-    ! ss -ltn 2>/dev/null | grep -qE "127\.0\.0\.1:$PORT\b" \
+    # `grep -c` and not `-q`: an early-exiting reader under pipefail can make
+    # this pipeline non-zero, which `!` turns into "free" — reporting an empty
+    # port while one is occupied. Same defect as bench_jnext_supports, and here
+    # the wrong answer is the silent one. -c reads to EOF.
+    [ "$(ss -ltn 2>/dev/null | grep -cE "127\.0\.0\.1:$PORT\b" || true)" -eq 0 ] \
         || die "something is already listening on 127.0.0.1:$PORT — stop it first (CSpect, a stale jnext?)"
 fi
 

@@ -9,7 +9,8 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 **Built.** `bench_jnext_supports` in `test/bench-jnext.sh`, replacing the
 `"$JNEXT" --help | grep -q -- '--flag' || die` in **thirteen** places across
-**nine** benches.
+**ten** benches — and then the same early-exiting-reader shape in **nine** more,
+which the independent review is what turned up.
 
 **IT WAS NOT A TIDY-UP: EVERY BENCH IN THIS REPOSITORY WAS DEAD.** Against jnext
 0.99.127 all of them refused to start, each blaming the emulator for a flag it
@@ -28,8 +29,19 @@ a teardown it deliberately does not want.
 
 **What makes the new form correct is that it reads to EOF**, not that it avoids
 `grep`. A command substitution consumes all the output, so there is no early
-close to signal. `grep -c` would do as well and is what the one `strings` call
-site uses.
+close to signal, and `grep -c` does as well — which is what the port checks now
+use, since they need the regex.
+
+**THE REVIEW FOUND THE CLASS WAS WIDER THAN THE FIX, AND ONE OF THE SURVIVORS
+FAILED IN THE DANGEROUS DIRECTION.** Every bench's port pre-flight was
+`! ss -ltn | grep -qE "…:$PORT" || die`, and `bench_require_port_free` the same
+shape: a SIGPIPE there makes the pipeline non-zero, `!` reads that as **free**,
+and the run starts against an occupied port — the contaminated-and-GREEN outcome
+that check exists to prevent. Measured inert today (`ss` writes its small output
+in one go, unlike jnext's per-line help), so this is a property of *another*
+program's buffering rather than of our code, which is the same reason the
+original defect appeared without anything here changing. Nine sites, now
+`grep -c`, verified both ways against a real listener.
 
 **THE PROPERTY THAT BROKE IS NOT OURS, WHICH IS THE TRANSFERABLE PART.** Nothing
 in this repository changed. The old check's correctness depended on **where the

@@ -207,7 +207,16 @@ bench_require_port_free() {
     local port=$1
     shift
     command -v ss >/dev/null 2>&1 || return 0
-    if ss -ltn 2>/dev/null | grep -qE "127\.0\.0\.1:$port\b"; then
+    # `grep -c` and not `grep -q`, for the reason bench_jnext_supports above
+    # exists — and here the failure DIRECTION is the dangerous one. If `ss` ever
+    # took SIGPIPE from an early-exiting reader, pipefail would make the
+    # pipeline non-zero, `if` would read that as FALSE, and this would report a
+    # free port while one was occupied: the contaminated-and-GREEN run the line
+    # below is about. Measured inert today (ss writes its small output in one
+    # go), which is a property of ss's buffering rather than of this code.
+    local hits
+    hits=$(ss -ltn 2>/dev/null | grep -cE "127\.0\.0\.1:$port\b" || true)
+    if [ "${hits:-0}" -gt 0 ]; then
         bench_die "something is listening on 127.0.0.1:$port $* — a run started now would be answered by it, and a contaminated run can come out GREEN (issue #17)"
     fi
 }

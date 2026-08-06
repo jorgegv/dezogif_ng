@@ -435,8 +435,11 @@ inbound ceiling on the same machine at **5** (against jnext's 4). Here, four van
 survivable and the fifth is not — one slot consumed **permanently** per peer, with nothing giving
 one back. `AT+CIPSERVER=0` does not, and before issue #19 nothing in the stub did.
 
-**The terminal symptom is a TIMEOUT, not a refusal** — 10009 ms, the same signature probe A read at
-the ceiling the day before. And **B4 says the stub was healthy the whole time**: a clean error area
+**The terminal symptom is a TIMEOUT, not a refusal** — 10009 ms. Probe A read the same signature at
+the ceiling on the same machine the day before (**10002 ms**, 2026-08-06; that run was recorded in
+the session handover and not in this tree, which is why the figure is quoted here with its
+provenance rather than cited as if it were already written down). jnext cannot produce it: its
+module accepts and then RSTs, which arrives as a fast `DROPPED`. And **B4 says the stub was healthy the whole time**: a clean error area
 while the module was answering nobody. Module refusing, screen intact, stub fine, recoverable only
 from outside — that is issue #15's reported shape, produced deliberately.
 
@@ -445,12 +448,19 @@ it. What it shows is what a vanished peer **costs**. Nothing here says what made
 the field, and B3's recovery is the module being *told*, not healing.
 
 **THE UNCOMFORTABLE HALF, AND IT IS ABOUT OUR OWN FIX.** Issue #19's sweep runs from
-`esp_recover`, which fires after `ESP_FAULT_LIMIT` **consecutive faults** — and in this run the stub
-never faulted at all, which B4's clean error area is the evidence for. **So the fix would not have
-rescued this exact case.** It reclaims slots when the stub is already failing; a healthy stub with
-leaked slots stays leaked until something makes it fault five times, or the machine is
-power-cycled. That is a real limit on what #19 buys, it was measured rather than reasoned, and it
-is written here rather than left for somebody to discover.
+`esp_recover`, which fires after `ESP_FAULT_LIMIT` **consecutive faults**, and `esp_fault_count` is
+incremented in exactly one place — `rxtx_error`. In the state measured above, nothing can reach it:
+a **new** client never completes the module's handshake (V5), so the stub sees zero bytes and has
+nothing to time out; the **leaked peers** are silent by construction; and an **unprompted send** to
+a stale id takes `esp_wait_prompt`'s `ERROR` arm to `.no_client`, which returns quietly and raises
+no fault. B4's clean error area is the observable half of that.
+
+**So the fix CANNOT rescue this state — not "would probably not", cannot.** The trigger is
+structurally unreachable once the module is full of vanished peers. What #19 buys is a reclaim on
+the way INTO trouble, while the transport is still failing loudly; it is not a general reclaim, and
+a power cycle remains the answer to the terminal state. That is a real limit, it was traced rather
+than assumed, and it is written here rather than left for somebody to discover. Closing it needs a
+trigger reachable from a quiet stub — a periodic or connect-time sweep — which is not issue #19.
 
 ### `make probe-jnext` FIRST, always
 

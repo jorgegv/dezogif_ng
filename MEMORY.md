@@ -56,9 +56,10 @@ that wedged rather than closing kept its inbound slot for the rest of the
 power-on session.
 
 **THE FAILURE IT REMOVES WEARS ISSUE #15'S FACE, WHICH IS WHY IT IS NOT
-HOUSEKEEPING.** Four or five such peers — which is what a user retrying a hang
-produces — and the module refuses every new client while `esp_recover` goes on
-reporting success. TCP connects, nothing answers, power cycle. **It is NOT a fix
+HOUSEKEEPING.** Four or five such peers and the module refuses every new client
+while `esp_recover` goes on reporting success — **five, measured on a real
+Next**. How a peer comes to vanish in the field is deliberately not claimed;
+nothing here has measured that. TCP connects, nothing answers, power cycle. **It is NOT a fix
 for #15**, which was closed on other evidence and never reproduced deliberately;
 it removes one mechanism that produces the same outward signature, which is a
 smaller claim and the only one earned.
@@ -160,14 +161,35 @@ symptom is a **timeout at 10009 ms**, not a refusal, and the stub's error area
 was **clean throughout**. So the leak this fixes is real on silicon and was an
 inference from jnext's source until now.
 
-**And the same run says the fix would NOT have rescued that case.** The sweep
-runs from `esp_recover`, which fires on `ESP_FAULT_LIMIT` consecutive faults, and
-in that run the stub never faulted — the clean error area is the evidence.
-**A healthy stub with leaked slots stays leaked** until something makes it fail
-five times in a row, or the machine is power-cycled. The fix reclaims slots when
-the transport is already in trouble, which is the case a user retrying a hang
-produces; it is not a general reclaim. Recorded in
-[doc/HARDWARE-TESTING.md] under probe B.
+**AND THE SAME RUN SAYS THE FIX CANNOT RESCUE THAT STATE AT ALL — not "is
+unlikely to", CANNOT.** The sweep runs from `esp_recover`, which fires on
+`ESP_FAULT_LIMIT` consecutive faults, and `esp_fault_count` is incremented in
+exactly one place, `rxtx_error`. Trace every source of traffic in the terminal
+leaked state and none of them can reach it: a **new** client never completes the
+module's handshake (V5, 10009 ms), so the stub sees zero bytes and cannot time
+one out; the **leaked peers** are silent by construction, having sent neither FIN
+nor RST; and an **unprompted send** to a stale id takes `esp_wait_prompt`'s
+`ERROR` arm to `.no_client`, which clears the validity flag and returns quietly,
+after which `transport_flush` discards without asking. So there is no ordinary
+mechanism left by which the stub can fault again, and the trigger is
+**structurally unreachable** rather than merely improbable.
+
+**A first version of this paragraph said the fix helps in "the case a user
+retrying a hang produces", and the reviewer REJECTED the branch over it.** Twice
+wrong: an unverified claim about user behaviour, the same species as "DeZog
+reconnects" one entry up — and, worse, contradicted by the measurement three
+sentences above it. Retrying describes the **lead-up** to leaking, while the
+module can still be reached and a truncated exchange can still make the stub
+fail; it says nothing about the **aftermath**, which is the state that paragraph
+had just admitted is unrescued. The tell was that the sibling paragraph in
+[doc/HARDWARE-TESTING.md], written in the same commit, did not make the claim —
+**two renderings of one fact disagreed, and the careful one was right**.
+
+So what #19 buys is narrower than it first appears: it reclaims slots on the way
+INTO trouble, while the transport is still failing loudly. It is not a general
+reclaim, and a module already full of vanished peers gives the sweep nothing to
+trigger on. Closing that needs a trigger the stub can reach from a quiet
+state — a periodic or connect-time sweep — which is not this branch.
 
 **NOT COVERED, and none of it is hidden.** The case above — a healthy stub that
 never faults. **Which ids were freed** — no PC-side check can see them, so S2

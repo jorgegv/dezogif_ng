@@ -1068,9 +1068,12 @@ tx_timeout: ; The transmit timeout handler
 ; or strands any connection past them. Until this loop existed, nothing in this
 ; program ever freed one: a peer that wedged rather than closing kept its slot
 ; for the rest of the power-on session, and recovery after recovery could not
-; reclaim it. Four or five such peers — which is what a user retrying a hang
-; produces — and the module refuses every new client while this routine goes on
-; reporting success. That is a hang with issue #15's exact outward signature.
+; reclaim it. Four or five such peers and the module refuses every new client
+; while this routine goes on reporting success — a hang with issue #15's exact
+; outward signature, and five is all it takes, measured on a real Next
+; (doc/HARDWARE-TESTING.md, probe B). How a peer comes to vanish in the field is
+; NOT claimed here: nothing has measured that, and an earlier version of this
+; comment asserted a user's retry loop as though it had.
 ;
 ; ISSUE #16 CLAIMED PART C "SUBSUMES THE STALE LINK SLOTS PROBLEM". IT DID NOT,
 ; and the gap is what this loop closes. It could not be written when #16 landed:

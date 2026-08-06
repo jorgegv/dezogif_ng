@@ -117,14 +117,18 @@
  * The offset is a permanent contract with src/constants.asm: the END of an image
  * whose size the firmware fixes at 8192, chosen because it cannot drift as the
  * code grows. */
-#define MAGIC_OFF       0x1FE0UL
+/* The OFFSET is deliberately NOT repeated here: mfwin.asm holds it, because
+ * mfwin.asm is what reads it, and one contract in two files is the drift this
+ * project has paid for more than once. */
 #define MAGIC_PREFIX    "DeZoGiFnG_"
 #define MAGIC_PREFIX_N  10U
 #define MAGIC_READ      20U     /* prefix + 4 variant + '_' + 4 build + NUL */
 #define BUILD_N         4U
 #define BUILD_SHOWN_N   (BUILD_N + 1U)  /* NN.NN — one stored form, displayed */
 
-#define ID_UNREADABLE   (-1)
+/* No ID_UNREADABLE: unlike mfselect's, this identity check is handed a block of
+ * bytes rather than a path, so "could not read it" is the caller's problem and
+ * never this function's answer. */
 #define ID_NOT_OURS     0
 #define ID_UART         1
 #define ID_WIFI         2
@@ -652,13 +656,14 @@ int main(int argc, char **argv)
             want = read_config(&why);
             if (want < 0)
                 return fail(why);
-            act = (want == ID_NOT_OURS) ? ACT_HELP : ACT_LOAD;
             if (want == ID_NOT_OURS) {
                 /* The config file says do nothing, which is a SUCCESS and not a
-                 * reason to print usage at every boot. */
+                 * reason to print usage at every boot — `--auto` lives in
+                 * AUTOEXEC.BAS and runs on days nobody is debugging. */
                 say(M_AUTONO);
                 return 0;
             }
+            act = ACT_LOAD;
         } else if (strcmp(a, "--load") == 0 && (i + 1) < (uint8_t)argc) {
             i++;
             if (strcmp(argv[i], "wifi") == 0)
@@ -712,8 +717,13 @@ int main(int argc, char **argv)
      * reloaded from the card and nothing of ours is ever live. See
      * doc/MFINSTALL.md, which says so where a user will read it.
      */
-    if (win_call(OP_READ_ID, 0, 0) < 0)
+    if (win_call(OP_READ_ID, 0, 0) < 0) {
+        /* The copy dirtied the screen before it failed, so clear up even here.
+         * A machine whose 0x5000 is not RAM has larger problems, but leaving
+         * half a routine painted across the display is not one to add. */
+        blank_pixels();
         return fail(E_RELOC);
+    }
     memcpy(live_id, VARS + W_ID, MAGIC_READ);
     blank_pixels();
 

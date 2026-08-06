@@ -45,16 +45,18 @@ The assembler is [sjasmplus](https://github.com/z00m128/sjasmplus). Running `mak
 lists everything available:
 
 ~~~
-make all        # everything: both ROMs, both .sums, mfselect, the program, the unit tests
+make all        # everything: both ROMs, both .sums, mfselect, mfinstall, the program, the unit tests
 make mf-rom     # build/enNextMf.rom on its own, the deployable artefact
 make mfselect   # just the on-Next ROM switcher and what it installs (see Deployment)
+make mfinstall  # the .mfinstall dot command, which installs a ROM WITHOUT touching the card
 ~~~
 
 Build output goes to `build/`, and **`make all` really does build all of it** — both transport
 variants, their checksum sidecars, and `build/deploy/` ready to copy to the card.
 
-`mfselect` is the one component built with [z88dk](https://github.com/z88dk/z88dk) rather than
-sjasmplus.
+`mfselect` and `mfinstall` are the components built with [z88dk](https://github.com/z88dk/z88dk)
+rather than sjasmplus — one exception aside: `tools/mfinstall/mfwin.asm`, which has to be assembled
+at a fixed address and so cannot be a C function. See [doc/MFINSTALL.md](doc/MFINSTALL.md).
 
 
 # Testing
@@ -78,6 +80,16 @@ byte-identically, that the on-Next and host checksums agree, that each of our tw
 that mfselect refuses to mistake *either* of them for the original, that the ROM it says is
 installed is the one that is, and that a backup left short by an interrupted capture is detected
 and taken again rather than trusted. It is not part of `make test`.
+
+~~~
+make test-mfinstall
+~~~
+
+runs the `.mfinstall` bench: eight headless jnext runs, six checks. `.mfinstall` writes a ROM into
+Multiface **SRAM** through the Next's config mode, so the change is live at the next NMI press and
+the SD card is never written at all — which is what its last check asserts, byte for byte. Its
+strongest check presses the M1 button straight after an install and requires the stub's own screen,
+with no soft reset. Also not part of `make test`. See [doc/MFINSTALL.md](doc/MFINSTALL.md).
 
 The Z80 unit tests under `src/unit_tests/` are DeZog-driven and need VS Code; they are a manual
 layer.

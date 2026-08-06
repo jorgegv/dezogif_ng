@@ -30,16 +30,18 @@ it matches, inside an early one; jnext's next write then takes **SIGPIPE** and
 dies with **141**; and `set -o pipefail` — which every one of these scripts sets,
 correctly — carries that 141 out as the pipeline's status.
 
-*(An earlier version of this entry said "a line at a time". A reviewer straced it
-and it is wrong: three writes of 4096, 4096 and 1382 bytes, not 134 per-line
-ones, with the matched flag at byte 5859 — inside the second. The conclusion is
-untouched, because all that matters is that the writer is still writing when the
-reader has gone, at whatever granularity. It is corrected because a mechanism
-asserted from a plausible picture instead of a traced one is the failure this
-file exists for, and this entry had it.)* So `|| die` fired on a pipeline whose
-grep had **succeeded**, and it fired precisely when the flag was PRESENT and not
-on the last line of output. Absent flags were reported correctly, which is why
-the check looked sound for months.
+So `|| die` fired on a pipeline whose grep had **succeeded**, and it fired
+precisely when the flag was PRESENT and not in the final chunk of output. Absent flags were reported correctly — `grep -q`
+must read to EOF to conclude "no match", so it never closes the pipe early —
+which is why the check looked sound for months.
+
+*(An earlier version of this entry said the help was written "a line at a time".
+A reviewer straced it and it is wrong: three writes of 4096, 4096 and 1382 bytes,
+not 134 per-line ones, with the matched flag at byte 5859 — inside the second.
+The conclusion is untouched, because all that matters is that the writer is still
+writing when the reader has gone, at whatever granularity. It is corrected
+because a mechanism asserted from a plausible picture instead of a traced one is
+the failure this file exists for, and this entry had it.)*
 
 **Not a pipe-buffer race, and that was the first guess.** The help is 10 KB
 against a 64 KB pipe buffer, so nothing ever blocked on a full pipe. The buffer
@@ -49,8 +51,9 @@ flaky.
 
 **Why it appeared now**, and this is the part worth carrying: nothing in this
 repository changed. The check's correctness depended on **where the match falls
-in another program's output** — line 79 of 134 — a property jnext is free to
-alter in any release, and did.
+in another program's output** — the matched flag at byte 5859 of 10005, inside
+the second of three chunks — a property jnext is free to alter in any release,
+and did.
 
 **Fix.** One helper in `test/bench-jnext.sh`, not thirteen repaired call sites,
 for the reason issue #17 already paid for. It reads to EOF, so there is no early

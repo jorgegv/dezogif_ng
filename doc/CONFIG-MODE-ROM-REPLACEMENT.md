@@ -173,7 +173,8 @@ anything doing this earlier in boot needs to know.
     ;    and DivMMC ROM must not be mapped, or the write silently does nothing.
 
     di                           ; closes the MASKABLE half - not optional.
-                                 ; NMI needs nothing: config mode suppresses it (below)
+                                 ; config mode suppresses NEW NMIs by itself; an edge
+                                 ; latched just before this is still serviced - see below
     NEXTREG 3,7                  ; enter config mode (bits 2:0 = 111)
     NEXTREG 4,5                  ; 16 KB config bank 5 at 0x0000-0x3FFF, writable
     LDIR                         ; 8 KB image -> 0x0000, the MF ROM half
@@ -204,14 +205,37 @@ That clear is **continuously re-asserted for as long as config mode is set**, so
 DivMMC or expansion-bus NMI can latch during the window at all. Clearing NR `0x06` bit 3 by hand —
 which an earlier version of this document recommended — is therefore redundant.
 
-**What remains is an entry race of a few clock cycles, and no software closes it.** `nmi_generate_n`
-(`:2168`) fires on `nmi_state = S_NMI_IDLE and nmi_activated = '1'` **or** on
-`nmi_state = S_NMI_FETCH`. The second term does not consult `nmi_activated`, so an NMI whose state
-machine has already reached `S_NMI_FETCH` in the cycle or two before `NEXTREG 3,7` takes effect will
-complete its fetch of `0x0066` from the newly remapped bank. Neither `di` nor NR `0x06` reaches it,
-because both act on the *assertion* and this transition is already under way. It is a genuine hazard
-and it is a vanishingly small target; the honest handling is to know it exists rather than to defend
-against it with something that does not work.
+**What remains is an entry race, and settling it took the CPU core's own source.** Two clauses in
+`zxnext.vhd` cancel the FPGA's side of an NMI the moment config mode is entered — `:2102-2105` clears
+the latches, and `:2156-2157` forces `nmi_state` back to `S_NMI_IDLE` regardless of what it was,
+including `S_NMI_FETCH`. Both terms of `nmi_generate_n` (`:2168`) are therefore false, on the same
+clock the CPU core samples `/NMI` on (`:1750`). *(An earlier version of this document cited `:2168`
+alone and concluded the race was open and unclosable. That was reading one clause and stopping.)*
+
+**But the FPGA withdrawing its request is not the same as the CPU forgetting it**, and that is
+settled in the T80 core, `cpu/t80n.vhd:1663-1669`:
+
+```vhdl
+if NMICycle = '1' then                          NMI_s <= '0';
+elsif NMI_n = '0' and OldNMI_n = '1' then       NMI_s <= '1';
+end if;
+```
+
+**The falling edge is latched into `NMI_s` and cleared only when the NMI cycle actually runs**, with
+service at an instruction boundary (`:1765`, `if NMI_s = '1' and Prefix = "00"`). That is real Z80
+behaviour, faithfully modelled. So an edge latched in the instruction *before* `NEXTREG 3,7` is
+**still serviced**, whatever the FPGA does with its request line afterwards.
+
+**Where that lands is the useful part, and it is not the `LDIR`.** Service happens at the next
+instruction boundary — which, in the §1.5 sequence, is before `NEXTREG 4,5` and before the copy. The
+fetch therefore reads a bank that has not been written yet. What it means instead is that **the
+Multiface NMI handler can begin executing with config mode active**, a state this stub has never
+been designed for or run in.
+
+**Status of that last paragraph: reasoned from the three sources above, not observed.** Nobody has
+run it. It is the one place in this document where the conclusion is a deduction across two files
+rather than a reading of one, and a dotcommand author should treat it as the thing to test first
+rather than as a settled fact.
 
 **There is no `NEXTREG 4,<previous>` step, deliberately, and an earlier version of this document had
 one.** NR `0x04` is **write-only**: `nextreg.txt:85-90` documents no `(R)` section, and the VHDL's
@@ -307,7 +331,9 @@ not make.
 | A second arbiter after it can still override, DivMMC and Layer 2 being left eligible by config mode's own `"110"` | `zxnext.vhd:3050`, `:3084`, `:3100` | **verified** |
 | Config mode remaps the WHOLE of `0x0000-0x3FFF`, so the IM1, NMI and RST vectors are served from the bank being written | `zxnext.vhd:3029` (`cpu_a(15 downto 14) = "00"`) | **verified** |
 | **Config mode itself suppresses new NMI latching** for the whole window — `nmi_mf`/`nmi_divmmc`/`nmi_expbus` are cleared continuously while it is set | `zxnext.vhd:2102-2105` | **verified** — an earlier version of this document said nothing could mask NMI, having read `:2090` and stopped short of this |
-| A residual entry race remains: an NMI already at `S_NMI_FETCH` completes its fetch from the remapped bank, and no software action closes it | `zxnext.vhd:2168`, the second term | **verified** |
+| `nmi_state` is ALSO forced to `S_NMI_IDLE` while config mode is set, so both terms of `nmi_generate_n` are false — the FPGA withdraws its own request | `zxnext.vhd:2156-2157` against `:2168` | **verified** — an earlier version of this document cited `:2168` alone and called the race unclosable |
+| The T80 core latches the `/NMI` falling edge in `NMI_s`, cleared only by the NMI cycle itself, so an edge taken before config mode is still serviced | `cpu/t80n.vhd:1663-1669`, `:1765` | **verified** — in the CPU core's source, not in `zxnext.vhd` |
+| That service lands before the copy begins, so it reads an unwritten bank — but the Multiface handler then runs WITH config mode active | deduced from the three rows above | **inferred, and the weakest claim in this document.** Two files reasoned across; nothing run |
 | Of the five paths that can beat or override config mode, only two discard the write; three can corrupt what is actually mapped | `zxnext.vhd:3035`, `:3042`, `:3089`, `:3097`, `:3105` | **verified** — earlier versions called them all no-ops |
 | **NR `0x04` is WRITE-ONLY** — it cannot be saved and restored | `nextreg.txt:85-90` has no `(R)` section; `zxnext.vhd:5893-5896` goes `X"03"` → `X"05"` with no `when X"04"`, falling to `when others => 0x00` | **verified** — the first version of this document instructed a restore that cannot be written |
 | `nr_04_romram_bank` is consulted only inside the config-mode branch, so it need not be restored | `zxnext.vhd:3045`, sole reference | **verified** |

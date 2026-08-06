@@ -5,6 +5,41 @@ attempting similar logic.
 
 ---
 
+## A running shell script is read by BYTE OFFSET, so editing it mid-run corrupts it
+
+**Symptom.** `test/run-mfinstall.sh: line 329: no: command not found`, from a bench
+that had run clean minutes earlier and whose `bash -n` passed. Line 329 is an
+ordinary `run_dot ... no ".mfinstall --load wifi"` call; nothing in the script
+contains a command called `no`.
+
+**Cause.** The script was rewritten **while bash was executing it** — a background
+`make test-mfinstall` was still running when the file was edited to improve two
+comment blocks. Bash does not slurp a script; it reads and parses it in chunks,
+keeping a **byte offset** into the open file. The edit made the file longer, so
+every offset past the edit shifted, and bash resumed parsing in the middle of a
+line. `no` was the tail of line 329 as it landed at the old offset — not a command
+anybody wrote. The reported line number is computed against the **new** content,
+which is why it points at a line that is perfectly correct.
+
+**Fix.** Do not edit a shell script that is running. Wait for it, or edit a copy
+and move it into place — a rename replaces the directory entry and leaves the
+running instance reading the old inode, which is exactly what the offset needs.
+
+**How it was settled, and this is the tell this file keeps recording.** Two
+mechanisms were proposed first, both from reading the script: a stale function
+definition, then an errexit interaction with an `&&` list. Both were plausible and
+neither was checked. What settled it in one step was `bash -x` and the file's own
+mtime — the edit landed at 23:38:24, inside the run's window. **When a script that
+just worked fails at a line that is visibly fine, suspect the file rather than the
+line.**
+
+**Kept short on purpose.** One wrong diagnosis, corrected the same evening. It is
+here because the mechanism is invisible — nothing warns you, the error names an
+innocent line, and `bash -n` on the finished file passes — not because it was
+expensive.
+
+---
+
 ## `git checkout <file>` to undo an experiment, on a file holding uncommitted work
 
 **Symptom.** An hour of uncommitted edits to `src/transport_esp.asm` gone, in

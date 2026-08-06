@@ -155,7 +155,7 @@ def main():
     # stub blocks in transport_read_byte, its RX budget expires, and rxtx_error
     # counts the fault — the only counter ESP_FAULT_LIMIT watches.
     trigger = held[-1]
-    frame = trigger.build_command(dzrp.CMD_INIT, dzrp.init_payload())
+    frame, _seq = trigger.build_command(dzrp.CMD_INIT, dzrp.init_payload())
     trigger.send_raw(frame[:-4])
     print("injected a truncated command on the last held connection, and left "
           "it OPEN: a socket that closes hands its slot back", flush=True)
@@ -201,4 +201,13 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # A crash must not wear one of the codes above. Python exits 1 on an
+    # uncaught exception, which is this client's "too few connections were
+    # granted" — and a bench that reports a harness fault as a finding about
+    # the module is worse than one that fails.
+    try:
+        sys.exit(main())
+    except Exception:                               # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        sys.exit(20)

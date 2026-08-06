@@ -260,6 +260,9 @@ log "  drops=$drops recoveries=$stops closes=$closes listens=$listens (from $log
 if [ "$rc" -eq 99 ]; then
     fail "S1 the stub's listener never appeared, so nothing was tested"
     fail "S2 the run never got far enough to count the sweep's commands"
+elif [ "$rc" -eq 20 ]; then
+    fail "S1 the client itself crashed: a harness fault, not a finding about the module"
+    fail "S2 not judged: the client crashed"
 elif [ "$rc" -eq 2 ] || [ "$rc" -eq 1 ]; then
     fail "S1 the module granted too few connections to exhaust, so nothing was tested"
     fail "S2 the run never reached a recovery"
@@ -304,6 +307,8 @@ log "  drops=$drops recoveries=$stops closes=$closes listens=$listens (from $log
 
 if [ "$rc" -eq 99 ]; then
     fail "S3 the stub's listener never appeared, so the control tested nothing"
+elif [ "$rc" -eq 20 ]; then
+    fail "S3 the client itself crashed: a harness fault, not a finding about the module"
 elif [ "$rc" -eq 1 ] || [ "$rc" -eq 2 ] || [ "$rc" -eq 3 ]; then
     fail "S3 the control never reached a ceiling, so its silence proves nothing"
 elif [ "${drops:-0}" -lt 1 ]; then

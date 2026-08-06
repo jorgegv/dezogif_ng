@@ -501,6 +501,24 @@ test-mfselect: mfselect
 	 ROM_WIFI="$(ROM_WIFI)" SUM_WIFI="$(SUM_WIFI)" \
 	 ROMSUM="$(ROMSUM)" CELLDIFF="$(TEST)/cell-diff.py" $(TEST)/run-mfselect.sh
 
+# The .mfinstall bench (issue #21). Deliberately NOT part of `make test`, for
+# the reason every other bench here is not: `make test` is the screenshot bench
+# and mfinstall is separate tooling, exactly as `test-mfselect` is. It binds no
+# port and needs no external dependency; it is out because of what it is, not
+# because of what it needs.
+#
+# The bare '#' below ends this block for the help scanner, which takes the LAST
+# '# ' line before a target as its description.
+#
+
+# Run the mfinstall headless bench (8 jnext runs, 6 checks; not part of `make test`)
+test-mfinstall: mfinstall
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" DOT="$(MFINSTALL_DOT)" \
+	 ROM_UART="$(ROM_UART)" SUM_UART="$(SUM_UART)" \
+	 ROM_WIFI="$(ROM_WIFI)" SUM_WIFI="$(SUM_WIFI)" \
+	 ROMSUM="$(ROMSUM)" SCREENDIFF="$(TEST)/screen-diff.py" \
+	 SCREENTEXT="$(TEST)/screen-text.py" $(TEST)/run-mfinstall.sh
+
 # Run the ESP-01 server bench (M0(b): 1 jnext run + a TCP client; not part of `make test`)
 test-esp: $(ESP_BIN)
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" ESP_BIN="$(ESP_BIN)" \

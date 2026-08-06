@@ -208,15 +208,28 @@ bench_require_port_free() {
     shift
     command -v ss >/dev/null 2>&1 || return 0
     # `grep -c` and not `grep -q`, for the reason bench_jnext_supports above
-    # exists — and here the failure DIRECTION is the dangerous one. If `ss` ever
-    # took SIGPIPE from an early-exiting reader, pipefail would make the
-    # pipeline non-zero, `if` would read that as FALSE, and this would report a
-    # free port while one was occupied: the contaminated-and-GREEN run the line
-    # below is about. Measured inert today (ss writes its small output in one
-    # go), which is a property of ss's buffering rather than of this code.
+    # exists — and here the failure DIRECTION is the dangerous one: a pipeline
+    # made non-zero by an early-exiting reader would be read as FALSE, i.e. as a
+    # free port while one was occupied, which is the contaminated-and-GREEN run
+    # the message below is about. -c must read to EOF to count, so it cannot
+    # close early. (`ss` is measured to write its whole output in ONE syscall,
+    # so the hazard was never live here — a property of ss, not of this code,
+    # which is exactly how the jnext one arrived with nothing here changing.)
+    #
+    # THE `|| true` IS NOT PART OF THAT, and an earlier comment said it was:
+    # `grep -c` exits 1 when it counts zero, which is the ORDINARY case for a
+    # free port, and under `set -e` an assignment carrying that status kills the
+    # script silently — every time the check passes. Demonstrated by removing it.
+    #
+    # And the test is written to fail CLOSED. An empty or non-numeric capture —
+    # `ss` absent, a broken pattern — must read as "occupied" and stop the run,
+    # never as "free": ${hits:-1} makes anything that is not exactly 0 die.
+    # Unreachable while $port is a numeric literal at every call site, which it
+    # is; written this way because the asymmetry was found by review, not
+    # because it fired.
     local hits
     hits=$(ss -ltn 2>/dev/null | grep -cE "127\.0\.0\.1:$port\b" || true)
-    if [ "${hits:-0}" -gt 0 ]; then
+    if [ "${hits:-1}" != "0" ]; then
         bench_die "something is listening on 127.0.0.1:$port $* — a run started now would be answered by it, and a contaminated run can come out GREEN (issue #17)"
     fi
 }

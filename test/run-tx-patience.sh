@@ -170,10 +170,12 @@ bench_jnext_supports "$JNEXT" '--delayed-nmi' \
     || die "this jnext has no --delayed-nmi (need >= 0.99.118); rebuild it"
 
 if command -v ss >/dev/null 2>&1; then
-    # `grep -c` and not `-q`: an early-exiting reader under pipefail can make
-    # this pipeline non-zero, which `!` turns into "free" — reporting an empty
-    # port while one is occupied. Same defect as bench_jnext_supports, and here
-    # the wrong answer is the silent one. -c reads to EOF.
+    # `grep -c` and not `-q`. -q exits at its first match, and the SIGPIPE that
+    # would give `ss` comes back as 141 under pipefail — which `!` then reads as
+    # "free", starting a run against an occupied port. -c cannot do that: it must
+    # read to EOF to count, so there is no early close to signal.
+    # THE `|| true` IS FOR SOMETHING ELSE, and not for that: `grep -c` exits 1
+    # when the count is 0, which is the ORDINARY case here.
     [ "$(ss -ltn 2>/dev/null | grep -cE "127\.0\.0\.1:$PORT\b" || true)" -eq 0 ] \
         || die "something is already listening on 127.0.0.1:$PORT — stop it first (CSpect, a stale jnext?)"
 fi

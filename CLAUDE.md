@@ -395,6 +395,38 @@ strongest:
    and nothing here can drive that transport headless — T6 attaches no client, so it never reaches
    `cmd_loop`), the recovery at its shipped limit, and anything about a real ESP-01. Not part of
    `make test`: it binds a host TCP port.
+4i. **`make test-screen-agreement`** — the DZRP **screen reader**, 2 headless jnext runs, and the
+   only bench here that judges one artefact against **two independent views of it**.
+   `test/dzrp/screen.py` fetches the stub's own display file with `CMD_READ_MEM 0x4000,6912`, so
+   `doc/HARDWARE-TESTING.md`'s S1-S4 — the error area, the connect block, the session line — stop
+   being a photograph a human interprets and become text in the bench output. **G1** a clean
+   screen, **G2** the same shipped ROM with a real error painted on it. Each is checked three ways:
+   every one of the 49152 pixels rendered from the DZRP bytes must equal jnext's own screenshot
+   (**P1**, an exact match, not a percentage — both views are of the same frame's memory, so there
+   is no noise to threshold), the bright-red counts must agree (**P2**), and the border must
+   contribute none, since the whole-image count P2 compares against would otherwise not be the
+   error text alone (**P3**).
+   **The two views share nothing but the machine** — one is the emulator's ULA renderer, the other
+   is the Z80 answering over an emulated UART and ESP-01 — which is what makes agreement evidence
+   rather than a restatement. It is available only in the emulator, and that is precisely why the
+   reader is earned here and believed on hardware.
+   **G2 is the discriminating half**: a reader checked only against a blank error area is checked
+   against the case where every wrong answer agrees with the right one on zero — mfselect's M9
+   again (ERRORS.md). Its lever is command 42, which `cmd_not_supported` turns into
+   `Last Error: / Command not supported`, deliberately **not** the tx-patience bench's injected TX
+   budget: that reddens the screen by crippling the transport this bench must read 6912 bytes back
+   through.
+   **Two facts it established that are now load-bearing elsewhere.** The figures this project
+   quotes (824, 848, 1044 bright-red pixels) are **physical** pixels in a PNG jnext renders at
+   scale 2, so `824 of TX Timeout` is **206** logical — P2 checks that relationship instead of
+   leaving it to be rediscovered. And **a client disconnect can paint `RX Timeout`** — measured a
+   second after a clean close and persisting, issue #16's `<id>,CLOSED` reaching `drain_main` —
+   though **not unconditionally**: probe A's own A5/A6 read clean after three closes, so it depends
+   on what arrives next. What a probe asks is therefore whether the text is something *other* than
+   that, which only a decoded area can answer.
+   **Not part of `make test`**: it binds a host TCP port. **It says nothing about hardware** — but
+   what it validates is the display-file addressing, attribute decoding and palette, which are the
+   same silicon either way. The reader **cannot see the border** in either place.
 5. **`build/ut.nex`** — the same tests, **DeZog-driven** (`"unitTests": true` + zsim + the
    `customCode` plugin) in VS Code. Still a manual layer, and still the only way to exercise the
    36 that 4d must skip. `make unit-tests` assembles it; nothing here runs it.

@@ -94,6 +94,7 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "dzrp"))
 
 import dzrp  # noqa: E402
+import screen  # noqa: E402
 
 SERVED, DROPPED, SILENT, REFUSED = "SERVED", "DROPPED", "SILENT", "REFUSED"
 MEASURED, NOTE = "MEAS", "NOTE"
@@ -378,21 +379,37 @@ def main():
 
     # Leave the Next's screen saying the session is closed (issue #14), the
     # same courtesy hardware-check.py pays. Not a check; it adds no row.
+    #
+    # The screen is read BEFORE the CMD_CLOSE on this same connection: cmd_close
+    # answers and then leaves through `jp main`, which repaints, so a read
+    # afterwards would be of a screen this teardown had just changed.
+    #
+    # WHY THERE IS ONLY ONE READING HERE, WHERE PROBE A HAS TWO. The moment
+    # worth seeing is phase 1's — a fresh client being refused — and at that
+    # moment this probe holds NOTHING it could read over: every doomed peer is
+    # behind the blackhole and every fresh client is opened and closed inside
+    # `fresh_client`. Opening a connection there would take one of the very
+    # slots being exhausted and move the number the probe exists to measure. So
+    # the reading is taken at the end, where the slot is spent after the
+    # counting rather than during it, and phase 1's screen stays a human's job.
     try:
         conv = dzrp.Dzrp(dzrp.TcpTransport(args.host, args.port, args.timeout),
                          start_byte=None, base_timeout=args.timeout)
+        row("B4", MEASURED, screen.observe(conv))
+        detail("read at teardown, after phase 2; see the note about phase 1 in the source")
         dzrp.send_close_quietly(conv)
     except (OSError, dzrp.DzrpError) as e:
         print("  (teardown: could not send CMD_CLOSE: %s)" % e)
 
     print("""
-AT THE MACHINE — this probe cannot see any of it:
-  * the ERROR AREA (bottom rows, red on black). CLEAN while fresh clients are
-    being refused is the load-bearing observation for the #15-is-#19
-    hypothesis: it says the stub is not faulting, so what is refusing
-    connections is on the module's side of the UART.
-  * the BORDER: moving, or frozen, and at what colour.
-  * the SESSION LINE, and whether it changed during the run.
+AT THE MACHINE — what B4 still cannot reach:
+  * the ERROR AREA WHILE FRESH CLIENTS ARE BEING REFUSED. B4 reads it at the
+    END, after phase 2 lifted the blackhole; reading it during phase 1 would
+    cost one of the slots being counted. That moment is still the load-bearing
+    one for the #15-is-#19 hypothesis, and it is still yours to watch.
+  * the BORDER. It is not in the display file, so no CMD_READ_MEM can see it:
+    moving, or frozen, and at what colour.
+  * WHETHER the screen changed DURING the run. B4 is one point sample.
 Photograph it, and say what it looked like BEFORE and AFTER.""")
 
     print("""

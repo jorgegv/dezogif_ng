@@ -104,6 +104,7 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "dzrp"))
 
 import dzrp  # noqa: E402
+import screen  # noqa: E402
 
 # Connection outcomes. See the module docstring: these are four different
 # findings and collapsing any two of them would destroy the probe's only
@@ -405,6 +406,37 @@ def main():
         report.add("A2", MEASURED,
                    "%d connections held open at once and none was refused" % ceiling)
 
+    # --- the screen, at the moment the ceiling was hit --------------------
+    #
+    # READ OVER A CONNECTION THIS PROBE ALREADY HOLDS, AND THAT IS THE WHOLE
+    # DESIGN. A reader that dialled in would take a slot from the very module
+    # whose slots are being counted, which is the defect the control socket in
+    # a057d51 was fixed for — the instrument holding a slot inside the window
+    # it is measuring. Over held[0] it costs nothing: the connection is open,
+    # A1 has just used it, and CMD_READ_MEM adds no connection of any kind.
+    #
+    # This is the observation the AT THE MACHINE block used to ask a human for,
+    # and it is the load-bearing one for the #15-is-#19 hypothesis: an error
+    # area with NO STUB FAULT in it, while connections are being refused, says
+    # what is refusing them is on the module's side of the UART. It was lost
+    # once already — probe A was run against a real Next on 2026-08-06, found
+    # the ceiling, and nobody watched the screen.
+    #
+    # "NO STUB FAULT" IS NOT THE SAME AS "CLEAN", and assuming it was would
+    # have made this row misleading from its first run. `RX Timeout` appears
+    # here by the time the walk stops, because the walk CLOSES the connection
+    # that was refused and a clean disconnect paints exactly that (measured;
+    # see screen.py). So `observe` names that case as this run's own doing, and
+    # what would be a finding is any OTHER text — `TX Timeout`, `No WiFi
+    # address` — or an area that is genuinely clean.
+    if held:
+        report.add("A5", MEASURED, screen.observe(held[0]))
+        report.detail("read over connection 1, which was already open: no slot was spent on it")
+    else:
+        report.add("A5", NOTE,
+                   "no connection was ever served, so there is none to read the "
+                   "screen over without taking a slot from the measurement")
+
     # --- reclaim ----------------------------------------------------------
     close_all(held)
     time.sleep(args.settle)
@@ -438,23 +470,31 @@ def main():
     # Leave the machine's screen saying the session is closed rather than
     # whatever the last CMD_INIT claimed — issue #14's status line, and the same
     # courtesy hardware-check.py pays. Not a check; it adds no row.
+    #
+    # THE SCREEN IS READ BEFORE THE CMD_CLOSE, on this same connection.
+    # cmd_close answers and then leaves through `jp main`, which repaints — so
+    # a read afterwards would be of a screen this teardown had just changed.
+    # By now every measurement above is finished, so the slot this connection
+    # takes is spent after the counting rather than during it.
     try:
         conv = dzrp.Dzrp(dzrp.TcpTransport(args.host, args.port, args.timeout),
                          start_byte=None, base_timeout=args.timeout)
+        report.add("A6", MEASURED, screen.observe(conv))
+        report.detail("read at teardown, after the walk and the reclaim phase")
         dzrp.send_close_quietly(conv)
     except (OSError, dzrp.DzrpError) as e:
         print("  (teardown: could not send CMD_CLOSE: %s)" % e)
 
     print("""
-AT THE MACHINE — this probe cannot see any of it, and all three matter:
-  * the ERROR AREA (bottom rows, red on black). Clean while TCP degrades is the
-    load-bearing observation: it says the stub is not faulting, so whatever is
-    refusing connections is on the module's side of the UART.
-  * the BORDER. Moving means the stub is still cycling; frozen yellow means it
-    is parked in a read.
-  * the SESSION LINE. "Session opened (CMD_INIT)" after this run is expected —
-    every connection above sent one.
-Photograph it, and say whether anything changed DURING the run.""")
+AT THE MACHINE — what A5 and A6 still cannot reach:
+  * the BORDER. It is not in the display file, so no CMD_READ_MEM can see it.
+    Moving means the stub is still cycling; frozen yellow means it is parked in
+    a read. This one is still worth a pair of eyes.
+  * WHETHER ANYTHING CHANGED DURING the run. A5 and A6 are two point samples,
+    at the ceiling and at the end; a screen that reddened in between and was
+    repainted would be invisible to both.
+  * the machine returning to a usable NextZXOS afterwards.
+Photograph it anyway — it costs nothing and it is the only artefact.""")
 
     print("""
 WHAT THIS RUN DOES NOT ESTABLISH. A ceiling found here is a ceiling under

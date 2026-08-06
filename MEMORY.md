@@ -5,6 +5,156 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-06 — The Next's screen is readable over the wire, and it must never say hello first
+
+**Built.** `test/dzrp/screen.py` fetches the stub's own display file with
+`CMD_READ_MEM 0x4000,6912`, so `doc/HARDWARE-TESTING.md`'s **S1-S4** — the
+error area, `Core:`, the connect block, the session line — become **text in
+bench output** instead of a photograph a human interprets. `make read-screen
+NEXT_IP=<ip>`, plus rows **A5**/**A6** in probe A, **B4** in probe B and **H6**
+in the hardware bench. The doc has carried "nobody has written that" since the
+first hardware session.
+
+**IT WAS WRITTEN BECAUSE AN OBSERVATION WAS LOST.** Probe A ran against a real
+Next on 2026-08-06, found the ceiling — 5 on hardware against jnext's 4 — and
+nobody watched the screen. Asked afterwards, the user reported no red errors,
+and **that answer could not carry the weight for a mechanical reason**: the
+probe's own reclaim phase opens fresh connections after the ceiling, each
+sending `CMD_INIT`, and `cmd_init` does `xor a` / `ld (last_error),a` and then
+repaints. Anything the walk raised was wiped by the instrument.
+
+**SO THE RULE IS THE DESIGN: A READER SENDS NO `CMD_INIT`.** Not a style
+preference — a reader that introduced itself the way every other client here
+does would destroy the thing it was run to read, then report the blank screen
+it had just created.
+
+**The obvious objection is that the screen is only mapped BECAUSE of
+`CMD_INIT`**, and the doc's own wording invites it: it cites `cmd_init`'s
+`REG_MMU+2,10` / `REG_MMU+3,11` as the reason 0x4000 is the display file.
+**Measured instead of argued**, against jnext with a connection that sent no
+`CMD_INIT` ever: the read is answered in 256 ms; the 768 attribute bytes are
+exactly `{7: 480, 66: 288}`, which is `show_ui`'s own MEMFILL (15 rows
+`WHITE+(BLACK<<3)`, 9 rows `RED+BRIGHT`) and nothing else's; and a `CMD_INIT`
+sent afterwards changed **one display row — row 8, the session line — and not
+one attribute byte**. Those writes RESTORE a mapping already in place, which is
+also why `show_ui` is visible on the first M1 press with no client attached.
+`cmd_loop` has no session gate at all: it reads a header and dispatches through
+`cmd_call`.
+
+**The font comes off the wire too, and that is better than the fallback it
+replaced.** Decoding needs the ZX character set, and `test/screen-text.py` takes
+it from the 48.rom on the SD image — unavailable for a Next across a WiFi link.
+It does not have to be: slot 0 holds `ROM_BANK` while the debugger is stopped,
+so `CMD_READ_MEM 0x3D00,768` fetches the font **out of the machine under
+test's own ROM**. Verified byte-identical to the 48.rom on the image jnext
+booted. A local file is kept only as `load_font_file`, and a wrong font is
+self-announcing — every glyph decodes to `?`, not to a plausible other letter.
+
+**HAZARD: A READER THAT DIALS IN IS AN INSTRUMENT HOLDING A SLOT IN THE WINDOW
+IT IS MEASURING**, which is the defect `a057d51` had just fixed in probe A's own
+control socket. So every read goes over a connection the caller **already
+holds**: probe A reads over `held[0]`, the connection A1 has just used, at the
+moment the ceiling is hit — zero slots. Probe B has nothing live at its
+interesting moment (its peers are behind a blackhole, its fresh clients are
+opened and closed inside `fresh_client`), so it reads at teardown, where the
+slot is spent **after** the counting, and its "AT THE MACHINE" block still asks
+a human for phase 1's screen. The same for `hardware-check.py`, whose teardown
+connection was already being opened to send `CMD_CLOSE` — the read is folded
+onto it, before the close, because `cmd_close` leaves through `jp main` and
+repaints.
+
+**THE INSTRUMENT IS EARNED, NOT ASSERTED, AND THE MECHANISM IS AVAILABLE ONLY
+IN THE EMULATOR.** `make test-screen-agreement` puts **two independent views of
+the same 6912 bytes** against each other: jnext's PNG, drawn by the emulator's
+own ULA renderer from its own memory through no code of ours, and the DZRP
+read, produced by the Z80 answering over an emulated UART and ESP-01. They
+share nothing but the machine, either can be right while the other is wrong,
+and **all 49152 pixels agree** — in both a clean run and one with a real error
+on the screen. That is what makes the reader believable on hardware, where
+there is nothing to check it against.
+
+**G2 is the half that discriminates**, and its lever was chosen against the
+project's usual one. A reader checked only on a blank error area is checked
+where every wrong answer agrees with the right one on zero — mfselect's M9
+again. The obvious way to redden this screen is `run-tx-patience.sh`'s injected
+TX budget (824 pixels of `TX Timeout`), but it works **by crippling the
+transport this bench must read 6912 bytes back through**, so it would measure
+the injection. Command 42 instead: `cmd_not_supported` paints `Last Error: /
+Command not supported` on the **same shipped ROM**, leaving G1 and G2 one
+command apart.
+
+**TWO FINDINGS FELL OUT OF BUILDING IT, AND BOTH ARE NOW LOAD-BEARING
+ELSEWHERE.**
+
+**1. A client disconnect CAN paint `RX Timeout`.** Measured deliberately after
+a screenshot suggested it: a first-ever connection sees a clean area; a second
+client sends `CMD_INIT` and closes cleanly; the area reads `Last Error: /
+RX Timeout` at 1, 3, 6 and 10 s and again from a third connection. Known
+behaviour, not a new defect — the `<id>,CLOSED` the module emits ends
+`cmd_loop`'s wait and then fails to parse as a `+IPD` header, reaching
+`drain_main` (issue #16, deferred to M3).
+
+**It is NOT unconditional, and I wrote that it was before checking.** Probe A's
+own A5 and A6 read a CLEAN area in the same emulator, on a run that had closed
+a refused connection and two reclaim ones. So it depends on what arrives next
+and when: the sweep left the stub idle for a second with nothing coming, the
+probe does not. Recorded as the two measurements rather than as a rule, because
+a caller told "expect `RX Timeout`" who then sees a clean screen would distrust
+the instrument. The useful question is whether the text is something *other*
+than that — answerable only because the area is decoded rather than counted —
+and it is deliberately not treated as noise, since a failed AT chain reports the
+same string.
+
+**2. Every bright-red figure this project quotes is in PHYSICAL pixels.** jnext
+renders at an integer scale, 2 in practice, so the 824 of `TX Timeout` and the
+1044 of `No WiFi address` are **206** and **261** logical pixels. A reader
+printing 206 against a bench printing 824 would look broken while being right,
+so the agreement check asserts `whole == ours * scale²` instead of leaving it
+to be rediscovered.
+
+**THE AGREEMENT CHECK CAUGHT TWO BUGS IN ITSELF ON ITS FIRST RUN, which is the
+argument for having built it.** The scale conflation above was one. The other
+was worse and was invisible to reasoning: the client disconnected as soon as it
+had the bytes, so **the screenshot was of a later screen** — both runs failed
+with the picture reading `RX Timeout` where the read had shown a clean area
+(G1) and `Command not supported` (G2). The read was right and the ordering
+assumption was wrong. "The capture came after the read" is not "the capture is
+of the screen that was read": the client now **holds its connection open** until
+the bench signals that the screenshot has landed, so nothing repaints in
+between. A third, quieter one: the first sentinel was an empty file and the
+client required a non-zero size, so it never saw it and held for its full 300 s
+timeout — the right answer, with a broken handshake hidden behind it, and the
+bench was ignoring the client's exit code.
+
+**Rejected.** Sending `CMD_INIT` and accepting the wipe (it is the whole
+defect); opening a connection per reading (it perturbs the slot count — the
+`a057d51` mistake); OCR (the attributes already say which cells are error text,
+and `ui.asm` fills them itself); a committed reference bitmap (the font is on
+the machine); comparing the two views as a *percentage* like `screen-diff.py`
+(both views are of the same frame's memory, so there is no noise and anything
+but an exact match is a defect); reimplementing `screen-text.py`'s font
+decoding (`glyph_table` is the shared piece and the PNG sampling is not needed
+when the bytes are in hand); folding this into `make test` (it binds a host TCP
+port).
+
+**Test-only: `git diff --name-only main..HEAD -- src/` is EMPTY, so no `make
+bump`.** Checked mechanically, not by judgement. Both ROMs are byte-identical
+to `main`'s with `BUILD_TIME` and the build number pinned, and the comparison
+was made after deleting the `.bin` intermediates as well as the ROMs — the
+mistake ERRORS.md records.
+
+**NOT COVERED, and none of it is hidden.** The **BORDER**, which is not in the
+display file and which no `CMD_READ_MEM` can ever reach — it stays in every
+probe's "AT THE MACHINE" block, along with **S5** and "did anything change
+*during* the run", since every reading is a point sample. A client that has
+remapped 0x4000 with `CMD_SET_SLOT` would be read wrongly; nothing here sends
+command 10, and `validate_reader()`'s row-12 check is the backstop. And
+**nothing here is evidence about a real ESP-01** — what the agreement check
+validates is display-file addressing, attribute decoding and palette, which are
+the same silicon either way.
+
+---
+
 ## 2026-08-06 — Two INSTRUMENTS for #15, and a firewall change shaped so that dying badly is harmless
 
 **Built, issue #15.** `make probe-slots` (probe A, no root) and

@@ -111,6 +111,7 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "dzrp"))
 
 import dzrp  # noqa: E402
+import screen  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFORMANCE = os.path.join(HERE, "dzrp", "conformance.py")
@@ -616,26 +617,41 @@ def h3_connection_id(host, port, timeout, results):
 # --------------------------------------------------------------------------
 
 
-def leave_session_closed(host, port, timeout):
-    """Send a bare CMD_CLOSE last, so the Next is left saying so.
+def read_screen_then_close(host, port, timeout, results):
+    """Read the Next's own screen, then send a bare CMD_CLOSE.
 
-    NOT a check: it adds no row and cannot change the exit code. C15 in the
-    conformance suite already asserts that CMD_CLOSE is answered and that the
-    remote serves on afterwards.
+    TWO JOBS ON ONE CONNECTION, deliberately: this used to be
+    `leave_session_closed`, which opened a connection purely to close the
+    session, and the screen reading is free on the way past.
 
-    This is for the machine's SCREEN. Issue #14's status line reports the last
-    session event the stub actually observed, so a bench whose final act is
-    H5's connection leaves a Next reading "Session opened (CMD_INIT)" after a
-    completed run — accurate, and confusing to walk up to.
+    THE CLOSE IS FOR THE MACHINE'S SCREEN. Issue #14's status line reports the
+    last session event the stub actually observed, so a bench whose final act
+    is H5's connection leaves a Next reading "Session opened (CMD_INIT)" after
+    a completed run — accurate, and confusing to walk up to. It is NOT a check:
+    C15 in the conformance suite already asserts CMD_CLOSE is answered and that
+    the remote serves on afterwards.
 
-    Nothing may follow it: a later CMD_INIT would reopen the session this just
-    closed.
+    THE READ MUST COME FIRST, and not only because the close ends the session:
+    `cmd_close` answers and then leaves through `jp main`, which repaints, so a
+    read afterwards would be of a screen this teardown had just changed.
+
+    H6 IS A MEASUREMENT, NOT A CHECK, for the same reason H4 and H5 are. An
+    error on that screen is not necessarily a fault — a client disconnecting
+    while the stub is idle leaves `Last Error: RX Timeout` behind by design
+    (MEMORY.md, issue #16), and this bench has just disconnected many. What the
+    row is for is that the text is now RECORDED rather than remembered, so
+    `TX Timeout` or `No WiFi address` can be told apart from that benign one.
+
+    Nothing may follow this: a later CMD_INIT would reopen the session it just
+    closed, and would clear `last_error` as well.
     """
     try:
         d, _ = connect(host, port, timeout)
     except (OSError, dzrp.DzrpError) as e:
-        print("  (teardown: could not reconnect to send CMD_CLOSE: %s)" % e)
+        print("  (teardown: could not reconnect to read the screen and close: %s)" % e)
+        results.add("H6", SKIP, "the screen could not be read: no connection at teardown")
         return
+    results.add("H6", MEASURED, screen.observe(d))
     dzrp.send_close_quietly(d)
 
 
@@ -774,11 +790,13 @@ def main():
     h4_latency(args.host, args.port, args.timeout, results, args.latency_samples)
     h5_throughput(args.host, args.port, args.timeout, results, args.throughput_bytes)
 
-    # Leave the machine saying so. H3-H5 run AFTER the conformance delegation
-    # and each open connections of their own, so the suite's own teardown is
-    # not the last thing this bench does — without this, a completed hardware
-    # run leaves the Next reading "Session opened (CMD_INIT)".
-    leave_session_closed(args.host, args.port, args.timeout)
+    # Read the screen, then leave the machine saying the session is closed.
+    # H3-H5 run AFTER the conformance delegation and each open connections of
+    # their own, so the suite's own teardown is not the last thing this bench
+    # does — without this, a completed hardware run leaves the Next reading
+    # "Session opened (CMD_INIT)". H6 is taken on the same connection, before
+    # the close repaints.
+    read_screen_then_close(args.host, args.port, args.timeout, results)
 
     total = len(results.rows)
     print("\n%d passed, %d failed, %d measured, %d skipped of %d" % (

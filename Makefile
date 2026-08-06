@@ -7,8 +7,8 @@
 .PHONY: help all main unit-tests ut-headless mf-rom mf-rom-wifi mf-rom-sum mfselect test \
         test-unit test-mfselect \
         test-esp test-dzrp test-dzrp-stub test-ip-boundary test-tx-patience \
-        test-client-status test-no-hang \
-        test-hardware probe-jnext probe-slots probe-vanished \
+        test-client-status test-no-hang test-screen-agreement \
+        test-hardware probe-jnext probe-slots probe-vanished read-screen \
         bump bump-major check-reproducible \
         check-reproducible-wifi clean
 
@@ -503,6 +503,39 @@ test-no-hang: $(ROM_WIFI)
 	 ROM_BOUND="$(ROM_WIFI)" \
 	 ROM_SLOWPROMPT="$(OUT)/enNextMf-wifi-rxwait400-txp1.rom" \
 	 ROM_RECOVER="$(OUT)/enNextMf-wifi-rxwait400-txp1-fl1.rom" $(TEST)/run-no-hang.sh
+
+# ---------------------------------------------------------------------------
+# The DZRP screen reader (test/dzrp/screen.py) and its validation.
+#
+# The reader turns doc/HARDWARE-TESTING.md's S1-S4 — observations that needed a
+# human with a camera — into numbers, by fetching the stub's own display file
+# with CMD_READ_MEM 0x4000,6912. It has to be trusted on hardware, where there
+# is nothing to check it against; `test-screen-agreement` is where it is
+# earned, because under jnext there are TWO independent views of the same
+# screen (the emulator's PNG and the DZRP read) and they must agree.
+#
+# G2 runs with a real error painted on the screen, because a reader checked
+# only against a blank error area has been checked against the case where every
+# wrong answer agrees with the right one on zero.
+#
+# Not part of `make test`: it binds a host TCP port.
+# ---------------------------------------------------------------------------
+
+# Validate the DZRP screen reader against jnext's own picture (2 jnext runs)
+test-screen-agreement: $(ROM_WIFI)
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
+	 ROM="$(ROM_WIFI)" $(TEST)/run-screen-agreement.sh
+
+# Read and print the stub's own screen over DZRP (NEXT_IP=<ip>)
+read-screen:
+	@test -n "$(NEXT_IP)" || { \
+	  echo "usage: make read-screen NEXT_IP=<ip>   (the Next's address, port 11000)"; \
+	  echo "  Prints the stub's screen: the error area, the connect block and the"; \
+	  echo "  session line — doc/HARDWARE-TESTING.md's S1-S4, without a camera."; \
+	  echo "  It sends NO CMD_INIT, so it does not clear the error it is reading."; \
+	  echo "  It CANNOT see the border; that is still a human's job."; \
+	  exit 2; }
+	python3 $(TEST)/dzrp/screen-client.py --host "$(NEXT_IP)" $(SCREEN_ARGS)
 
 # Run the DZRP conformance suite against a remote (REMOTE=tcp:<host>:<port>)
 test-dzrp:

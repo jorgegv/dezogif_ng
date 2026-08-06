@@ -124,7 +124,23 @@ of it:
 | **S4** | What do rows 6 and 7 say? | The status block, and the one thing on this screen composed at run time. `Connect at <ip>:11000` is the success case; `No WiFi address...` and `ESP-01 setup failed...` are the two failures, each in words rather than a code. **Confirmed correct on hardware 2026-08-05** at a 15-character address — the length the parser used to refuse, and one jnext can never produce. A green bench run does not cover this: `AT+CIFSR` failing leaves a working listener, so every check can pass while this line reads `No WiFi address` |
 | **S5** | Does the machine return to a usable NextZXOS? | The ESP holds the listening socket, so the listener should survive normal use of the machine |
 
-**Photograph the screen.** It is the only artefact of S1-S5 and it costs nothing.
+**S1-S4 CAN NOW BE READ FROM THE PC, and S5 cannot.** Once the listener is up,
+
+    make read-screen NEXT_IP=192.168.1.42
+
+fetches the display file with `CMD_READ_MEM 0x4000,6912` and prints every row —
+so `Core:`, the status block and the error area come back as **text** rather than as a
+photograph somebody has to interpret. See `test/dzrp/screen.py`. Two properties of it matter here:
+
+- **It sends no `CMD_INIT`**, because `cmd_init` does `xor a` / `ld (last_error),a` and then
+  repaints — a reader that introduced itself would wipe the very error it was run to read. A bare
+  `CMD_READ_MEM` is answered: `cmd_loop` dispatches through `cmd_call` with no session gate.
+- **`RX Timeout` in the error area can simply be a client hanging up** — measured against jnext, a
+  second after a clean close, and by design (issue #16). Not unconditionally: probe A reads clean
+  after its own closes. It is *also* what a failed AT chain shows, so it is only benign in context.
+
+**Photograph the screen anyway.** It is still the only artefact of **S5**, and of the **border**,
+which is not in the display file and which no `CMD_READ_MEM` can ever reach.
 
 ## Step 4 — run the bench from the PC
 
@@ -527,12 +543,26 @@ was written to be read.
   expect it; and the workspace's own `CSpect MF ROM` launch config is **not safe to point at
   hardware** — it carries `loadObjs` of `enNextMf.rom` and an `execAddress`, so it would push the
   stub's own image into the running machine. Use a minimal config with no `loadObjs`.
-- **The Next's own screen — but only for as long as nobody reads it over the wire.** While the
-  debugger is stopped `cmd_init` maps 8K banks 10 and 11 at 0x4000 (`commands.asm`), which is 128K
-  bank 5: the display file the ULA is showing, and the one `ula.print_char` writes to. So
-  **`CMD_READ_MEM 0x4000,6912` fetches the stub's own screen**, and the S1-S5 observations in step 3
-  could be assertions in this bench instead of a photograph and a human. Nobody has written that.
-  Until somebody does, S1-S5 are recorded by hand and the photograph is their only artefact.
+- ~~**The Next's own screen — but only for as long as nobody reads it over the wire.**~~
+  **WRITTEN, 2026-08-06** — `test/dzrp/screen.py`, `make read-screen NEXT_IP=<ip>`, and bench row
+  **H6**. `CMD_READ_MEM 0x4000,6912` fetches the display file, so **S1-S4 are text in the bench
+  output** instead of a photograph and a human, and both issue #15 probes now print what the error
+  area said at the moment they measured.
+
+  The struck line said the screen is reachable because `cmd_init` maps banks 10 and 11 at 0x4000,
+  and **that reading would have made the reader destroy its own subject.** `cmd_init` also does
+  `xor a` / `ld (last_error),a` and repaints, so a reader that sent one would clear the error it
+  came to read — which is exactly how an observation was lost on 2026-08-06, when probe A ran
+  against a real Next and its reclaim phase's `CMD_INIT`s would have wiped anything the walk
+  raised. What is true is that those writes **restore** a mapping already in place: nothing the
+  stub runs by itself touches slots 2 or 3, and its own `show_ui` draws through them, which is why
+  its UI is visible on the first M1 press with no client attached. Measured against jnext — a
+  connection that sent no `CMD_INIT` ever read the screen, and a later `CMD_INIT` changed one
+  display row (the session line) and no attribute byte. A **client** can still move that mapping
+  with `CMD_SET_SLOT`; nothing here does, and `validate_reader()`'s row-12 check is the backstop.
+
+  **What it still cannot see: the BORDER**, which is not in the display file, and **S5**. Both stay
+  a human's job, and the probes still say so.
 - **The UART build**, which needs a joy-port cable and a USB serial adapter. The conformance suite
   reaches it directly when someone has that set up:
 

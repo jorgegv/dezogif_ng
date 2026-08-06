@@ -606,7 +606,9 @@ bright-red pixel count — **0** through both validation runs, i.e. jnext reprod
 
 ### What neither probe can establish
 
-- **Neither reproduces issue #15**, and **#15 must not be closed on either.** Probe A finds a
+- **Neither reproduces issue #15.** (It was closed anyway, by the user on 2026-08-06, before probe
+  B had run — recorded above. Read that as the user's call and not as either probe having settled
+  it; nothing here reproduces #15 and nothing here refutes it.) Probe A finds a
   ceiling under *cleanly closed* connections, which are measured not to leak. Probe B shows what a
   vanished peer *costs*, not that a vanished peer is what happened on 2026-08-05.
 - **Nothing here identifies what made a peer vanish** in the field. Probe B manufactures the

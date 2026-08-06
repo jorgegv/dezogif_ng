@@ -12,6 +12,10 @@ anything read off a real Next, `MEMORY.md` for why a decision went the way it di
 points at them instead of restating them. Two renderings of one fact drifting apart is a failure
 this project has paid for repeatedly; see `ERRORS.md`.
 
+**#19's home is `doc/HARDWARE-TESTING.md`, beside the probe run that measured it. #18 has no such
+home, so this file IS its home** — its figures were measured on hardware on 2026-08-05 and until
+now lived only in the GitHub issue, which is not diffable and not readable offline.
+
 **None of these is a reason to distrust a green bench.** Both are states no bench here reaches, and
 both were found on hardware.
 
@@ -32,6 +36,9 @@ not: see "why this is not fixed" below.
 The Next stops answering DZRP entirely — a second connection gets nothing, and the machine's own
 `R` and `B` keys do not respond either — for as long as one client holds a socket open without
 reading from it. Then everything recovers on its own.
+
+**The dead keyboard is the discriminator against #19 below**, which produces a very similar picture
+from the PC side but leaves the stub idle and its keys working.
 
 ### What causes it
 
@@ -102,14 +109,20 @@ hot path is untouched), close the connection when the bound is hit, and keep all
 
 **Don't let a machine with an open debug session vanish off the network — crash it, cut its power,
 or suspend it and reopen it somewhere else. If you do it five times without power-cycling the Next,
-power-cycle the Next.** Unlike #18, the stub genuinely **cannot** do anything reasonable about this
-one; the reason is below and it is not a shortage of effort.
+power-cycle the Next.** The stub is told nothing when a peer vanishes, so it cannot *detect* this;
+what it could do instead is described under "why this is not fixed", and like #18 that is a cost
+judgement rather than an impossibility.
 
 ### Symptom
 
 TCP connections to the Next stop completing — they time out rather than being refused — while the
-stub's own screen stays **clean**: no error text, `Core:` line intact, keyboard responsive. A power
-cycle fixes it. Nothing else does.
+stub's own screen stays **clean**: no error text, `Core:` line intact. A power cycle fixes it.
+Nothing else does.
+
+**THE KEYBOARD IS WHAT TELLS THIS APART FROM #18**, and from the outside they otherwise look almost
+identical — connections not completing, screen clean. Here the stub is perfectly healthy and idle,
+so **`B` still toggles the border and `R` still resets**. In #18 it is stuck inside a flush and the
+keys do nothing. Try the keys before concluding anything, and before power-cycling.
 
 ### What causes it
 
@@ -161,22 +174,34 @@ whether an *earlier* connection still answers, and a module with every slot leak
 connection to ask. The tool says so itself. **The discriminator is the machine's own screen** — a
 live stub draws cleanly and answers its keys, a wedged one does not.
 
-### Why the stub cannot reasonably prevent it
+### Why this is not fixed
 
-**A vanished peer is indistinguishable from a working one.** It sent no FIN and no RST, so the
-module still believes the connection is open and the stub is told nothing at all. There is no
-signal to react to.
+**The stub cannot DETECT this, and that part is solid.** A vanished peer sent no FIN and no RST, so
+the module still believes the connection is open and the stub is told nothing at all. Every
+application-layer signal it might lean on is unavailable or wrong: `<id>,CLOSED` never arrives for a
+peer that vanished; DZRP has no keepalive; and **idleness cannot be the trigger**, because a DeZog
+session stopped at a breakpoint while somebody reads code is silent for minutes and perfectly
+healthy — which is exactly why issue #16's idle wait is deliberately not counted as a fault.
 
-The only lever the stub has is to close connections **on suspicion**, and every version of that
-suspicion is wrong. Idleness cannot be the trigger: a DeZog session stopped at a breakpoint while
-somebody reads code is silent for minutes and is perfectly healthy — which is exactly why issue
-#16's idle wait is deliberately **not** counted as a fault. Tracking the module's
-`<id>,CONNECT`/`<id>,CLOSED` lines does not help either, because a peer that vanishes produces no
-`CLOSED`. And DZRP has no keepalive to lean on.
+**But "cannot detect" is not "cannot prevent", and an earlier version of this entry said the
+stronger thing.** It was rejected in review for contradicting the sentence three paragraphs below,
+which describes a fix. Two mechanisms exist that are not "closing on suspicion", and each has a
+real cost rather than being impossible:
 
-So a stub that reclaimed these slots by itself would be a stub that hangs up on live debugging
-sessions for being quiet. That is a worse failure than the one it fixes, and it is why this is
-"cannot reasonably" rather than "has not got round to".
+* **Sweep at connect time.** When a client attaches, close the *other* link ids. Leaks would then
+  never accumulate to the ceiling, because each new debugging session clears whatever the last one
+  stranded. It does **not** rescue the terminal state — by then no client can connect to trigger it
+  — and it costs the multi-client behaviour this transport deliberately built and tests (issues #11
+  and #13; bench checks W4 and W5 rely on two clients being served at once).
+* **A TCP-level keepalive on the module.** ESP-AT does carry the concept — `AT+CIPSTART`'s fourth
+  TCP argument is a keepalive, which jnext parses and discards — but that is the **outbound** form,
+  and whether a server-accepted inbound link can be given one is **unverified**. jnext does not
+  model it, so no bench here can answer the question; it needs the real firmware's documentation or
+  the module itself. If it exists, the module's own stack would decide liveness and the stub would
+  need no guesswork at all.
+
+Neither has been scoped, and the decision is to leave both unscoped rather than that neither could
+work.
 
 ### What already shipped
 
@@ -184,6 +209,14 @@ Build `00.10` added a sweep: on recovery, the stub closes every link id with `AT
 That reclaims slots when the leak coincides with some **independent** transport fault. It cannot
 reach the state above, because a vanished peer generates no faults at all — traced in
 `src/transport_esp.asm`'s `esp_recover` header and in `doc/HARDWARE-TESTING.md`.
+
+One leg of that trace is **jnext-grounded rather than hardware-verified**, and this project hedges
+that distinction everywhere else so it is hedged here: the claim that an unprompted send to a stale
+id is answered `ERROR` at once, and so raises no fault, is jnext's modelled behaviour. A real module
+might instead sit on such a send until the stub's own budget expires, which *would* raise a fault —
+and would, ironically, make the shipped sweep more useful than this entry credits it for. Nobody has
+measured it. The primary leak path does not depend on this leg: a peer that vanishes while nothing
+is being sent to it produces no traffic in either direction.
 
 Closing the gap properly needs a sweep reachable from a **quiet** stub — periodic, or at connect
 time — which is a change nobody has scoped.

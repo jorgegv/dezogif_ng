@@ -25,10 +25,18 @@ check was
 "$JNEXT" --help 2>&1 | grep -q -- '--flag' || die "..."
 ```
 
-jnext writes its help **a line at a time**; `grep -q` exits the moment it
-matches; jnext's next write then takes **SIGPIPE** and dies with **141**; and
-`set -o pipefail` — which every one of these scripts sets, correctly — carries
-that 141 out as the pipeline's status. So `|| die` fired on a pipeline whose
+jnext writes its help in **block-buffered chunks**; `grep -q` exits the moment
+it matches, inside an early one; jnext's next write then takes **SIGPIPE** and
+dies with **141**; and `set -o pipefail` — which every one of these scripts sets,
+correctly — carries that 141 out as the pipeline's status.
+
+*(An earlier version of this entry said "a line at a time". A reviewer straced it
+and it is wrong: three writes of 4096, 4096 and 1382 bytes, not 134 per-line
+ones, with the matched flag at byte 5859 — inside the second. The conclusion is
+untouched, because all that matters is that the writer is still writing when the
+reader has gone, at whatever granularity. It is corrected because a mechanism
+asserted from a plausible picture instead of a traced one is the failure this
+file exists for, and this entry had it.)* So `|| die` fired on a pipeline whose
 grep had **succeeded**, and it fired precisely when the flag was PRESENT and not
 on the last line of output. Absent flags were reported correctly, which is why
 the check looked sound for months.

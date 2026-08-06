@@ -56,11 +56,13 @@ bench_die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 # bench_jnext_supports <binary> <flag> — does this jnext's --help mention <flag>?
 #
 # NOT `"$JNEXT" --help | grep -q -- <flag>`, WHICH IS WHAT EVERY BENCH HERE USED
-# TO DO AND WHICH REPORTS THE OPPOSITE OF THE TRUTH. jnext writes its help a line
-# at a time; `grep -q` exits the moment it matches; jnext's next write then gets
-# SIGPIPE and dies with 141; and `set -o pipefail` — which every bench sets —
-# makes the pipeline carry that 141 even though the match SUCCEEDED. So the check
-# failed exactly when the flag was present and not on the last line of output.
+# TO DO AND WHICH REPORTS THE OPPOSITE OF THE TRUTH. jnext writes its help in
+# block-buffered CHUNKS — strace says three writes of 4096, 4096 and 1382 bytes,
+# not 134 per-line ones; `grep -q` exits the moment it matches, inside an early
+# chunk; jnext's next write then gets SIGPIPE and dies with 141; and
+# `set -o pipefail` — which every bench sets — makes the pipeline carry that 141
+# even though the match SUCCEEDED. So the check failed exactly when the flag was
+# present and not in the final chunk of output.
 #
 # Measured rather than inferred: 10 runs of 10 returned 141, and every bench in
 # this repository that takes this path refused to start against jnext 0.99.127,

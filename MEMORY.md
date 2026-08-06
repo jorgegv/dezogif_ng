@@ -17,7 +17,9 @@ which the independent review is what turned up.
 has. `make test`, `make test-unit`, `make test-dzrp-stub` — the whole gate.
 `grep -q` exits at its match, jnext's next write takes SIGPIPE and exits 141,
 and `set -o pipefail` carries that 141 out of a pipeline that had **succeeded**.
-Full mechanism and the measurement in [[ERRORS.md]].
+Full mechanism and the measurement in [[ERRORS.md]] — including the correction a
+reviewer's strace forced on it: the help is written in ~4 KB **chunks**, not a
+line at a time, which changes the picture and not the conclusion.
 
 **SHARED, NOT COPIED — the same decision as issue #17 and for the same reason.**
 Thirteen repaired call sites would be thirteen places for the next correction to

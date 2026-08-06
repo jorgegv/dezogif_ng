@@ -357,6 +357,22 @@ well, and available on its own as `sudo test/run-vanished-peer.sh --clean`:
 transcript, and the removal is **verified** — a leftover produces a loud failure naming the exact
 commands to paste.
 
+**Two limits of that teardown, both measured rather than argued.** `SIGKILL` cannot be trapped, so
+`kill -9` leaves the chain — and it also leaves the **Python probe running**, still adding rules to
+the surviving chain until it finishes. It can only ever touch the chain it was given, so nothing
+outside is at risk, but after a `kill -9` do **both**:
+
+    sudo pkill -f vanished-peer-probe.py
+    sudo test/run-vanished-peer.sh --clean
+
+And `SIGINT` is unavailable in one invocation shape, which is not the documented one: a script
+backgrounded by a **non-interactive shell with no job control** (`sh -c './script &'`) is entered
+with SIGINT already `SIG_IGN`, and a signal ignored at exec cannot be trapped afterwards — measured
+from `/proc/<pid>/status`, `SigIgn: …0006` against `SigCgt: …14000` for SIGTERM. **The firewall is
+never left broken by it**: an ignored signal does not kill the process, the run carries on and its
+`EXIT` trap still cleans up. What is unavailable is the early abort, not the teardown. Use SIGTERM
+from a harness; it is caught in every shape tested.
+
 **Why a dedicated chain rather than a rule in `OUTPUT` directly.** Because cleanup has to be right
 when the script dies badly, and this is the shape where it can be. Teardown is three fixed commands
 that do not depend on what was added, so a rule the script never recorded cannot survive it; every

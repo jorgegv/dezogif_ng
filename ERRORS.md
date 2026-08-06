@@ -43,6 +43,26 @@ trapped, so it leaves the chain. That is why the chain shape was chosen in the
 first place — the leftovers are inert once unhooked, `--clean` removes them, and
 the next run's startup teardown removes them too. Both were run.
 
+**A fourth shape, found while writing the caveat, and it cost the shell again.**
+`pgrep -f sigprobe.sh | head -1` to find the process under test returned **this
+shell's own pid**, because the Bash tool's command line contains the script name;
+`kill -INT` on it then killed the shell mid-command, and the first `/proc` bitmap
+read was of the wrong process entirely — and it read plausibly, which is the
+dangerous part. `pgrep -f` matching itself is already written down in
+`test/bench-jnext.sh` and in the mutex entry below; it is worth restating that
+the lie it tells is not "no match" but **"a match that looks right"**. The fix is
+the same one that file uses: exact process name, then the command line read out
+of `/proc/<pid>/cmdline` and compared.
+
+**What the corrected measurement then said**, and it is now a caveat in the
+wrapper's header rather than a defect: a script backgrounded by a
+**non-interactive shell with no job control** (`sh -c './script &'`) is entered
+with SIGINT already `SIG_IGN` — `SigIgn: 0000000000000006`, bits for SIGINT and
+SIGQUIT, against `SigCgt: 0000000000014000` for SIGTERM and SIGCHLD — and a
+signal ignored at exec cannot be trapped. It does not kill the process either, so
+the teardown is not at risk; only the early abort is unavailable, and SIGTERM
+works in every shape tested.
+
 **Lesson, and this file already carries its cousin.** ERRORS.md's `cp --reflink`
 entry records two attempts that tested the wrong *process*; this is the same
 disease one layer down — a test that never delivered its *signal*, and a liveness

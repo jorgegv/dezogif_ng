@@ -81,8 +81,16 @@ WHAT THIS PROBE CANNOT ESTABLISH, and none of it is hidden:
     not prove the ceiling is what a real user hit on 2026-08-05.
   * It cannot read the Next's screen. See the checklist it prints.
 
-EXIT CODE. 0 when it measured something, 2 when it could not measure at all
-(nothing listening). Never 1: there is no failure for it to report.
+EXIT CODES.
+
+  0  it measured something. THE ONLY ORDINARY OUTCOME — the numbers are the
+     result, whatever they are.
+  2  it could not measure at all: nothing answered on the port.
+  3  `--expect-ceiling` was passed and the measurement disagreed with it. Only
+     the emulator harness ever passes that; against a Next the ceiling is the
+     unknown being measured, so 3 is unreachable there by construction.
+
+Never 1. There is no failure for this to report: it renders no verdict.
 """
 
 import argparse
@@ -165,9 +173,13 @@ def open_one(host, port, timeout, name):
     try:
         conv.command(dzrp.CMD_INIT, dzrp.init_payload(name=name))
     except dzrp.Timeout as e:
-        # Left OPEN on purpose. A silent connection still occupies whatever the
-        # module gave it, and closing it here would quietly undo the state the
-        # next attempt is supposed to meet.
+        # RETURNED LIVE, AND THE CALLER OWNS IT. A silent connection is
+        # connected-but-unanswered, so it is still holding whatever slot the
+        # module gave it — that is a fact about the module the caller may want
+        # to keep (a walk that is still opening connections) or may have to
+        # undo (a control attempt, which must meet the state the FIRST attempt
+        # met and not one perturbed by the first attempt's own socket). It is
+        # not this function's decision. See walk().
         return SILENT, ms, conv, str(e)
     except dzrp.DzrpError as e:
         conv.close()
@@ -267,12 +279,43 @@ def walk(host, port, timeout, limit, report):
                        "connect %.0f ms, CMD_INIT answered, held open" % ms)
             continue
 
+        # THE FIRST ATTEMPT'S SOCKET GOES BEFORE THE CONTROL RUNS, AND THIS IS
+        # NOT TIDINESS. `open_one` returns a LIVE conversation for SILENT —
+        # connected but unanswered — and a connected socket occupies a slot on
+        # the module. Left open, it would still be open across the sleep and
+        # across the control attempt below, so the control would run with one
+        # fewer slot available than the state it exists to characterise: it
+        # could turn a transient into a false ceiling, or move the number by
+        # one. The discriminating result of this whole probe is a single
+        # integer — 4 against 5 — so an instrument that perturbs the quantity
+        # it measures, in the exact window it measures it, is worthless.
+        #
+        # Relying on CPython refcounting here would not do either: `conv` is
+        # rebound only at the top of the NEXT iteration, which is after the
+        # control attempt on the continue path, and on the break path never —
+        # the socket lives until the frame is torn down at `return`.
+        #
+        # Mirrors the `if conv2 is not None` below, so the two branches read
+        # alike and neither can be the one that was forgotten.
+        if conv is not None:
+            close_all([conv])
+            conv = None
+
         # THE SECOND ATTEMPT IS A CONTROL, not a retry. A ceiling is a
         # persistent property of the module; a transient is not. Without this,
         # one unlucky packet would be reported as the answer to the question
         # this whole probe exists to ask. Same shape as H3's delayed retry.
+        #
+        # The existing 2 s IS the settle after that close — it sits between the
+        # close and the control, which is exactly where a settle belongs, and
+        # no extra time is added. Sized against what has been measured on this
+        # module: probe B reuses a slot freed by a clean close after 0.5 s,
+        # every iteration, and probe A's own reclaim phase gets 2 of 2 after
+        # 2 s. On a real ESP-01 it is unmeasured, like every other constant
+        # here, and `--settle` is not it — this one is deliberately fixed
+        # because it belongs to the control, not to the reclaim phase.
         report.add("#%d" % i, state, "connect %.0f ms — %s" % (ms, why or "no detail"))
-        report.detail("retrying once after 2 s, to separate a ceiling from a transient")
+        report.detail("closed it, then retrying once after 2 s, to separate a ceiling from a transient")
         time.sleep(2.0)
         state2, ms2, conv2, why2 = open_one(
             host, port, timeout, "dezogif_ng-slot-probe-%dr" % i)

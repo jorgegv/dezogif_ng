@@ -91,6 +91,21 @@ so `-X` must fail) exits 1 and names the three commands to paste; SIGKILL cannot
 be trapped, so it leaves the chain, and both `--clean` and the next run's
 startup teardown remove it.
 
+**THE CONTROL ATTEMPT MUST NOT HOLD A SLOT OF ITS OWN, and the first version
+did.** `open_one` returns a *live* conversation for `SILENT` — connected but
+unanswered — and `walk()` left it open across the 2 s sleep and across the
+control attempt, because `conv` is rebound only at the top of the next
+iteration (after the control, on the continue path) and never at all on the
+break path. So the control ran with **one fewer slot than the state it exists to
+characterise**, which can turn a transient into a false ceiling or move the
+number by one — and the discriminating result of this whole probe is a single
+integer, 4 against 5. It is closed explicitly now, before the sleep, so the
+existing 2 s doubles as the settle and no time was added. Caught by the manager
+session, filed MINOR by the reviewer on a refcounting argument that does not
+hold. **It did not fire in jnext**, whose over-ceiling answer is `DROPPED` (that
+path already closed), which is exactly the point: it would have fired on
+hardware if a real module answers by accepting and staying silent.
+
 **Rejected.** Rules inserted directly into `OUTPUT` (above); a comment-match
 sweep (`-m comment`) to find orphans (it works, but deleting by a parsed `-S`
 line means reconstructing a spec from text, where a chain needs no parsing at

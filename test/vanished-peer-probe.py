@@ -66,6 +66,21 @@ WHAT A RESULT WOULD AND WOULD NOT ESTABLISH.
     times its fresh connect. #15's degradation was 83 ms -> 389 ms -> timeout.
     A ceiling that arrives abruptly and one that is approached through
     lengthening accepts are different findings about the same module.
+
+EXIT CODES. The wrapper passes these through, so they are what a caller sees.
+
+  0  it measured something. THE ONLY ORDINARY OUTCOME — the numbers are the
+     result, whatever they are.
+  1  the blackhole could not be lifted. The wrapper's EXIT teardown still
+     removes the whole chain; this says the measurement is incomplete.
+  2  it could not measure at all: not run as root (so run it through the
+     wrapper), or nothing answered on the port.
+  3  `--expect-ceiling` was passed and the measurement disagreed with it. Only
+     the emulator harness ever passes that; against a Next the number is the
+     unknown being measured, so 3 is unreachable there by construction.
+
+The wrapper adds its own: 2 for a usage error, 1 for "not root" or for a
+teardown that left something behind, 130 on SIGINT and 143 on SIGTERM.
 """
 
 import argparse

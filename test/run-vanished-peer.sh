@@ -54,6 +54,37 @@
 # connection to the same machine keeps working.
 #
 # ===========================================================================
+# TWO LIMITS OF THE TEARDOWN, BOTH MEASURED RATHER THAN REASONED ABOUT
+# ===========================================================================
+#
+# 1. SIGKILL CANNOT BE TRAPPED, so `kill -9` at this script leaves the chain —
+#    which is precisely why the chain shape was chosen: what survives is inert
+#    the moment it is unhooked, and `--clean` removes it wholesale.
+#
+#    AND THE PROBE OUTLIVES IT. Killed with -9, this script cannot reap its
+#    child, so the Python probe goes on running and goes on ADDING rules to the
+#    surviving chain until it finishes. It can only ever touch the chain it was
+#    given, so nothing outside is at risk — but "the chain survives, --clean
+#    fixes it" is not the whole picture. After a `kill -9`, do both:
+#
+#        sudo pkill -f vanished-peer-probe.py
+#        sudo test/run-vanished-peer.sh --clean
+#
+# 2. SIGINT IS UNAVAILABLE IN ONE INVOCATION SHAPE, and it is not this one.
+#    A script backgrounded by a NON-INTERACTIVE shell with no job control —
+#    `sh -c './script &'` — is entered with SIGINT (and SIGQUIT) already set to
+#    SIG_IGN, and a signal ignored at exec cannot be trapped afterwards.
+#    Measured here, from /proc/<pid>/status rather than from the specification:
+#    `SigIgn: 0000000000000006`, bits 2 and 3, against `SigCgt: 0000000000014000`
+#    for SIGTERM and SIGCHLD.
+#
+#    THE FIREWALL IS NEVER LEFT BROKEN BY IT. An ignored signal does not kill
+#    the process: the run simply carries on and its EXIT trap still cleans up
+#    when it finishes or is asked to stop. What is unavailable is the
+#    early-abort route, not the teardown. SIGTERM is caught in every shape
+#    tested, so use that from a harness.
+#
+# ===========================================================================
 # WHAT IT MEASURES
 # ===========================================================================
 #

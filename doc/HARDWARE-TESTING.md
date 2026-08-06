@@ -436,9 +436,9 @@ survivable and the fifth is not — one slot consumed **permanently** per peer, 
 one back. `AT+CIPSERVER=0` does not, and before issue #19 nothing in the stub did.
 
 **The terminal symptom is a TIMEOUT, not a refusal** — 10009 ms. Probe A read the same signature at
-the ceiling on the same machine the day before (**10002 ms**, 2026-08-06; that run was recorded in
-the session handover and not in this tree, which is why the figure is quoted here with its
-provenance rather than cited as if it were already written down). jnext cannot produce it: its
+the ceiling on the same machine earlier the same day (**10002 ms**, 2026-08-06; that run was
+recorded in the session handover and not in this tree, which is why the figure is quoted here with
+its provenance rather than cited as if it were already written down). jnext cannot produce it: its
 module accepts and then RSTs, which arrives as a fast `DROPPED`. And **B4 says the stub was healthy the whole time**: a clean error area
 while the module was answering nobody. Module refusing, screen intact, stub fine, recoverable only
 from outside — that is issue #15's reported shape, produced deliberately.
@@ -461,6 +461,14 @@ the way INTO trouble, while the transport is still failing loudly; it is not a g
 a power cycle remains the answer to the terminal state. That is a real limit, it was traced rather
 than assumed, and it is written here rather than left for somebody to discover. Closing it needs a
 trigger reachable from a quiet stub — a periodic or connect-time sweep — which is not issue #19.
+
+**AND A SYMBOL SHIFT + NMI RE-INIT IS NOT A WAY OUT EITHER**, which is worth knowing because it is
+the thing a user would reach for before the power switch. It does not run the sweep at all:
+`main_bank_entry` calls `transport_init` directly (`src/main.asm`), never `esp_recover`, so no
+`AT+CIPSERVER=0` is sent — and jnext refuses `AT+CIPSERVER=1` outright while a listener is already
+running, which it still would be. So the re-init fails at its own AT chain and paints
+"ESP-01 setup failed". A power cycle is therefore not merely the simplest answer to the terminal
+state, it is the only one the machine currently offers.
 
 ### `make probe-jnext` FIRST, always
 

@@ -310,6 +310,16 @@ a deliberate change (2026-08-05, at the user's request) from details that ran to
 clauses each. The substance was not deleted: it is in each check's **docstring**, which is
 documentation that happens to live in the source, and in this file.
 
+**The budget binds each SINGLE-CAUSE verdict; a line that joins several independent faults is
+deliberately allowed past it.** Measured across every branch of both harnesses (2026-08-06, 66
+reachable lines): the longest single-cause line is **22 words** — `main()`'s REQUIRED-refusal
+branch. **Four** branches exceed the budget on purpose, each marked at its call site with why:
+C10's join at 38 words, C11's at 66, and `hardware-check.py`'s two H2 composites at 39 and 28.
+They are not truncated because each joined fault is separately load-bearing — a resume path that
+is badly broken is precisely the one that fails on several axes at once, and *which* axes is the
+diagnosis. Cutting a compound diagnostic returns the reader to the bare "no reply" that cost this
+project eight hours on 2026-08-05, which is the same argument that keeps H3's composite long.
+
 Two conventions follow from it and both are load-bearing:
 
 - **The id never changes.** `test/run-dzrp-stub.sh`'s W3 asserts its negative control with
@@ -355,7 +365,7 @@ The program leaves four independent traces:
 
 The marker area is cleared and read back **before** the run: a stale byte from an earlier check
 would otherwise let "the debuggee ran" pass without it running. A failure of that setup is
-reported as `PRECONDITION, not this check's subject`, so a memory fault is never filed as a
+reported under the `PRECONDITION:` label described above, so a memory fault is never filed as a
 resume fault.
 
 Everything lives in 0x8000-0x9FFF, which `CMD_INIT` maps to bank 4, clear of the ROM and of the

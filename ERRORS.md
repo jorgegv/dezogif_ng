@@ -37,11 +37,19 @@ The comparison was then byte-identical both ways, and confirmed a third way by
 `git stash`ing the branch and rebuilding from clean `main`.
 
 **This CORRECTS a rule already written down, which is why it is here rather than
-in a commit message.** MEMORY.md 2026-08-05 (the identity-line entry) says
-*"Delete the outputs before any pinned comparison"* — and that is exactly what
-was done, and it was not sufficient. The output is not the thing make decides
-about; **its prerequisites are.** Read "outputs" as "everything derived",
-`.bin` files included.
+in a commit message.** MEMORY.md 2026-08-05 (the identity-line entry) **used to
+say** *"Delete the outputs before any pinned comparison"* — and that is exactly
+what was done, and it was not sufficient. The output is not the thing make
+decides about; **its prerequisites are.** Read "outputs" as "everything
+derived", `.bin` files included.
+
+**The correction was announced here before it was MADE there, and that is its
+own small lesson.** This entry claimed to correct that wording and edited
+nothing, so for one commit the insufficient instruction stood unqualified in the
+place a reader actually follows instructions from — MEMORY.md is long and nobody
+reads it top to bottom, so a retraction filed only in ERRORS.md reaches nobody
+standing at the wrong rule. Fixed in place on 2026-08-06. **Announcing a
+correction is not making one**; go and edit the sentence.
 
 **Lesson, and it generalises past this Makefile.** When you pin a variable that
 is consumed *inside* a build step, deleting that step's product does not

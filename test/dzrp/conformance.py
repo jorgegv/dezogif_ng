@@ -618,6 +618,14 @@ def chk_continue_resumes(d):
     if reason not in (0, 1, 2, 3, 4, 255):
         problems.append("break reason %d is not in the specification" % reason)
     if problems:
+        # DELIBERATELY OVER THE ~20-WORD BUDGET when more than one axis broke.
+        # Each problem above fits it on its own; they COMPOUND, and the worst
+        # case here — wrong address, no marker, ran past the breakpoint and an
+        # illegal reason all at once — measures 38 words. It is not truncated,
+        # because a badly broken resume path is exactly what fails on several
+        # axes at once, and which ones they are is the diagnosis. Dropping any
+        # of them returns the reader to a bare "it did not resume". Same
+        # reasoning as hardware-check.py's H3 composite; see doc/DZRP-TESTING.md.
         return FAIL, "; ".join(problems)
     return PASS, ("stopped on the breakpoint at 0x%04X (reason %d, bank %d)"
                   % (addr, reason, bank))
@@ -657,6 +665,13 @@ def chk_continue_state(d):
         problems.append("A came back 0x%02X, expected 0x%02X"
                         % (regs["AF"] >> 8, RUN_A))
     if problems:
+        # DELIBERATELY OVER THE ~20-WORD BUDGET, and the worst here is the
+        # longest line either harness can print: nine independent faults — BC
+        # and IX inward, six registers outward, and A — joined at 66 words.
+        # Each is separately load-bearing: "the state was corrupted" is not a
+        # finding, "SP came back somewhere else while everything else survived"
+        # is. Truncating would leave the reader unable to tell a restore fault
+        # from a capture fault. See chk_continue_resumes above.
         return FAIL, "; ".join(problems)
     return PASS, "BC/IX reached the debuggee, and PC/SP/AF/BC/DE/HL/IX came back as left"
 
@@ -830,6 +845,16 @@ def chk_close(d):
 # docstring and in doc/DZRP-TESTING.md, which is where a reader can afford to
 # read it; a verdict a reviewer has to scroll is a verdict nobody reads.
 #
+# THE BUDGET BINDS EACH SINGLE-CAUSE VERDICT, NOT A LINE THAT JOINS SEVERAL
+# INDEPENDENT FAULTS. Measured across every branch of both harnesses
+# (2026-08-06): the longest single-cause line is 22 words, main()'s
+# REQUIRED-refusal branch. Four branches deliberately exceed it because they
+# join faults that are each separately load-bearing — C10 at 38 words, C11 at
+# 66, and hardware-check.py's two H2 composites at 39 and 28. Every one is
+# marked at its call site with why. Truncating a compound diagnostic is the
+# regression, not the fix: it is the shape that once cost this project eight
+# hours with nothing but "no reply".
+#
 # THE ID IS PART OF THE INTERFACE AND NEVER CHANGES. test/run-dzrp-stub.sh's W3
 # asserts its negative control with `grep '^FAIL  C10 '`, hardware-check.py's
 # classify() takes the code from field 2 of every FAIL line, and every document
@@ -991,6 +1016,14 @@ def main():
         except Unsupported as e:
             if cmd_name in required or cmd_name in ALWAYS_REQUIRED:
                 status = FAIL
+                # SLIGHTLY OVER THE ~20-WORD BUDGET — 22 in the worst case,
+                # against a 7-word label — and that is the longest single-cause
+                # line either harness prints. The words are not padding: which
+                # command was refused, that it was REQUIRED rather than
+                # optional, and the transport-level reason the remote gave are
+                # three different facts, and this branch is the one that
+                # separates "this remote is a partial implementation" from
+                # "this remote is broken". Left long deliberately.
                 detail = "CMD_%s is REQUIRED but the remote does not implement it (%s)" % (
                     cmd_name, e)
             else:

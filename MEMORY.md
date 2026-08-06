@@ -15,10 +15,12 @@ suite had ever sent **command 2**: C1-C14 each take a fresh connection and drop
 it, which is a TCP event and not a DZRP one, so the remote was never told a
 session ended. C15 asserts the specified **Length=1 response** *and* that a
 `CMD_INIT` after it is answered. The second is the point — `cmd_close` answers
-**first** and only then leaves through `jp main`, whose prologue is destructive
-(`prgm_state` → `PRGM_IDLE`, `backup.speed`, `backup.interrupt_state`,
-`slot_backup.slot0`, then `transport_activate` and `show_ui`). **The response is
-written before all of that and proves none of it.**
+**first** and only then does the destructive part: it sets `prgm_state` to
+`PRGM_IDLE` itself (`commands.asm:239-240`) and leaves through `jp main`, whose
+prologue resets `backup.speed`, `backup.interrupt_state`, `backup.layer_2_port`
+and `slot_backup.slot0` — and sets `prgm_state` a second, redundant time
+(`main.asm:129-143`) — before `transport_activate` and `show_ui`. **The response
+is written before all of that and proves none of it.**
 
 The follow-up is `CMD_INIT` because DeZog's own stress driver does exactly that
 — `cmdList`'s first entry is `sendDzrpCmdClose()` immediately followed by
@@ -34,11 +36,26 @@ in a docstring.** Three scratch ROMs, one edit each, none committed. (A)
 `cmd_close` routed to `cmd_not_supported` → red on the response. (B) `cmd_close`
 flushing and then hanging → red on serving on, which is the half that matters.
 **(C) `jp cmd_loop` in place of `jp main` → C15 PASSES.** That stub answers and
-goes on serving *without ever running the destructive prologue*, and C15 is
-blind to it, because `prgm_state` and the backup fields are **not observable over
-a socket**. So the honest statement of what C15 establishes is "answered, and
-still serving" — never "the session state was reset". A check bounded by
-measurement rather than by assertion.
+goes on serving *without ever running `main`'s prologue*, and C15 is blind to
+it, because the backup fields are **not observable over a socket**. So the
+honest statement of what C15 establishes is "answered, and still serving" —
+never "the session state was reset". A check bounded by measurement rather than
+by assertion.
+
+**WHAT (C) SKIPS IS NOT WHAT THE FIRST VERSION OF THIS ENTRY SAID, and the
+correction narrows the control rather than weakening it.** That version listed
+`prgm_state` → `PRGM_IDLE` among the things (C) fails to do. It is not:
+`cmd_close` sets `prgm_state` **itself, unconditionally, before the `jp`**
+(`commands.asm:239-240`), so (C) leaves it at `PRGM_IDLE` exactly as the shipped
+ROM does — `main`'s write of it (`main.asm:133-134`) is redundant. What (C)
+genuinely skips is `backup.speed`, `backup.interrupt_state`,
+`backup.layer_2_port` and `slot_backup.slot0`, plus the `di` and stack reset.
+**The conclusion is untouched**: none of those is observable over a socket
+either, so C15 still cannot see the difference and its scope is still "answered,
+and still serving". The mechanism was attributed to the wrong routine, which is
+the failure this file names repeatedly — a plausible mechanism stated instead of
+a traced one, in an entry whose whole subject is what a check can and cannot
+see.
 
 **(B) needed an explicit `TRANSPORT_END_MESSAGE` before its hang, and that is a
 real fact about the WiFi build**: `cmd_close`'s response is buffered and the
@@ -69,10 +86,36 @@ surviving one — a retraction deleted while the thing it retracted stayed. **Wh
 deleting prose, check whether it is the only place a correction lives.**
 
 **3. A check line says what happened; the documents say what it means.** Every
-verdict `conformance.py` and `hardware-check.py` print is now one sentence of
-**about twenty words**. Ids are untouched and are interface, not prose:
-`run-dzrp-stub.sh`'s W3 greps `^FAIL  C10 ` and `classify()` takes the code from
-field 2.
+verdict `conformance.py` and `hardware-check.py` print for a **single cause** is
+one sentence of **about twenty words**. Ids are untouched and are interface, not
+prose: `run-dzrp-stub.sh`'s W3 greps `^FAIL  C10 ` and `classify()` takes the
+code from field 2.
+
+**THE "SINGLE CAUSE" QUALIFIER IS NOT DECORATION, AND ITS ABSENCE MADE THE FIRST
+VERSION OF THIS ENTRY FALSE.** It claimed "longest line anywhere is now 20; the
+only exception is H3's, marked". Re-measured mechanically on 2026-08-06 — every
+reachable `(label, detail)` pair in both harnesses, 66 lines, representative
+values substituted — that is wrong in both halves. **The budget binds each
+single-cause verdict: worst case 22 words**, `main()`'s REQUIRED-refusal branch.
+**Four** branches exceed it, not one, and they exceed it by a lot:
+
+| branch | worst case | why it is long |
+|---|---|---|
+| C11 `chk_continue_state`'s `"; ".join(problems)` | **66 words** | nine independent faults — BC/IX inward, six registers outward, A |
+| `hardware-check.py`'s H2 novel composite | **39 words** | names every failing check by id; worst case is all 15 red |
+| C10 `chk_continue_resumes`'s join | **38 words** | wrong address, no marker, ran past the breakpoint, illegal reason |
+| `hardware-check.py`'s H2 known-red composite | **28 words** | same, 15 ids |
+
+**They are deliberately NOT truncated, and the fix was to the CLAIM rather than
+to the output.** Each joined fault is separately load-bearing: "the state was
+corrupted" is not a finding, "SP came back elsewhere while everything else
+survived" is. And the compounding is not a rare tail — **a badly broken resume
+path is precisely the thing that fails on several axes at once**, which is what
+C10/C11 exist to catch, so the longest lines belong to the most important
+failure. Cutting them returns the reader to the bare "no reply" that cost this
+project eight hours on 2026-08-05, which is exactly the argument that already
+kept H3's composite long. Every one of the four is now marked at its call site
+with why, in H3's style.
 
 **Measured on the PASS path only the first time, and that was the review's
 finding.** "All 15 lines comply, max 19" was true of a *healthy* run and said
@@ -82,14 +125,24 @@ across **every** branch then found three more, the `PRECONDITION` ones on
 C10/C11. **A rule checked on the happy path is a rule half checked**, and the
 paths a test bench exists for are the unhappy ones.
 
-**One deliberate exception, marked where it is taken**: `hardware-check.py`'s H3
-*failure* composite runs to ~25 words, because it joins which connection got no
-reply, which other connection holds the payload, and whether a pause fixes it —
-and that combination is what discriminates the `SEND OK` window from an id bug.
-Dropping one fact returns the reader to the bare "no reply" that cost this
-project eight hours on 2026-08-05. The **user narrowed the exception explicitly**
-to the failure line: H3's PASS line lost its `— the +IPD id is read from the
-header, not assumed` tail, which is explanation, and it now lives in the doc.
+**AND THAT RE-MEASUREMENT WAS ITSELF DONE BY HAND AND ITSELF MISSED THINGS** —
+the second occurrence of one disease in one commit. It caught the branches it
+went looking for and never enumerated the rest, so four compound joins survived
+under a claim that said there were none. The `PRECONDITION` fix it made was
+real (that branch measures **19** words now, comfortably inside the budget); the
+*claim* it attached to the fix was not. **A rule about output is a rule about
+every branch of that output, and the only way to know is to enumerate them with
+a script** — `ast`, representative values, worst-case joins expanded — which is
+what 2026-08-06 did and what should have happened the first time. Eyeballing is
+what produced both wrong measurements.
+
+**H3's exception stands unchanged.** `hardware-check.py`'s H3 *failure*
+composite runs to ~25 words, because it joins which connection got no reply,
+which other connection holds the payload, and whether a pause fixes it — and
+that combination is what discriminates the `SEND OK` window from an id bug. The
+**user narrowed the exception explicitly** to the failure line: H3's PASS line
+lost its `— the +IPD id is read from the header, not assumed` tail, which is
+explanation, and it now lives in the doc.
 
 **Rejected.** Keeping the reasoning in the printed lines (a verdict a reviewer
 scrolls is a verdict nobody reads); a per-check verbosity flag (two renderings to
@@ -103,8 +156,10 @@ recorded as a follow-up instead.
 took two goes and the failure is in [[ERRORS.md]]: deleting the ROMs is not
 enough, because make reuses `main-wifi.bin`/`mf_nmi-wifi.bin` assembled at an
 unpinned `BUILD_TIME`. **That corrects the wording of the 2026-08-05 identity
-entry below**, which says to delete "the outputs" — the outputs are not what make
-decides about; their prerequisites are.
+entry below**, which said to delete "the outputs" — the outputs are not what make
+decides about; their prerequisites are. *(That entry was left unedited by this
+commit and carried the insufficient instruction for one more commit; corrected
+in place 2026-08-06.)*
 
 **`make test-dzrp-stub`: W1-W5 pass, 15 passed / 0 failed of 15, exit 0.**
 C15 has **not** run on hardware; the next hardware run is 15 checks, not 14.
@@ -957,8 +1012,18 @@ checked. It costs no bytes.
 **A measurement lesson worth more than the change.** The first pinned "before"
 hash quoted for the WiFi ROM was wrong, because `make BUILD_TIME=… mf-rom` does
 **nothing** when the output is already newer than its prerequisites — it hashed
-an image built at the *unpinned* time. Delete the outputs before any pinned
-comparison; `make check-reproducible` does its own build and is not affected.
+an image built at the *unpinned* time. Delete everything **derived** before any
+pinned comparison — `rm -f build/*.bin build/enNextMf*.rom`, **not** the `.rom`
+files alone: the ROM is a `cat` of `main*.bin` and `mf_nmi*.bin`, whose rule
+depends on the sources rather than on `BUILD_TIME`, so make will happily reuse
+`.bin` files assembled at the unpinned time and hand you yesterday's answer.
+`make check-reproducible` runs `make clean` first and is not affected.
+
+*(Corrected 2026-08-06. This paragraph originally said "delete the outputs",
+which is exactly what a later branch did — and it reported a WiFi ROM change on
+a diff that touched no `src/` file. The output is not what make decides about;
+its prerequisites are. Full incident in [[ERRORS.md]], "Deleting the ROMs is NOT
+enough before a pinned hash comparison".)*
 
 **Rejected.** Keeping `v2.2.1` with a label such as "fork of" (32 columns, and
 a fork point is not a runtime fact); putting the build number on its own row

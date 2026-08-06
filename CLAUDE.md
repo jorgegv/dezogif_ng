@@ -263,7 +263,13 @@ strongest:
    it re-initialises the stub. What it cannot see is that any of that state really was reset —
    `prgm_state` is not observable over a socket.
    **Every check prints one short line, about twenty words**; the reasoning is in each check's
-   docstring and in `doc/DZRP-TESTING.md`. The **id** is interface, not prose: `run-dzrp-stub.sh`'s
+   docstring and in `doc/DZRP-TESTING.md`. **That budget binds each SINGLE-CAUSE verdict — measured
+   worst case 22 words — and deliberately does NOT bind a branch that joins several independent
+   faults into one line.** Four such branches exceed it, each marked at its call site: C10's join
+   (38 words), C11's (66), and `hardware-check.py`'s two H2 composites (39 and 28). They are not
+   truncated, because each joined fault is separately load-bearing and a badly broken resume is
+   exactly what fails on several axes at once — the same argument that keeps H3's composite long.
+   The **id** is interface, not prose: `run-dzrp-stub.sh`'s
    W3 greps `^FAIL  C10 ` and `hardware-check.py` takes the code from field 2 of every `FAIL` line.
    **Result 2026-08-05: W1-W5 pass, 15 passed / 0 failed of 15 — the target exits 0.**
    **C12 was the last red and issue #8 closed it**: `CMD_PAUSE` was mapped to `cmd_not_supported`,

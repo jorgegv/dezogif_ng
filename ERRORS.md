@@ -591,11 +591,35 @@ exits 0 having completed, new exits 143 having stopped. Four wrong mechanisms
 were asserted on this one bench script before that test existed. **Every one of
 them was caught by measuring, none by reasoning.**
 
-**Still outstanding, deliberately untouched:** `run-headless.sh` leaves
-`sd-stock.img` *and* `sd-ours.img` per run, and `run-mfselect.sh` its own —
-same mechanism, and `make clean` is the only thing that reclaims them. They
-were the bulk of the 22 GB. Not changed here because they are outside this
-change's scope, but they are the next occurrence waiting to happen.
+**~~Still outstanding, deliberately untouched:~~ CLOSED, 2026-08-06.**
+`run-headless.sh` left `sd-stock.img` *and* `sd-ours.img` per run, and
+`run-mfselect.sh` its own **six** — same mechanism, and `make clean` was the
+only thing that reclaimed them. They were the bulk of the 22 GB. Both now
+remove their working images from the same `cleanup` the departure check already
+runs from, unlinking **before** `bench_await_departure`, because that call can
+`exit` and an exit that skipped the `rm` would reintroduce this very leak.
+
+**Kept per-script rather than moved into `bench-jnext.sh`, and the reason is
+that file's own invariant.** What carries the four wrong attempts is the *trap
+wiring* — armed before the copy, tolerant of a variable the handler has not
+seen, `exit 130`/`exit 143` rather than a handler that returns — and issue #17
+already put all of it in both scripts. It cannot move into the helper either,
+which documents itself as defining functions and doing **nothing else**: no
+`set`, no traps, no top-level state. What was left to share is a single
+`rm -f`, and wrapping that would put mutable state into the one file whose
+value is that it has none. So the code is one line in each script and the
+*reasoning* stays shared where it already lived — `run-esp.sh`'s comment block
+and this entry — cited from both rather than restated.
+
+**The negative control is what makes this more than "the file is gone".** An
+image that is absent after a run that *completed* proves nothing: it is absent
+either way. So the interrupt test asserts the run did **not** finish — no
+success line in the output, exit 143 — as well as that the image went. And the
+script is launched **alone**, with `$!` taken from it directly: `cmd && ./script
+&` backgrounds the whole `&&` chain, so `$!` is a wrapper subshell and the
+signal never reaches the script. That mistake has now been made three times in
+this repository by three different people, and every time the run completed
+normally and looked like a pass.
 
 **Lesson.** An `auto` flag that degrades silently is a landmine on a
 filesystem you did not anticipate — and a quota failure disguises itself as a

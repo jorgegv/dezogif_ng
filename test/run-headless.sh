@@ -89,10 +89,30 @@ MF_ROM_PATH='::/machines/next/enNextMf.rom'
 # confirmed for the same reason and by the same code, and the claim is the
 # smaller one.
 #
-# The working images are still left behind on purpose: that leak is real and is
-# recorded in ERRORS.md, and removing it is a different change from this one.
+# THE WORKING IMAGES ARE REMOVED, and the two names are declared HERE — above
+# the trap and above the copy — rather than beside the `cp` that creates them.
+#
+# `cp --reflink=auto` is free on a filesystem that supports reflinks and a full
+# gigabyte on one that does not, silently; this bench makes TWO of them. About
+# 22 GB of exactly these abandoned copies filled the /tmp quota on 2026-08-04
+# and took the shell down mid-session — see ERRORS.md, and test/run-esp.sh,
+# which carries the whole reasoning and the four wrong attempts it took to get
+# the trap right. The short form: the copy is the slowest step here and so the
+# likeliest moment to be interrupted, and under `set -u` a variable the handler
+# has never seen aborts it before it reaches the `rm` — a leak fix that leaks.
+#
+# Nothing is lost. The diagnostics this bench leaves are its screenshots and its
+# verdicts; the images are byte-for-byte copies of a reference file that is
+# still sitting where it always was.
+sd_stock=$OUT/sd-stock.img
+sd_ours=$OUT/sd-ours.img
+
 current_image=""
 cleanup() {
+    # Unlinked BEFORE departure is confirmed, because bench_await_departure can
+    # `exit` and an exit that skipped this `rm` would reintroduce the leak. It
+    # matches on the command line, not on the file, so removing first is safe.
+    rm -f "$sd_stock" "$sd_ours"
     if [ -n "$current_image" ]; then
         bench_await_departure "$current_image"
     fi
@@ -147,11 +167,10 @@ part_off=$((part_lba * 512))
 #
 # The reference image is never touched: both working copies live in the build
 # directory and are reflinked where the filesystem supports it, so a 1 GB copy
-# costs nothing.
+# costs nothing — and where it does not, it costs a gigabyte each, which is why
+# both names are declared and trapped for removal further up rather than here.
 
 mkdir -p "$SHOTS"
-sd_stock=$OUT/sd-stock.img
-sd_ours=$OUT/sd-ours.img
 
 log "== preparing SD images (reference: $SD_IMAGE, partition offset $part_off)"
 cp --reflink=auto -f "$SD_IMAGE" "$sd_stock"

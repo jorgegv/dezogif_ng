@@ -70,10 +70,37 @@ RUN_TIMEOUT=300
 # and holding a gigabyte working image open. Departure is confirmed for that
 # reason, by the same code, and the claim is the smaller one.
 #
-# The six working images are still left behind on purpose: that leak is real,
-# recorded in ERRORS.md, and removing it is a different change from this one.
+# THE SIX WORKING IMAGES ARE REMOVED, and the list is declared HERE — above the
+# trap and above the first copy — rather than beside the `cp` in prepare_image.
+#
+# `cp --reflink=auto` is free on a filesystem that supports reflinks and a full
+# gigabyte on one that does not, silently; this bench makes SIX of them, the
+# largest leak of any bench here. About 22 GB of exactly these abandoned copies
+# filled the /tmp quota on 2026-08-04 and took the shell down mid-session — see
+# ERRORS.md, and test/run-esp.sh, which carries the whole reasoning and the four
+# wrong attempts it took to get the trap right. The short form: the copies are
+# the slowest step here and so the likeliest moment to be interrupted, and under
+# `set -u` a variable the handler has never seen aborts it before it reaches the
+# `rm` — a leak fix that leaks. Hence an array that exists from the start and is
+# empty rather than unset.
+#
+# They are removed at EXIT and not after each run, deliberately: this bench's
+# checks read files back OFF the image after its emulator has gone, so a
+# per-run `rm` would delete the evidence before it was asserted on.
+#
+# Nothing is lost. The diagnostics this bench leaves are its screenshots, the
+# files it pulled off the cards and its verdicts; the images are byte-for-byte
+# copies of a reference file that is still sitting where it always was.
+work_images=()
+
 current_image=""
 cleanup() {
+    # Unlinked BEFORE departure is confirmed, because bench_await_departure can
+    # `exit` and an exit that skipped this `rm` would reintroduce the leak. It
+    # matches on the command line, not on the file, so removing first is safe.
+    if [ "${#work_images[@]}" -gt 0 ]; then
+        rm -f "${work_images[@]}"
+    fi
     if [ -n "$current_image" ]; then
         bench_await_departure "$current_image"
     fi
@@ -141,6 +168,12 @@ type_keys() {
 # on every build.
 prepare_image() {
     local image=$1 mf_rom=$2 usum=${3:-$SUM_UART} wsum=${4:-$SUM_WIFI}
+    # Registered BEFORE the copy, for the reason the trap is armed before it:
+    # an interrupt during the copy is the case that once left a 777 MB partial
+    # image behind, and a name recorded afterwards is a name the handler that
+    # fires during the copy has never seen. This is the single place a working
+    # image is created, so a seventh one gets removed without being remembered.
+    work_images+=("$image")
     cp --reflink=auto -f "$SD_IMAGE" "$image"
     mmd -i "$image@@$part_off" ::/mfselect
     mcopy -o -i "$image@@$part_off" "$NEX" ::/mfselect/mfselect.nex

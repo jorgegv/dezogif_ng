@@ -5,6 +5,64 @@ attempting similar logic.
 
 ---
 
+## A pre-flight check that answered "no" *because* the answer was yes
+
+**Symptom.** Every bench in this repository refused to start against jnext
+0.99.127, each with a message blaming the emulator for a flag it has:
+
+```
+ERROR: this jnext has no --esp-listen-address (need >= 0.99.118); rebuild it
+```
+
+`jnext --help | grep -- '--esp-listen-address'` prints the option. `make test`,
+`make test-unit`, `make test-dzrp-stub` — all of them dead, all of them pointing
+at the wrong component.
+
+**Cause, and it is three ordinary things that are only wrong together.** The
+check was
+
+```sh
+"$JNEXT" --help 2>&1 | grep -q -- '--flag' || die "..."
+```
+
+jnext writes its help **a line at a time**; `grep -q` exits the moment it
+matches; jnext's next write then takes **SIGPIPE** and dies with **141**; and
+`set -o pipefail` — which every one of these scripts sets, correctly — carries
+that 141 out as the pipeline's status. So `|| die` fired on a pipeline whose
+grep had **succeeded**, and it fired precisely when the flag was PRESENT and not
+on the last line of output. Absent flags were reported correctly, which is why
+the check looked sound for months.
+
+**Not a pipe-buffer race, and that was the first guess.** The help is 10 KB
+against a 64 KB pipe buffer, so nothing ever blocked on a full pipe. The buffer
+is irrelevant: once the reader is *gone*, any further write raises SIGPIPE
+however much room there is. Measured 10 runs of 10, all 141 — deterministic, not
+flaky.
+
+**Why it appeared now**, and this is the part worth carrying: nothing in this
+repository changed. The check's correctness depended on **where the match falls
+in another program's output** — line 79 of 134 — a property jnext is free to
+alter in any release, and did.
+
+**Fix.** One helper in `test/bench-jnext.sh`, not thirteen repaired call sites,
+for the reason issue #17 already paid for. It reads to EOF, so there is no early
+close to signal:
+
+```sh
+help=$("$1" --help 2>&1 || true)
+case "$help" in *"$2"*) return 0 ;; *) return 1 ;; esac
+```
+
+**Lesson.** `set -o pipefail` and any early-exiting reader (`grep -q`, `head`,
+`grep -m1`) are a trap whenever the writer is slower than the reader's first
+match — which is most of the time and is not under your control. If you need an
+answer *about* a command's output rather than a stream of it, **capture the
+output and test the string**; a pipe is for data you intend to read all of. And
+when a tool insists it lacks something you can see it has, suspect the question
+before the tool.
+
+---
+
 ## A signal that was never delivered, and then one that arrived and waited
 
 **Symptom.** Probe B (issue #15) adds one `iptables` chain and removes it from an

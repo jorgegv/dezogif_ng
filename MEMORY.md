@@ -5,6 +5,57 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-06 — Asking a program what it supports is not the same as reading its output
+
+**Built.** `bench_jnext_supports` in `test/bench-jnext.sh`, replacing the
+`"$JNEXT" --help | grep -q -- '--flag' || die` in **thirteen** places across
+**nine** benches.
+
+**IT WAS NOT A TIDY-UP: EVERY BENCH IN THIS REPOSITORY WAS DEAD.** Against jnext
+0.99.127 all of them refused to start, each blaming the emulator for a flag it
+has. `make test`, `make test-unit`, `make test-dzrp-stub` — the whole gate.
+`grep -q` exits at its match, jnext's next write takes SIGPIPE and exits 141,
+and `set -o pipefail` carries that 141 out of a pipeline that had **succeeded**.
+Full mechanism and the measurement in [[ERRORS.md]].
+
+**SHARED, NOT COPIED — the same decision as issue #17 and for the same reason.**
+Thirteen repaired call sites would be thirteen places for the next correction to
+miss, which is exactly how #17's departure check became a repository-wide defect
+after being fixed correctly in one file. The helper goes in the file that
+already exists for this, and which **defines functions and does nothing else**,
+so `run-unit-tests.sh` could source it for this one function without inheriting
+a teardown it deliberately does not want.
+
+**What makes the new form correct is that it reads to EOF**, not that it avoids
+`grep`. A command substitution consumes all the output, so there is no early
+close to signal. `grep -c` would do as well and is what the one `strings` call
+site uses.
+
+**THE PROPERTY THAT BROKE IS NOT OURS, WHICH IS THE TRANSFERABLE PART.** Nothing
+in this repository changed. The old check's correctness depended on **where the
+match falls in another program's output** — line 79 of 134 — and jnext is free
+to reorder its own help in any release. A check resting on a property no test of
+ours can see is a check that will fail on somebody else's schedule.
+
+**Rejected.** Repairing each call site in place (above); dropping the version
+checks altogether (they are what turns "the bench behaved oddly" into "your
+jnext is too old", and one of them — `AT+CIPCLOSE=<id>` — is the whole
+precondition of issue #19's bench); parsing `jnext --version` instead of the
+help text (it answers a different question, and a flag's presence is the thing
+actually depended on).
+
+**Evidence: `make test` 6/6 and `make test-unit` 5/5 on this branch**, neither
+of which would start before it. Red-first is trivially available and was taken:
+`test/run-unit-tests.sh` on unmodified `main` dies with *"this jnext has no
+--magic-port"*. The helper was also checked in both directions — five runs of
+five say yes for a flag that exists, and it correctly says no for one that does
+not, which is the half a fix like this can most easily lose.
+
+**Test-only: `git diff --name-only main..HEAD -- src/ Makefile` is EMPTY, so no
+`make bump`.** No ROM byte moves.
+
+---
+
 ## 2026-08-06 — The Next's screen is readable over the wire, and it must never say hello first
 
 **Built.** `test/dzrp/screen.py` fetches the stub's own display file with

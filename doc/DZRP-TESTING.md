@@ -305,20 +305,36 @@ running it, so the shell kills itself — this cost two aborted commands before 
 
 ### A verdict line is one sentence; this file is where the reasoning is
 
-Every check prints **one short line — id, label and detail together, about twenty words.** That is
-a deliberate change (2026-08-05, at the user's request) from details that ran to three and four
-clauses each. The substance was not deleted: it is in each check's **docstring**, which is
-documentation that happens to live in the source, and in this file.
+Every check prints **one short verdict of about twenty words.** That is a deliberate change
+(2026-08-05, at the user's request) from details that ran to three and four clauses each. The
+substance was not deleted: it is in each check's **docstring**, which is documentation that
+happens to live in the source, and in this file.
 
-**The budget binds each SINGLE-CAUSE verdict; a line that joins several independent faults is
-deliberately allowed past it.** Measured across every branch of both harnesses (2026-08-06, 66
-reachable lines): the longest single-cause line is **22 words** — `main()`'s REQUIRED-refusal
-branch. **Four** branches exceed the budget on purpose, each marked at its call site with why:
-C10's join at 38 words, C11's at 66, and `hardware-check.py`'s two H2 composites at 39 and 28.
-They are not truncated because each joined fault is separately load-bearing — a resume path that
-is badly broken is precisely the one that fails on several axes at once, and *which* axes is the
-diagnosis. Cutting a compound diagnostic returns the reader to the bare "no reply" that cost this
-project eight hours on 2026-08-05, which is the same argument that keeps H3's composite long.
+**WHAT THE BUDGET COUNTS IS THE `detail` — the sentence a check writes about what happened — and
+NOT the label.** The label is the check's fixed title from the `CHECKS` table, written once and
+never varying at run time; it is not prose the check chose, so it is not charged to the check's
+budget. Two things force that reading, and an earlier version of this section got it wrong in a
+way that cost two review rounds:
+
+- `hardware-check.py` renders `"  %-4s %s %s" % (tag, paint(status), detail)`, where the tag is a
+  bare `H3`. Its one long-agreed exception — H3's failure composite at ~25 words — is therefore a
+  count of a **detail**, because there is no label there to count.
+- the labels here run **3 to 9 words** (`C3 frame preamble` … `C15 CMD_CLOSE is answered and the
+  remote serves on`). Charging them to the budget would allow C3 seventeen words of prose and C15
+  eleven, for the same nominal rule. That is not one rule.
+
+Measured mechanically on 2026-08-06 — every reachable detail in both harnesses, **81** of them,
+representative values substituted and worst-case joins expanded — single-cause details run **1 to
+14 words, median 8**. The longest is **14**, `main()`'s REQUIRED-refusal branch, so the budget is
+comfortably kept and **there is no single-cause exception anywhere**.
+
+**Four branches exceed it on purpose, every one a join of several INDEPENDENT faults**, each
+marked at its call site with why: C11's at **58 words**, `hardware-check.py`'s two H2 composites at
+**38** and **27**, and C10's at **29**. They are not truncated, because each joined fault is
+separately load-bearing — a resume path that is badly broken is precisely the one that fails on
+several axes at once, and *which* axes is the diagnosis. Cutting a compound diagnostic returns the
+reader to the bare "no reply" that cost this project eight hours on 2026-08-05, which is the same
+argument that keeps H3's composite long.
 
 Two conventions follow from it and both are load-bearing:
 

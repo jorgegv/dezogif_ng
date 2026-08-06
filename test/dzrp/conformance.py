@@ -621,7 +621,7 @@ def chk_continue_resumes(d):
         # DELIBERATELY OVER THE ~20-WORD BUDGET when more than one axis broke.
         # Each problem above fits it on its own; they COMPOUND, and the worst
         # case here — wrong address, no marker, ran past the breakpoint and an
-        # illegal reason all at once — measures 38 words. It is not truncated,
+        # illegal reason all at once — is a 29-word detail. It is not truncated,
         # because a badly broken resume path is exactly what fails on several
         # axes at once, and which ones they are is the diagnosis. Dropping any
         # of them returns the reader to a bare "it did not resume". Same
@@ -666,8 +666,8 @@ def chk_continue_state(d):
                         % (regs["AF"] >> 8, RUN_A))
     if problems:
         # DELIBERATELY OVER THE ~20-WORD BUDGET, and the worst here is the
-        # longest line either harness can print: nine independent faults — BC
-        # and IX inward, six registers outward, and A — joined at 66 words.
+        # longest detail either harness can print: nine independent faults — BC
+        # and IX inward, six registers outward, and A — joined at 58 words.
         # Each is separately load-bearing: "the state was corrupted" is not a
         # finding, "SP came back somewhere else while everything else survived"
         # is. Truncating would leave the reader unable to tell a restore fault
@@ -840,20 +840,36 @@ def chk_close(d):
     return PASS, "Length=1 response, and a CMD_INIT after it answered in sync"
 
 
-# A CHECK'S PRINTED LINE IS ONE SHORT SENTENCE — id, label and detail together
-# no longer than about twenty words. The reasoning behind each check lives in its
-# docstring and in doc/DZRP-TESTING.md, which is where a reader can afford to
-# read it; a verdict a reviewer has to scroll is a verdict nobody reads.
+# A CHECK'S VERDICT IS ONE SHORT SENTENCE of about twenty words. The reasoning
+# behind each check lives in its docstring and in doc/DZRP-TESTING.md, which is
+# where a reader can afford to read it; a verdict a reviewer has to scroll is a
+# verdict nobody reads.
 #
-# THE BUDGET BINDS EACH SINGLE-CAUSE VERDICT, NOT A LINE THAT JOINS SEVERAL
-# INDEPENDENT FAULTS. Measured across every branch of both harnesses
-# (2026-08-06): the longest single-cause line is 22 words, main()'s
-# REQUIRED-refusal branch. Four branches deliberately exceed it because they
-# join faults that are each separately load-bearing — C10 at 38 words, C11 at
-# 66, and hardware-check.py's two H2 composites at 39 and 28. Every one is
-# marked at its call site with why. Truncating a compound diagnostic is the
-# regression, not the fix: it is the shape that once cost this project eight
-# hours with nothing but "no reply".
+# WHAT THE BUDGET COUNTS IS THE `detail` — the sentence a check writes about
+# what happened — AND NOT THE LABEL. The label is the check's fixed title from
+# the CHECKS table below, written once and never varying at run time, and it is
+# not prose the check chose. Two things force this reading, and both are
+# checkable rather than matters of taste:
+#
+#   - hardware-check.py renders `"  %-4s %s %s" % (tag, paint(status), detail)`,
+#     where the tag is a bare "H3". Its one agreed exception, H3's failure
+#     composite, is described as ~25 words — so that budget is being counted on
+#     a detail, because there is no label there to count.
+#   - the labels here run 3 to 9 words. Charging them to the budget would give
+#     C3 seventeen words of prose and C15 eleven for the same nominal rule,
+#     which is not one rule.
+#
+# Measured mechanically on 2026-08-06 — every reachable detail in both
+# harnesses, 81 of them, representative values substituted and worst-case joins
+# expanded: single-cause details run 1 to 14 words, median 8. THE LONGEST IS 14,
+# main()'s REQUIRED-refusal branch, so the budget is comfortably kept and there
+# is no single-cause exception anywhere.
+#
+# FOUR BRANCHES DELIBERATELY EXCEED IT, all of them joins of several INDEPENDENT
+# faults: C11 at 58 words, hardware-check.py's two H2 composites at 38 and 27,
+# and C10 at 29. Each is marked at its call site with why. Truncating a compound
+# diagnostic is the regression, not the fix: it is the shape that once cost this
+# project eight hours with nothing but "no reply".
 #
 # THE ID IS PART OF THE INTERFACE AND NEVER CHANGES. test/run-dzrp-stub.sh's W3
 # asserts its negative control with `grep '^FAIL  C10 '`, hardware-check.py's
@@ -1016,14 +1032,13 @@ def main():
         except Unsupported as e:
             if cmd_name in required or cmd_name in ALWAYS_REQUIRED:
                 status = FAIL
-                # SLIGHTLY OVER THE ~20-WORD BUDGET — 22 in the worst case,
-                # against a 7-word label — and that is the longest single-cause
-                # line either harness prints. The words are not padding: which
-                # command was refused, that it was REQUIRED rather than
-                # optional, and the transport-level reason the remote gave are
-                # three different facts, and this branch is the one that
-                # separates "this remote is a partial implementation" from
-                # "this remote is broken". Left long deliberately.
+                # The longest single-cause detail either harness prints, at 14
+                # words — INSIDE the budget, which counts the detail and not the
+                # label. It is the longest because it carries three facts that
+                # are each load-bearing: which command was refused, that it was
+                # REQUIRED rather than optional, and the transport-level reason
+                # the remote gave. That combination is what separates "a partial
+                # implementation" from "a broken remote". Not an exception.
                 detail = "CMD_%s is REQUIRED but the remote does not implement it (%s)" % (
                     cmd_name, e)
             else:

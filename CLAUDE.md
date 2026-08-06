@@ -258,17 +258,24 @@ strongest:
    **C15 is the only check that sends `CMD_CLOSE`** — every other one takes a fresh connection and
    simply drops it, which is a TCP event and not a DZRP one. It asserts the Length=1 response
    **and** that a `CMD_INIT` after it is answered, because `cmd_close` answers first and only then
-   leaves through `jp main`, whose prologue resets `prgm_state` and the debuggee's saved state: the
+   tears the session down — it sets `prgm_state` itself (`src/commands.asm:239-240`) and then leaves
+   through `jp main`, whose prologue resets the debuggee's saved state: the
    response is written before all of that and proves none of it. It runs **last**, and must, since
    it re-initialises the stub. What it cannot see is that any of that state really was reset —
-   `prgm_state` is not observable over a socket.
-   **Every check prints one short line, about twenty words**; the reasoning is in each check's
-   docstring and in `doc/DZRP-TESTING.md`. **That budget binds each SINGLE-CAUSE verdict — measured
-   worst case 22 words — and deliberately does NOT bind a branch that joins several independent
-   faults into one line.** Four such branches exceed it, each marked at its call site: C10's join
-   (38 words), C11's (66), and `hardware-check.py`'s two H2 composites (39 and 28). They are not
-   truncated, because each joined fault is separately load-bearing and a badly broken resume is
-   exactly what fails on several axes at once — the same argument that keeps H3's composite long.
+   none of it is observable over a socket.
+   **Every check prints one short verdict, about twenty words**; the reasoning is in each check's
+   docstring and in `doc/DZRP-TESTING.md`. **The budget counts the `detail` — the sentence a check
+   writes about what happened — and NOT the label**, which is the check's fixed title from the
+   `CHECKS` table and is not prose the check chose. (`hardware-check.py` prints only a bare tag
+   plus a detail, and H3's long-agreed ~25-word exception is a detail; and labels here run 3-9
+   words, so charging them would buy different checks different amounts of prose for one rule.)
+   Measured mechanically 2026-08-06 over all **81** reachable details: single-cause details run
+   **1-14 words, median 8**, longest **14** — so **no single-cause exception exists**. **Four**
+   branches exceed the budget deliberately, all joins of several *independent* faults, each marked
+   at its call site: C11's (**58**), `hardware-check.py`'s two H2 composites (**38** and **27**),
+   and C10's (**29**). They are not truncated, because each joined fault is separately load-bearing
+   and a badly broken resume is exactly what fails on several axes at once — the same argument that
+   keeps H3's composite long.
    The **id** is interface, not prose: `run-dzrp-stub.sh`'s
    W3 greps `^FAIL  C10 ` and `hardware-check.py` takes the code from field 2 of every `FAIL` line.
    **Result 2026-08-05: W1-W5 pass, 15 passed / 0 failed of 15 — the target exits 0.**

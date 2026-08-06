@@ -407,8 +407,8 @@ def h2_conformance(remote, results, extra_args):
 
     # BOTH BRANCHES BELOW ARE DELIBERATELY OVER THE ~20-WORD BUDGET when more
     # than a couple of checks are red: they name every failing check by id, so
-    # the worst case — all 15 conformance checks red — is 39 words and 28
-    # words respectively. Naming them is the entire value of adopting the
+    # the worst case — all 15 conformance checks red — is a 38-word detail and
+    # a 27-word one respectively. Naming them is the entire value of adopting the
     # suite's verdict rather than a bare "the suite failed": which checks went
     # red is what says whether this is one command or a dead transport, and
     # the ids are what a reader greps for next. Same reasoning as H3's

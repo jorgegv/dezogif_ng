@@ -86,25 +86,42 @@ surviving one — a retraction deleted while the thing it retracted stayed. **Wh
 deleting prose, check whether it is the only place a correction lives.**
 
 **3. A check line says what happened; the documents say what it means.** Every
-verdict `conformance.py` and `hardware-check.py` print for a **single cause** is
-one sentence of **about twenty words**. Ids are untouched and are interface, not
-prose: `run-dzrp-stub.sh`'s W3 greps `^FAIL  C10 ` and `classify()` takes the
-code from field 2.
+verdict `conformance.py` and `hardware-check.py` print is one sentence of
+**about twenty words**. Ids are untouched and are interface, not prose:
+`run-dzrp-stub.sh`'s W3 greps `^FAIL  C10 ` and `classify()` takes the code from
+field 2.
 
-**THE "SINGLE CAUSE" QUALIFIER IS NOT DECORATION, AND ITS ABSENCE MADE THE FIRST
-VERSION OF THIS ENTRY FALSE.** It claimed "longest line anywhere is now 20; the
-only exception is H3's, marked". Re-measured mechanically on 2026-08-06 — every
-reachable `(label, detail)` pair in both harnesses, 66 lines, representative
-values substituted — that is wrong in both halves. **The budget binds each
-single-cause verdict: worst case 22 words**, `main()`'s REQUIRED-refusal branch.
-**Four** branches exceed it, not one, and they exceed it by a lot:
+**THE UNIT IS THE `detail`, NOT THE LABEL, AND NOT WRITING THAT DOWN COST TWO
+REVIEW ROUNDS** (adjudicated by the user, 2026-08-06). The label is the check's
+fixed title from the `CHECKS` table — written once, never varying at run time,
+not prose the check chose — so it is not charged to the check's budget. Two
+things force the reading, and both are checkable:
 
-| branch | worst case | why it is long |
+- `hardware-check.py` prints `"  %-4s %s %s" % (tag, paint(status), detail)`,
+  where the tag is a bare `H3`. Its one long-agreed exception, H3's failure
+  composite at **~25 words**, is therefore a count of a *detail* — there is no
+  label there to count. That single fact settles it.
+- the labels in `conformance.py` run **3 to 9 words**. Charging them would give
+  C3 seventeen words of prose and C15 eleven under the same nominal rule, which
+  is not one rule.
+
+**Measured mechanically under that definition**: every reachable detail in both
+harnesses, **81** of them, representative values substituted and worst-case
+joins expanded. Single-cause details run **1 to 14 words, median 8**; the
+longest is **14**, `main()`'s REQUIRED-refusal branch. **So the budget is
+comfortably kept and there is NO single-cause exception anywhere** — the
+"longest single-cause line is 22 words" ceiling asserted a commit earlier was an
+artefact of counting `label — detail`, and the exception it created has been
+withdrawn from all six places it was stated.
+
+**Four** branches do exceed it, all joins of several *independent* faults:
+
+| branch | worst-case detail | why it is long |
 |---|---|---|
-| C11 `chk_continue_state`'s `"; ".join(problems)` | **66 words** | nine independent faults — BC/IX inward, six registers outward, A |
-| `hardware-check.py`'s H2 novel composite | **39 words** | names every failing check by id; worst case is all 15 red |
-| C10 `chk_continue_resumes`'s join | **38 words** | wrong address, no marker, ran past the breakpoint, illegal reason |
-| `hardware-check.py`'s H2 known-red composite | **28 words** | same, 15 ids |
+| C11 `chk_continue_state`'s `"; ".join(problems)` | **58 words** | nine independent faults — BC/IX inward, six registers outward, A |
+| `hardware-check.py`'s H2 novel composite | **38 words** | names every failing check by id; worst case is all 15 red |
+| C10 `chk_continue_resumes`'s join | **29 words** | wrong address, no marker, ran past the breakpoint, illegal reason |
+| `hardware-check.py`'s H2 known-red composite | **27 words** | same, 15 ids |
 
 **They are deliberately NOT truncated, and the fix was to the CLAIM rather than
 to the output.** Each joined fault is separately load-bearing: "the state was
@@ -129,12 +146,30 @@ paths a test bench exists for are the unhappy ones.
 the second occurrence of one disease in one commit. It caught the branches it
 went looking for and never enumerated the rest, so four compound joins survived
 under a claim that said there were none. The `PRECONDITION` fix it made was
-real (that branch measures **19** words now, comfortably inside the budget); the
-*claim* it attached to the fix was not. **A rule about output is a rule about
-every branch of that output, and the only way to know is to enumerate them with
-a script** — `ast`, representative values, worst-case joins expanded — which is
-what 2026-08-06 did and what should have happened the first time. Eyeballing is
-what produced both wrong measurements.
+real (that branch's detail measures **11** words, comfortably inside the
+budget); the *claim* it attached to the fix was not. **A rule about output is a
+rule about every branch of that output, and the only way to know is to enumerate
+them with a script** — `ast`, representative values, worst-case joins expanded.
+Eyeballing produced both wrong measurements.
+
+**THE THIRD ROUND WENT ON AN OFF-BY-TWO, AND THE REAL FAULT WAS THAT NOBODY HAD
+SAID WHAT WAS BEING COUNTED.** One measurement said the REQUIRED-refusal branch
+was 22 words, a re-measurement said 24, and both were counting
+`label — detail` — a unit the rule had never named and which the H3 exception
+already contradicted. The true figure is **14**, and there was never anything to
+mark. **A measurement is not reproducible until the thing being measured is
+defined**, and "re-measured mechanically" buys nothing when the script measures
+the wrong unit — it only makes the wrong answer more precise, which is how a
+disagreement about a convention got mistaken for a disagreement about
+arithmetic. The definition now leads the rule in `conformance.py` and in
+[DZRP-TESTING.md], so the next person cannot pick the other reading.
+
+*(One supporting claim in that adjudication does not survive checking, and it is
+recorded because the conclusion stands without it: the suggestion that "several
+routine lines already breach" under the label+detail reading. Measured — **no**
+`PASS` line exceeds 20 that way and exactly one sits at 20. Only two lines
+breached at all, both the REQUIRED-refusal FAIL at 22. The decision rests on the
+H3 rendering and the 3-to-9-word label spread, which do hold.)*
 
 **H3's exception stands unchanged.** `hardware-check.py`'s H3 *failure*
 composite runs to ~25 words, because it joins which connection got no reply,
@@ -165,6 +200,7 @@ in place 2026-08-06.)*
 C15 has **not** run on hardware; the next hardware run is 15 checks, not 14.
 
 [doc/HARDWARE-TESTING.md]: doc/HARDWARE-TESTING.md
+[DZRP-TESTING.md]: doc/DZRP-TESTING.md
 
 ---
 

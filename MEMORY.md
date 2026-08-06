@@ -126,8 +126,37 @@ client required a non-zero size, so it never saw it and held for its full 300 s
 timeout — the right answer, with a broken handshake hidden behind it, and the
 bench was ignoring the client's exit code.
 
+**THE REVIEW FOUND THAT THE COMMIT LEFT PROSE CONTRADICTING ITS OWN CODE, AND
+THE GREP FOUND MORE OF IT THAN THE REVIEW NAMED.** Two sites were reported —
+`doc/HARDWARE-TESTING.md`'s "Neither probe can read the Next's screen", and
+"Not a check; it adds no row" sitting above the new `report.add`/`row` calls in
+both probes. Enumerating mechanically instead of from that list turned up two
+more: **probe A's own module docstring** (`It cannot read the Next's screen`, in
+its WHAT THIS PROBE CANNOT ESTABLISH list) and, worse, **step 3's own preamble**
+— "the script cannot see any of it", fifteen lines above the paragraph this
+commit added saying S1-S4 can now be read. A contradiction inside one section
+of one document, introduced by the change that corrected it.
+
+This is the rule this file already states, paid for again: **a correction is not
+finished until the claim is gone from everywhere it was used as a premise, and
+the enumeration is a grep, not a memory.** The same sweep is what confirmed the
+surviving "cannot see" lines are all about the BORDER or a broken reader, which
+are true.
+
+**The ~20-word budget was also checked across every branch rather than the one
+reported**, which is the other rule this project keeps re-learning. Three lines
+were over, not one: the degraded-reader message, `observe()`'s failure text and
+A5's NOTE. The degraded-reader line is now **bounded by construction** — it no
+longer interpolates what row 12 said, because that is up to 32 characters of
+arbitrary text, and a first attempt measured 19 words against a one-token
+placeholder and 21 against the real thing. A line whose length depends on its
+data cannot be held to a word budget at all; the diagnostic moved to
+`validate_reader()`, which `screen-client.py` prints in full.
+
 **Rejected.** Sending `CMD_INIT` and accepting the wipe (it is the whole
-defect); opening a connection per reading (it perturbs the slot count — the
+defect); marking the over-budget line as a deliberate exception the way H3's is
+(it was reducible without losing a fact, and an exception is for text that is
+not); opening a connection per reading (it perturbs the slot count — the
 `a057d51` mistake); OCR (the attributes already say which cells are error text,
 and `ui.asm` fills them itself); a committed reference bitmap (the font is on
 the machine); comparing the two views as a *percentage* like `screen-diff.py`

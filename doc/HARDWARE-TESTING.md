@@ -113,8 +113,9 @@ NMI — it is the third. In an emulator the same two are **F9** (Multiface) and 
 
 If the stub's UI appears, you pressed the right one: nothing else on the machine draws that screen.
 
-Record what happens on screen — this is observation, not decoration, and the script cannot see any
-of it:
+Record what happens on screen. **S1-S4 the bench can now read for itself** (see below the table);
+**S5 it cannot**, and at this point in the procedure nothing is listening yet, so all five are
+yours to observe here:
 
 | # | Observation | Why it matters |
 |---|---|---|
@@ -440,18 +441,29 @@ and a probe that insisted on an answer would not be an instrument.
 
 ### What to watch ON THE MACHINE while a probe runs
 
-Neither probe can read the Next's screen, and all three of these are load-bearing:
+**The probes now read the screen themselves, and this list is what is LEFT.** Since the DZRP screen
+reader landed, probe A prints the error area twice — **A5** at the moment the ceiling is hit, over
+the connection it already holds, and **A6** at teardown — and probe B prints it once, as **B4**, at
+teardown. So the observation this section used to ask a human for, and which was once lost by not
+being asked, arrives in the output by itself.
+
+Three things still need eyes, and the first two are not a formality:
 
 | Observation | Why it matters |
 |---|---|
-| the **error area** (bottom nine rows, bright red on black) | **Clean while TCP degrades is the whole hypothesis.** It says the stub is not faulting, so whatever is refusing connections is on the module's side of the UART. `Last Error: …` appearing instead points back at the stub and away from #19 |
-| the **border** | moving means the stub is still cycling; frozen yellow means it is parked in a read (`transport_read_byte` writes yellow after every byte) |
-| the **session line** | and whether it changed *during* the run |
+| the **error area DURING phase 1 of probe B** | **This is the one the probes cannot reach.** B4 reads at the END, after phase 2 has lifted the blackhole; reading it while fresh clients are being refused would take one of the very slots being exhausted. Clean at that moment is the whole #15-is-#19 hypothesis — it says the stub is not faulting, so what is refusing connections is on the module's side of the UART. Probe A's **A5** *does* reach the equivalent moment, because it reads over a connection already open |
+| the **border** | **Not in the display file, so no `CMD_READ_MEM` can ever see it.** Moving means the stub is still cycling; frozen yellow means it is parked in a read (`transport_read_byte` writes yellow after every byte) |
+| whether anything changed **DURING** the run | A5, A6 and B4 are point samples. A screen that reddened between two of them and was repainted is invisible to all three |
 
-Photograph it before and after, and say whether anything changed while the probe ran. In the
-emulator this is measurable and is reported by `make probe-jnext` as a bright-red pixel count — it
-was **0** through both validation runs, i.e. jnext reproduces #15's row 4 (screen intact) alongside
-rows 1 and 5.
+Photograph it before and after anyway — it costs nothing and it is the only artefact of the three
+rows above. Note that `Last Error: RX Timeout` on its own is **not** necessarily a finding here: a
+client hanging up can produce it (issue #16), and the probes open and close connections by design.
+What would be a finding is any *other* text, or a clean area, and reading the text is exactly what
+A5/A6/B4 do that a pixel count cannot.
+
+In the emulator the same reading is also taken from the screenshot by `make probe-jnext`, as a
+bright-red pixel count — **0** through both validation runs, i.e. jnext reproduces #15's row 4
+(screen intact) alongside rows 1 and 5.
 
 ### What neither probe can establish
 

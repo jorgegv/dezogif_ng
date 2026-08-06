@@ -79,7 +79,10 @@ WHAT THIS PROBE CANNOT ESTABLISH, and none of it is hidden:
     pair that can actually reproduce #19.
   * It cannot reproduce #15. Finding a ceiling proves a ceiling exists; it does
     not prove the ceiling is what a real user hit on 2026-08-05.
-  * It cannot read the Next's screen. See the checklist it prints.
+  * It cannot see the BORDER, which is not in the display file. It CAN read the
+    rest of the screen — A5 and A6 below — so what is left for a human is the
+    border and whether anything changed between those two samples. See the
+    checklist it prints.
 
 EXIT CODES.
 
@@ -434,8 +437,8 @@ def main():
         report.detail("read over connection 1, which was already open: no slot was spent on it")
     else:
         report.add("A5", NOTE,
-                   "no connection was ever served, so there is none to read the "
-                   "screen over without taking a slot from the measurement")
+                   "no connection was served, so there is none to read the "
+                   "screen over without taking a slot")
 
     # --- reclaim ----------------------------------------------------------
     close_all(held)
@@ -469,7 +472,9 @@ def main():
 
     # Leave the machine's screen saying the session is closed rather than
     # whatever the last CMD_INIT claimed — issue #14's status line, and the same
-    # courtesy hardware-check.py pays. Not a check; it adds no row.
+    # courtesy hardware-check.py pays. THE CMD_CLOSE is not a check and renders
+    # no verdict; A6 below is a MEASURED row, like everything else this probe
+    # prints.
     #
     # THE SCREEN IS READ BEFORE THE CMD_CLOSE, on this same connection.
     # cmd_close answers and then leaves through `jp main`, which repaints — so

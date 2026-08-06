@@ -367,11 +367,20 @@ class Screen:
 
     def observation(self):
         """What a probe prints. One clause, in the house style."""
-        ok, got = self.validate_reader()
+        ok, _ = self.validate_reader()
         if not ok:
-            return ("the screen could not be read (row %d says %r, not %r): "
-                    "treat this as a broken reader, not a clean screen"
-                    % (VALIDATION_ROW, got, VALIDATION_TEXT))
+            # "a broken reader, not a clean screen" is the load-bearing half: a
+            # reader that cannot read anything otherwise reports something
+            # indistinguishable from "no error".
+            #
+            # WHAT ROW 12 ACTUALLY SAID IS DELIBERATELY NOT INTERPOLATED HERE.
+            # It is up to 32 characters of arbitrary text, so a line carrying it
+            # has no bounded length — a first version measured 19 words against
+            # a one-token placeholder and 21 against the real thing. This line
+            # is the same length every time; the diagnostic belongs in
+            # `validate_reader()`, which screen-client.py prints in full.
+            return ("the reader failed its row-%d check — a broken reader, "
+                    "not a clean screen" % VALIDATION_ROW)
         red = self.error_pixels()
         if not red:
             return "the error area is CLEAN — 0 bright-red pixels on the stub's own screen"
@@ -421,8 +430,8 @@ def observe(conv, disconnected=True):
     try:
         scr = read_screen(conv, glyphs=read_font(conv))
     except Exception as e:                      # noqa: BLE001 — see above
-        return ("the screen could not be read (%s: %s) — that is a fact about "
-                "this read, not about the screen" % (type(e).__name__, e))
+        return ("the screen could not be read (%s: %s) — a fact about this read"
+                % (type(e).__name__, e))
 
     if disconnected and scr.only_error_is():
         return ("the error area holds only %r (%d px), which is what this run's "

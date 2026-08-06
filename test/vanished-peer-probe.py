@@ -378,7 +378,9 @@ def main():
                "power cycle is the next thing to try — record whether it fixes it.")
 
     # Leave the Next's screen saying the session is closed (issue #14), the
-    # same courtesy hardware-check.py pays. Not a check; it adds no row.
+    # same courtesy hardware-check.py pays. THE CMD_CLOSE is not a check and
+    # renders no verdict; B4 below is a MEASURED row, like everything else this
+    # probe prints.
     #
     # The screen is read BEFORE the CMD_CLOSE on this same connection: cmd_close
     # answers and then leaves through `jp main`, which repaints, so a read

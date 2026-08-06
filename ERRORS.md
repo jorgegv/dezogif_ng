@@ -59,7 +59,7 @@ flaky.
 
 **Why it appeared now**, and this is the part worth carrying: nothing in this
 repository changed. The check's correctness depended on **where the match falls
-in another program's output** — the matched flag at byte 5859 of 10005, inside
+in another program's output** — the matched flag at byte 5786 of 10005, inside
 the second of three chunks — a property jnext is free to alter in any release,
 and did.
 

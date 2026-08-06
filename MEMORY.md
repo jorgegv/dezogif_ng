@@ -5,6 +5,117 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-06 — Two INSTRUMENTS for #15, and a firewall change shaped so that dying badly is harmless
+
+**Built, issue #15.** `make probe-slots` (probe A, no root) and
+`make probe-vanished` (probe B, sudo) measure the one thing the standing
+hypothesis about issue #15 rests on: how many clients the ESP module will hold,
+and whether an abandoned slot is ever given back.
+
+**They are INSTRUMENTS, NOT GATES, and that is the first decision.** They print
+numbers and render no verdict, they are not in `make test` and must not be, and
+**neither can close #15.** Issue #15 has never been reproduced deliberately; a
+probe that said PASS or FAIL would be asserting a conclusion nobody has. The
+Makefile block says so, both scripts say so on every run, and
+[doc/HARDWARE-TESTING.md] carries the limits.
+
+**The hypothesis is that #15 IS #19, and it comes from what 000E did NOT
+explain.** The CRLF `SEND OK` swallow band accounts for the `RX Timeout`, the
+frozen border and the hung client — but a swallowed command is **transient**, so
+it accounts for neither the **power cycle** nor the **accept latency measured
+degrading 83 ms → 389 ms → timeout**. That degradation is on the *module's* side
+of the UART, where the Z80 cannot reach. #19 says nothing ever frees an inbound
+slot and a power cycle is the only thing that does. Probe A measures the
+ceiling; probe B produces a peer that never gives its slot back.
+
+**A1 is the line that earns probe A**, and without it the probe would be worth
+little. At the first connection that is not served it asks the **earliest
+still-open** one whether it still answers. "The fifth client got nothing" has two
+causes that are indistinguishable from the client that got nothing — the module
+is full (stub healthy) or the stub is wedged — and that is exactly the position
+#15 was reported from. One extra exchange separates them.
+
+**THE EXPECTED NUMBERS ARE DERIVED FROM jnext'S OWN SOURCE, NOT CHOSEN**, and
+`make probe-jnext` runs first, always. `MAX_CONNECTIONS` 5 minus
+`FIRST_INBOUND_CID` 1 is **4** inbound slots (`esp_at.h:437`/`:452`,
+`esp_at.cpp:894-902`); probe A must find 4, and probe B must see fresh clients
+survive **3** — a vanished peer keeps its slot for ever and the client after it
+needs one of its own. **Real firmware should be 5**, by jnext's own comment
+("ours is one lower because slot 0 is reserved"), and *that difference is itself
+a check*: a probe reporting 4 at a Next would be reproducing an emulator
+artefact. `--expect-ceiling` is passed by the emulator harness and **never** at
+hardware, where the number is the unknown. Measured: **V1 ceiling 4, V2 three
+survivals, both green, 0 bright-red pixels on the stub's screen throughout** —
+so jnext reproduces #15's rows 1, 4 and 5 (listener alive, screen intact, TCP
+refusing) with the stub perfectly healthy.
+
+**Validating first is not ceremony.** A probe that never worked reports a
+negative indistinguishable from a real one, and this project has already been
+handed one: the first hardware sweep of the swallow band reported a *refutation*
+produced by a harness that misread a DZRP response length ([[ERRORS.md]]).
+
+**PROBE B USES A DEDICATED iptables CHAIN, NOT RULES IN `OUTPUT`, and this is
+the decision most worth keeping.** The brief proposed the direct rule; a chain
+is strictly safer and the argument is about *how it dies*, not how it runs:
+teardown is three fixed commands that do not depend on what was added, so a rule
+the script never recorded cannot survive it; every deletion is **by
+specification**, never by index; **unhooking is the first step and is sufficient
+on its own**, so if the flush and the delete both fail the user's traffic is
+already normal and what is left is an inert, unreferenced chain; and a leftover
+chain is harmless and self-announcing where a leftover `-A OUTPUT … -j DROP`
+silently blackholes the user's own Next. `--clean` removes it wholesale, and the
+same teardown runs at startup.
+
+**And each DROP is scoped to ONE SOURCE PORT**, which is the other half. The
+blackhole must stay up for the whole measurement — lift it and our own kernel
+answers the module's retransmissions with a RST, freeing the slot and destroying
+the subject — so a rule saying "drop everything to the Next's 11000" would
+blackhole the probe's own later connections and leave nothing to measure with.
+Binding each doomed socket to a known local port is what lets one connection
+vanish while every other keeps working.
+
+**Phase 2's recovery is deliberately reported narrowly**, in the probe's own
+output and not only in the document: lifting the rule lets our kernel finally
+answer the module, which is news arriving from *outside*. A client served
+afterwards says the slot comes back once the module is **told** — never that the
+module heals on its own.
+
+**One change was forced by measurement rather than reasoning, and it is in
+[[ERRORS.md]]**: the probe now runs in the **background** with the wrapper
+`wait`ing on it, because bash defers a trapped signal until the running
+foreground command returns. Demonstrated: SIGINT at the wrapper left the chain
+hooked into OUTPUT for as long as the probe had left to run. After the change,
+cleanup completes in **under 0.5 s**, and SIGTERM exits 143 with the chain gone.
+Also demonstrated: the loud failure path (forced by planting a second reference
+so `-X` must fail) exits 1 and names the three commands to paste; SIGKILL cannot
+be trapped, so it leaves the chain, and both `--clean` and the next run's
+startup teardown remove it.
+
+**Rejected.** Rules inserted directly into `OUTPUT` (above); a comment-match
+sweep (`-m comment`) to find orphans (it works, but deleting by a parsed `-S`
+line means reconstructing a spec from text, where a chain needs no parsing at
+all); a network namespace for the vanishing peer (more root surface and more to
+leave behind, for the same effect); making the peer vanish without root
+(impossible — the kernel always sends FIN or RST, and both are measured to free
+the slot, #15's E-C); folding either probe into `make test` or giving them
+PASS/FAIL verdicts (they would then be asserting a conclusion about an
+unreproduced fault); asserting the ceiling at hardware.
+
+**NOT ESTABLISHED, and it is written into both scripts and the document.**
+Neither probe reproduces #15. Probe A's ceiling is a ceiling under *cleanly
+closed* connections, which are measured not to leak. Probe B shows what a
+vanished peer **costs**, not that one is what happened on 2026-08-05, and
+nothing here says what made a peer vanish in the field. No PC-side check can see
+connection ids. And a green `make probe-jnext` says the instruments work in an
+emulator whose ceiling is four integers in a header file.
+
+**Test-only: no `src/` file and no ROM logic in the `Makefile` changed, so no
+`make bump`.** Checked mechanically rather than by judgement — see the report.
+
+[doc/HARDWARE-TESTING.md]: doc/HARDWARE-TESTING.md
+
+---
+
 ## 2026-08-06 — The build number is stored once and rendered twice; and a row that was already exactly full
 
 **Decided (user) and built, issue #20.** `version.yaml` holds four uppercase hex

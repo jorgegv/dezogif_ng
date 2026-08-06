@@ -8,7 +8,8 @@
         test-unit test-mfselect \
         test-esp test-dzrp test-dzrp-stub test-ip-boundary test-tx-patience \
         test-client-status test-no-hang \
-        test-hardware bump bump-major check-reproducible \
+        test-hardware probe-jnext probe-slots probe-vanished \
+        bump bump-major check-reproducible \
         check-reproducible-wifi clean
 
 # Show this help
@@ -530,6 +531,63 @@ test-hardware:
 	  echo "  an observation on the Next's screen, not something a socket can reach."; \
 	  exit 2; }
 	python3 $(TEST)/hardware-check.py --host "$(NEXT_IP)" $(HW_ARGS)
+
+# ---------------------------------------------------------------------------
+# Issue #15 investigation probes. INSTRUMENTS, NOT GATES.
+#
+# `make test` is a gate: it says whether the thing still works. These three
+# targets are not, and must never be folded into one. They MEASURE — how many
+# clients the module will hold, and what a peer that vanishes without a FIN or
+# a RST costs — because issue #15 has never been reproduced deliberately and the
+# first job is to make a positive reproduction possible. They print numbers, not
+# verdicts: a probe that said PASS would be asserting a conclusion nobody has.
+#
+# The hypothesis they test is that #15 IS #19. #15's `RX Timeout`, frozen border
+# and hung client are explained by the CRLF swallow band fixed in 000E; its
+# POWER CYCLE and its degrading TCP accept latency (83 ms -> 389 ms -> timeout)
+# are not, and both sit on the module's side of the UART where the Z80 cannot
+# reach. #19 says nothing ever frees an inbound slot and a power cycle is the
+# only thing that does.
+#
+# `probe-jnext` FIRST, ALWAYS. A probe that never worked reports a negative
+# result indistinguishable from a real one, and this project has already been
+# handed one of those (ERRORS.md, the hardware sweep whose harness misread a
+# DZRP response length). It checks both probes find jnext's OWN documented
+# ceiling before either is pointed at a machine whose ceiling is the unknown.
+#
+# See doc/HARDWARE-TESTING.md.
+# ---------------------------------------------------------------------------
+
+# Validate BOTH issue #15 probes against jnext before trusting them on hardware
+probe-jnext:
+	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
+	 ROM="$(ROM_WIFI)" $(TEST)/run-probes-jnext.sh
+
+# Probe A: how many clients the module holds, and if a close gives one back (NEXT_IP=<ip>)
+probe-slots:
+	@test -n "$(NEXT_IP)" || { \
+	  echo "usage: make probe-slots NEXT_IP=<ip>   (the Next's address, port 11000)"; \
+	  echo "  Run 'make probe-jnext' FIRST: it checks the probe can find a ceiling"; \
+	  echo "  it already knows, which is the only thing that makes a hardware number"; \
+	  echo "  worth reading. Read doc/HARDWARE-TESTING.md, and watch the SCREEN."; \
+	  exit 2; }
+	python3 $(TEST)/slot-ceiling-probe.py --host "$(NEXT_IP)" $(PROBE_ARGS)
+
+# Probe B needs root, so `sudo` is on the SCRIPT rather than on `make`: the
+# build system has no business running as root, and the script is the thing
+# whose header states every firewall rule it adds. It refuses to run without
+# root and offers --dry-run, so a user can audit it before typing a password.
+#
+# Probe B: is an abandoned connection slot EVER reclaimed without a power cycle (NEXT_IP=<ip>)
+probe-vanished:
+	@test -n "$(NEXT_IP)" || { \
+	  echo "usage: make probe-vanished NEXT_IP=<ip>   (needs sudo; adds ONE firewall chain)"; \
+	  echo "  Audit it first:  $(TEST)/run-vanished-peer.sh --host <ip> --dry-run"; \
+	  echo "  If a run is interrupted:  sudo $(TEST)/run-vanished-peer.sh --clean"; \
+	  echo "  Run 'make probe-jnext' FIRST. Read doc/HARDWARE-TESTING.md."; \
+	  exit 2; }
+	sudo $(TEST)/run-vanished-peer.sh --host "$(NEXT_IP)" $(PROBE_ARGS)
 
 # The build number is two bytes and, since issue #20, is READ as two: the high
 # one says which series and is moved deliberately, the low one counts the merges

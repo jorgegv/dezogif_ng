@@ -278,6 +278,167 @@ done. It landed, so C2 goes green on its own and the entry went with it.
 
 So every failure here is now new on this remote, and is the part worth investigating.
 
+## Step 4b — the issue #15 probes (optional, and NOT part of the bench)
+
+    make probe-jnext                             # FIRST. Always. See below
+    make probe-slots      NEXT_IP=192.168.1.42   # probe A
+    make probe-vanished   NEXT_IP=192.168.1.42   # probe B — needs sudo
+
+These two are **instruments, not gates**. They print numbers and observations and render no
+verdict, they are not part of `make test`, and **neither can close
+[issue #15](https://github.com/jorgegv/dezogif_ng/issues/15) on its own.** Nobody has reproduced
+that wedge deliberately; their job is to make a positive reproduction possible.
+
+### The hypothesis they test
+
+Issue #15's signature has two halves and only one is explained. The CRLF `SEND OK` swallow band
+fixed in build 000E accounts for the `RX Timeout`, the frozen border and the hung client — but a
+swallowed command is **transient**, so it accounts for neither the **power cycle** nor the **TCP
+accept latency measured degrading 83 ms → 389 ms → timeout** while it was happening. That
+degradation is on the **module's** side of the UART: the Z80 does not accept TCP connections and
+cannot make one slow.
+
+[Issue #19](https://github.com/jorgegv/dezogif_ng/issues/19) says the module holds a small number of
+inbound connections, drops anything past them, and that **nothing in the stub ever frees one** —
+`AT+CIPCLOSE=<id>` is the fix and is unwritten because jnext cannot model it (jnext#211). A power
+cycle is the only thing in the system today that reclaims a slot. That fits the unexplained half
+exactly: stub healthy, screen intact, TCP degrading then refusing, recoverable only by pulling the
+plug.
+
+**So the hypothesis is that #15 IS #19**, and these probes measure what it rests on.
+
+What does *not* contradict it: #15's own E-C control, 12 rounds of connect + abortive RST on build
+000B, found accept latency flat at 4-12 ms and no leak. **An RST frees the slot**, and so does a
+FIN. The leak needs a peer that goes away with **neither** — which is probe B's whole mechanism.
+
+### Probe A — the slot-ceiling probe (`make probe-slots`, no root)
+
+Opens connections **one at a time and holds them open**, each given a `CMD_INIT`, with **no
+retries**: a connection that needed three goes is the signal, not noise to smooth away. It reports
+per connection whether it was `SERVED`, `DROPPED` (accepted at TCP and then hung up on — what a
+module out of slots looks like), `SILENT` (open, no reply — what a wedged *stub* looks like) or
+`REFUSED`. Then it closes everything cleanly and reopens, to see whether a clean close gives a slot
+back. It ends by reporting the accept-latency **trend**, first to last, because #15's number was a
+trend and a median would have averaged it away.
+
+**The line that earns the probe is `A1`.** At the first connection that is not served it asks the
+**earliest still-open** connection whether it still answers. "The fifth client got nothing" has two
+completely different causes — the module is full (the stub is healthy and still serving the
+connections it has) or the stub is wedged (nobody is served) — and they are indistinguishable from
+the client that got nothing, which is exactly the position #15 was reported from. One extra
+exchange separates them.
+
+**What it cannot do**: it cannot see connection ids, so it measures *how many* slots there are and
+never *which*; every connection it opens is closed cleanly, and a clean close is measured not to
+leak, so it cannot produce a leaked slot at all; and finding a ceiling proves a ceiling exists, not
+that a ceiling is what a user hit.
+
+### Probe B — the vanished-peer probe (`make probe-vanished`, needs sudo)
+
+Establishes a connection, has it served, then makes the peer **vanish with neither FIN nor RST** so
+the module keeps the slot, and asks whether a fresh ordinary client is still served — repeatedly,
+until one is not. Finally it lifts the blackhole and asks once more.
+
+**The exact firewall change, which is auditable before you type a password** —
+`test/run-vanished-peer.sh --host <ip> --dry-run` prints it and touches nothing:
+
+    iptables -N DEZOGIF_PROBE
+    iptables -I OUTPUT 1 -j DEZOGIF_PROBE
+    iptables -A DEZOGIF_PROBE -p tcp -d <NEXT_IP> --sport <local-port> --dport 11000 -j DROP
+
+and the teardown, run from an `EXIT` trap armed **before** the chain is created, at startup as
+well, and available on its own as `sudo test/run-vanished-peer.sh --clean`:
+
+    iptables -D OUTPUT -j DEZOGIF_PROBE      # unhook FIRST: traffic is normal again
+    iptables -F DEZOGIF_PROBE
+    iptables -X DEZOGIF_PROBE
+
+`iptables -S` is printed before and after, so the change and its removal are both in the run's own
+transcript, and the removal is **verified** — a leftover produces a loud failure naming the exact
+commands to paste.
+
+**Why a dedicated chain rather than a rule in `OUTPUT` directly.** Because cleanup has to be right
+when the script dies badly, and this is the shape where it can be. Teardown is three fixed commands
+that do not depend on what was added, so a rule the script never recorded cannot survive it; every
+deletion is **by specification**, never by index; **unhooking is first and is sufficient on its
+own**, so even if the flush and delete both fail the network is already normal and what is left is
+an inert, unreferenced chain; and a leftover chain is harmless, where a leftover
+`-A OUTPUT … -j DROP` silently blackholes the user's own Next.
+
+**Why each rule is scoped to one source port.** The blackhole must stay up while the measurement
+runs — lift it and our own kernel answers the module's retransmissions with a RST, which frees the
+slot and destroys the thing being measured. A rule written as "drop everything to the Next's port
+11000" would therefore also blackhole the probe's own later connections. Binding each doomed socket
+to a known local port is what lets one connection vanish while every other connection to the same
+machine keeps working.
+
+**Read phase 2's recovery narrowly.** Lifting the blackhole lets our kernel finally answer the
+module: that is news arriving from outside. A fresh client being served afterwards says the slot
+comes back once the module is **told**, never that the module heals on its own.
+
+### `make probe-jnext` FIRST, always
+
+**A probe that never worked reports a negative result indistinguishable from a real one.** This
+project has already been handed one: the first hardware sweep of the CRLF swallow band reported a
+*refutation*, and the refutation was a harness that read a DZRP response length as payload-only
+where it counts from the sequence byte, so every trial died on its first command and the verdict
+logic scored that as "answered" (`ERRORS.md`). The numbers were real; the instrument was not.
+
+So both probes are pointed first at a machine whose ceiling is **known**, and checked against it.
+The numbers are derived from jnext's own source, not chosen:
+
+| | jnext | why |
+|---|---|---|
+| `MAX_CONNECTIONS` | 5 | `esp_at.h:437` — "ESP-AT's own `AT+CIPMUX=1` limit (ids 0..4)" |
+| `FIRST_INBOUND_CID` | 1 | `esp_at.h:452` — slot 0 holds the **borrowed outbound** transport (simplification 8a) |
+| **inbound slots** | **4** | the difference. `esp_at.cpp:894-902` closes anything past it: *"Real firmware refuses past its own ceiling too; ours is one lower because slot 0 is reserved"* |
+| probe A expects | ceiling **4** | four held open, the fifth `DROPPED` |
+| probe B expects | **3** survivals | a vanished peer keeps its slot for ever and the fresh client after it needs one of its own, so 4 − 1 |
+
+**Real firmware should be one higher — a ceiling of 5** — by that same comment: nothing on a real
+module reserves a slot for outbound when the guest never sends `AT+CIPSTART`, so ids 0..4 are all
+available. **That difference is itself a check.** A probe reporting 4 against hardware would be
+reproducing an emulator artefact rather than measuring a module — and this project has been bitten
+twice by jnext's value sitting on the safe side of ours, with a connection id of 0 and a
+15-character IP address, both green in every emulator run.
+
+**Neither expected number is ever asserted against hardware.** `--expect-ceiling` is passed by the
+emulator harness and must never be passed at a Next: there the number is the unknown being measured,
+and a probe that insisted on an answer would not be an instrument.
+
+### What to watch ON THE MACHINE while a probe runs
+
+Neither probe can read the Next's screen, and all three of these are load-bearing:
+
+| Observation | Why it matters |
+|---|---|
+| the **error area** (bottom nine rows, bright red on black) | **Clean while TCP degrades is the whole hypothesis.** It says the stub is not faulting, so whatever is refusing connections is on the module's side of the UART. `Last Error: …` appearing instead points back at the stub and away from #19 |
+| the **border** | moving means the stub is still cycling; frozen yellow means it is parked in a read (`transport_read_byte` writes yellow after every byte) |
+| the **session line** | and whether it changed *during* the run |
+
+Photograph it before and after, and say whether anything changed while the probe ran. In the
+emulator this is measurable and is reported by `make probe-jnext` as a bright-red pixel count — it
+was **0** through both validation runs, i.e. jnext reproduces #15's row 4 (screen intact) alongside
+rows 1 and 5.
+
+### What neither probe can establish
+
+- **Neither reproduces issue #15**, and **#15 must not be closed on either.** Probe A finds a
+  ceiling under *cleanly closed* connections, which are measured not to leak. Probe B shows what a
+  vanished peer *costs*, not that a vanished peer is what happened on 2026-08-05.
+- **Nothing here identifies what made a peer vanish** in the field. Probe B manufactures the
+  condition with a firewall rule; a real client crashing, a laptop sleeping or a WiFi drop would
+  produce it differently and with different timing.
+- **No PC-side check can see connection ids**, so "which slot" is unanswerable from here, exactly as
+  it is for H3.
+- **Neither says anything about `esp_recover`**, issue #16's part C. It re-runs the AT chain and
+  `AT+CIPSERVER=0` does **not** close established connections (`esp_at.cpp:619-621`), which is the
+  correction #19 was filed on — so a probe finding a wedge is not evidence that the recovery
+  mechanism is broken, only that it does not reach this.
+- **A green `make probe-jnext` says the instruments can find a ceiling in the emulator.** jnext's
+  ceiling is four integers in a header file and its "connection" is a host TCP socket; a real
+  ESP-01's is firmware with its own buffers, timers and failure modes.
+
 ## Step 5 — report
 
 Save the whole run, and send it with the photograph from step 3:

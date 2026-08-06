@@ -5,6 +5,54 @@ attempting similar logic.
 
 ---
 
+## A signal that was never delivered, and then one that arrived and waited
+
+**Symptom.** Probe B (issue #15) adds one `iptables` chain and removes it from an
+`EXIT` trap. Testing the interrupt path: SIGINT was sent, and the chain was still
+hooked into `OUTPUT` afterwards with its DROP rules intact. Read at face value
+that is a firewall teardown that does not work — the one failure this script
+exists to make impossible.
+
+**It took three goes, and only the third was the script's fault.**
+
+**1. The signal was never delivered.** The script runs under `sudo`, so both it
+and its child are **root**, and `kill -INT <pid>` from uid 1000 fails with
+`EPERM`. Worse, the liveness loop watching for the process to go was
+`kill -0 "$pid" 2>/dev/null || break` — which fails with `EPERM` too, so it broke
+out immediately and the test reported "gone, and the chain survived". **`kill -0`
+is a lie across a uid boundary**: it cannot distinguish "no such process" from
+"not yours". `ps -eo pid,args` showed the script and its python child both
+running the whole time.
+
+**2. Delivered properly with `sudo kill`, bash DEFERRED it.** A trapped signal is
+not acted on until the running **foreground** command returns, and the foreground
+command was the probe, with minutes left. The trap then ran perfectly — several
+minutes late, with the blackhole in place throughout. In a terminal this never
+shows, because Ctrl-C signals the whole process **group**, so the child dies too
+and the trap runs at once; anything scripted signals one pid and gets the
+deferral.
+
+**3. The real fix.** The probe is backgrounded and the wrapper `wait`s on it.
+`wait` is interruptible, so the handler fires immediately, kills the child (which
+is the only thing that could still add rules) and then removes the chain.
+Measured: cleanup completes in **under 0.5 s** where it had taken minutes, and
+SIGTERM exits 143 with nothing left behind.
+
+**The honest limit, demonstrated rather than asserted.** SIGKILL cannot be
+trapped, so it leaves the chain. That is why the chain shape was chosen in the
+first place — the leftovers are inert once unhooked, `--clean` removes them, and
+the next run's startup teardown removes them too. Both were run.
+
+**Lesson, and this file already carries its cousin.** ERRORS.md's `cp --reflink`
+entry records two attempts that tested the wrong *process*; this is the same
+disease one layer down — a test that never delivered its *signal*, and a liveness
+check that could not have told. **Before concluding a handler is broken, prove
+the signal arrived**: `ps` for the process, and remember that `kill -0` answers
+"is it mine" as well as "is it there". And when it did arrive and nothing
+happened, ask what the shell was busy with before rewriting the handler.
+
+---
+
 ## Deleting the ROMs is NOT enough before a pinned hash comparison
 
 **Symptom.** A test-only branch — no file under `src/` touched, `git diff main --

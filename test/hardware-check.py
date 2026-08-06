@@ -626,7 +626,7 @@ def read_screen_then_close(host, port, timeout, results):
 
     THE CLOSE IS FOR THE MACHINE'S SCREEN. Issue #14's status line reports the
     last session event the stub actually observed, so a bench whose final act
-    is H5's connection leaves a Next reading "Session opened (CMD_INIT)" after
+    is H5's connection leaves a Next reading "Session opened - CMD_INIT" after
     a completed run — accurate, and confusing to walk up to. It is NOT a check:
     C15 in the conformance suite already asserts CMD_CLOSE is answered and that
     the remote serves on afterwards.
@@ -794,7 +794,7 @@ def main():
     # H3-H5 run AFTER the conformance delegation and each open connections of
     # their own, so the suite's own teardown is not the last thing this bench
     # does — without this, a completed hardware run leaves the Next reading
-    # "Session opened (CMD_INIT)". H6 is taken on the same connection, before
+    # "Session opened - CMD_INIT". H6 is taken on the same connection, before
     # the close repaints.
     read_screen_then_close(args.host, args.port, args.timeout, results)
 

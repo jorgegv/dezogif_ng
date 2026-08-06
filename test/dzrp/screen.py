@@ -3,7 +3,7 @@
     from screen import read_screen, Screen
     scr = read_screen(conv)                 # conv is a live dzrp.Dzrp
     scr.error_pixels()                      # 0 when the error area is clean
-    scr.row_text(8)                         # "Session opened (CMD_INIT)."
+    scr.row_text(8)                         # "Session opened - CMD_INIT"
 
 WHY THIS EXISTS.
 

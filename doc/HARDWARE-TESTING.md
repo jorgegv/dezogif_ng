@@ -67,7 +67,7 @@ must print `DeZoGiFnG_WIFI_nnnn`. That string is at a fixed offset which is a pe
 **The stub shows it.** Bring it up (step 3) and read the address off the Next's own screen:
 
 ```
-Remote debugger active.
+Remote debugger ACTIVE
 Connect at 192.168.1.42:11000
 ```
 

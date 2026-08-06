@@ -724,7 +724,7 @@ esp_client_state:   defb ESP_CLIENT_NONE
 ;---------------------------------------------------------------------------
 esp_text_connect:
     defb AT, 0, 6*8
-    defb "Remote debugger active."
+    defb "Remote debugger ACTIVE"
     defb AT, 0, 7*8
     ; There is no room for the colon MEMORY.md's sketch put after "at", and the
     ; ASSERTs below are why: this prefix plus the longest address plus the port
@@ -803,7 +803,7 @@ esp_text_client_none:
 esp_text_client_attached:
     defb AT, 0, ESP_CLIENT_ROW*8
 .text:
-    defb "Session opened (CMD_INIT)."
+    defb "Session opened - CMD_INIT"
 .end:
     defb 0
     ASSERT .end - .text <= 32
@@ -811,7 +811,7 @@ esp_text_client_attached:
 esp_text_client_detached:
     defb AT, 0, ESP_CLIENT_ROW*8
 .text:
-    defb "Session closed (CMD_CLOSE)."
+    defb "Session closed - CMD_CLOSE"
 .end:
     defb 0
     ASSERT .end - .text <= 32

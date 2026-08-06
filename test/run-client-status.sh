@@ -8,8 +8,8 @@
 # screen BACK AS TEXT.
 #
 #   N1  a client connects over TCP and says NOTHING  ->  "No debug session yet."
-#   N2  a client sends CMD_INIT                      ->  "Session opened (CMD_INIT)."
-#   N3  ... and then CMD_CLOSE                       ->  "Session closed (CMD_CLOSE)."
+#   N2  a client sends CMD_INIT                      ->  "Session opened - CMD_INIT"
+#   N3  ... and then CMD_CLOSE                       ->  "Session closed - CMD_CLOSE"
 #
 # WHY IT READS THE ROW RATHER THAN COMPARING RUNS. A check that only requires
 # the three screens to differ cannot say which of them is right, and ERRORS.md
@@ -354,9 +354,9 @@ one_run() {
 
 one_run N1 silent "No debug session yet." \
     "a client connects over TCP and says nothing — a socket is not a session"
-one_run N2 init "Session opened (CMD_INIT)." \
+one_run N2 init "Session opened - CMD_INIT" \
     "a client sends CMD_INIT"
-one_run N3 close "Session closed (CMD_CLOSE)." \
+one_run N3 close "Session closed - CMD_CLOSE" \
     "the same client then sends CMD_CLOSE"
 
 log ""

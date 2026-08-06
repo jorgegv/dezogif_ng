@@ -349,7 +349,7 @@ strongest:
    another picture. **N1** a client connects over TCP and says nothing: the line must still read
    `No debug session yet.`, because the line reports a DZRP session and a socket is not one — that
    is the honesty check, not a baseline. **N2** after `CMD_INIT` it reads `Session opened
-   (CMD_INIT).`; **N3** after `CMD_CLOSE` it reads `Session closed (CMD_CLOSE).`, with the client
+   - CMD_INIT`; **N3** after `CMD_CLOSE` it reads `Session closed - CMD_CLOSE`, with the client
    sending one further command first, because `cmd_close` answers *before* it reaches `show_ui` and
    so its response proves nothing about the screen.
    **Why not a cross-run comparison**: the two interesting states are adjacent lines of similar

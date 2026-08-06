@@ -677,7 +677,7 @@ work: bring-up first, then UI. **Port 11000**, DeZog's `cspect` default, so Appe
 `launch.json` and the ROM agree. It replaces the baud line and the joy-port selector only; the
 core-version check and the error area are mode-independent and stay. See MEMORY.md.
 
-*As built (2026-08-05) that string is two lines — `Remote debugger active.` then
+*As built (2026-08-05) that string is two lines — `Remote debugger ACTIVE` then
 `Connect at <ip>:11000` — because the screen is 32 columns and the sketch above is 64. The colon
 after "at" went with it: `Connect at ` is eleven columns, and the longest possible tail
 (`255.255.255.255:11000`) is twenty-one, so the line ends exactly at column 32 with no room for a

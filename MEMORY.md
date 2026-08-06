@@ -5,6 +5,48 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-06 — Three WiFi screen lines reworded (user)
+
+**Decided by the user, and it is aesthetics rather than correctness**, so it is
+recorded for the coupling rather than for the reasoning:
+
+    Remote debugger active.      ->  Remote debugger ACTIVE
+    Session opened (CMD_INIT).   ->  Session opened - CMD_INIT
+    Session closed (CMD_CLOSE).  ->  Session closed - CMD_CLOSE
+
+Capitals, a dash instead of brackets, no full stop. `No debug session yet.` was
+not in the request and is **untouched**.
+
+**WHAT MAKES THIS MORE THAN A STRING EDIT: A BENCH ASSERTS ON THESE WORDS.**
+`make test-client-status` decodes row 8 with the ZX font and judges each run on
+what it **says** (issue #14), precisely so that swapping two labels cannot pass
+— so the expected text in `run-client-status.sh` had to move with the source, in
+the same commit, or N2 and N3 would have gone red for a change that broke
+nothing. Re-run and green: N1-N3 read the new lines off the screen.
+
+**The past-tense honesty the wording carries is unaffected**, which is the one
+thing that could not have been traded away here: each line still names the DZRP
+command it observed, so it reports an event rather than claiming a live socket
+the transport cannot see. That was the whole argument for the wording in the
+first place.
+
+Four further sites named the old strings in prose — `screen.py`,
+`hardware-check.py` twice, `CLAUDE.md`, `doc/HARDWARE-TESTING.md`'s screen
+mock-up and the plan's "as built" note — all updated by grep rather than from
+memory. The plan's **2026-08-04 decision sketch** and this file's own history
+keep the old spelling deliberately: they record what was decided and measured
+then, and editing evidence to match a later rendering is the thing this project
+refuses.
+
+**Cost: WiFi −3 bytes**, one per line, `main_end` 0xF9CF → **0xF9CC** — so the
+branch's net against `main` is **+54**, not the +57 the entry below quotes for
+its own commit. **The UART ROM is still byte-identical** pinned (`9755e3fa…`):
+these strings live in `transport_esp.asm` and UART mode draws no session line at
+all, deliberately (issue #14 — over a cable there is no connection event to
+report).
+
+---
+
 ## 2026-08-06 — The stub closes connections now, blindly, and only when it has given up
 
 **Built, issue #19.** `esp_recover` sweeps every link id with `AT+CIPCLOSE=<id>`

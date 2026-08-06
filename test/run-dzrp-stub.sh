@@ -373,12 +373,15 @@ log ""
 # Reporting it instead of asserting it would leave the one thing MEMORY.md
 # singles out about WiFi mode untested.
 #
-# --require CONTINUE because this stub implements it: were it ever to start
-# refusing the command, the suite's partial-remote allowance would otherwise
-# report that as UNSUPPORTED and pass.
+# --require CONTINUE,CLOSE because this stub implements both: were it ever to
+# start refusing either command, the suite's partial-remote allowance would
+# otherwise report that as UNSUPPORTED and pass. CLOSE is the same argument one
+# command along — C15 is the only check that sends command 2, and talk() maps a
+# remote that hangs up onto Unsupported, so a stub that started closing the
+# socket on CMD_CLOSE would score UNSUP and this target would still exit 0.
 set +e
 python3 "$CONFORMANCE" --remote "tcp:127.0.0.1:$PORT" --expect-preamble none \
-    --require CONTINUE --timeout "$DZRP_TIMEOUT" $DZRP_ARGS
+    --require CONTINUE,CLOSE --timeout "$DZRP_TIMEOUT" $DZRP_ARGS
 suite_rc=$?
 set -e
 [ "$suite_rc" -eq 0 ] || failures=$((failures + 1))

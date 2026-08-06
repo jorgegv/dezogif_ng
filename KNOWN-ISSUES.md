@@ -120,9 +120,18 @@ stub's own screen stays **clean**: no error text, `Core:` line intact. A power c
 Nothing else does.
 
 **THE KEYBOARD IS WHAT TELLS THIS APART FROM #18**, and from the outside they otherwise look almost
-identical — connections not completing, screen clean. Here the stub is perfectly healthy and idle,
-so **`B` still toggles the border and `R` still resets**. In #18 it is stuck inside a flush and the
-keys do nothing. Try the keys before concluding anything, and before power-cycling.
+identical — connections not completing, screen clean. Here the stub is idle, so **`B` should still
+toggle the border and `R` should still reset**. In #18 it is stuck inside a flush and the keys do
+nothing. Try the keys before concluding anything, and before power-cycling.
+
+**TRACED, NOT MEASURED — the same hedge #18's half of this carries, and it matters more here.**
+Nobody has pressed a key during a live five-slot exhaustion on hardware: `test/vanished-peer-probe.py`
+neither presses one nor reads the border. The trace is that nothing in the terminal state occupies
+the Z80 — a new client never completes its handshake, so no `+IPD` ever arrives (probe B's V5,
+10009 ms), and the leaked peers carry no traffic in either direction, so `main_loop` reaches
+`.no_uart_byte`'s key poll every iteration exactly as it does when idle. That is a solid trace and it
+is still not a measurement, which is worth knowing **because this is the discriminator you follow
+before power-cycling**, and the power cycle destroys the evidence either way.
 
 ### What causes it
 
@@ -200,8 +209,8 @@ real cost rather than being impossible:
   the module itself. If it exists, the module's own stack would decide liveness and the stub would
   need no guesswork at all.
 
-Neither has been scoped, and the decision is to leave both unscoped rather than that neither could
-work.
+Neither has been scoped, and the decision is to leave both unscoped rather than a finding that
+neither could work.
 
 ### What already shipped
 

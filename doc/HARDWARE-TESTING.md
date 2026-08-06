@@ -322,7 +322,7 @@ A power cycle was the only thing in the system that reclaimed a slot. That fits 
 half exactly: stub healthy, screen intact, TCP degrading then refusing, recoverable only by pulling
 the plug.
 
-**#19 IS NOW FIXED, AND THE PAST TENSE ABOVE IS DELIBERATE — BUT IT DOES NOT RETIRE THESE PROBES.**
+**#19 IS PARTLY FIXED AND CLOSED AS WONTFIX, AND IT DOES NOT RETIRE THESE PROBES.**
 jnext#211 shipped `AT+CIPCLOSE=<id>`, and `esp_recover` sweeps every link id with it
 (`make test-slot-recovery`, 3 checks, green in the emulator). What that reclaims a slot on is a
 **recovery**, which needs `ESP_FAULT_LIMIT` **consecutive faults** — so a peer that goes away

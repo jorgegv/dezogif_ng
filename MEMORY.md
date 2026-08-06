@@ -5,6 +5,104 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-06 — The verdict rule reaches the shell benches; and a fourth count of the same thing
+
+**Decided (user, 2026-08-05) and built.** The twenty-word verdict rule now
+covers the **shell** benches, not only the two Python harnesses it was written
+for ([[#C15 sends CMD_CLOSE]]). Every `PASS`/`FAIL` line the nine
+`test/run-*.sh` benches print is at most twenty words, and the reasoning that
+used to ride in the printed line moves into a **block comment above its own
+assertion** — where the reader who needs it is already standing.
+
+**The shell benches were the anomaly, not an exception.** `make test` is the
+gate, so these are the first verdicts anybody reads; the rule's own
+justification — a verdict a reviewer scrolls is a verdict nobody reads — applied
+*least* where it was needed *most*. Eight scripts changed. The ninth,
+`run-esp.sh`, prints no verdict of its own: its E1-E4 come from
+`esp-echo-client.py`, which is why it appears in the rule and not in the diff.
+
+**`CLAUDE.md` carries the rule with two carve-outs, both interface rather than
+taste.** **The check id never changes** — `T1`-`T6`, `M1`-`M10`, `W1`-`W5`,
+`C1`-`C15` and the rest are cited by every document and issue, and two things
+*match* on them: `run-dzrp-stub.sh`'s W3 greps `^FAIL  C10 `, and
+`hardware-check.py` takes the code from field 2 of every `FAIL` line. Shorten
+the prose after the id; never the id. And **a clause a reviewer added to stop a
+check overclaiming is never trimmed**: some of these lines are long precisely
+because an earlier version claimed more than the run had shown. N4 still says
+the *mechanism* fired and is "not a repair"; `test-client-status`'s reader
+failure still says the session line was **not judged**, so a broken reader is
+never reported as a wrong screen. Where such a clause will not fit it moves into
+the comment and is not deleted — and if it survives neither move, the long line
+stays and says so.
+
+**THE MEASUREMENT, AND ONLY HALF OF IT IS SAFE TO QUOTE.** Four independent
+counts were taken of the same eight files:
+
+| source | strings | over 20 before | longest |
+|---|---|---|---|
+| the commit message | 137 | 45 | 46 |
+| the independent reviewer | 139 | 43 | 46 → 19 |
+| the manager | 139 | 42 | 46 → 19 |
+| this entry, re-measured | **139** | 42-43 | **46 → 19** |
+
+**Reproduced by every count and safe to assert**: **139** verdict strings; the
+longest fell from **46 words to 19**; and **none now exceeds 20** — which is the
+only claim the rule actually makes, and the one figure on which all four agree
+exactly.
+
+**Parser-sensitive, and NOT to be quoted as a precise figure**: how many were
+over budget *before*. Four counts gave 42, 43, 45 and 42-43. The spread is
+entirely in how each parser models `$(...)` and `${var}` inside the strings, and
+a substituted value's real word count is **unknowable statically** — so the
+honest statement is *roughly forty*, and this entry deliberately does not
+improve on it.
+
+**THE MECHANISM WAS FOUND THIS TIME, AND IT IS WORTH THE SPACE.** Counting the
+same 139 strings under three substitution models gives three answers, and one of
+them *manufactures* words: replacing a substitution with **nothing** turns
+`($ours_pct%)` into `( %)`, two tokens where the source had one, so that model
+scores 24 strings *higher* than the model that replaces it with a single token.
+It reports the post-change maximum as 20 rather than 19. Neither is a wrong
+count of a real thing; they are counts of different assumed expansions.
+
+**THE LESSON, AND THIS RULE HAS NOW PRODUCED IT THREE TIMES IN ONE DAY.** Each
+time the disagreement looked like arithmetic and was the **instrument**:
+
+1. the **unit** was never written down — one measurement counted `label — detail`
+   and another counted the detail, and a convention dispute was mistaken for an
+   off-by-two ([[#C15 sends CMD_CLOSE]]);
+2. a script substituted a **one-word token for a multi-word `%s`**, scoring
+   C13/C14 at 17 where the literal strings give 20;
+3. and now `$(...)` in shell, above.
+
+**A word count over interpolated text is an estimate, and the only figures worth
+asserting are the ones that survive a different parser.** Where a figure does
+not survive one, say the band and say why — as this entry does for "roughly
+forty". See [[ERRORS.md]], which carries the same disease under three other
+names.
+
+**Rejected.** Leaving the shell benches outside the rule (they are the first
+verdicts a developer reads, so exempting them would have kept the rule where it
+mattered least); **deleting** the reasoning rather than moving it into comments
+(this project has decided repeatedly that a check's reasoning is load-bearing
+and belongs in the source — it is what `doc/DZRP-TESTING.md` and the C15 entry
+both rest on); and pinning the before-count to one number by picking a
+favourite parser, which would assert a precision the input does not have.
+
+**Verification, and it is narrower than the change may look.** Eight benches run
+serially and green by the independent reviewer — `test` 6/6, `test-dzrp-stub`
+15/15 with W1-W5, `test-no-hang` 4/4, `test-client-status` 3/3,
+`test-tx-patience` 3/3, `test-ip-boundary` 2/2, `test-unit` 5/5,
+`test-mfselect` 10/10 — with W3's negative control demonstrated firing live; and
+a static audit showing the diff is **string literals only**, apart from two new
+comment blocks. **It says nothing about hardware and nothing about `src/`.**
+
+**Test-only: no `src/` file and no `Makefile` change, so no `make bump`** —
+checked mechanically, `git diff main..HEAD -- src/ Makefile` is empty, so no ROM
+byte moves.
+
+---
+
 ## 2026-08-05 — C15 sends CMD_CLOSE; a check says WHAT HAPPENED and the docs say what it means
 
 **Decided (user) and built.** Three things landed together, and the last is a

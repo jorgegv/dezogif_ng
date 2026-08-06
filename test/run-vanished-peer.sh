@@ -89,7 +89,11 @@
 # ===========================================================================
 #
 # Issue #19: the module holds a small number of inbound connections and nothing
-# in the stub ever frees one. Issue #15: a real Next stopped serving anyone and
+# in the stub ever freed one. (Since #19's fix esp_recover sweeps every link id
+# with AT+CIPCLOSE, so one CAN be reclaimed — on a recovery, which needs
+# ESP_FAULT_LIMIT consecutive faults. This probe produces none: its peers are
+# blackholed, the stub stays healthy, and nothing here ever reclaims. The
+# measurement is unchanged.) Issue #15: a real Next stopped serving anyone and
 # needed a power cycle, with TCP accept latency degrading 83 ms -> 389 ms ->
 # timeout beforehand. The hypothesis is that #15 IS #19.
 #

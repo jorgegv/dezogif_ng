@@ -5,6 +5,45 @@ attempting similar logic.
 
 ---
 
+## `git checkout <file>` to undo an experiment, on a file holding uncommitted work
+
+**Symptom.** An hour of uncommitted edits to `src/transport_esp.asm` gone, in
+one command, with no error and nothing to undo it — `git checkout` writes no
+reflog entry for the working tree.
+
+**Cause.** The ASSERT added with the change had to be *watched to fail*, which
+this project rightly insists on, so the bounded string was temporarily length-
+ened with `sed -i`, built twice — 24 assembles, 25 goes red, exactly as intended
+— and then the experiment was reverted with
+
+```sh
+git checkout src/transport_esp.asm
+```
+
+That restores the file from the **index**, and the index held `HEAD`'s version,
+because none of the real work had been staged. So it did not undo the `sed`; it
+undid everything since the last commit, of which the `sed` was the last two
+characters.
+
+**Fix, and it is a habit rather than a command.** **Commit before running any
+destructive experiment on a file you are editing.** The work was redone from
+the conversation's own record in ten minutes, which was luck: a longer session
+or a file edited by hand would have lost more.
+
+Where a commit is genuinely unwanted, `cp file file.bak` before the `sed` and
+`mv` it back is two words longer and cannot reach anything else. `git stash`
+also works and, unlike `checkout`, is recoverable.
+
+**Lesson.** `git checkout -- <path>` is the one common git command that
+**destroys uncommitted work silently and irrecoverably**; `reset`, `rebase` and
+even `reset --hard` all leave something in the reflog. Treat it as `rm`, not as
+"undo", and never point it at a file that is mid-change. And note what made it
+tempting: the experiment and the real work were **in the same file**, so there
+was no revert that could tell them apart. If a check needs a file mutilated,
+mutilate a copy.
+
+---
+
 ## A pre-flight check that answered "no" *because* the answer was yes
 
 **Symptom.** Every bench in this repository refused to start against jnext

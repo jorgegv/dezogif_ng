@@ -5,6 +5,122 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-06 — The stub closes connections now, blindly, and only when it has given up
+
+**Built, issue #19.** `esp_recover` sweeps every link id with `AT+CIPCLOSE=<id>`
+— after retiring the listener, before re-running the AT chain. Until this,
+**nothing in this program had ever closed an established connection**, so a peer
+that wedged rather than closing kept its inbound slot for the rest of the
+power-on session.
+
+**THE FAILURE IT REMOVES WEARS ISSUE #15'S FACE, WHICH IS WHY IT IS NOT
+HOUSEKEEPING.** Four or five such peers — which is what a user retrying a hang
+produces — and the module refuses every new client while `esp_recover` goes on
+reporting success. TCP connects, nothing answers, power cycle. **It is NOT a fix
+for #15**, which was closed on other evidence and never reproduced deliberately;
+it removes one mechanism that produces the same outward signature, which is a
+smaller claim and the only one earned.
+
+**THE SWEEP IS BLIND, AND THAT IS THE DECISION.** The stub does not know which
+ids are open: learning that means tracking `<id>,CONNECT` / `<id>,CLOSED`, which
+is M3's work and a second pattern in the RX hot path. `AT+CIPCLOSE=<id>` on an
+id with nothing behind it is answered `ERROR` — jnext refuses that case
+deliberately rather than answering OK, so that a guest "cannot believe it had
+freed a slot that was never taken" — at the cost of one line of RX. **Asking
+about all five is cheaper than knowing which one to ask about.**
+
+**And blind is what keeps it NUMBERING-AGNOSTIC, which matters more than the
+saving.** jnext's inbound ids start at 1, real firmware's first inbound
+connection is 0, and this project has already lost a hardware evening to
+encoding one of those (`esp_conn_valid`, [[ERRORS.md]]). Measured this week:
+jnext's ceiling is **4**, a real ESP-01's is **5**. Nothing in the sweep encodes
+which end of the range is real.
+
+**WHAT IT COSTS, STATED RATHER THAN DISCOVERED LATER.** One AT line and one
+drain per id — five drains — paid only on a recovery, which already runs the
+whole AT chain at bring-up budgets. And **a healthy client's connection goes
+with the wedged ones**. That is deliberate: `ESP_FAULT_LIMIT` consecutive faults
+means nothing got through in between, so a connection surviving that is not a
+session worth preserving, and DeZog reconnects. Sparing it would need per-id
+state the program does not have.
+
+**Answers are DRAINED, not matched**, which is why the routine is nine lines
+rather than a scan. The caller has no decision to make either way: an id that
+was already free is the expected case, not a fault. A wait for `OK` would sit
+out its whole budget on every free id — most of them, every time — and would
+then have to be told not to read that as the failure it looks like. A drain also
+cannot destroy an inbound frame the way a scan can (issue #11), and there is
+nothing inbound to protect: no listener is up and every connection is about to
+be closed.
+
+**WRITABLE ONLY BECAUSE jnext#211 LANDED, and #16 declined it for exactly that
+reason.** Then, jnext's `AT+CIPCLOSE` took no argument and acted on the outbound
+slot only, so the Z80 would have been unexecutable by every bench here — the
+trade this project refuses. The dependency was filed with this project as the
+demonstrated consumer, it shipped, and the code is now exercised rather than
+reasoned about.
+
+**Evidence: `make test-slot-recovery`, 3/3, and the control is the point.**
+S1 and S3 differ in one assembler constant:
+
+| | slots filled | 5th | `AT+CIPCLOSE` | held sockets closed | fresh client |
+|---|---|---|---|---|---|
+| **S1** shipped | 4 | DROPPED | **5** | 4 of 4 | **served, attempt 2** |
+| **S3** `LINK_IDS=0` | 4 | DROPPED | **0** | 0 of 4 | **refused 40× in 40 s** |
+
+`LINK_IDS` is the **fifth** build seam of the shape `IP_MAX`, `RX_WAIT`,
+`TX_PASSES`, `WAIT_SECS` and `FAULT_LIMIT` already have, and for the fourth
+time's reason: the state a check must be shown red against has to be reachable
+by a **build**, or the red is a story about a scratch tree nobody can re-run.
+
+**S2 counts per recovery, not in total**, and that is not pedantry — "at least
+five" would pass a sweep that ran once for two recoveries.
+
+**The held peers are ANSWERED before they go silent**, deliberately. A slot can
+be occupied by a socket that never speaks, but then a refusal at the ceiling has
+two indistinguishable causes — "the module is full" and "the stub is wedged" —
+which is the position #15 was reported from. Probe A's A1 lesson, applied to a
+gate instead of an instrument.
+
+**Two comments in `esp_recover` were still asserting the claim its own header
+retracts** — that stopping the listener closes connections, and that the drain
+eats `<id>,CLOSED` lines it produces. It produces none. Thirty lines below the
+paragraph correcting it, inside one routine: the same shape as the
+screen-reader commit's, and the reason this file keeps saying **a correction is
+not finished until a grep says it is**. The grep also found four prose sites
+elsewhere — `doc/HARDWARE-TESTING.md` twice, `slot-ceiling-probe.py` and
+`run-vanished-peer.sh` — all saying nothing ever frees a slot, all now qualified
+rather than deleted: **neither probe is retired by this fix**, because both keep
+the stub healthy and so neither ever triggers a recovery.
+
+**Rejected.** Tracking `<id>,CONNECT`/`<id>,CLOSED` so only live ids are closed
+(M3's work, a second pattern in the hot path, and it buys nothing here — an
+`ERROR` costs one line); `AT+CIPCLOSE=5`, which real firmware reads as "close
+everything" and jnext refuses on purpose, so it would be a promise no engine
+here makes; sweeping *before* `AT+CIPSERVER=0` (a client could take a slot
+between the sweep and the re-listen); sweeping *after* `transport_init` (the
+re-listen would land on a module still full); a scratch tree instead of the
+`LINK_IDS` seam (a red nobody can re-run).
+
+**NOT COVERED, and none of it is hidden.** A **real ESP-01**: its ceiling is
+five where jnext's is four, and no run here can check the sweep was right not to
+care. **Which ids were freed** — no PC-side check can see them, so S2 counts
+commands. A genuinely **wedged** peer: these are answered and then silent, which
+occupies a slot the same way but is not the same thing. And the sweep at its
+**shipped** `ESP_FAULT_LIMIT` of five, since jnext cannot produce five
+consecutive faults.
+
+**Regression, on the merged branch: `test-dzrp-stub` 15/15 with W1-W5,
+`test-no-hang` 4/4, `make test` 6/6, `test-unit` 5/5, both variants
+`check-reproducible`.**
+
+**Cost: WiFi +57 bytes** (`main_end` 0xF996 → 0xF9CF), 1233 free to the identity
+block. **The UART ROM is byte-identical** pinned (`9755e3fa…`), which is what
+says nothing shared moved: `transport_esp.asm` is in the WiFi build only. **This
+changes a ROM, so the merge carries a `make bump`.**
+
+---
+
 ## 2026-08-06 — Asking a program what it supports is not the same as reading its output
 
 **Built.** `bench_jnext_supports` in `test/bench-jnext.sh`, replacing the

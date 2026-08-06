@@ -20,11 +20,18 @@ transient — nor for the accept latency that was measured degrading at the time
 of the UART: the Z80 does not accept TCP connections and cannot make one slow.
 
 Issue #19 says the module holds a small number of inbound connections, drops
-anything past them, and that **nothing in the stub ever frees one** — the fix
-would be `AT+CIPCLOSE=<id>`, which is not written because jnext cannot model it.
-A power cycle is the only thing in the system today that reclaims a slot. That
-fits the unexplained half exactly: stub healthy, screen intact, TCP degrading and
-then refusing, recoverable only by pulling the plug.
+anything past them, and that **nothing in the stub ever freed one** — the fix is
+`AT+CIPCLOSE=<id>`, which was unwritten while jnext could not model it. A power
+cycle was the only thing in the system that reclaimed a slot. That fits the
+unexplained half exactly: stub healthy, screen intact, TCP degrading and then
+refusing, recoverable only by pulling the plug.
+
+#19 IS NOW FIXED and this probe is unaffected, which is worth stating rather
+than leaving as a surprise. `esp_recover` sweeps every link id, so a slot IS
+reclaimable — on a recovery, which needs ESP_FAULT_LIMIT consecutive faults.
+This probe produces none: its peers are answered and then quiet, and the stub is
+healthy throughout. So what it measures is still the module with nothing
+reclaiming, which is the number the hypothesis rests on.
 
 So the hypothesis under test is that **#15 IS #19**, and this probe measures the
 one number that hypothesis rests on: how many clients the module will hold.

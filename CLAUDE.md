@@ -427,6 +427,34 @@ strongest:
    **Not part of `make test`**: it binds a host TCP port. **It says nothing about hardware** — but
    what it validates is the display-file addressing, attribute decoding and palette, which are the
    same silicon either way. The reader **cannot see the border** in either place.
+4j. **`make test-slot-recovery`** — whether a recovery gives the module's inbound slots back
+   (issue #19), 2 headless jnext runs, 3 checks, and the **fifth** bench to move a build-time
+   constant to reach its subject. Nothing in the stub had ever closed an established connection:
+   `AT+CIPSERVER=0` retires the *listener* and leaves live connections alone, so a peer that wedged
+   rather than closing kept its slot for the rest of the power-on session, and enough of them left
+   the module refusing every new client while `esp_recover` went on reporting success — **issue
+   #15's outward signature reached by a mechanism that is entirely ours**. `esp_recover` now sweeps
+   every link id with `AT+CIPCLOSE=<id>`.
+   **S1** fills every inbound slot with connections that were *answered* and are then held —
+   answered, because a refusal at the ceiling otherwise has two indistinguishable causes, "the
+   module is full" and "the stub is wedged", which is the position #15 was reported from — confirms
+   the module stops granting them, injects one truncated command so the fault count reaches its
+   limit, and requires a **fresh client to be served afterwards**. **S2** counts the sweep's own
+   `AT+CIPCLOSE` lines out of jnext's log, **per recovery rather than in total**: a module that
+   freed slots for some other reason would satisfy S1 and say nothing about this code. **S3** is
+   the control, `LINK_IDS=0`, which assembles `esp_recover` exactly as it was — measured: 5
+   `AT+CIPCLOSE` and served on the 2nd attempt against **0** and **refused 40 times in 40 s**, one
+   constant apart.
+   The trigger connection is **left open on purpose**: a client that hangs up hands its slot back,
+   which is the thing being measured. Both ROMs are `FAULT_LIMIT=1`, N4's seam, since five
+   consecutive faults cannot be produced against an emulator that answers everything.
+   **Writable only because jnext#211 landed** — #16 declined this fix precisely because
+   `AT+CIPCLOSE=<id>` did not exist in any bench here, which would have meant shipping Z80 nothing
+   could execute. Needs jnext ≥ 0.99.127 and binds a host TCP port, so it is not part of
+   `make test`. **It says nothing about a real ESP-01**, whose ceiling is 5 where jnext's is 4
+   (measured on the user's Next, 2026-08-06) — the sweep is written not to care, and no run here
+   can check that it was right to be. It also does not reproduce a **wedged** peer, only an
+   occupied slot, and it is **not** a fix for #15.
 5. **`build/ut.nex`** — the same tests, **DeZog-driven** (`"unitTests": true` + zsim + the
    `customCode` plugin) in VS Code. Still a manual layer, and still the only way to exercise the
    36 that 4d must skip. `make unit-tests` assembles it; nothing here runs it.

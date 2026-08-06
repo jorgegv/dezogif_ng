@@ -316,11 +316,19 @@ degradation is on the **module's** side of the UART: the Z80 does not accept TCP
 cannot make one slow.
 
 [Issue #19](https://github.com/jorgegv/dezogif_ng/issues/19) says the module holds a small number of
-inbound connections, drops anything past them, and that **nothing in the stub ever frees one** —
-`AT+CIPCLOSE=<id>` is the fix and is unwritten because jnext cannot model it (jnext#211). A power
-cycle is the only thing in the system today that reclaims a slot. That fits the unexplained half
-exactly: stub healthy, screen intact, TCP degrading then refusing, recoverable only by pulling the
-plug.
+inbound connections, drops anything past them, and that **nothing in the stub ever freed one** —
+`AT+CIPCLOSE=<id>` is the fix, and it was unwritten because jnext could not model it (jnext#211).
+A power cycle was the only thing in the system that reclaimed a slot. That fits the unexplained
+half exactly: stub healthy, screen intact, TCP degrading then refusing, recoverable only by pulling
+the plug.
+
+**#19 IS NOW FIXED, AND THE PAST TENSE ABOVE IS DELIBERATE — BUT IT DOES NOT RETIRE THESE PROBES.**
+jnext#211 shipped `AT+CIPCLOSE=<id>`, and `esp_recover` sweeps every link id with it
+(`make test-slot-recovery`, 3 checks, green in the emulator). What that reclaims a slot on is a
+**recovery**, which needs `ESP_FAULT_LIMIT` **consecutive faults** — so a peer that goes away
+without ever making the stub fail a read still holds its slot indefinitely, and the module still
+has no other way to give one back. The probes' subject is that residue, and it is exactly the case
+probe B stages. Read the paragraph above as the state a Next built before that fix is in.
 
 **So the hypothesis is that #15 IS #19**, and these probes measure what it rests on.
 
@@ -475,10 +483,15 @@ bright-red pixel count — **0** through both validation runs, i.e. jnext reprod
   produce it differently and with different timing.
 - **No PC-side check can see connection ids**, so "which slot" is unanswerable from here, exactly as
   it is for H3.
-- **Neither says anything about `esp_recover`**, issue #16's part C. It re-runs the AT chain and
-  `AT+CIPSERVER=0` does **not** close established connections (`esp_at.cpp:619-621`), which is the
-  correction #19 was filed on — so a probe finding a wedge is not evidence that the recovery
-  mechanism is broken, only that it does not reach this.
+- **Neither says anything about `esp_recover`**, issue #16's part C. `AT+CIPSERVER=0` does **not**
+  close established connections (`esp_at.cpp:619-621`), which is the correction #19 was filed on —
+  so a probe finding a wedge is not evidence that the recovery mechanism is broken.
+  **Since #19 that recovery DOES sweep every link id with `AT+CIPCLOSE=<id>`**, so it can now
+  reclaim what these probes strand — but only when it *runs*, and it runs on `ESP_FAULT_LIMIT`
+  consecutive faults. Neither probe produces a fault at all: probe A's peers are answered and then
+  quiet, probe B's are blackholed behind a firewall rule, and in both cases the stub is healthy
+  throughout. So a probe still measures the module with nothing reclaiming, which is the state
+  that matters here.
 - **A green `make probe-jnext` says the instruments can find a ceiling in the emulator.** jnext's
   ceiling is four integers in a header file and its "connection" is a host TCP socket; a real
   ESP-01's is firmware with its own buffers, timers and failure modes.

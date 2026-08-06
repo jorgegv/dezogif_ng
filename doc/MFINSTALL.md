@@ -102,6 +102,11 @@ install: wifi        # or: uart, or: none
 `install: none` is a success, not an error: `--auto` says so and exits cleanly, which is what makes
 it safe to leave in `AUTOEXEC.BAS` on a day you are not debugging.
 
+**A missing or unreadable `mfinstall.yml` IS an error**, and deliberately so — `--auto` was asked to
+obey a file that is not there, and a `.mfinstall` that quietly did nothing would leave you wondering
+at the next NMI press why the debugger is not the one that came up. From `AUTOEXEC.BAS` that shows as
+a BASIC error you can read and fix; `install: none` is how you say "do nothing" on purpose.
+
 ### AUTOEXEC.BAS
 
 ```basic

@@ -61,14 +61,14 @@ RUN_TIMEOUT=400
 
 # --- frame choreography, all of it measured during calibration -------------
 #
-# The Next reaches the NextZXOS command line at ~500 frames. A command is then
-# typed one key at a time and given SETTLE frames to finish; `--load wifi` is
-# the slowest, because it CRCs 8192 bytes bitwise before writing anything, and
-# it completed inside 700 in every calibration run. The NMI lands after all of
-# that, and the capture NMI_PAINT frames later — a budget sized for the WiFi
-# build's AT chain timing out against an emulator with no ESP, which is far
-# slower to paint than the stock monitor.
-BOOT_FRAMES=500
+# space/down/enter at 400/470/500 reaches the NextZXOS command line, as jnext's
+# own regression suite does it. A command is then typed one key at a time from
+# CMD_START and given SETTLE frames to finish; `--load wifi` is the slowest,
+# because it CRCs 8192 bytes bitwise before writing anything, and it completed
+# inside 700 in every calibration run. The NMI lands after all of that, and the
+# capture NMI_PAINT frames later — a budget sized for the WiFi build's AT chain
+# timing out against an emulator with no ESP, which is far slower to paint than
+# the stock monitor.
 CMD_START=560
 KEY_STEP=14
 SETTLE=700
@@ -263,7 +263,7 @@ run_dot() {
         --sdcard "$image" --rtc "2026-01-01 12:00:00" \
         --delayed-keypress-frames 400 space \
         --delayed-keypress-frames 470 down \
-        --delayed-keypress-frames "$BOOT_FRAMES" enter \
+        --delayed-keypress-frames 500 enter \
         $keys $nmiarg \
         --delayed-screenshot "$shot" \
         --delayed-screenshot-frames "$shot_frame" \
@@ -430,10 +430,12 @@ fi
 i5=0
 i5_wifi=$(diff_pct "$stocknmi" "$autowifi")
 i5_none=$(diff_pct "$stocknmi" "$autonone")
-over "$i5_wifi" "$TAKEOVER_PCT" \
-    || { i5=1; log "      install: wifi — the stub did not come up ($i5_wifi% unlike stock)"; }
-over "$i5_none" "$MENU_PCT" \
-    && { i5=1; log "      install: none — something was installed anyway ($i5_none% unlike stock)"; }
+if ! over "$i5_wifi" "$TAKEOVER_PCT"; then
+    i5=1; log "      install: wifi — the stub did not come up ($i5_wifi% unlike stock)"
+fi
+if over "$i5_none" "$MENU_PCT"; then
+    i5=1; log "      install: none — something was installed anyway ($i5_none% unlike stock)"
+fi
 if [ "$i5" -eq 0 ]; then
     pass "I5 --auto obeys mfinstall.yml: wifi installs the stub, none installs nothing"
 else

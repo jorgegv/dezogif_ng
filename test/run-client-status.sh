@@ -121,7 +121,7 @@ variant=$(dd if="$ROM" bs=1 skip=8160 count=19 2>/dev/null | tr -d '\0')
 [ "${variant#DeZoGiFnG_WIFI_}" != "$variant" ] \
     || die "$ROM does not identify itself as a WiFi build (magic: '$variant')"
 
-"$JNEXT" --help 2>&1 | grep -q -- '--delayed-nmi' \
+bench_jnext_supports "$JNEXT" '--delayed-nmi' \
     || die "this jnext has no --delayed-nmi (need >= 0.99.118); rebuild it"
 
 if command -v ss >/dev/null 2>&1; then

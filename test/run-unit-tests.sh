@@ -90,13 +90,21 @@ pass() { printf 'PASS  %s\n' "$*"; }
 fail() { printf 'FAIL  %s\n' "$*"; failures=$((failures + 1)); }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+# Sourced for bench_jnext_supports alone. This bench takes none of the other
+# functions — it runs the REFERENCE image read-only and synchronously with
+# --no-esp, so the departure check is deliberately not its business — and
+# sourcing costs it nothing either way: the file defines functions and does
+# nothing else, which is the property that makes it safe to pull in here.
+# shellcheck source=test/bench-jnext.sh
+. "$(dirname "$0")/bench-jnext.sh"
+
 # --- pre-flight ------------------------------------------------------------
 
 [ -x "$JNEXT" ]    || die "jnext binary not found or not executable: $JNEXT"
 [ -f "$SD_IMAGE" ] || die "SD card image not found: $SD_IMAGE"
 [ -f "$UT_NEX" ]   || die "unit-test image not built: $UT_NEX (run 'make ut-headless')"
 
-"$JNEXT" --help 2>&1 | grep -q -- '--magic-port' \
+bench_jnext_supports "$JNEXT" '--magic-port' \
     || die "this jnext has no --magic-port; the runner has no way to report"
 
 mkdir -p "$OUT"

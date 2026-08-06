@@ -53,6 +53,33 @@
 # `die` so sourcing this cannot silently redefine one.
 bench_die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+# bench_jnext_supports <binary> <flag> — does this jnext's --help mention <flag>?
+#
+# NOT `"$JNEXT" --help | grep -q -- <flag>`, WHICH IS WHAT EVERY BENCH HERE USED
+# TO DO AND WHICH REPORTS THE OPPOSITE OF THE TRUTH. jnext writes its help a line
+# at a time; `grep -q` exits the moment it matches; jnext's next write then gets
+# SIGPIPE and dies with 141; and `set -o pipefail` — which every bench sets —
+# makes the pipeline carry that 141 even though the match SUCCEEDED. So the check
+# failed exactly when the flag was present and not on the last line of output.
+#
+# Measured rather than inferred: 10 runs of 10 returned 141, and every bench in
+# this repository that takes this path refused to start against jnext 0.99.127,
+# each blaming the emulator for a flag it has. It is not a pipe-buffer race —
+# the help is 10 KB against a 64 KB buffer; the writer is simply still writing
+# when the reader has gone.
+#
+# The command substitution reads to EOF, so there is no early close to signal,
+# and `|| true` keeps a jnext that exits non-zero on --help from tripping the
+# caller's errexit before the answer can be given.
+bench_jnext_supports() {
+    local help
+    help=$("$1" --help 2>&1 || true)
+    case "$help" in
+        *"$2"*) return 0 ;;
+        *)      return 1 ;;
+    esac
+}
+
 # _bench_abs <path> [cwd] — <path> in absolute form, WITHOUT requiring it to
 # exist. The working image is usually unlinked before departure is checked, so
 # anything that stats the file (realpath, readlink -f) would be wrong here.

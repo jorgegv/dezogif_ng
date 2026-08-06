@@ -100,7 +100,7 @@ die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 # Server mode arrived in jnext 0.99.118 (GH #210). Checked by name, because
 # without it AT+CIPMUX=1 is answered ERROR and the fixture parks at border 2 —
 # a failure that looks like a fixture bug and is not one.
-"$JNEXT" --help 2>&1 | grep -q -- '--esp-listen-address' \
+bench_jnext_supports "$JNEXT" '--esp-listen-address' \
     || die "this jnext has no --esp-listen-address (need >= 0.99.118, found: $("$JNEXT" --help 2>&1 | grep -oE 'jnext [0-9.]+' | head -1)); rebuild it — the ESP server bench cannot run without it"
 
 # A port already in use would make E1 connect to somebody else's listener and

@@ -164,9 +164,9 @@ for rom in "$ROM_FIXED" "$ROM_PREFIX" "$ROM_CONTROL"; do
         || die "$rom does not identify itself as a WiFi build (magic: '$variant')"
 done
 
-"$JNEXT" --help 2>&1 | grep -q -- '--esp-listen-address' \
+bench_jnext_supports "$JNEXT" '--esp-listen-address' \
     || die "this jnext has no --esp-listen-address (need >= 0.99.118); rebuild it"
-"$JNEXT" --help 2>&1 | grep -q -- '--delayed-nmi' \
+bench_jnext_supports "$JNEXT" '--delayed-nmi' \
     || die "this jnext has no --delayed-nmi (need >= 0.99.118); rebuild it"
 
 if command -v ss >/dev/null 2>&1; then

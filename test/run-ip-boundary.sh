@@ -115,7 +115,7 @@ die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 python3 -c 'import PIL' 2>/dev/null || die "python3 Pillow is required to read the stub's screen"
 command -v mcopy >/dev/null || die "mtools (mcopy) is required to install the ROM into the SD image"
 
-"$JNEXT" --help 2>&1 | grep -q -- '--delayed-nmi' \
+bench_jnext_supports "$JNEXT" '--delayed-nmi' \
     || die "this jnext has no --delayed-nmi (need >= 0.99.118); rebuild it"
 
 # The whole design rests on 12 sitting strictly between the two bounds. Said

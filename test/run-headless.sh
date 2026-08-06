@@ -145,7 +145,7 @@ command -v mcopy >/dev/null || die "mtools (mcopy) is required to install the RO
 # explicitly because the failure mode otherwise is jnext exiting with "Unknown
 # option" and the run being reported as a jnext crash — which cost real time
 # once already. A stale binary should say so in one line.
-"$JNEXT" --help 2>&1 | grep -q -- '--delayed-nmi' \
+bench_jnext_supports "$JNEXT" '--delayed-nmi' \
     || die "this jnext has no --delayed-nmi (need >= 0.99.118, found: $("$JNEXT" --help 2>&1 | grep -oE 'jnext [0-9.]+' | head -1)); rebuild it — T6 cannot run without it"
 python3 -c 'import PIL' 2>/dev/null || die "python3 Pillow is required to compare screenshots"
 

@@ -40,15 +40,19 @@ FAILED IN THE DANGEROUS DIRECTION.** Every bench's port pre-flight was
 shape: a SIGPIPE there makes the pipeline non-zero, `!` reads that as **free**,
 and the run starts against an occupied port — the contaminated-and-GREEN outcome
 that check exists to prevent. Measured inert today (`ss` writes its small output
-in one go, unlike jnext's per-line help), so this is a property of *another*
+in ONE syscall, where jnext takes three), so this is a property of *another*
 program's buffering rather than of our code, which is the same reason the
-original defect appeared without anything here changing. Nine sites, now
+original defect appeared without anything here changing. The contrast is
+narrower than the first version of this sentence claimed — jnext is not per-line,
+it is 4096/4096/1765 — but one write cannot be interrupted by a departing reader
+and three can, which is the whole of it. Nine sites, now
 `grep -c`, verified both ways against a real listener.
 
 **THE PROPERTY THAT BROKE IS NOT OURS, WHICH IS THE TRANSFERABLE PART.** Nothing
 in this repository changed. The old check's correctness depended on **where the
-match falls in another program's output** — line 79 of 134 — and jnext is free
-to reorder its own help in any release. A check resting on a property no test of
+match falls in another program's output** — byte 5786 of 10005, inside the second
+of three write() chunks — and jnext is free to reorder its own help in any
+release. A check resting on a property no test of
 ours can see is a check that will fail on somebody else's schedule.
 
 **Rejected.** Repairing each call site in place (above); dropping the version

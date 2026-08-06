@@ -36,12 +36,20 @@ must read to EOF to conclude "no match", so it never closes the pipe early —
 which is why the check looked sound for months.
 
 *(An earlier version of this entry said the help was written "a line at a time".
-A reviewer straced it and it is wrong: three writes of 4096, 4096 and 1382 bytes,
-not 134 per-line ones, with the matched flag at byte 5859 — inside the second.
-The conclusion is untouched, because all that matters is that the writer is still
-writing when the reader has gone, at whatever granularity. It is corrected
-because a mechanism asserted from a plausible picture instead of a traced one is
-the failure this file exists for, and this entry had it.)*
+A reviewer straced it and it is wrong: **three writes of 4096, 4096 and 1765
+bytes**, not 134 per-line ones, with the matched flag at byte **5786 of 10005** —
+inside the second. The conclusion is untouched, because all that matters is that
+the writer is still writing when the reader has gone, at whatever granularity.)*
+
+*(And the FIRST correction of it got the third figure wrong — 1382 — which is
+worth more than the number. `strace -f` follows forks, and jnext spawns an
+ffmpeg-derived child whose own 4096/4096/**1382** banner lands in the same trace;
+that child's output never reaches the stdout a bench pipes through, which
+`"$JNEXT" --help > file` proves: 9957 bytes, containing `--esp-listen-address`
+and no "ffmpeg version" at all. So the trace was real and read off the wrong
+process. **A measurement is not evidence until you know whose it is** — the same
+disease as this file's `pgrep -f` entry, one tool along, and it was caught by a
+reviewer re-running the trace rather than trusting the number.)*
 
 **Not a pipe-buffer race, and that was the first guess.** The help is 10 KB
 against a 64 KB pipe buffer, so nothing ever blocked on a full pipe. The buffer

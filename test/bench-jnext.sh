@@ -57,7 +57,7 @@ bench_die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 #
 # NOT `"$JNEXT" --help | grep -q -- <flag>`, WHICH IS WHAT EVERY BENCH HERE USED
 # TO DO AND WHICH REPORTS THE OPPOSITE OF THE TRUTH. jnext writes its help in
-# block-buffered CHUNKS — strace says three writes of 4096, 4096 and 1382 bytes,
+# block-buffered CHUNKS — strace says three writes of 4096, 4096 and 1765 bytes,
 # not 134 per-line ones; `grep -q` exits the moment it matches, inside an early
 # chunk; jnext's next write then gets SIGPIPE and dies with 141; and
 # `set -o pipefail` — which every bench sets — makes the pipeline carry that 141

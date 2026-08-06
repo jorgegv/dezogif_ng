@@ -410,6 +410,27 @@ ESP_IP_MAX:     equ 15
 ESP_FAULT_LIMIT:    equ 5
  ENDIF
 
+; How many link ids esp_recover sweeps with AT+CIPCLOSE — issue #19. ESP-AT
+; numbers connections 0-4 and jnext accepts exactly that range (esp_at.cpp,
+; cmd_cipclose_id parses against MAX_CONNECTIONS-1); 5 is refused there on
+; purpose, because real firmware reads it as "close every connection" and that
+; is a promise the engine declines to make.
+;
+; THE SWEEP IS BLIND, AND THAT IS THE DESIGN RATHER THAN A SHORTCUT. This
+; program does not know which ids are open: learning that means tracking the
+; module's <id>,CONNECT / <id>,CLOSED lines, which is M3's reconnect work and a
+; second pattern in the RX hot path. AT+CIPCLOSE=<id> on an id with nothing
+; behind it is answered ERROR, which costs one line of RX and nothing else, so
+; asking about all five is cheaper than knowing which one to ask about.
+;
+; It is also what keeps this NUMBERING-AGNOSTIC, which matters more here than
+; the saving. jnext's inbound ids start at 1 because it reserves slot 0 for an
+; outbound AT+CIPSTART the stub never sends; real firmware's first inbound
+; connection IS 0. Encoding either was the bug that made every reply vanish on
+; a real Next while every emulator check stayed green — see esp_conn_valid and
+; ERRORS.md. Nothing here encodes which end of the range is real.
+ESP_LINK_IDS:   equ 5
+
 ; What the UI has to say about the link. Decided once, during bring-up, because
 ; show_ui is re-entered on every redraw and an AT round trip per redraw would
 ; buy nothing — the address cannot change while we hold the module.
@@ -481,6 +502,11 @@ esp_cmd_cifsr:      defb "AT+CIFSR",13,10,0
 ; already up (jnext esp_at.cpp:648, and real ESP-AT does the same), so a
 ; re-init that skipped it would report a failure on a module that was working.
 esp_cmd_cipserver_off:  defb "AT+CIPSERVER=0",13,10,0
+; Only esp_recover sends this, once per link id, with the id and a CRLF built
+; on after it in esp_cmd_buffer. See ESP_LINK_IDS for why every id is asked
+; rather than only the ones this program believes are open.
+esp_cmd_cipclose:       defb "AT+CIPCLOSE=",0
+esp_cmd_cipclose_end:
 
 esp_str_ok:         defb "OK",13,10,0
 esp_str_ipd:        defb "+IPD,",0
@@ -803,6 +829,13 @@ esp_tx_fault:       defb 0
 esp_fault_error:    defb 0
 esp_tx_buffer:      defs ESP_TX_CHUNK
 esp_cmd_buffer:     defs 24
+esp_cmd_buffer_end:
+; The longest line built here is esp_recover's, and this is an ASSERT rather
+; than the sum in a comment that three earlier bounds in this project turned
+; out to be (ERRORS.md). esp_put_decimal emits up to three digits whatever the
+; caller knows about its value. Watched to fail: six characters added to the
+; string above is exactly 24 and assembles, seven is 25 and goes red here.
+    ASSERT (esp_cmd_cipclose_end - esp_cmd_cipclose - 1) + 3 + 2 + 1 <= esp_cmd_buffer_end - esp_cmd_buffer
 
 
 ;===========================================================================
@@ -1018,26 +1051,39 @@ tx_timeout: ; The transmit timeout handler
 ; that appears in N4's log is `note_peer_close` firing for the bench client
 ; hanging up its own socket, not this command.
 ;
-; SO THE RESIDUAL IS A SLOT LEAK, AND IT IS NOT SMALL. The module has four
-; inbound slots (MAX_CONNECTIONS 5 less the reserved outbound slot 0,
-; esp_at.h:425/440) and drops any connection past them (esp_at.cpp:830-838,
-; "Real firmware refuses past its own ceiling too"). Nothing in this program
-; frees one: a peer that has wedged rather than closed keeps its slot for the
-; rest of the power-on session, and recovery after recovery cannot reclaim it.
-; Four such peers — which is what a user retrying a hang produces — and the
-; module refuses every new client while this routine goes on reporting success.
+; SO THE SLOTS ARE FREED HERE INSTEAD, EXPLICITLY — issue #19. The module has a
+; small number of inbound slots (jnext: MAX_CONNECTIONS 5 less the reserved
+; outbound slot 0, esp_at.h; a real ESP-01 measured at 5, 2026-08-06) and drops
+; or strands any connection past them. Until this loop existed, nothing in this
+; program ever freed one: a peer that wedged rather than closing kept its slot
+; for the rest of the power-on session, and recovery after recovery could not
+; reclaim it. Four or five such peers — which is what a user retrying a hang
+; produces — and the module refuses every new client while this routine goes on
+; reporting success. That is a hang with issue #15's exact outward signature.
 ;
-; ISSUE #16 CLAIMS PART C "SUBSUMES THE STALE LINK SLOTS PROBLEM". IT DOES NOT,
-; and that is stated here rather than left for somebody to discover. Freeing a
-; multiplexed connection needs `AT+CIPCLOSE=<id>`, which jnext does not
-; implement at all — its `AT+CIPCLOSE` takes no argument and acts on the
-; outbound slot only (esp_at.cpp:124, cmd_cipclose) — so writing it here would
-; ship Z80 code no bench in this repository could ever execute. Filed separately
-; instead, with jnext as the dependency; see MEMORY.md and plan §8.2.
+; ISSUE #16 CLAIMED PART C "SUBSUMES THE STALE LINK SLOTS PROBLEM". IT DID NOT,
+; and the gap is what this loop closes. It could not be written when #16 landed:
+; freeing a multiplexed connection needs `AT+CIPCLOSE=<id>`, and jnext's
+; AT+CIPCLOSE then took no argument and acted on the outbound slot only, so the
+; code would have been unexecutable by every bench here — the trade this project
+; refuses. jnext#211 shipped it (esp_at.cpp, cmd_cipclose_id, a separate table
+; entry from the bare spelling), so the code below is exercised rather than
+; reasoned about; see test/run-slot-recovery.sh.
 ;
-; WHAT THE RECOVERY DOES BUY is a listener that is definitely accepting again
-; and an AT chain known to be answering, which is what a module that has lost
-; its listener needs. A wedged PEER is a different fault and is not fixed here.
+; THE ORDER IS FORCED, and both halves of it. The listener is stopped BEFORE the
+; sweep, so no client can take a slot between freeing it and the re-listen —
+; between those two points there is no listener at all. And the sweep runs
+; BEFORE transport_init, because that is what makes its AT+CIPSERVER=1 land on a
+; module with room; running it afterwards would leave the first client after a
+; recovery competing with the corpses.
+;
+; WHAT IT COSTS is one AT line and one drain per id, paid only on a recovery —
+; which is already an AT chain at bring-up budgets — and a healthy client's
+; connection, which is closed along with the wedged ones. That is deliberate:
+; ESP_FAULT_LIMIT consecutive faults means nothing has got through in between,
+; so a connection surviving that is not a session worth preserving, and DeZog
+; reconnects. Distinguishing them would need per-id state this program does not
+; have (ESP_LINK_IDS).
 ;
 ; Changes:
 ;  A, BC, DE, HL
@@ -1049,11 +1095,32 @@ esp_recover:
     ld hl,esp_cmd_cipserver_off
     call esp_send_string
     ; Read the answer away without caring what it was: OK if a server was
-    ; running, ERROR if not, and both are fine here. The drain also eats the
-    ; `<id>,CLOSED` lines that stopping the listener produces, and anything the
-    ; module was still owed from a send that never completed.
+    ; running, ERROR if not, and both are fine here. The drain also eats
+    ; anything the module was still owed from a send that never completed.
+    ;
+    ; IT DOES NOT PRODUCE `<id>,CLOSED` LINES, and an earlier version of this
+    ; comment said it did — the same retracted claim the header above corrects,
+    ; left standing thirty lines below the correction. Stopping the listener
+    ; leaves established connections alone; the `1,CLOSED` in N4's log was
+    ; jnext's note_peer_close firing for the bench client hanging up its own
+    ; socket. The `<id>,CLOSED` lines this routine really does produce are the
+    ; sweep's, below, and they are drained there.
     call transport_drain
-    ; Every connection the module had is gone with the listener.
+
+    ; Free every inbound slot, id by id (issue #19). Blind and numbering-
+    ; agnostic on purpose: see ESP_LINK_IDS.
+    ld b,ESP_LINK_IDS
+.close_link:
+    push bc
+    ld a,b
+    dec a                       ; B counts ESP_LINK_IDS..1, so ids run 4..0
+    call esp_close_link
+    pop bc
+    djnz .close_link
+
+    ; NOW every connection the module had really is gone, which is what lets
+    ; this line say so. Before the sweep it was a statement about a thing that
+    ; had not happened.
     xor a
     ld (esp_conn_valid),a
     ; esp_recovering is cleared by rxtx_error's .report, NOT here, because that
@@ -1063,6 +1130,55 @@ esp_recover:
     ; set for the rest of the power-on session, and no recovery would ever run
     ; again.
     jp transport_init
+
+
+;===========================================================================
+; Closes one link id, and does not care whether there was anything to close.
+;
+; Parameter:
+;  A = link id.
+;
+; The module answers "\r\n<id>,CLOSED\r\n\r\nOK\r\n" when it closed something,
+; and "\r\nERROR\r\n" when that id had nothing behind it — jnext refuses that
+; case deliberately rather than answering OK, "a guest told OK here would
+; believe it had freed a slot that was never taken" (esp_at.cpp,
+; cmd_cipclose_id), which is real firmware's answer too.
+;
+; BOTH ARE READ AWAY WITH A DRAIN RATHER THAN MATCHED, and that is the whole
+; reason this is nine lines instead of a scan. The caller has no decision to
+; make either way: an id that was already free is the expected case, not a
+; fault. A wait for "OK" would sit out its entire budget on every free id — most
+; of them, every time — and would then have to be told not to treat that as the
+; failure it looks like. A drain also cannot destroy an inbound frame the way a
+; scan can (issue #11), and there is nothing inbound to protect here anyway:
+; this runs with no listener up and every connection about to be closed.
+;
+; The cost is one drain's quiet period per id. That is real, and it is paid only
+; on a recovery, which already runs the whole AT chain at bring-up budgets.
+; Changes:
+;  AF, BC, DE, HL
+;===========================================================================
+esp_close_link:
+    ; The id is parked in C because esp_copy_string destroys A, and read back
+    ; before esp_put_decimal, which destroys BC.
+    ld c,a
+    ld hl,esp_cmd_cipclose
+    ld de,esp_cmd_buffer
+    call esp_copy_string
+    ld a,c
+    call esp_put_decimal
+    ld a,13
+    ld (de),a
+    inc de
+    ld a,10
+    ld (de),a
+    inc de
+    xor a
+    ld (de),a
+
+    ld hl,esp_cmd_buffer
+    call esp_send_string
+    jp transport_drain
 
 
 ;===========================================================================

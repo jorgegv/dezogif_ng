@@ -5,7 +5,7 @@
 
 .DEFAULT_GOAL := help
 .PHONY: help all main unit-tests ut-headless mf-rom mf-rom-wifi mf-rom-sum mfselect test \
-        test-unit test-mfselect \
+        test-unit test-mfselect mfinstall test-mfinstall \
         test-esp test-dzrp test-dzrp-stub test-ip-boundary test-tx-patience \
         test-client-status test-no-hang test-screen-agreement \
         test-hardware probe-jnext probe-slots probe-vanished read-screen \
@@ -47,12 +47,28 @@ SJASMPLUS ?= $(shell command -v sjasmplus 2>/dev/null || echo $(HOME)/src/spectr
 JNEXT     ?= $(HOME)/src/spectrum/jnext/build/gui-release/jnext
 SD_IMAGE  ?= $(HOME)/.jnext/sdcard/cspect-next-1gb-fixed.img
 
-# z88dk, for mfselect only. The stub itself is sjasmplus and must stay that way
-# (DeZog cannot do banking with z88dk — see MEMORY.md); mfselect is a
-# standalone NextZXOS utility DeZog never sees, so that constraint does not
-# reach it.
+# z88dk, for the two host-side NextZXOS utilities only. The stub itself is
+# sjasmplus and must stay that way (DeZog cannot do banking with z88dk — see
+# MEMORY.md); mfselect and mfinstall are standalone NextZXOS utilities DeZog
+# never sees, so that constraint does not reach them.
+#
+# TWO SUBTYPES, and they are not interchangeable. mfselect is a `nex`: it takes
+# the whole machine, draws a menu and is launched with .nexload. mfinstall is a
+# `dot`: it runs at 0x2000 inside a live BASIC session, takes a command tail,
+# and can therefore be called from AUTOEXEC.BAS — which is the entire point of
+# issue #21. A dot command is also the only one of the two that CAN do the job:
+# see tools/mfinstall/mfwin.asm on why the window has to be relocated.
+#
+# `-startup=30` on the dot build is NOT cosmetic and NOT copied from a habit.
+# It is the startup z88dk's own dot-command examples use, it prints through the
+# 48K ROM instead of linking a console driver, and it takes the binary from
+# 10238 bytes to 6606 — from over the 8192-byte dot page to inside even the
+# ~7 KB ceiling stock esxdos imposes. It also fixes which crt is in play:
+# 0x100 + 30 = zxn_crt_286, which is the one whose documented exit convention
+# tools/mfinstall/mfinstall.c returns values for.
 ZCC       ?= zcc
 ZCCFLAGS   = +zxn -subtype=nex -clib=sdcc_iy -SO3 -compiler=sdcc -create-app
+ZCCDOTFLAGS = +zxn -subtype=dot -startup=30 -clib=sdcc_iy -SO3 -compiler=sdcc -create-app
 
 # Stamped into the ROM (constants.asm: BUILD_TIME16). Pin it to compare two
 # builds byte for byte — see `make check-reproducible`.
@@ -224,6 +240,8 @@ TRIGGER_ASM = $(TEST)/nmi_trigger.asm
 COPPER_ASM  = $(TEST)/copper_nmi.asm
 ESP_ASM     = $(TEST)/esp_server.asm
 MFSELECT_C  = $(TOOLS)/mfselect/mfselect.c
+MFINSTALL_C = $(TOOLS)/mfinstall/mfinstall.c
+MFWIN_ASM   = $(TOOLS)/mfinstall/mfwin.asm
 ROMSUM      = $(TOOLS)/romsum.py
 UT_GEN      = $(TOOLS)/ut-headless-gen.py
 
@@ -291,6 +309,24 @@ SUM_WIFI     = $(OUT)/dezowifi.sum
 # tools/mfselect/mfselect.c, which is the program that opens them.
 DEPLOY       = $(OUT)/deploy
 
+# mfinstall (issue #21) — the dot command that installs a ROM through config
+# mode instead of by swapping a file on the card.
+#
+# THREE BUILD PRODUCTS, and the middle one is the interesting part. mfwin.asm is
+# assembled by SJASMPLUS at a fixed address (0x5000) because it has to run from
+# somewhere that survives DivMMC being turned off, and a C function cannot be
+# relocated. It is then turned into a C array so the dot command carries it and
+# copies it there itself. `xxd -i` names the array after the FILE, so the binary
+# is copied to a file called `mfwin_bin` rather than the symbol being patched
+# afterwards.
+#
+# IT IS THE ONE FILE ON THE CARD THAT DOES NOT GO IN /mfselect/. Dot commands
+# are looked up in /dot/ — checked on the reference SD image — while its ROMs
+# stay where mfselect already puts them. The deploy listing below labels it.
+MFWIN_BIN     = $(OUT)/mfwin.bin
+MFWIN_H       = $(OUT)/mfwin_bin.h
+MFINSTALL_DOT = $(OUT)/mfinstall
+
 # The pair for whichever variant this invocation selected. Equal to SUM_UART
 # with TRANSPORT=uart and to SUM_WIFI with TRANSPORT=wifi, so one rule text
 # builds both — once per recursive invocation.
@@ -329,8 +365,8 @@ ASMFLAGS = --inc=$(SRC) --lstlab --fullpath \
 # images, neither is a deliverable, and building one of the pair is exactly the
 # fraction-of-everything trap the paragraph above is about.
 #
-# Build everything: the program, both unit-test images, mfselect, BOTH ROMs and their .sums
-all: main unit-tests ut-headless mfselect
+# Build everything: the program, both unit-test images, mfselect, mfinstall, BOTH ROMs and their .sums
+all: main unit-tests ut-headless mfselect mfinstall
 
 # Build the debugger program (build/main.bin + build/mf_nmi.bin)
 main: $(MAIN_BIN) $(MF_NMI_BIN)
@@ -389,12 +425,42 @@ mfselect: $(MFSELECT_NEX)
 	@cp -f $(ROM_UART)     $(DEPLOY)/dezouart.rom
 	@cp -f $(SUM_UART)     $(DEPLOY)/dezouart.sum
 	@echo
-	@echo "$(DEPLOY)/ is ready — copy its CONTENTS into /mfselect/ on the card:"
+	@echo "$(DEPLOY)/ is ready — copy its contents onto the card:"
 	@echo
-	@ls -1 $(DEPLOY) | sed 's|^|    /mfselect/|'
+	@$(deploy_listing)
 	@echo
 	@echo "  Nothing to rename. Each .rom and its .sum come from this one build,"
 	@echo "  which is what makes them a coherent set."
+
+# The deploy listing, shared by `mfselect` and `mfinstall` because both print it
+# and two renderings of one layout is how they start to disagree.
+#
+# IT IS NOT A BLANKET /mfselect/ PREFIX ANY MORE, and that is a correctness fix
+# rather than a flourish: since issue #21 the directory holds one file — the
+# mfinstall DOT COMMAND — that goes to /dot/ instead, because that is where
+# NextZXOS looks dot commands up. A prefix applied to everything would have told
+# the user to put it somewhere it can never be found, in the one line they are
+# meant to follow literally.
+deploy_listing = ls -1 $(DEPLOY) | \
+	awk '{ printf "    %s/%s\n", ($$0 == "mfinstall" ? "/dot" : "/mfselect"), $$0 }'
+
+# mfinstall needs BOTH ROMs and both .sums on the card exactly as mfselect does
+# — it installs the same files by a different route — so it depends on the
+# target that produces them rather than shipping a second, thinner deploy
+# directory that could disagree with the first.
+#
+
+# Build the .mfinstall dot command (issue #21) and everything it installs
+mfinstall: $(MFINSTALL_DOT) mfselect
+	@cp -f $(MFINSTALL_DOT) $(DEPLOY)/mfinstall
+	@echo
+	@echo "$(DEPLOY)/ is ready — copy its contents onto the card:"
+	@echo
+	@$(deploy_listing)
+	@echo
+	@echo "  /dot/mfinstall is the ONLY file here that does not go in /mfselect/."
+	@echo "  Then, on the Next:  .mfinstall --load wifi"
+	@echo "  It writes SRAM, never the SD card, and lasts until power-off."
 
 # NOT the Z80 unit tests, and calling this "the test suite" invited exactly that
 # reading. This boots a Next in jnext with our ROM installed as the Multiface
@@ -796,6 +862,53 @@ $(ROM): $(MF_NMI_BIN) $(MAIN_BIN)
 # pointing that at $(OUT) keeps the source tree clean.
 $(MFSELECT_NEX): $(MFSELECT_C) Makefile | $(OUT)
 	$(ZCC) $(ZCCFLAGS) $(MFSELECT_C) -o $(OUT)/mfselect
+
+# The relocated config-mode window, assembled at its own fixed address. The
+# output path is a -D as it is for every other fixture here, so nothing is
+# written into the source tree.
+$(MFWIN_BIN): $(MFWIN_ASM) Makefile | $(OUT)
+	$(SJASMPLUS) -DMFWIN_BIN=\"$@\" $(MFWIN_ASM)
+
+# ... and the same bytes as a C array. `xxd -i` derives the array's name from
+# the FILE's name, so the binary is copied to `mfwin_bin` first; patching the
+# symbol afterwards would be a sed expression that has to keep matching xxd's
+# output format.
+$(MFWIN_H): $(MFWIN_BIN) Makefile | $(OUT)
+	@cp -f $(MFWIN_BIN) $(OUT)/mfwin_bin
+	xxd -i -n mfwin_bin $(OUT)/mfwin_bin > $@
+	@echo '#define MFWIN_BIN_LEN mfwin_bin_len' >> $@
+	@rm -f $(OUT)/mfwin_bin
+
+# The dot command. -I finds the generated header; zcc leaves its intermediates
+# beside the -o basename, which is $(OUT), for the same reason mfselect's rule
+# does.
+#
+# WHY IT LINKS TO ONE NAME AND SHIPS UNDER ANOTHER. On the z88dk installed here,
+# `-subtype=dot -create-app` leaves the -o file EMPTY and writes the actual dot
+# command to <name>_CODE.bin — reproduced with z88dk's own `touch` example, so
+# it is the toolchain and not this program. Rather than hardcode that, the rule
+# takes whichever of the two is non-empty, so a z88dk that stops doing it keeps
+# working; and it FAILS LOUDLY if neither is, because the alternative is
+# shipping a zero-byte file that a user discovers on the machine.
+#
+# THE SIZE CHECK IS NOT DECORATION EITHER. A dot command is limited to the 8 KB
+# page mapped at 0x2000, and z88dk's own documentation puts the practical
+# ceiling nearer 7 KB under stock esxdos. Over that it does not fail to build —
+# it fails to LOAD, on the machine, with an error that says nothing about size.
+$(MFINSTALL_DOT): $(MFINSTALL_C) $(MFWIN_H) Makefile | $(OUT)
+	$(ZCC) $(ZCCDOTFLAGS) -I$(OUT) $(MFINSTALL_C) -o $(OUT)/mfinstall-app
+	@bin=$(OUT)/mfinstall-app_CODE.bin; \
+	[ -s "$$bin" ] || bin=$(OUT)/mfinstall-app; \
+	if [ ! -s "$$bin" ]; then \
+	  echo "ERROR: zcc produced no dot command binary for $(MFINSTALL_C)" >&2; exit 1; \
+	fi; \
+	size=$$(stat -c%s "$$bin"); \
+	if [ "$$size" -gt 8192 ]; then \
+	  echo "ERROR: the dot command is $$size bytes, over the 8192-byte page it loads into" >&2; \
+	  exit 1; \
+	fi; \
+	cp -f "$$bin" $(MFINSTALL_DOT); \
+	echo "  $(MFINSTALL_DOT): $$size bytes (the dot command page is 8192)"
 
 $(ROM_SUM): $(ROM) $(ROMSUM) | $(OUT)
 	python3 $(ROMSUM) $(ROM) > $@

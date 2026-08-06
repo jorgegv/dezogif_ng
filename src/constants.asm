@@ -65,6 +65,12 @@ BUILD_TIME16: equ BUILD_TIME & 0xFFFF
 ; "which one". The build number is information to *show* the user, never
 ; something to match on — matching it would reintroduce exactly the
 ; per-build fragility this block exists to remove.
+;
+; ITS FOUR DIGITS STAY BARE, and a reader who has just seen the debugger's
+; banner say "build 00.A3" should not come here and add the dot (issue #20).
+; This field's format is a contract with tools/mfselect/mfselect.c; the dot is
+; a rendering applied where a person reads the number, and putting it in the
+; stored form would give the same value two spellings to drift between.
 ROM_MAGIC_ADDR:     equ MAIN_ADDR + 0x1EA0  ; 0xFEA0 = ROM offset 0x1FE0
 ROM_MAGIC_SIZE:     equ 32                  ; reserved; the string is 20 bytes
 
@@ -93,15 +99,22 @@ ROM_VARIANT:        equ ROM_VARIANT_UART
 ;===========================================================================
 ; The same three facts as the identity block, for the debugger's own screen.
 ;
-;   dezogif_ng WiFi build 0008          26 columns of the 32 there are
+;   dezogif_ng WiFi build 00.08         27 columns of the 32 there are
 ;
 ; IT LIVES HERE, BESIDE rom_magic's DEFINITION, ON PURPOSE. Both say which
 ; fork, which transport and which build; a screen that disagreed with the
 ; block mfselect reads would be worse than no screen at all (issue #12). The
 ; only way to keep them in step is for both to be spelled from the same two
-; symbols — ROM_VARIANT and BUILD_NUMBER_HEX — in a place where changing one
+; symbols — ROM_VARIANT and the build number — in a place where changing one
 ; and not the other is visibly wrong. Never introduce a second source for the
 ; build number: that conflation is what issue #4 and ERRORS.md are about.
+;
+; THE SCREEN'S NUMBER IS DOTTED AND THE BLOCK'S IS NOT, and that is one source
+; with two renderings rather than two sources (issue #20). BUILD_NUMBER_HEX and
+; BUILD_NUMBER_SHOWN are both handed in by the Makefile, the second derived from
+; the first on the line below it, so nothing here can make them disagree. The
+; block keeps four bare digits because its format is a contract mfselect parses;
+; the dot is for the person reading the screen, to whom "0010" reads as ten.
 ;
 ; It is a MACRO rather than a label because it is emitted inside INTRO_TEXT's
 ; AT-terminated stream (data_const.asm), which has no room for a call.
@@ -114,7 +127,7 @@ ROM_VARIANT:        equ ROM_VARIANT_UART
     defb "UART"
  ENDIF
     defb " build "
-    defb BUILD_NUMBER_HEX               ; the identity block's number, not a copy
+    defb BUILD_NUMBER_SHOWN             ; the identity block's number, dotted
     ENDM
 
 

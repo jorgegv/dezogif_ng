@@ -146,8 +146,17 @@ DeZoGiFnG_UART_0001      DeZoGiFnG_WIFI_0001
 `ERRORS.md`. Anything asking "is this ROM ours?" matches the `DeZoGiFnG_` prefix and the variant
 field, and **never the build number**, which changes and is only ever displayed.
 
-The build number lives in **`version.yaml`** and is bumped with **`make bump`**, never by hand —
-the target is what validates the 0-65535 range the four hex digits can hold. `version.yaml` is a
+**The block stores four BARE hex digits; every place a person reads the number shows `NN.NN`**
+— high byte, dot, low byte (issue #20). So the ROM above is `00.01` on the debugger's banner and
+in mfselect, and `0001` in the block those two are spelled from. That is one stored form with one
+display transform, not two stored forms: the block's format is a contract `tools/mfselect/mfselect.c`
+parses, and `0010` read by someone who was not told it is hex means ten.
+
+The build number lives in **`version.yaml`**, stored as a quoted four-hex-digit string, and is
+bumped with **`make bump`** — the low byte — or **`make bump-major`** — the high byte, resetting
+the low one to `00`. Never by hand: the targets are what validate the range. `bump` does **not**
+carry into the high byte; at `xx.FF` it refuses and says to use `bump-major`, because a new series
+is a decision rather than an overflow. `version.yaml` is a
 prerequisite of the assembly rule, so a bump really does reach the next build; without that it
 would rewrite the file, change nothing, and ship the old number silently. **House rule: one bump
 per merge to `main` that changes a ROM** — docs-only and test-only merges leave every ROM byte

@@ -95,7 +95,7 @@ line:
 
 Up/Down move the selection, ENTER runs it, exactly as the NextZXOS browser behaves.
 
-    Installed: dezogif_ng WiFi 0003
+    Installed: dezogif_ng WiFi 00.03
 
     Select ROM to install:
       Official Multiface NMI ROM
@@ -165,6 +165,11 @@ The magic is `DeZoGiFnG_` + variant (`UART`/`WIFI`) + `_` + a four-hex-digit bui
 matching it would reintroduce exactly the per-build fragility the block removes. mfselect shows it
 beside the ROM name so you can say which build is on the card without computing anything.
 
+**The block stores four bare digits; mfselect shows them as `NN.NN`** (issue #20), the same way
+the debugger's own banner does — high byte, dot, low byte. The dot is a rendering applied where a
+person reads the number, and it is deliberately *not* in the ROM: this field's format is a
+contract, and one stored form with one display transform is what stops the two drifting.
+
 The two fields answer two different questions, and mfselect uses each for one of them:
 
 - the **prefix** answers *is this ours* — and that alone drives the first-run guard, so both
@@ -197,8 +202,10 @@ and differ from the other. A swap cannot satisfy that, and neither can a single 
 both. No OCR and no committed reference bitmap: the picture checks itself.
 
 Every column involved falls out of one fact — all these strings begin with the 11 characters
-`dezogif_ng ` — so the transport field is 11 cells into each: status row 2, columns 23-26; menu
-rows 6 and 7, columns 13-16.
+`dezogif_ng ` — so the transport field is 11 cells into each: status row 2, columns 22-25; menu
+rows 6 and 7, columns 13-16. (The status row starts at column 0 rather than 1 since issue #20: the
+dotted build number is one character wider, and `Installed: dezogif_ng UART 00.0E` is exactly the
+32 columns there are.)
 
 **M10** keeps the cross-run half, which is still worth something on its own: nothing *else* on that
 row may differ between the two runs. M9 reads four cells; M10 covers the other twenty-eight, so a

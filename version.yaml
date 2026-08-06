@@ -4,15 +4,23 @@
 # e.g. DeZoGiFnG_UART_0001, and mfselect shows it so a user can say which build
 # is on their card without a checksum.
 #
-# Range 0-65535, rendered as four uppercase hex digits.
+# STORED AS FOUR UPPERCASE HEX DIGITS, 0000-FFFF (issue #20) — quoted, so a
+# value like 0014 cannot be read back as the decimal fourteen it is not.
 #
-# Bump it with `make bump` — never by editing this file by hand, because the
-# Makefile is what validates the range. The house rule is one bump per merge to
-# main THAT CHANGES A ROM; a merge touching only docs or tests leaves every ROM
-# byte identical, and bumping there would assert a difference that does not
-# exist. See CLAUDE.md for the mechanical check.
+# SHOWN to the user as NN.NN — high byte, dot, low byte — on the debugger's own
+# banner and in mfselect. The MAGIC STRING keeps the four bare digits: its
+# format is a contract that mfselect parses, and the dot is a rendering choice,
+# so there is one stored form and one display transform rather than two stored
+# forms that can drift.
+#
+# Bump it with `make bump` (the low byte) or `make bump-major` (the high one,
+# which resets the low byte to 00) — never by editing this file by hand,
+# because the Makefile is what validates the range. The house rule is one bump
+# per merge to main THAT CHANGES A ROM; a merge touching only docs or tests
+# leaves every ROM byte identical, and bumping there would assert a difference
+# that does not exist. See CLAUDE.md for the mechanical check.
 #
 # It is NOT part of identity. mfselect matches the "DeZoGiFnG_" prefix and the
 # variant field, never this number: matching a per-build value is precisely the
 # fragility the identity block exists to remove.
-build_number: 14
+build_number: "000E"

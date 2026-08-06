@@ -323,15 +323,18 @@ fi
 # with the 11 characters "dezogif_ng " — so the transport field sits 11 cells
 # into each of them:
 #
-#   status row  print_at(12, ROW_STATUS, "dezogif_ng WiFi")  -> cols 23-26, row 2
+#   status row  print_at(11, ROW_STATUS, "dezogif_ng WiFi")  -> cols 22-25, row 2
 #   menu WiFi   print_at(2,  ROW_MENU+1, "dezogif_ng WiFi …") -> cols 13-16, row 6
 #   menu UART   print_at(2,  ROW_MENU+2, "dezogif_ng UART …") -> cols 13-16, row 7
+#
+# The status row moved one column left with issue #20: the build number after
+# the name is now the dotted "00.0E", one wider, and the row is exactly full.
 #
 # Cells are compared as raw pixels, so the attributes have to match too. They do:
 # the status row and the unselected menu rows are both ATTR_BODY, and the
 # selected row — the inverse-video one — is row 5 in these runs, because neither
 # sends an arrow key. If that ever changes this check goes red rather than quiet.
-STATUS_FIELD=2:23-26
+STATUS_FIELD=2:22-25
 MENU_WIFI_FIELD=6:13-16
 MENU_UART_FIELD=7:13-16
 
@@ -363,7 +366,7 @@ fi
 # cells; this one covers the other twenty-eight, so a name of a different length
 # (which shifts the build number that follows it), a changed prefix or a row that
 # was never drawn cannot hide behind a correct transport field.
-expect_cols="23 24 25 26"
+expect_cols="22 23 24 25"
 if [ -f "$wifi_shot" ] && [ -f "$uart_shot" ]; then
     got_cols=$(python3 "$CELLDIFF" rows "$wifi_shot" "$uart_shot" 2)
     if [ "$got_cols" = "$expect_cols" ]; then

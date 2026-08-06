@@ -8,7 +8,7 @@
         test-unit test-mfselect \
         test-esp test-dzrp test-dzrp-stub test-ip-boundary test-tx-patience \
         test-client-status test-no-hang \
-        test-hardware bump check-reproducible \
+        test-hardware bump bump-major check-reproducible \
         check-reproducible-wifi clean
 
 # Show this help
@@ -61,13 +61,28 @@ BUILD_TIME ?= $(shell date +%s)
 # rather than kept here, so `make bump` has one file to rewrite and the number
 # survives in git as a reviewable one-line diff.
 #
-# Rendered as four uppercase hex digits and emitted into the magic string, e.g.
-# DeZoGiFnG_UART_0001. Unlike BUILD_TIME this does NOT change on every build,
-# which is the whole point: check-reproducible still passes, and a rebuild of
-# the same source gives the same identity.
+# STORED as four uppercase hex digits (issue #20), quoted in version.yaml so
+# nothing reads 0014 back as a decimal. Unlike BUILD_TIME this does NOT change
+# on every build, which is the whole point: check-reproducible still passes, and
+# a rebuild of the same source gives the same identity.
+#
+# TWO RENDERINGS, ONE SOURCE, and the second is derived from the first one line
+# below it so they cannot drift:
+#
+#   BUILD_NUMBER_HEX     000E    the magic string's field — four BARE digits,
+#                                because that block's format is a contract
+#                                mfselect parses (issue #4)
+#   BUILD_NUMBER_SHOWN   00.0E   what a person reads — on the debugger's banner
+#                                and, via the block above, in mfselect
+#
+# The arithmetic round trip (parse as hex, print as %04X) normalises a
+# hand-written or command-line value — `make BUILD_NUMBER=3` still gives 0003 —
+# and makes a value that is not a number fail loudly instead of reaching the
+# assembler.
 VERSION_FILE   = version.yaml
-BUILD_NUMBER  ?= $(shell awk '/^build_number:/ { print $$2 }' $(VERSION_FILE))
-BUILD_NUMBER_HEX = $(shell printf '%04X' $(BUILD_NUMBER))
+BUILD_NUMBER  ?= $(shell awk '/^build_number:/ { v = $$2; gsub(/"/, "", v); print v }' $(VERSION_FILE))
+BUILD_NUMBER_HEX = $(shell printf '%04X' $$(( 0x$(BUILD_NUMBER) )))
+BUILD_NUMBER_SHOWN = $(shell printf '%s' '$(BUILD_NUMBER_HEX)' | sed 's/../&./')
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +288,7 @@ ASMFLAGS = --inc=$(SRC) --lstlab --fullpath \
            -DMAIN_BIN=\"$(MAIN_BIN)\" -DMF_NMI_BIN=\"$(MF_NMI_BIN)\" \
            -DBUILD_TIME=$(BUILD_TIME) \
            -DBUILD_NUMBER_HEX=\"$(BUILD_NUMBER_HEX)\" \
+           -DBUILD_NUMBER_SHOWN=\"$(BUILD_NUMBER_SHOWN)\" \
            $(VARIANT_FLAGS)
 
 
@@ -515,19 +531,49 @@ test-hardware:
 	  exit 2; }
 	python3 $(TEST)/hardware-check.py --host "$(NEXT_IP)" $(HW_ARGS)
 
-# Increment the ROM build number in version.yaml (one bump per merge to main)
+# The build number is two bytes and, since issue #20, is READ as two: the high
+# one says which series and is moved deliberately, the low one counts the merges
+# inside it. So there are two targets, and neither can do the other's job:
+#
+#   make bump         00.0E -> 00.0F     one merge to main that changed a ROM
+#   make bump-major   00.0F -> 01.00     a release or a milestone
+#
+# `bump` DOES NOT CARRY INTO THE HIGH BYTE. At 00.FF it refuses and names
+# bump-major, rather than silently minting a new series nobody decided on —
+# which is the whole reason the high byte exists. Both refuse to leave FF.FF.
+#
+# Increment the low byte of the ROM build number (one bump per merge to main)
 bump:
-	@cur=$$(awk '/^build_number:/ { print $$2 }' $(VERSION_FILE)); \
-	case "$$cur" in '' | *[!0-9]*) \
-	  echo "ERROR: build_number in $(VERSION_FILE) is not a number: '$$cur'" >&2; exit 1;; \
+	@cur=$$(awk '/^build_number:/ { v = $$2; gsub(/"/, "", v); print v }' $(VERSION_FILE)); \
+	case "$$cur" in [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) ;; \
+	  *) echo "ERROR: build_number in $(VERSION_FILE) is not four hex digits: '$$cur'" >&2; exit 1;; \
 	esac; \
-	next=$$(( cur + 1 )); \
-	if [ "$$next" -gt 65535 ]; then \
-	  echo "ERROR: build_number $$next exceeds 65535; the magic string has four hex digits" >&2; \
+	n=$$(( 0x$$cur )); \
+	if [ $$(( n & 255 )) -eq 255 ]; then \
+	  echo "ERROR: build_number $$cur: the low byte is already FF." >&2; \
+	  echo "       Use 'make bump-major' — bump does not carry into the high byte." >&2; \
 	  exit 1; \
 	fi; \
-	sed -i "s/^build_number:.*/build_number: $$next/" $(VERSION_FILE); \
-	printf 'build_number %s -> %s   (ROM magic becomes DeZoGiFnG_<VARIANT>_%04X)\n' "$$cur" "$$next" "$$next"
+	next=$$(printf '%04X' $$(( n + 1 ))); \
+	sed -i "s/^build_number:.*/build_number: \"$$next\"/" $(VERSION_FILE); \
+	printf 'build_number %s -> %s   (shown as %s; ROM magic becomes DeZoGiFnG_<VARIANT>_%s)\n' \
+	  "$$cur" "$$next" "$$(printf '%s' "$$next" | sed 's/../&./')" "$$next"
+
+# Increment the HIGH byte of the ROM build number, resetting the low one to 00
+bump-major:
+	@cur=$$(awk '/^build_number:/ { v = $$2; gsub(/"/, "", v); print v }' $(VERSION_FILE)); \
+	case "$$cur" in [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) ;; \
+	  *) echo "ERROR: build_number in $(VERSION_FILE) is not four hex digits: '$$cur'" >&2; exit 1;; \
+	esac; \
+	n=$$(( 0x$$cur )); \
+	if [ $$(( n >> 8 )) -ge 255 ]; then \
+	  echo "ERROR: build_number $$cur: the high byte is already FF, and FF.FF is the end" >&2; \
+	  exit 1; \
+	fi; \
+	next=$$(printf '%04X' $$(( ((n >> 8) + 1) << 8 ))); \
+	sed -i "s/^build_number:.*/build_number: \"$$next\"/" $(VERSION_FILE); \
+	printf 'build_number %s -> %s   (shown as %s; ROM magic becomes DeZoGiFnG_<VARIANT>_%s)\n' \
+	  "$$cur" "$$next" "$$(printf '%s' "$$next" | sed 's/../&./')" "$$next"
 
 
 # Check the ROM builds byte-identically twice with BUILD_TIME pinned

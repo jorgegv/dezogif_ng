@@ -115,6 +115,12 @@
  * hex digits are there to show the user which build they have; treating them
  * as part of identity would put the per-build fragility straight back.
  *
+ * THE BLOCK STORES FOUR BARE DIGITS AND WE SHOW THEM AS NN.NN (issue #20) —
+ * high byte, dot, low byte, the same way the debugger's own banner does. The
+ * dot is a rendering and lives in rom_identity() below, not in the ROM: this
+ * field's format is a contract, and giving the same value two stored spellings
+ * is how they start to drift.
+ *
  * The offset is a permanent contract with src/constants.asm — it is the end of
  * a ROM whose size the firmware fixes at 8192, chosen precisely because it
  * cannot drift as the code grows.
@@ -131,7 +137,8 @@
 #define MAGIC_PREFIX    "DeZoGiFnG_"
 #define MAGIC_PREFIX_N  10U
 #define MAGIC_READ      20U     /* prefix + 4 variant + '_' + 4 build + NUL */
-#define BUILD_N         4U      /* hex digits of the build number */
+#define BUILD_N         4U      /* hex digits of the build number, as stored */
+#define BUILD_SHOWN_N   (BUILD_N + 1U)  /* NN.NN — the same digits, displayed */
 
 /* Result of rom_identity(). Negative values are failures to read. */
 #define ID_UNREADABLE   (-1)
@@ -183,8 +190,9 @@ typedef char menu_fits_above_messages[(ROW_MENU + MENU_ITEMS <= ROW_MSG) ? 1 : -
 static uint8_t buf[CHUNK];
 
 /* Build number of whatever is installed, filled by installed_name() and shown
- * beside it. Empty when the installed ROM is not ours and so carries none. */
-static char build_str[BUILD_N + 1];
+ * beside it, already in its NN.NN display form. Empty when the installed ROM
+ * is not ours and so carries none. */
+static char build_str[BUILD_SHOWN_N + 1];
 
 static uint8_t msg_row;
 
@@ -401,8 +409,9 @@ static int8_t rom_crc(const char *path, uint16_t *out)
  * be read at all — a distinction the callers need, because "not ours" is a
  * fact about the ROM and "unreadable" is a fact about the card.
  *
- * If build_out is non-NULL it receives the four build-number digits plus a
- * NUL. It is only ever displayed.
+ * If build_out is non-NULL it receives the build number in its NN.NN display
+ * form plus a NUL — BUILD_SHOWN_N + 1 bytes. It is only ever displayed, which
+ * is why the dot is applied here rather than kept as a second field.
  *
  * Cheap on purpose: one seek and a 20-byte read, no 8K pass. That is what lets
  * the menu identify the live ROM on every redraw where a CRC could not. */
@@ -433,10 +442,13 @@ static int8_t rom_identity(const char *path, char *build_out)
             return ID_NOT_OURS;
     }
 
+    /* NN.NN: the first two digits, the dot, the last two. The block itself is
+     * untouched — see the header above. */
     if (build_out) {
         for (i = 0; i < BUILD_N; i++)
-            build_out[i] = (char)buf[MAGIC_PREFIX_N + 5U + i];
-        build_out[BUILD_N] = 0;
+            build_out[i < 2U ? i : i + 1U] = (char)buf[MAGIC_PREFIX_N + 5U + i];
+        build_out[2]             = '.';
+        build_out[BUILD_SHOWN_N] = 0;
     }
 
     /* The variant field sits straight after the prefix. An unrecognised one is
@@ -775,7 +787,9 @@ static const char *installed_name(void)
     uint16_t cur, other;
     int8_t   id;
 
-    /* These names are printed at column 12, so they must fit in 20 columns. */
+    /* These names are printed at column 11, so a name and the build number
+     * beside it must fit in the 21 columns left. The longest of ours is 15,
+     * plus a space and the five of "00.0E" — exactly 21. */
 
     /* Ours is answered by the magic block, which costs one 20-byte read and,
      * unlike a CRC, still says yes after the stub has been rebuilt. */
@@ -837,7 +851,9 @@ static void draw_chrome(void)
 static void draw_status(void)
 {
     clear_row(ROW_STATUS);
-    print_at(1, ROW_STATUS, "Reading installed ROM...");
+    /* Column 0, as the line that replaces it — see main(). A one-column jog
+     * between the two would read as a glitch on the same row. */
+    print_at(0, ROW_STATUS, "Reading installed ROM...");
 }
 
 static void draw_menu(uint8_t sel)
@@ -897,16 +913,22 @@ void main(void)
          * screen looking hung for the whole of it. */
         name = installed_name();
         clear_row(ROW_STATUS);
-        print_at(1, ROW_STATUS, "Installed: ");
-        print_at(12, ROW_STATUS, name);
+        print_at(0, ROW_STATUS, "Installed: ");
+        print_at(11, ROW_STATUS, name);
 
         /* The build number, when there is one, so a user can say which build
          * is on the card without computing a checksum — which is the reason
-         * it is in the ROM at all. "dezogif_ng UART 0001" is 20 characters
-         * and column 12 leaves exactly 20, so the longest case fits the row
-         * with nothing to spare. */
+         * it is in the ROM at all.
+         *
+         * THIS ROW STARTS AT COLUMN 0, and it used to start at 1. The dotted
+         * build number is one character wider than the bare digits it replaced
+         * (issue #20), and "Installed: dezogif_ng UART 00.0E" is 32 characters
+         * — the whole row. print_at() clips at column 32, so the column left
+         * over from before would have silently eaten the last digit rather
+         * than complaining. Column 0 is also where the title and footer bars
+         * begin, so the widest rows on the screen now all start together. */
         if (build_str[0]) {
-            print_at(12 + (uint8_t)strlen(name) + 1, ROW_STATUS, build_str);
+            print_at(11 + (uint8_t)strlen(name) + 1, ROW_STATUS, build_str);
         }
 
         sel = menu_select(sel);

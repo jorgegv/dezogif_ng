@@ -190,6 +190,21 @@ ifneq ($(FAULT_LIMIT),)
   VARIANT_FLAGS  += -DESP_FAULT_LIMIT=$(FAULT_LIMIT)
 endif
 
+# LINK_IDS — the fifth bench seam, and the only way the state issue #19 fixed can
+# be assembled again. The shipped value sweeps every link id with AT+CIPCLOSE on
+# a recovery; LINK_IDS=0 leaves the sweep out, which is esp_recover exactly as it
+# was, and is what test/run-slot-recovery.sh's S2 needs to be red against. A
+# scratch tree would have shown the same thing once; a seam shows it on every
+# run, which is the difference between a claim and a check.
+#
+# Same naming rule as the others: each probe ROM gets its own output name.
+LINK_IDS ?=
+
+ifneq ($(LINK_IDS),)
+  VARIANT_SUFFIX := $(VARIANT_SUFFIX)-li$(LINK_IDS)
+  VARIANT_FLAGS  += -DESP_LINK_IDS=$(LINK_IDS)
+endif
+
 
 # ---------------------------------------------------------------------------
 # Layout
@@ -503,6 +518,33 @@ test-no-hang: $(ROM_WIFI)
 	 ROM_BOUND="$(ROM_WIFI)" \
 	 ROM_SLOWPROMPT="$(OUT)/enNextMf-wifi-rxwait400-txp1.rom" \
 	 ROM_RECOVER="$(OUT)/enNextMf-wifi-rxwait400-txp1-fl1.rom" $(TEST)/run-no-hang.sh
+
+# ---------------------------------------------------------------------------
+# Do the module's inbound slots come back? — issue #19.
+#
+# Nothing in the stub had ever closed an established connection, so a peer that
+# wedged rather than closing kept its slot for the rest of the power-on session.
+# esp_recover now sweeps every link id with AT+CIPCLOSE, and this is what shows
+# it: fill the slots, confirm the module stops granting them, inject one fault
+# so the recovery runs, and require a FRESH client to be served afterwards.
+#
+# Both ROMs are FAULT_LIMIT=1, the seam run-no-hang.sh's N4 already uses, since
+# five consecutive faults cannot be produced against an emulator that answers
+# everything. S3 adds LINK_IDS=0 — esp_recover assembled exactly as it was — so
+# S1 and S3 differ in one constant, which is what attributes S1's green to the
+# sweep rather than to the recovery it rides in.
+#
+# It needs jnext >= 0.99.127 (jnext#211's AT+CIPCLOSE=<id>) and binds a host TCP
+# port, so it is not part of `make test`. It says NOTHING about a real ESP-01,
+# whose ceiling differs from the emulator's by design; see the script's header.
+#
+# Run the slot-recovery bench (2 jnext runs, 3 checks; not part of `make test`)
+test-slot-recovery:
+	@$(MAKE) --no-print-directory TRANSPORT=wifi FAULT_LIMIT=1 mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi FAULT_LIMIT=1 LINK_IDS=0 mf-rom
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
+	 ROM_SWEEP="$(OUT)/enNextMf-wifi-fl1.rom" \
+	 ROM_NOSWEEP="$(OUT)/enNextMf-wifi-fl1-li0.rom" $(TEST)/run-slot-recovery.sh
 
 # ---------------------------------------------------------------------------
 # The DZRP screen reader (test/dzrp/screen.py) and its validation.

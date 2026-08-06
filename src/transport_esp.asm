@@ -429,7 +429,18 @@ ESP_FAULT_LIMIT:    equ 5
 ; connection IS 0. Encoding either was the bug that made every reply vanish on
 ; a real Next while every emulator check stayed green — see esp_conn_valid and
 ; ERRORS.md. Nothing here encodes which end of the range is real.
+;
+; OVERRIDABLE, AND 0 IS THE ONLY INTERESTING OVERRIDE: it assembles esp_recover
+; exactly as it was before issue #19, sweeping nothing. That is the negative
+; control for test/run-slot-recovery.sh, and it is the fifth seam of this shape
+; here for the fourth time's reason — the behaviour a check must be shown red
+; against has to be reachable by a build, or the red is a story about a scratch
+; tree nobody can re-run. It is not a tuning knob: a value between 0 and the
+; module's real ceiling would leave some slots leaking and some not, which is
+; not a state anyone should ship.
+ IFNDEF ESP_LINK_IDS
 ESP_LINK_IDS:   equ 5
+ ENDIF
 
 ; What the UI has to say about the link. Decided once, during bring-up, because
 ; show_ui is re-entered on every redraw and an AT round trip per redraw would
@@ -1109,6 +1120,11 @@ esp_recover:
 
     ; Free every inbound slot, id by id (issue #19). Blind and numbering-
     ; agnostic on purpose: see ESP_LINK_IDS.
+    ;
+    ; The IF is the bench seam and not a runtime choice: ESP_LINK_IDS=0 leaves
+    ; this out altogether, which is the pre-#19 routine. `ld b,0` would run the
+    ; loop 256 times rather than none, so it cannot be left to djnz.
+ IF ESP_LINK_IDS > 0
     ld b,ESP_LINK_IDS
 .close_link:
     push bc
@@ -1117,10 +1133,12 @@ esp_recover:
     call esp_close_link
     pop bc
     djnz .close_link
+ ENDIF
 
     ; NOW every connection the module had really is gone, which is what lets
     ; this line say so. Before the sweep it was a statement about a thing that
-    ; had not happened.
+    ; had not happened — and with the seam at 0 it still is, which is exactly
+    ; what that control run exists to show.
     xor a
     ld (esp_conn_valid),a
     ; esp_recovering is cleared by rxtx_error's .report, NOT here, because that

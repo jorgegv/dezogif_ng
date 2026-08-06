@@ -134,9 +134,11 @@ counts were taken of the same eight files:
 | this entry, re-measured | **139** | 42-43 | **46 → 19** |
 
 **Reproduced by every count and safe to assert**: **139** verdict strings; the
-longest fell from **46 words to 19**; and **none now exceeds 20** — which is the
-only claim the rule actually makes, and the one figure on which all four agree
-exactly.
+longest fell from **46 words to 19** — or to **20** under the substitution model
+described below, so the exact maximum is model-dependent in the same way the
+before-count is, and only the bound is not; and **none now exceeds 20** — which
+is the only claim the rule actually makes, and the one figure on which all four
+agree exactly.
 
 **Parser-sensitive, and NOT to be quoted as a precise figure**: how many were
 over budget *before*. Four counts gave 42, 43, 45 and 42-43. The spread is

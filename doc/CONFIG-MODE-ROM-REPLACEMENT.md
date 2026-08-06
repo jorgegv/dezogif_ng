@@ -1,16 +1,35 @@
 # Replacing the Multiface ROM at run time, with config mode
 
-**Analysis for [issue #21](https://github.com/jorgegv/dezogif_ng/issues/21). Input to a design, not
-a design.** The intended consumer is a **dotcommand** that installs the debugger from the NextZXOS
-command line and/or from `AUTOEXEC.BAS`, instead of the SD-card file swap `mfselect` performs today.
+**The VHDL analysis behind [issue #21](https://github.com/jorgegv/dezogif_ng/issues/21), and the
+record of what was measured on top of it.** It was written as *input to a design, not a design*, and
+that is still what most of it is: the consumer it was written for now exists — **`.mfinstall`**, a
+dot command that installs the debugger from the NextZXOS command line or from `AUTOEXEC.BAS` instead
+of swapping a file on the SD card. For how to *use* it, read [MFINSTALL.md](MFINSTALL.md); this
+document is why it is shaped the way it is.
 
 **Scope: the delivery mechanism only.** Nothing about the stub, the DZRP layer, the transports or
 the identity block changes. This is about how the 8 KB image gets into Multiface ROM space and how a
 user turns it on and off.
 
-**Nothing here has been run.** Every mechanical claim below is read from the FPGA VHDL — this
-project's first hard rule, and the reason the two contradictory Discord accounts in #21 are both
-corrected rather than picked between. The status of every claim is in the table at the end.
+**MOST OF THIS HAS NOW BEEN RUN, AND ONE THING IN IT WAS WRONG BY OMISSION.** This document opened
+with "Nothing here has been run" until 2026-08-06, when three measurement rounds in jnext under a
+booted NextZXOS turned the analysis into a working tool — `.mfinstall`, `tools/mfinstall/`, bench
+`make test-mfinstall`, and [MFINSTALL.md](MFINSTALL.md). What changed, in one place, is §1.2c: the
+five-way priority contest below is complete about the FPGA and says nothing about the **NextZXOS
+runtime**, and the intended caller's own execution context is what takes the window away. Every
+mechanical claim is still read from the FPGA VHDL — this project's first hard rule, and the reason
+the two contradictory Discord accounts in #21 are both corrected rather than picked between. The
+status of every claim, at its own tier, is in the table at the end.
+
+**What has been run, and what has not:**
+
+| | |
+|---|---|
+| **Run, in jnext** | the whole §1.5 sequence as `tools/mfinstall/mfwin.asm`, including entering and leaving config mode, the DivMMC bridge, the `rst 8` re-arm and the read-back; an 8192-byte ROM installed in two 4 KB passes and verified inside the window; the stub taken live by an M1 button NMI **with no soft reset** |
+| **Run, with a control** | that **turning DivMMC off is the load-bearing step** — the identical routine with DivMMC left on, one assembler constant apart, reproduces the blocked result from the same code location |
+| **NOT run** | any of it on **real hardware**. jnext's config-mode model cites the same VHDL lines this document does, so agreement between them is not independent evidence |
+| **NOT run** | anything **thrown at the window** — no interrupt or NMI was aimed at it, and the expansion-bus hazard in §1.5 has never been provoked |
+| **Still open** | whether taylorza's `NEXTREG 2,1` is required **on silicon**. In the emulator it is not: bench I2 |
 
 **The first version of this document was rejected in review for three defects of its own**, all
 found by reading the same VHDL more carefully: it described the priority contest as two-way when it
@@ -113,6 +132,112 @@ must establish its memory state deliberately** — not rely on the write failing
 **None of this is an argument against the mechanism**; `tbblue.fw` uses it successfully. It is an
 argument that the window has to be entered from a known state.
 
+### 1.2c THE SIXTH HAZARD: the intended caller's own context takes the window away
+
+**MEASURED, 2026-08-06.** The five hazards above are all things a careful caller can avoid. There is
+a sixth, and it is **structural rather than a hazard to be careful about**: a dot command cannot
+reach bank 5 at all, as it stands. Nothing in the VHDL analysis above could have said so, because it
+is a fact about the **NextZXOS runtime** and not about the FPGA — which is why it had to be measured.
+
+A minimal probe dot command entered config mode, selected bank 5, and read eight bytes at `0x0000`
+and at `0x1FE0`. The `0x0000` row is the discriminator, and it is unambiguous:
+
+| first 8 bytes at `0x0000` | which ROM |
+|---|---|
+| what the probe read: `F3 C3 6A 00 44 56 09 02` | **`enNxtmmc.rom` — the DivMMC ROM**, byte-exact |
+| `enNextMf.rom` (config bank 5, low half) | `F5 3E 02 CD 69 00 F1 C9` — not what was read |
+
+The write at `0x1FE0` did not stick. `MMU0 = MMU1 = 0xFF` in the same reading, so the *MMU* branch
+did not win either: it was the **DivMMC second arbiter**, exactly as the paragraph above warns, and
+for a reason no dot command can dodge —
+
+* **DivMMC page0 and page1 are enabled TOGETHER.** `divmmc.vhd:94-95` gates both on
+  `conmem = '1' or automap = '1'`. There is no state in which DivMMC RAM is at `0x2000` and `0x0000`
+  is free. **A command executing at `0x2000` out of DivMMC RAM therefore NECESSARILY has DivMMC at
+  `0x0000`.**
+* **And page0 is unconditionally read-only there** — `divmmc.vhd:100`.
+
+Measured for this invocation: **port `0xE3` = `0x82`**, i.e. CONMEM = 1, MAPRAM = 0, DivMMC bank 2.
+A dot command is mapped by **CONMEM**, not by automap. Also `SP = 0xFF2B` (already high),
+`MMU2 = 0x0A`, `MMU3 = 0x0B` (so `0x4000-0x5FFF` is the display file, ordinary main RAM),
+`NR03 = 0x33`, `NR0A = 0x11`, `NR81 = 0x80` (bit 5 clear, so the expansion-bus NMI hazard was not
+armed), `0x123B = 0x00`.
+
+**There is no other route to that page.**
+`mmu_A21_A13 <= ("0001" + ('0' & mem_active_page(7 downto 5))) & mem_active_page(4 downto 0)`
+(`zxnext.vhd:2964`) is `page + 32`, so an MMU value N reaches physical 8K page N+32 and pages 0-31 —
+which include the Multiface ROM at page `0x0A` — are unreachable from `NEXTREG 0x50` at **any** value.
+Config mode is the only door.
+
+#### The fix, and the control that attributes it
+
+**Relocate the critical section above `0x4000` and turn DivMMC OFF for the window.** Everything at
+`0x2000` — the command's own code and statics — vanishes with it, which is what makes the relocation
+necessary rather than tidy. Then, and this is the part that had to be measured rather than argued:
+
+| run | one variable | 8 bytes read at `0x0000` inside the window | verdict |
+|---|---|---|---|
+| **A** | the full sequence | `F5 3E 02 CD 69 00 F1 C9` = **`enNextMf.rom`** | **LANDED**, and the command survived |
+| **B** | no `rst 8` re-arm | same | **LANDED**, survived |
+| **C** | **DivMMC left ON** | `F3 C3 6A 00 44 56 09 02` = **the DivMMC ROM** | **BLOCKED**, survived |
+
+**C is the point.** It differs from B in one assembler constant and is otherwise identical — same
+relocation, same MMU0, same layer-2 clear, same config-mode entry and exit — and it reproduces the
+blocked result **from a different code location**. So relocating above `0x4000` is *not* what fixes
+this; **turning DivMMC off is**, and relocation is merely what makes turning it off survivable.
+
+#### Every piece of state the window disturbs can be READ BACK, so nothing is guessed
+
+This is what makes the restore exact instead of hopeful, and it is the other thing the measurement
+established:
+
+* **Port `0xE3` is readable** — `port_e3_rd` (`:2727`), `port_e3_rd_dat` (`:2815`), and
+  `port_e3_dat <= port_e3_reg(7 downto 6) & "00" & port_e3_reg(3 downto 0)` (`:4190`). So CONMEM,
+  MAPRAM and the DivMMC bank are saved and restored exactly, and the "which bank do we page back?"
+  problem does not exist. **Note the contrast with NR `0x04`, which is write-only** (§4) — these are
+  not the same kind of register and the difference decides how each is handled.
+* **NR `0x0A` bit 4 is `nr_0a_divmmc_automap_en`** (`:5196`) and reads back (`:5912`). Clearing it
+  forces `divmmc_automap_reset <= '1'` (`:4112`), which zeroes `automap_hold` and `automap_held`
+  outright. That is the off switch.
+* **MAPRAM is sticky**: `port_e3_reg(6) <= cpu_do(6) or port_e3_reg(6)` (`:4182`), so writing 0 to
+  port `0xE3` cannot clear it. Harmless here, because clearing CONMEM *and* automap takes DivMMC off
+  whichever way MAPRAM points — but exactly the kind of thing that bites a restore written from
+  assumption.
+
+#### Getting back in needs a bridge
+
+Restoring NR `0x0A` does **not** restore `automap_held` — clearing bit 4 zeroed it, and automap only
+re-arms on an M1 fetch at an entry point, which by then is unreachable because the command at
+`0x2000` is gone. So: restore NR `0x0A`, page DivMMC back with `out (0xE3), saved | 0x80` (CONMEM,
+original bank), execute one `rst 8` **from high RAM** to re-arm `automap_held` — the M1 fetch lands
+at `0x0008`, where `i_automap_active` (= `sram_pre_override(2)`, `:3137`) is true because
+`cpu_a(15 downto 14) = "00"` — then restore port `0xE3` byte-exact.
+
+**Run B shows the `rst 8` was not needed in this invocation**, because CONMEM was already set and the
+byte-exact restore was sufficient on its own. It is kept anyway, and the reason is a limit of the
+measurement rather than a preference: `0xE3 = 0x82` is what *this* NextZXOS gave *this* dot command
+typed at *this* command line. Nothing shows a dot command is always CONMEM-mapped, and `--auto` from
+`AUTOEXEC.BAS` is a different invocation path that was not measured. If one is ever automapped with
+CONMEM = 0, the exact restore alone puts DivMMC back **off** and the return to `0x2000` lands
+nowhere. Six bytes.
+
+#### One hazard that would have been ugly, disarmed by the VHDL rather than by luck
+
+The `LDIR` writes **through** `0x0000`, `0x0008`, `0x0038` and `0x0066` — every DivMMC automap entry
+point — because it is copying an 8 KB image over them. A write cannot re-trigger automap mid-copy:
+`automap_hold` only updates on `i_cpu_mreq_n = '0' and i_cpu_m1_n = '0'` (`divmmc.vhd:126-131`) and
+the `divmmc_automap_*_q` inputs are cleared whenever `cpu_m1_n = '1'` (`:4115-4119`). **M1 fetches
+only.** Worth recording because the live `automap` expression at `divmmc.vhd:148` has had its
+`not i_cpu_m1_n` term commented out, so the gating is not where a reader looks for it.
+
+#### And where the command itself lives
+
+**Dot commands are looked up in `/dot/`**, checked on the reference SD image, which carries
+`DISPLAYEDGE` and `ESPUPDATE` there — so the nine-character name `mfinstall` is fine, and the binary
+**cannot** sit in `/mfselect/` as the issue's plan assumed. Its ROM files still can, and do; the
+plan's operative words are "with access to the same ROM files", which is unaffected. See
+[MFINSTALL.md](MFINSTALL.md).
+
 ### 1.3 Entering and leaving config mode — both Discord accounts are wrong as stated
 
 `zxnext.vhd:5147-5151`, the tail of the `when X"03"` write handler:
@@ -146,8 +271,19 @@ write of `011` while in config mode **sets machine type to +3 and leaves config 
 **The exit values split into two groups, and an earlier version of this document missed that.** The
 type case covers `001`-`100`; the exit condition is `/= "000"`. So `101` and `110` **leave config
 mode without touching the machine type**, while `001`-`100` leave *and* set it. Either is a
-legitimate exit; the caller must know which it is doing. Writing back the machine type you want is
-the safe habit, and it is why taylorza's "restore NR `0x04`, then NR `0x03`" ordering works.
+legitimate exit; the caller must know which it is doing.
+
+**DO NOT CHOOSE A MACHINE TYPE — READ THE ONE THAT IS THERE AND WRITE IT BACK.** This corrects the
+advice this paragraph used to give ("writing back the machine type you want is the safe habit"),
+which is workable but asks the caller to *decide* something it has no business deciding: a tool that
+installs a ROM should not be picking the machine's timing model. NR `0x03` **is readable**
+(`zxnext.vhd:5894`), and `nr_03_machine_type` is initialised `"011"` and is only ever assigned
+`001`/`010`/`011`/`100` (`:1103`, `:5139-5142`) — **never `000`**. So `a = read NR 0x03; a &= 7;`
+gives a value that is a valid "leave config mode" **by construction** and that changes nothing.
+
+Measured: the probe read `0x33` and restored `011`, and `tools/mfinstall/mfwin.asm` does exactly
+this. It is also why there is no `NEXTREG 4,<previous>` step — see §4 on NR `0x04` being write-only,
+which is the asymmetry that makes reading NR `0x03` worth pointing out.
 
 ### 1.4 Three traps in the same handler
 
@@ -167,7 +303,13 @@ anything doing this earlier in boot needs to know.
 
 ### 1.5 The sequence that follows from all of the above
 
+**BUILT AND RUN.** This is now `tools/mfinstall/mfwin.asm`, assembled at `0x5000` and copied there at
+run time; the version below is the sketch it was written from, corrected where the measurement
+disagreed. Read the source for the citations in place.
+
 ```
+    ; -- RELOCATED: this whole routine, its variables AND its stack are >= 0x4000,
+    ;    because everything at 0x2000 vanishes when DivMMC goes off (1.2c).
     ; -- establish the memory state first: config mode is THIRD in priority (1.2b)
     ;    MF memory must not be paged in, slot 0/1 must not hold an MMU RAM page,
     ;    and DivMMC ROM must not be mapped, or the write silently does nothing.
@@ -175,17 +317,41 @@ anything doing this earlier in boot needs to know.
     di                           ; closes the MASKABLE half - not optional.
                                  ; config mode suppresses the M1 button and DivMMC by
                                  ; itself; NR 0x81 bit 5 is the one that can still fire
+    in   a,(0xE3)  -> save       ; CONMEM/MAPRAM/bank, READABLE (1.2c)
+    read NR 0x0A -> save; clear bit 4    ; automap off, automap_held zeroed (:4112)
+    out  (0xE3),0                        ; CONMEM off. DivMMC is now gone.
+    read NR 0x03 -> mach = a & 7 ; the exit value, ASKED FOR rather than chosen (1.3)
+    read port 0x123B -> save; clear the layer-2 map bits    ; (:3077)
     ; read NR 0x81, clear bit 5, write it back   ; belt and braces: the bit defaults to 0,
                                  ; but this is the ONE NMI path that survives config mode.
                                  ; NR 0x81 IS readable (zxnext.vhd:6126), unlike NR 0x04,
                                  ; so a read-modify-write and a restore are implementable
+    read NR 0x50 -> save; set 0xFF       ; an MMU RAM page in slot 0 BEATS config mode
     NEXTREG 3,7                  ; enter config mode (bits 2:0 = 111)
     NEXTREG 4,5                  ; 16 KB config bank 5 at 0x0000-0x3FFF, writable
-    LDIR                         ; 8 KB image -> 0x0000, the MF ROM half
-    NEXTREG 3,<machine type>     ; leave: 001-100 sets the type too, 101/110 do not
+    LDIR                         ; image -> 0x0000, the MF ROM half
+    READ IT BACK AND COMPARE     ; INSIDE the window: see below
+    NEXTREG 3,mach               ; leave, writing back the type we read
+    restore NR 0x50, NR 0x81, NR 0x0A, port 0x123B    ; NOT NR 0x04: write-only (§4)
+    out  (0xE3),saved | 0x80     ; CONMEM bridge, original bank
+    rst  8 / defb 0x88           ; M_DOSVERSION: the M1 at 0x0008 re-arms automap
+    out  (0xE3),saved            ; exact restore
     ei
-    NEXTREG 2,1                  ; soft reset - reportedly required; see 3.1
+    ; NO SOFT RESET — see 3.1, which this now answers for the emulator
 ```
+
+**THE READ-BACK MUST HAPPEN INSIDE THE WINDOW, and that is not belt and braces.** Outside it,
+`0x0000` is the DivMMC ROM again, so there is nothing to read: a **silently discarded write is this
+mechanism's entire failure mode** — it is what a naive dot command does, every time (1.2c) — and a
+tool that reported success on having reached the end of a routine would report success on doing
+nothing at all.
+
+**AND `NEXTREG 2,1` IS GONE FROM THE SEQUENCE.** taylorza reported needing it; bench check I2 presses
+the M1 button straight after an install with no reset of any kind, and the stub takes the screen. So
+in the emulator the answer to §3.1 is that the soft reset is **not** required for the bytes to be
+live. On silicon, nobody has checked. Issuing one "just in case" would destroy the user's BASIC
+session to work around something that may not be true — and would make the check unable to ask the
+question.
 
 **THE INTERRUPT WINDOW, AND IT IS NARROWER THAN THIS DOCUMENT FIRST SAID.** Config mode remaps the
 whole of `0x0000-0x3FFF`, not merely the 8 KB being written — the branch is gated on
@@ -323,6 +489,19 @@ Two things to establish, and the second is ours alone: whether the reset is genu
 what it does to a machine that is **already** running a debug session — the stub's own `R = Reset`
 key is on that screen.
 
+**ANSWERED FOR THE EMULATOR, 2026-08-06: NO RESET IS NEEDED.** `.mfinstall` issues none — deliberately,
+because issuing one "just in case" would destroy the user's BASIC session to work around something
+that may not be true, and would leave nothing able to ask the question. Bench check **I2** presses the
+M1 button straight after an install, with no reset of any kind, and the stub takes the screen: 97% of
+it repainted, 95% unlike the stock Multiface monitor. That is exactly the check that would be red if
+the bytes were not live.
+
+**NOT ANSWERED ON SILICON**, and this is the one place a difference would be expensive: taylorza's
+report is first-hand from real hardware, and jnext's config-mode model is written from the same VHDL
+this document reads, so it can only confirm what the VHDL implies. **If a reset turns out to be
+needed on a real Next, the fix is a line in `main()` and a change to I2 — not a redesign.** The
+second question is untouched either way: nothing has run a soft reset against a live debug session.
+
 ### 3.2 What the dotcommand is, and what it is not
 
 Xalior's refinement in #21 avoids the obvious trap and is worth keeping: **do not parse
@@ -336,6 +515,16 @@ That gives the removal story the file swap does not have:
 * nothing is ever overwritten, so **the stock ROM cannot be lost** — which is the failure mode
   `mfselect`'s first-run guard exists to prevent and which `ERRORS.md` records as a data-loss bug.
 
+**BUILT.** `/mfselect/mfinstall.yml`, one `install:` key taking `wifi`, `uart` or `none`, and
+`.mfinstall --auto` obeys it. It is deliberately not a YAML parser: it finds a line whose first word
+is `install:` and reads the next word, which is the whole of the format the issue specifies.
+`install: none` is a **success** and not an error, so leaving `--auto` in `AUTOEXEC.BAS` on a day you
+are not debugging costs nothing and reports nothing alarming.
+
+The uninstall path is `--unload`, and one clarification the issue's framing invites: it restores
+`/mfselect/original.rom` **into SRAM for the rest of the session**. It does not touch the card,
+because nothing here touches the card. A power cycle does the same thing.
+
 ### 3.3 What happens to `mfselect`
 
 Its identity machinery stays relevant either way: the magic string at ROM offset `0x1FE0`, matched on
@@ -344,21 +533,74 @@ landed. This would change *what it does*, not *how it knows what it is looking a
 delivery mechanisms live side by side, or one replaces the other, is a decision this document does
 not make.
 
+**AS BUILT, THEY LIVE SIDE BY SIDE AND ONE DEPENDS ON THE OTHER.** `.mfinstall` reuses mfselect's
+directory, its file names, its `.sum` sidecars and its identity block verbatim — `make mfinstall`
+depends on `make mfselect`, and one deploy directory serves both. **`mfselect` keeps one job
+exclusively: capturing the stock ROM as `original.rom`, with its first-run guard.** `.mfinstall`
+deliberately does not duplicate that, because capturing means deciding whether what is installed is
+really the stock ROM, and a second implementation of that decision is a second place for the
+data-loss bug in `ERRORS.md` to come back. So `--unload` needs mfselect to have been run once, and
+says so when it has not.
+
+One thing the identity machinery is used for here that mfselect does not need: **idempotence**.
+`--auto` reads the block out of the **live** ROM through a read-only config-mode pass and does
+nothing if the requested variant is already there. Matching on variant and not on build number is
+issue #4's rule, and its consequence is written down in [MFINSTALL.md](MFINSTALL.md) rather than left
+to be discovered: a rebuilt ROM of the same variant is not re-installed within one session.
+
 ### 3.4 Open, and not investigated here
 
-* Where the ROM image lives once it is not at `machines/next/enNextMf.rom`, and whether anything else
-  on the machine expects a Multiface ROM at that path.
+**Two of the three below are now closed, and they are struck rather than deleted so a reader can see
+which questions the build answered.**
+
+* ~~Where the ROM image lives once it is not at `machines/next/enNextMf.rom`~~ — **it stays exactly
+  where it was.** `machines/next/enNextMf.rom` is never written and never moves; the images
+  `.mfinstall` installs from are mfselect's, in `/mfselect/`. Nothing on the machine sees a change to
+  any path, which is why bench I6 can assert byte-identity there. Only the **command** had to move,
+  to `/dot/` (§1.2c).
 * Whether `AUTOEXEC.BAS` runs early and reliably enough, and what boot looks like to a user who is
-  not debugging that day.
-* Whether the dotcommand can verify what it wrote — reading back through config mode should work by
-  §1.2, since the mapping is symmetric, but that is inference and has not been checked.
+  not debugging that day. **STILL OPEN, and note that `--auto` from `AUTOEXEC.BAS` is also the
+  invocation path §1.2c's `0xE3 = 0x82` reading does NOT cover** — the bench types the command at the
+  command line, as the probes did. That is why the `rst 8` re-arm is kept.
+* ~~Whether the dotcommand can verify what it wrote~~ — **it does, and it is not optional.** The
+  read-back happens **inside** the window, because outside it `0x0000` is the DivMMC ROM again. Shown
+  working the only way that means anything: a build with DivMMC left on reports
+  `Write blocked: ROM unchanged` instead of succeeding.
+
+Still open, and added by the build rather than inherited from the issue:
+
+* **Anything on real hardware.** Nothing here has run on a Next.
+* **The window under load.** No interrupt or NMI has ever been aimed at it, and the expansion-bus NMI
+  hazard §1.5 guards against has never been provoked.
+* **A partially written ROM.** If the second 4 KB pass fails there is nothing to roll back to — the
+  first pass has already overwritten the previous contents and SRAM has no rename. `.mfinstall` says
+  so; a power cycle always fixes it; no test produces the state.
 
 ---
 
 ## 4. Status of every claim above
 
+**A tier was added on 2026-08-06: `measured in jnext`.** It sits below `verified` for anything about
+the FPGA, because jnext's config-mode model cites the same VHDL lines this document reads and
+agreement between them is not independent evidence. It sits **above** `verified` for anything about
+the **NextZXOS runtime** — what a dot command's `0xE3`, MMU and SP actually are — which no amount of
+VHDL can answer and which is where §1.2c came from. Nothing below is `verified on hardware`; nothing
+here has run on a real Next.
+
 | Claim | Source | Status |
 |---|---|---|
+| **A dot command CANNOT write bank 5 through config mode as it stands** — DivMMC wins the second arbiter and the write is silently discarded | probe read back `enNxtmmc.rom`'s bytes at `0x0000` inside the window, byte-exact; `divmmc.vhd:94-95`, `:100` | **measured in jnext**, and the mechanism **verified** in the VHDL. §1.2c |
+| **DivMMC page0 and page1 are enabled together, so a command at `0x2000` necessarily has DivMMC at `0x0000`** | `divmmc.vhd:94-95` | **verified** — this is what makes the hazard structural rather than avoidable |
+| A dot command is mapped by **CONMEM**, not automap: port `0xE3` = `0x82` | read back in the window; decoded per `zxnext.vhd:4190` | **measured in jnext** — one invocation path (typed at the command line); `--auto` from `AUTOEXEC.BAS` was NOT measured |
+| A dot command's SP is already high (`0xFF2B`), MMU2/3 are `0x0A`/`0x0B`, MMU0 is `0xFF` | same reading | **measured in jnext** |
+| **Relocating above `0x4000` and turning DivMMC OFF makes the write land, and the command survives** | `tools/mfinstall/mfwin.asm`; runs A and B | **measured in jnext** |
+| **Turning DivMMC off is the load-bearing step; relocation alone fixes nothing** | run C — the same routine with DivMMC left on, one assembler constant apart, reads back the DivMMC ROM from the same code location | **measured in jnext, with a control** |
+| The `rst 8` automap re-arm works | runs A and B | **measured in jnext**, and **not needed in this invocation** — B survived without it because CONMEM was already set. Kept for the unmeasured path |
+| **An 8192-byte ROM can be installed this way, in two 4 KB passes, and verified inside the window** | bench `make test-mfinstall`, I1 | **measured in jnext** |
+| **The bytes are LIVE with no soft reset**: an M1 button NMI straight after an install brings up the stub | bench I2 — 97% repainted, 95% unlike the stock monitor | **measured in jnext** — answers §3.1 for the emulator ONLY |
+| The SD card is never written | bench I6 — `machines/next/enNextMf.rom` byte-identical after a run in which the stub was demonstrably live | **measured in jnext** |
+| Dot commands are looked up in `/dot/`, and a 9-character name is fine | the reference SD image carries `DISPLAYEDGE` and `ESPUPDATE` there | **verified** |
+| A dot command reports success/failure through **carry and A**, from `main`'s return value | z88dk `zxn_crt_286.asm.m4:332-346`; both probes' spurious "Path too long, 0:1" came from a `void main` | **verified** in z88dk's source, and the fix **measured in jnext** — `.mfinstall --help` returns cleanly with no trailing error |
 | MF ROM is the bottom 8 KB of 16 KB bank 5; MF RAM the top | `zxnext.vhd:3029-3035` | **verified** |
 | The MF path serves the ROM half read-only | same, `sram_pre_rdonly <= not cpu_a(13)` | **verified** |
 | Config mode maps NR `0x04`'s bank to `0x0000-0x3FFF`, writable | `zxnext.vhd:3044-3050` | **verified** |

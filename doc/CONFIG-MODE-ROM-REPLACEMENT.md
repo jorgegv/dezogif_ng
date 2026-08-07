@@ -536,7 +536,7 @@ That gives the removal story the file swap does not have:
 
 * ~~hold the key that skips `AUTOEXEC.BAS`~~ → **this half of the argument cannot be sourced.** No
   key that skips `AUTOEXEC.BAS` is documented anywhere in the NextZXOS guides on the card, checked
-  across all eleven of them; BREAK stopping a running NextBASIC program is the obvious candidate and
+  across all twelve of them; BREAK stopping a running NextBASIC program is the obvious candidate and
   nothing here has verified it applies at boot. What survives is the weaker and still sufficient
   form: the config file is one line, editable on the Next, and `install: none` turns the whole thing
   off. See [MFINSTALL.md](MFINSTALL.md);
@@ -629,11 +629,17 @@ agreement between them is not independent evidence. It sits **above** `verified`
 the **NextZXOS runtime** — what a dot command's `0xE3`, MMU and SP actually are — which no amount of
 VHDL can answer and which is where §1.2c came from.
 
-**Three rows below are now hardware-sourced, and they are the ONLY ones**, so read every other row
-as an emulator or a VHDL claim exactly as before. They carry `reported on hardware` — the rung
-Appendix A of the plan defines for first-hand evidence from one machine, one reporter, with no
-artefact anyone can re-run — rather than `verified`, which this file's older mfselect-reset row
-spends more loosely than the ladder allows.
+**Some rows below now carry hardware evidence, and no two of them carry it the same way**, so read
+the tag on each rather than a count in this paragraph. Two of the 2026-08-07 rows are `reported on
+hardware` — the rung Appendix A of the plan defines for first-hand evidence from one machine, one
+reporter, with no artefact anyone can re-run. The soft-reset-is-required row is a **join**, jnext
+and then hardware. The file-swap reset row predates all of this and says `verified on hardware`,
+which is looser than the ladder allows for the same kind of evidence and is left as it was found.
+And one row is a third party's report, which is weaker again.
+
+*(An earlier version of this paragraph said "three rows, and they are the ONLY ones", then named a
+fourth in its own next sentence. A count is a thing that has to be maintained; the per-row tags are
+the thing that cannot silently go stale, so this paragraph no longer competes with them.)*
 
 | Claim | Source | Status |
 |---|---|---|

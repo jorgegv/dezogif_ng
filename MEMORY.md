@@ -5,6 +5,98 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-07 — The deploy directory IS the card, and the config file it ships is one a run has parsed
+
+**Decided (user) and built.** `build/deploy/` mirrors the layout its contents
+take on the Next — `dot/` and `mfselect/` — so deployment is
+`cp -r build/deploy/* <card>/` and nothing is renamed or placed by hand. And
+`make mfinstall` ships a **default `mfselect/mfinstall.yml`** saying
+`install: wifi`, where before the user wrote that file themselves.
+
+**THE FLAT VERSION HAD TO PRINT A RULE, AND A RULE BESIDE A LISTING IS A RULE
+SOMEBODY READS PAST.** Since issue #21 one of the six files goes to `/dot/` and
+the other five to `/mfselect/`, so `deploy_listing` mapped basename to
+destination with an awk conditional and the recipe printed *"/dot/mfinstall is
+the ONLY file here that does not go in /mfselect/"* underneath. That is a second
+copy of a fact the build already knows, in the one line a user follows
+literally. The listing is now `find -printf '    /%P\n'` over the tree: the
+**directory answers the question and the listing only reads it back**, which is
+the same move as `build/deploy/` itself — the ROMs wear one name for the
+firmware (`enNextMf.rom`) and another for mfselect (`dezouart.rom`), and that
+was made the build's problem rather than the user's for exactly this reason.
+
+**THE CONFIG FILE'S NAME IS `mfinstall.yml` AND THE REQUEST SAID
+`mfselect.yml`.** `tools/mfinstall/mfinstall.c:102` hardcodes
+`CONF_FILE "/mfselect/mfinstall.yml"`, so a default under any other name would
+be **inert** — shipped, copied to the card, and never opened. Renaming the
+constant instead was considered and rejected by the reviewer as well as here:
+`mfselect` the program reads no config file at all, so `mfselect.yml` would
+misname *which* program it configures, and the rename would move the C source,
+the dot command, the bench and four documents for a filename that appears
+nowhere in the repository.
+
+**"IT CAN BE READ" IS TWO CHECKABLE THINGS, AND NEITHER IS AN ASSERTION.**
+
+1. **The build refuses a config over 511 bytes.** `read_config()` reads
+   `CHUNK-1` = 511 bytes **once** and scans only those, so an `install:` line
+   pushed past that by a longer preamble is a file the dot command reports as
+   unreadable — and nothing else here bounds it. The key is therefore written
+   **first**, and the guard is a proxy for the real bound rather than the bound
+   itself, which is said where it is used. Shown red: 64 bytes appended, `make
+   mfinstall` fails with the message, exit 2.
+2. **The bench parses the file that SHIPS.** `test-mfinstall`'s I5 used to
+   `printf 'install: wifi'` into a scratch file, which would have left the
+   shipped default checked by nothing at all — the classic shape this file
+   records under other names. It now `mcopy`s `build/deploy/mfselect/mfinstall.yml`
+   onto the card image, so what a user copies is what a run has read: CRLF,
+   comment block, long-filename entry and all. Shown red: a shipped
+   `install: none` turns I5's wifi half red at 0.00%, restored green.
+
+**CRLF and 64 columns, because that is what NextZXOS's own config files are** —
+`/nextzxos/browser.cfg` and `/nextzxos/enBrowsext.cfg`, both checked on the
+reference image rather than assumed. The parser takes either ending; the
+editor on the machine is the reason to pick one.
+
+**The nine-character name needs a long-filename entry, and that is ordinary
+here**: NextZXOS reads `enBrowsext.cfg` itself and looks dot commands up by
+names like `DISPLAYEDGE`. The reviewer confirmed independently that `mcopy`
+writes the same `MFINST~1.YML` + LFN pair a PC would and that it round-trips
+byte-identical.
+
+**Rejected.** Generating the yml in the recipe with `printf` (it is data a user
+edits on the card, not a build product, and a generated file cannot be the one
+the bench parses); `rm -rf $(DEPLOY)` to clear the old flat files (the recipe's
+existing comment refuses a recursive delete of a variable-built path, and there
+is nothing here it buys); leaving the pre-hierarchy flat names in place (a tree
+built before this would list five loose files as instructions to copy something
+to the card's root).
+
+**A REVIEW FINDING AND A GREP FINDING, AND THEY ARE THE SAME DISEASE.** The
+reviewer rejected the first commit because `doc/MFSELECT.md` still tabulated the
+flat copy — five files, a From/To table, by hand — while `README.md` links to it
+for "full detail" on the procedure this branch exists to delete. Enumerating
+mechanically rather than from the review's list then found a **third** site, the
+plan's Appendix B A2/A3, which cited that very table. `MEMORY.md`'s own "the
+five files a card needs" is left alone deliberately: it records what was decided
+then, and editing evidence to match a later rendering is what this project
+refuses.
+
+**Evidence: `test-mfinstall` 7/7 and `test-mfselect` 10/10**, each re-run
+independently by the reviewer. **Both ROMs are byte-identical to `main`'s** with
+`BUILD_TIME` and the build number pinned and `build/*.bin` deleted first — the
+trap [[ERRORS.md]] records — re-derived by the reviewer as well, **so no `make
+bump`** even though the mechanical check lists `Makefile`.
+
+**NOT COVERED.** Nothing here has run on **real hardware**: no Next has opened
+this file, and `--auto` from `AUTOEXEC.BAS` remains the unmeasured invocation
+path it was before. `mcopy` writing an LFN entry is not proof that NextZXOS's
+esxdos `f_open` will read one, only that the entry is the kind NextZXOS reads
+elsewhere. And `CLAUDE.md`'s §Testing catalogue still has **no entry for
+`test-mfinstall`** where every other bench has one, which is its own small
+branch and now has one more thing to say.
+
+---
+
 ## 2026-08-06 — Three WiFi screen lines reworded (user)
 
 **Decided by the user, and it is aesthetics rather than correctness**, so it is

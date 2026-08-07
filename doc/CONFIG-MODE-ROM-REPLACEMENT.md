@@ -31,7 +31,7 @@ status of every claim, at its own tier, is in the table at the end.
 | **NOT run** | `--unload` on real hardware, and the `0xE3` read-back on the `AUTOEXEC.BAS` path — the value `0x82` in §1.2c is what *one* typed invocation gave, so the `rst 8` bridge is still kept for a case nobody has observed |
 | **NOT run** | anything **thrown at the window** — no interrupt or NMI was aimed at it, and the expansion-bus hazard in §1.5 has never been provoked |
 | **Answered on silicon** | the `NEXTREG 2,1` in taylorza's example is **not required** — not in the emulator (bench I2) and not on a real Next, where two invocation paths each went live on the next M1 press with no reset |
-| **Still open, and it is now the interesting one** | what a soft reset **costs**. On hardware it leaves the machine unusable until a power cycle, and that is [#26](https://github.com/jorgegv/dezogif_ng/issues/26) rather than a config-mode fault: `--auto` reinstalled the ROM in between and the stub's own `R` key does the same |
+| **Was still open; answered and FIXED since** | what a soft reset **costs**. On hardware (build `0010`) it left the machine unusable until a power cycle — [#26](https://github.com/jorgegv/dezogif_ng/issues/26), not a config-mode fault: `--auto` reinstalled the ROM in between and the stub's own `R` key does the same. Since diagnosed (the stub's NMI dispatch declining over a stale image and leaking MMU slot 7 — upstream code from 2020) and fixed, with bench check T7 guarding it; the fixed ROM has not been through the sequence on hardware |
 
 **The first version of this document was rejected in review for three defects of its own**, all
 found by reading the same VHDL more carefully: it described the priority contest as two-way when it
@@ -524,7 +524,10 @@ with a live debug session, and the answer measured on hardware is that it **brea
 reset the NMI does nothing and NextZXOS locks up, recoverable only by power cycling — even though
 `--auto` re-ran and reinstalled the ROM in between. That reinstall is what makes this **not** a
 config-mode fault: the bytes were freshly written and verified, and the stub's own `R` key produces
-the same state. It is [#26](https://github.com/jorgegv/dezogif_ng/issues/26).
+the same state. It is [#26](https://github.com/jorgegv/dezogif_ng/issues/26) — **since diagnosed
+and fixed**: the stub's own NMI dispatch declined the press over a stale image and leaked MMU
+slot 7, an upstream defect from 2020, guarded by bench check T7. The measurement above predates
+the fix; the fixed ROM has not yet been through this sequence on hardware.
 
 ### 3.2 What the dotcommand is, and what it is not
 
@@ -606,12 +609,18 @@ than deleted so a reader can see which questions the build answered.**
 
 Still open, and added by the build rather than inherited from the issue:
 
-* **A SOFT RESET AFTER AN INSTALL LEAVES THE MACHINE BROKEN**, measured on a real Next 2026-08-07:
-  boot, `--auto`, NMI, debugger fine; **soft reset**, `--auto` runs again and reinstalls, and then
-  the NMI does nothing and NextZXOS locks up shortly afterwards. A power cycle always recovers.
+* ~~**A SOFT RESET AFTER AN INSTALL LEAVES THE MACHINE BROKEN**~~, measured on a real Next
+  2026-08-07: boot, `--auto`, NMI, debugger fine; **soft reset**, `--auto` runs again and
+  reinstalls, and then the NMI does nothing and NextZXOS locks up shortly afterwards. A power
+  cycle always recovers.
   **This is [#26](https://github.com/jorgegv/dezogif_ng/issues/26) and not a config-mode fault** —
   the stub's own `R` key does the same, and the reinstall on the way past is what says the ROM
-  bytes are not where the damage is.
+  bytes are not where the damage is. **Diagnosed and FIXED since**: the stub's NMI dispatch,
+  upstream code from 2020, declined the second press over a stale image and leaked MMU slot 7
+  (`MAIN_BANK` left mapped at `0xE000`) — which is also why the reinstall could not help, the
+  damage never being in the Multiface ROM. Bench check T7 in `make test` now presses the button
+  twice with a reset between and goes red on the decline. **On hardware the fixed ROM has not
+  been through this sequence yet** — the measurement above is of build `0010`.
 * **`--unload` on real hardware.** Everything hardware has shown is an install.
 * **The window under load.** No interrupt or NMI has ever been aimed at it, and the expansion-bus NMI
   hazard §1.5 guards against has never been provoked.
@@ -680,6 +689,6 @@ the thing that cannot silently go stale, so this paragraph no longer competes wi
 | A soft reset is **required** for the config-mode method | **our earlier misreading** of the Discord thread — taylorza described what they did, not a requirement, and said so | **DISPROVED**, in jnext by bench I2 and then **on a real Next** twice — `--load wifi` typed, and `--auto` from `AUTOEXEC.BAS` — each live on the next M1 press with no reset |
 | A soft reset is **enough** for it, i.e. the replacement survives one | taylorza, Discord | **reported by a third party** — not tested here, and not by anything this bench does: no run issues `NEXTREG 2,1` at all |
 | **`.mfinstall --auto` from `AUTOEXEC.BAS` installs at boot on a real Next**, which was the last untried invocation path | user's own machine, 2026-08-07: autoexec ran, the stub installed, the M1 press brought up the debugger | **reported on hardware** — one machine, one reporter, no re-runnable artefact |
-| **A soft reset after an install leaves the machine unusable** — NMI does nothing, NextZXOS locks up, power cycle recovers | same session: reset, `--auto` reinstalled the ROM, and the next NMI still did nothing | **reported on hardware**, and **NOT a config-mode fault**: the reinstall means the ROM bytes were freshly written and verified, and the stub's own `R` key does the same. Issue #26 |
+| **A soft reset after an install leaves the machine unusable** — NMI does nothing, NextZXOS locks up, power cycle recovers | same session: reset, `--auto` reinstalled the ROM, and the next NMI still did nothing | **reported on hardware**, and **NOT a config-mode fault**: the reinstall means the ROM bytes were freshly written and verified, and the stub's own `R` key does the same. Issue #26 — **since diagnosed and fixed** (the stub's NMI dispatch declined over a stale image and leaked MMU slot 7; bench T7). The measurement is of build `0010`; the fixed ROM is unverified on hardware |
 | Config mode is re-enterable | `.mfinstall` enters and leaves it THREE times per install — one identity read plus two 4 KB passes — and the bench's run 5 does two installs in one session, six entries, without a reset between them | **measured in jnext** — was **inferred** from `:5147` having no one-way guard, and is now exercised on every run of `make test-mfinstall` |
 | The sequence in §1.5 works | it IS `tools/mfinstall/mfwin.asm`; bench `make test-mfinstall` I1 and I2 | **measured in jnext** — 8192 bytes installed in two passes, verified inside the window, and live on the next M1 press |

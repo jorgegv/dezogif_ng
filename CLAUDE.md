@@ -191,7 +191,7 @@ strongest:
 1. **It assembles** — necessary, proves nothing. Enforced by the in-source `ASSERT`s
    (`main_end` within budget) plus the Makefile's 8192-byte ROM size check.
 2. **`make check-reproducible`** — the same source gives the same ROM.
-3. **`make test`** — six headless jnext runs, judged on screenshots (`test/run-headless.sh`):
+3. **`make test`** — eight headless jnext runs, judged on screenshots (`test/run-headless.sh`):
    - T1 the bench boots a Next at all
    - T2 our `enNextMf.rom` does not perturb the NextZXOS boot
    - T3 **control** — the software-NMI fixture really fires the Multiface NMI, shown against the
@@ -221,6 +221,19 @@ strongest:
      verified. **Which of its two branches ran is not**: NR `0xC2`/`0xC3` and the debuggee's own
      stack would both give that answer, and nothing read NR `0xC0` back. No bench here can do this
      — `--delayed-nmi` counts frames and a client counts wall clock — so it stays a human's job.
+   - T7 a second M1 press after a **soft reset** re-initialises the debugger instead of
+     declining (issue #26). **The only check that presses the button twice**, which is why five
+     years of upstream and every earlier bench missed the defect it guards: the NMI dispatch
+     read "magic number and build time match, no debuggee running" as "the debugger is
+     executing" and declined — an inference a soft reset falsifies, since RAM survives one and
+     the same evidence then means a stale image with NextZXOS executing. The decline also
+     leaked MMU slot 7, which the entry path had already pointed at `MAIN_BANK` and the
+     immediate return never restored, so the machine hung shortly afterwards. The fix keys the
+     decline on `slot_backup.slot7` — the bank slot 7 held at the moment of the press. Two
+     runs, differing only in the second press, shot at the same frame; preconditions are
+     asserted from jnext's own log (both queued NMIs really delivered — `--delayed-nmi-frames`
+     queues, and a dropped first press would make run 8 a *first* press that passes vacuously)
+     and from the reset run really leaving the stub's screen.
    Screen comparison is a **percentage of differing pixels** (`test/screen-diff.py`), not a byte
    compare: NextZXOS idling changes 0.01% of the screen and that once produced a false PASS.
 4. **`make test-mfselect`** — the mfselect bench, 6 headless runs, 10 checks, asserting on files
@@ -511,7 +524,7 @@ read once; a document can be revised, cited and diffed.
 
 Two things the shortening may **never** touch, because they are interface rather than prose:
 
-- **The check id.** `T1`-`T6`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W5`, `C1`-`C15`, `B1`-`B2`,
+- **The check id.** `T1`-`T7`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W5`, `C1`-`C15`, `B1`-`B2`,
   `P1`-`P3`, `N1`-`N4`, `G1`-`G2`, `I1`-`I9`, `S1`-`S3`, `H1`-`H5` are cited by every document and
   issue, and two things match on
   them: `run-dzrp-stub.sh`'s W3 greps `^FAIL  C10 `, and `test/hardware-check.py` takes the code

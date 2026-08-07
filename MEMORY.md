@@ -5,6 +5,96 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-07 — The NMI decline is keyed on who was EXECUTING, not on what RAM holds
+
+**Built, issue #26 — a five-year-old upstream defect, diagnosed the day before
+and fixed as specified there.** On a button NMI, `mf_rom.asm`'s dispatch read
+"magic number and build time match in `MAIN_BANK`, and no debuggee is running"
+as *"the debugger is already executing — decline"*. A soft reset falsifies that
+inference without touching its evidence: RAM survives one, so the same two
+facts then mean **a stale image with NextZXOS executing**. And the decline was
+not merely useless there — the entry path had already paged `MAIN_BANK` into
+slot 7, and `mf_nmi_button_pressed_immediate_return` restores the NextREG
+select, the turbo mode and the MF paging but **never slot 7** — correct when
+the debugger really was executing (slot 7 already held `MAIN_BANK`),
+catastrophic when NextZXOS was, which got its machine back with the debugger's
+bank at `0xE000` and hung as soon as anything touched it.
+
+**THE FIX IS SIX INSTRUCTIONS AND ONE ORDERING CONSTRAINT.** When
+`prgm_state` is not `PRGM_RUNNING`, the decline is now gated on
+`slot_backup.slot7` — the bank slot 7 held at the moment of *this* press,
+which the entry path saved five instructions earlier. The debugger executes
+**from** `MAIN_BANK` in slot 7, so any other value proves it was not
+executing, and the dispatch falls through to `init_main_bank`, which recopies
+the image and comes up fresh. **The test MUST stay after the `PRGM_RUNNING`
+one**: while a debuggee runs, slot 7 holds the *debuggee's* bank, and testing
+slot 7 first would send every manual break — the path verified on real
+hardware 2026-08-05 — through `init_main_bank`. That ordering is the entire
+risk in the change, and the comment in the source says so.
+
+**Cost: +9 bytes, entirely inside the MF ROM's ALIGN padding.** The dispatch
+lives in the 8 KB image's first `0x140` bytes, whose end is pinned by the
+identity-block contract (`main_prg_copy` must sit at `0x140` or the block
+leaves ROM offset `0x1FE0`). Padding was 15 bytes; it is now 6. `main.bin`
+and `main-wifi.bin` are **byte-identical pinned** (`0a0676d4…`, `1caa298d…`
+unchanged) — the debugger image itself did not move — but both ROMs' bytes
+change with their `mf_nmi` halves: UART `efc73695…` → `8aa20230…`, WiFi
+`f065776c…` → `d117e122…`, **so the merge carries a `make bump`**.
+
+**Evidence: bench check T7, shown red first.** `make test` gains two runs and
+one check — the only one that presses the button twice, which is why five
+years of upstream and every bench here missed the defect: nothing ever put a
+reset *between* two presses. Both new runs boot, NMI (the stub comes up),
+press the stub's own `R` (a soft reset), and let NextZXOS boot again; the
+second run alone presses NMI once more, and both shoot at the same frame —
+`SHOT_FRAMES + 36*32`, keeping every compared pair at one point in the FLASH
+cycle. Against `main`'s ROM: T1-T6 green, **T7 red, `0.00% changed`** — the
+decline, byte-identical screens. With the fix: **7/7, T7 at 90.32%
+repainted** and byte-identical to the stub's own screen from run 6 (the probe
+measured C vs A at exactly 0.00%).
+
+**T7's preconditions are what keep it from passing vacuously, and one is
+asserted from jnext's own log.** `--delayed-nmi-frames` QUEUES rather than
+overrides (its help says so; discovered the day before) — but a jnext that
+dropped the first press would make run 8 a *first* press, whose takeover
+passes the pixel diff while never touching the path under test. So T7 counts
+the `Delayed NMI button` lines out of the run's log and requires exactly 2,
+W4's pattern. The second precondition is that run 7 differs from the stub
+screen at all — i.e. the `R` key really reset the machine — without which
+"the decline survived a reset" was never staged. And the takeover must *look
+like* run 6's stub screen, T6's lesson that a difference measure does not
+know what it is looking at.
+
+**Rejected.** Testing `slot_backup.slot7` before `prgm_state` (breaks manual
+break, above); a separate bench target for the probe (T7's subject is the NMI
+path, it binds no port and needs nothing external — `make test` is exactly
+its home); asserting only that runs 7 and 8 differ, with no log precondition
+(vacuous-pass hazard, above); keeping the scratch probe as the only evidence
+(a red nobody can re-run is a story about a scratchpad).
+
+**NOTICED, TRACED, AND DELIBERATELY NOT FIXED HERE — a second defect of the
+same family, upstream's as well.** `mf_rom.asm`'s entry path writes
+`slot_backup.slot7` on **every** button NMI, before any decision. Press M1
+while the debugger is **stopped at a breakpoint** and that write clobbers the
+debuggee's saved bank with `MAIN_BANK` (slot 7's content while the debugger
+executes), so the next `CMD_CONTINUE` restores the *debugger's* bank into the
+debuggee's slot 7. The immediate-return path this branch fixes is exactly the
+path such a press takes, and the fix keeps it correct — the clobber is the
+save it reads. **This is a trace, not a run**: nothing has executed it, no
+bench presses M1 while stopped, and the hardware manual break of 2026-08-05
+was against a *running* debuggee. Filed as its own issue rather than fixed
+on this branch, which is scoped to #26's decline.
+
+**NOT COVERED.** The fixed ROM has not been through reset-then-NMI on
+**hardware** — the 2026-08-07 hardware breakage that opened #26 was build
+`0010`, and T7's green is jnext's word. The testable prediction that
+upstream's own released `enNextMf.rom` fails the probe identically remains
+un-run. And T7 resets from the stub's `R` key only; a reset from NextZXOS's
+own menus between two presses is the same mechanism by inspection, but no run
+stages it.
+
+---
+
 ## 2026-08-07 — `.mfinstall --configure` writes the config; the YAML loses its comments
 
 **Decided (user) and built.** `.mfinstall --configure wifi|uart|none` writes

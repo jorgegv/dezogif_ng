@@ -164,8 +164,26 @@ nmi66h:
     ; Check if program was already stopped
     ld a,(prgm_state)
     cp PRGM_RUNNING
-    jp nz,mf_nmi_button_pressed_immediate_return
+    jr z,.break_into_debuggee
 
+    ; No debuggee is running. Upstream read that as "the debugger itself is
+    ; executing" and declined the NMI — but a matching magic number and build
+    ; time only prove the IMAGE is in MAIN_BANK, not that it is executing:
+    ; a soft reset leaves RAM intact, so after one the same state means
+    ; NextZXOS is executing over a stale image (issue #26). Declining then is
+    ; worse than useless, because the entry path above has already paged
+    ; MAIN_BANK into slot 7 and the immediate return never restores it.
+    ; The debugger executes FROM MAIN_BANK in slot 7, so what slot 7 held at
+    ; this NMI — saved to slot_backup.slot7 above — settles who was executing.
+    ; This test must stay AFTER the PRGM_RUNNING one: while a debuggee runs,
+    ; slot 7 holds the DEBUGGEE's bank, and testing it first would send every
+    ; manual break through init_main_bank.
+    ld a,(slot_backup.slot7)
+    cp MAIN_BANK
+    jr nz,init_main_bank	; Stale image, NextZXOS executing: re-initialize
+    jp mf_nmi_button_pressed_immediate_return
+
+.break_into_debuggee:
     ; Restore registers from MF stack
     pop af
 

@@ -22,6 +22,10 @@
 #   T6  our stub TAKES OVER on a real M1 button NMI and paints its own screen.
 #       The only check here that proves the stub is alive rather than proving
 #       it correctly ignores something — see the note at T6.
+#   T7  a second M1 press after a SOFT RESET re-initialises the debugger
+#       instead of declining (issue #26) — see the note at T7. The only check
+#       here that presses the button twice, which is why five years of
+#       upstream and every earlier bench missed the defect it guards.
 #
 # T3 is not decoration. Without it a broken fixture would make T4 look like a
 # stub bug (or, worse, a change in T4's screen would look like a pass). If T3
@@ -62,6 +66,18 @@ BOOT_FRAMES=900
 SHOT_FRAMES=1050
 EXIT_FRAMES=1100
 
+# T7's choreography (issue #26): the stub is brought up with a button NMI,
+# its own R key soft-resets the machine, NextZXOS boots again, and — in the
+# second of the two runs — the button is pressed a SECOND time. Frame counts
+# follow the same FLASH rule as everywhere else here: T7 compares its shots
+# against run 6's stub screen, so RESET_SHOT_FRAMES sits a multiple of 32
+# frames after SHOT_FRAMES (1050 + 36*32), keeping every compared pair at the
+# same point in the FLASH attribute cycle.
+RESET_KEY_FRAME=1080     # R pressed in the stub, 180 frames after it came up
+SECOND_NMI_FRAME=2030    # the second NextZXOS boot is complete by here
+RESET_SHOT_FRAMES=2202   # = SHOT_FRAMES + 36*32, and 172 frames after the NMI
+RESET_EXIT_FRAMES=2262
+
 # Wall-clock guard per emulator run. Headless runs above take ~6s.
 RUN_TIMEOUT=120
 
@@ -84,7 +100,7 @@ MF_ROM_PATH='::/machines/next/enNextMf.rom'
 # so its runs never bind port 11000 and it takes no bench lock; the "a survivor
 # answers the next agent's client" failure cannot happen from here. What CAN
 # happen is an emulator left running after a `timeout` fired or the script was
-# interrupted — six per run, competing for the machine with whatever bench is
+# interrupted — eight per run, competing for the machine with whatever bench is
 # holding the lock, and holding a gigabyte working image open. So departure is
 # confirmed for the same reason and by the same code, and the claim is the
 # smaller one.
@@ -215,13 +231,50 @@ run() {
     [ -s "$shot" ] || die "no screenshot written: $shot"
 }
 
-log "== running the bench (6 headless runs, ~50s)"
+# T7's two runs: NMI, then the stub's own R key (a soft reset), then a second
+# NextZXOS boot — and, in the second run only, a second NMI. jnext's stdout is
+# kept, because T7's precondition is asserted from it: --delayed-nmi-frames
+# QUEUES rather than overrides (so two NMIs in one run are possible at all),
+# and the log's "Delayed NMI button ... pressed" lines are the evidence that
+# both were really delivered — without that, a jnext that dropped the first
+# press would turn run 8 into a FIRST press, whose takeover is not this
+# check's subject and would pass it vacuously.
+#
+# run_reset <screenshot> <log> [second-nmi]
+run_reset() {
+    local shot=$1 rlog=$2 second=${3:-}
+    local -a args=(
+        --headless --machine next
+        --sdcard "$sd_ours"
+        --rtc "2026-01-01 12:00:00"
+        --delayed-screenshot "$shot"
+        --delayed-screenshot-frames "$RESET_SHOT_FRAMES"
+        --delayed-automatic-exit-frames "$RESET_EXIT_FRAMES"
+        --delayed-nmi-frames "$BOOT_FRAMES" nmi
+        --delayed-keypress-frames "$RESET_KEY_FRAME" r
+    )
+    if [ -n "$second" ]; then
+        args+=(--delayed-nmi-frames "$SECOND_NMI_FRAME" nmi)
+    fi
+    rm -f "$shot"
+    current_image=$sd_ours
+    local rc=0
+    timeout "$RUN_TIMEOUT" "$JNEXT" "${args[@]}" >"$rlog" 2>&1 || rc=$?
+    bench_await_departure "$sd_ours"
+    current_image=""
+    [ "$rc" -eq 0 ] || die "jnext reset run failed or timed out (shot=$shot)"
+    [ -s "$shot" ] || die "no screenshot written: $shot"
+}
+
+log "== running the bench (8 headless runs, ~70s)"
 run "$sd_stock" "$SHOTS/boot-stock.png"
 run "$sd_ours"  "$SHOTS/boot-ours.png"
 run "$sd_stock" "$SHOTS/nmi-stock.png" "$TRIGGER_BIN"
 run "$sd_ours"  "$SHOTS/nmi-ours.png"  "$TRIGGER_BIN"
 run "$sd_stock" "$SHOTS/copper-stock.png" "$COPPER_BIN"
 run "$sd_ours"  "$SHOTS/button-ours.png" "" nmi
+run_reset "$SHOTS/reset-ours.png"      "$SHOTS/reset-ours.log"
+run_reset "$SHOTS/second-nmi-ours.png" "$SHOTS/second-nmi-ours.log" second
 
 # --- assertions ------------------------------------------------------------
 
@@ -333,10 +386,53 @@ else
     pass "T6 the stub is ALIVE: it takes over on a real M1 button NMI ($button_pct% repainted, $vs_stock_pct% unlike stock)"
 fi
 
+# T7 — a second M1 press after a SOFT RESET must re-initialise, not decline.
+#
+# Issue #26, reproduced headless on 2026-08-07 and traced to upstream's 2020
+# NMI dispatch: on a button press, a matching magic number and build time in
+# MAIN_BANK plus "no debuggee running" was read as "the debugger is already
+# executing", and the NMI declined. A soft reset does not clear RAM, so after
+# one the same evidence means something else — the image is STALE and NextZXOS
+# is executing. The decline also leaks a bank: the entry path has already
+# paged MAIN_BANK into slot 7 and the immediate return never restores it, so
+# the machine came back with the debugger's bank at 0xE000 and hung shortly
+# after. The fix reads slot_backup.slot7 — the bank slot 7 held at the moment
+# of THIS press, saved by the entry path — which is MAIN_BANK only when the
+# debugger itself was executing; anything else re-runs init_main_bank.
+#
+# The comparisons, and why each side of them exists:
+#   - both runs shoot at the SAME frame, after the second boot; run 7 has no
+#     second press, so the pair differ ONLY by what that press did. Declined
+#     (the pre-fix ROM) they are byte-identical; re-initialised, ~90% apart.
+#   - the takeover must also LOOK LIKE run 6's stub screen, which excludes a
+#     crash painting garbage — the T6 lesson that a difference measure does
+#     not know what it is looking at.
+#   - two preconditions guard the harness half. The queued second NMI is
+#     counted out of jnext's own log, because a jnext that dropped the first
+#     press would make run 8 a FIRST press — a takeover that passes the diff
+#     while never touching the path under test. And run 7 must differ from
+#     the stub screen at all, or the R key never reset the machine and the
+#     "decline" being judged never had a reset to survive.
+nmi_count=$(grep -c 'Delayed NMI button' "$SHOTS/second-nmi-ours.log" || true)
+reset_pct=$(diff_pct "$SHOTS/button-ours.png" "$SHOTS/reset-ours.png")
+second_pct=$(diff_pct "$SHOTS/reset-ours.png" "$SHOTS/second-nmi-ours.png")
+second_vs_stub_pct=$(diff_pct "$SHOTS/button-ours.png" "$SHOTS/second-nmi-ours.png")
+if [ "$nmi_count" -ne 2 ]; then
+    fail "T7 harness: jnext delivered $nmi_count of 2 queued NMI presses, so the sequence never ran"
+elif ! took_over "$reset_pct"; then
+    fail "T7 harness: the R key did not reset the machine ($reset_pct% vs the stub screen); nothing was judged"
+elif ! took_over "$second_pct"; then
+    fail "T7 a second NMI after a soft reset was DECLINED ($second_pct% changed): issue #26 is back"
+elif took_over "$second_vs_stub_pct"; then
+    fail "T7 the second NMI painted something unlike the stub's own screen ($second_vs_stub_pct% differs): see second-nmi-ours.png"
+else
+    pass "T7 a second NMI after a soft reset re-initialises the debugger ($second_pct% repainted)"
+fi
+
 log ""
 # Derived, not hardcoded: the summary said "5/5" for a while after a sixth
 # check was added, which is a small lie in exactly the place a reader trusts.
-checks=6
+checks=7
 if [ "$failures" -eq 0 ]; then
     verdict="$checks/$checks checks passed"
 else

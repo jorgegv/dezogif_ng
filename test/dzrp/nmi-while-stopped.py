@@ -42,15 +42,30 @@ BANK IS 30 AND MUST BE NEITHER 1 NOR 94. 1 is what cmd_init leaves, so a stub
 that ignored CMD_SET_SLOT entirely would look unchanged across the press; 94 is
 MAIN_BANK, the value the defect writes, so it must not be the one we asked for.
 
-THE SENTINEL IS WHAT STOPS THIS PASSING VACUOUSLY, and it is not a convenience.
-The press has to land BETWEEN the two reads. jnext schedules it in emulated
-frames while this client counts wall clock, and the frame rate collapses under
-DZRP traffic — so sleeping "long enough" would be a guess that fails in the
-green direction: a press arriving after the second read leaves a broken stub
-looking clean. Instead the bench watches jnext's own log for the second
-"Delayed NMI button ... pressed" line and only then touches the sentinel, so
-the press is inside the window by construction. The bench asserts the count
-from the log again after the run, for the same reason W4 does.
+THE PRESS HAS TO LAND BETWEEN THE TWO READS, AND THE TWO EDGES OF THAT WINDOW
+ARE HELD BY DIFFERENT MEANS. Getting this wrong is how the check fails green,
+so it is worth being exact about which is which:
+
+  * the RIGHT edge is guaranteed. The bench watches jnext's own log for the
+    second "Delayed NMI button ... pressed" line and only then touches the
+    sentinel this client is waiting on, so the second read cannot precede the
+    press. Sleeping instead would be a guess — jnext counts emulated frames
+    while this client counts wall clock, and the frame rate collapses under
+    DZRP traffic.
+  * the LEFT edge is a MARGIN plus an assertion, not a guarantee. Nothing
+    stops a press scheduled too early from landing before CMD_SET_SLOT takes
+    effect — and that direction is the dangerous one, because CMD_SET_SLOT
+    would then overwrite whatever a corrupting press had just written, leaving
+    no second press to observe and reporting before=30 after=30 on a broken
+    ROM. An earlier version of this file called both edges "by construction"
+    and was wrong: measured across two runs of the identical script on an idle
+    machine, the margin was 149 ms in one and 2 ms in the other. The bench now
+    widens the schedule AND asserts from the log that three commands had
+    arrived before the press, so losing the margin fails RED.
+
+The bench asserts the press count from the log after the run too, for the same
+reason W4 asserts its collision: a precondition nobody checked is a check that
+can pass having tested nothing.
 
 Idling here also costs nothing and is realistic: transport_wait_rx's bound
 (issue #16) expires after five seconds and the stub drops back to main_loop

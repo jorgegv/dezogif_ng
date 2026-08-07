@@ -149,10 +149,29 @@ QUEUED=$(dirname "$0")/dzrp/queued-commands.py
 SPLIT=$(dirname "$0")/dzrp/split-command.py
 NMI_STOPPED=$(dirname "$0")/dzrp/nmi-while-stopped.py
 
-# W6's second M1 press, in frames after the first. It has to be late enough
-# that the client has connected and armed, and there is no upper bound to worry
-# about: EXIT_FRAMES is a backstop and the run ends when the bench kills jnext.
-SECOND_NMI_FRAMES=$((BOOT_FRAMES + 600))
+# W6's second M1 press, in frames after the first.
+#
+# THIS IS A MARGIN, NOT A GUARANTEE, AND THE FIRST VERSION TREATED IT AS ONE.
+# The press has to land after CMD_SET_SLOT has taken effect. At 600 frames that
+# held, but only just: measured across two runs of the identical script on an
+# idle machine, the gap between the reply to the "before" CMD_GET_REGISTERS and
+# the press was 149 ms in one and 2 ms in the other. Inverted, CMD_SET_SLOT
+# would overwrite whatever a corrupting press had just written, no further press
+# would remain to observe, and W6 would report before=30 after=30 — GREEN, on a
+# broken ROM. Found by review, by measuring rather than by reading.
+#
+# So two things changed. The margin is wider, and there is no cost to that:
+# EXIT_FRAMES is a backstop, the run ends when the bench kills jnext, and the
+# client is idle while these frames elapse, so the emulator runs at its
+# unloaded rate. And the ordering is now ASSERTED from the log below, so if the
+# margin is ever lost anyway the run fails RED as a precondition rather than
+# passing.
+# Overridable so the precondition's own control is re-runnable by anyone rather
+# than being a story about a scratch tree, which is the seam the IP_MAX /
+# RX_WAIT / LINK_IDS family already uses. `SECOND_NMI_FRAMES=901
+# make test-dzrp-stub` puts the press before the client has said anything and
+# W6 must go RED on the precondition, not green.
+SECOND_NMI_FRAMES=${SECOND_NMI_FRAMES:-$((BOOT_FRAMES + 3000))}
 
 # Longer than the suite's own 5 s default. The loopback sweep now goes to 4096
 # bytes, which is ~8 KB over a 115200 link plus seventeen AT+CIPSEND round
@@ -646,13 +665,15 @@ fi
 # from that byte rather than from the MMU. See test/dzrp/nmi-while-stopped.py,
 # which carries the sequence and why each step is the one it is.
 #
-# THE SENTINEL IS THE VACUITY GUARD. The press must land BETWEEN the client's
-# two reads, and jnext schedules it in emulated FRAMES while the client counts
-# wall clock — the same mismatch that makes an NMI against a running debuggee
-# unschedulable here (MEMORY.md 2026-08-05). So the bench waits for jnext's own
-# log to report the second press and only then releases the client, which puts
-# the press inside the window by construction rather than by a sleep that fails
-# green. The count is asserted from the log again afterwards, as W4 does.
+# THE SENTINEL IS THE VACUITY GUARD FOR ONE EDGE OF THE WINDOW, NOT BOTH. The
+# press must land BETWEEN the client's two reads, and jnext schedules it in
+# emulated FRAMES while the client counts wall clock — the same mismatch that
+# makes an NMI against a running debuggee unschedulable here (MEMORY.md
+# 2026-08-05). The bench waits for jnext's own log to report the second press
+# and only then releases the client, so the press cannot follow the second
+# read. The other edge — the press must not PRECEDE the setup — is a frame
+# margin, and it is asserted from the log below rather than assumed, because
+# that direction fails GREEN. See SECOND_NMI_FRAMES.
 # ===========================================================================
 
 log ""
@@ -695,12 +716,38 @@ else
     w6_presses=$(grep -c 'Delayed NMI button' "$jlog6" || true)
     w6_connects=$(grep -c "accepted as cid" "$jlog6" || true)
 
+    # THE LEFT EDGE OF THE WINDOW, asserted from the module's own log exactly as
+    # W4 and W5 assert theirs. The sentinel guarantees the press happened before
+    # the SECOND read; nothing but a frame count guarantees it happened after
+    # the FIRST, and that direction fails GREEN. The client sends exactly three
+    # commands before it arms — CMD_INIT, CMD_SET_SLOT, CMD_GET_REGISTERS — so
+    # at least three inbound frames must precede the second press. Fewer means
+    # the press raced the setup and the run judged nothing.
+    w6_before=$(python3 - "$jlog6" <<'EOF'
+import re, sys
+ipd = 0
+presses = 0
+for line in open(sys.argv[1], errors='replace'):
+    if '+IPD,' in line:
+        ipd += len(re.findall(r'\+IPD,\d+,\d+', line))
+    if 'Delayed NMI button' in line:
+        presses += 1
+        if presses == 2:
+            print(ipd)
+            break
+else:
+    print(-1)
+EOF
+)
+
     if [ "$w6_connects" -gt 4 ]; then
         fail "W6 CONTAMINATED: $w6_connects connections in $jlog6 where this fixture makes 1"
     elif [ "$w6_presses" -ne 2 ]; then
         fail "W6 harness: jnext delivered $w6_presses of 2 NMI presses, so no press was judged"
     elif [ "$nmi_seen" -ne 1 ]; then
         fail "W6 harness: the second press was never seen in the log while the client waited"
+    elif [ "$w6_before" -lt 3 ]; then
+        fail "W6 harness: the press raced the setup — $w6_before commands had arrived, needed 3"
     elif [ "$w6_rc" -ne 0 ]; then
         fail "W6 an M1 press while stopped destroyed the debuggee's saved slot 7 bank (issue #26)"
     else

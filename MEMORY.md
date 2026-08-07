@@ -70,10 +70,34 @@ out, with no screenshot and no emulator introspection.
 land between the two reads; `--delayed-nmi-frames` counts emulated frames while
 the client counts wall clock, and the frame rate collapses under DZRP traffic —
 the same mismatch that makes an NMI against a *running* debuggee unschedulable
-here (2026-08-05, below). A sleep would fail in the **green** direction: a press
-arriving after the second read leaves a broken stub looking clean. So the bench
-waits for the delivery line and only then releases the client through a
-sentinel, and asserts the count afterwards as W4 does.
+here (2026-08-05, below). So the bench waits for the delivery line and only then
+releases the client through a sentinel, and asserts the count afterwards as W4
+does.
+
+**AND THAT COVERS ONE EDGE OF THE WINDOW, WHICH THE FIRST VERSION CLAIMED WAS
+BOTH.** The sentinel stops the press arriving *after* the second read. Nothing
+but a frame count stopped it arriving *before* the setup — and that is the
+direction that fails **green**, because `CMD_SET_SLOT` would overwrite whatever
+a corrupting press had just written and no second press would remain to observe.
+The reviewer found it by **measuring** rather than reading: across two runs of
+the identical script on an idle machine the margin was **149 ms** and **2 ms**.
+So the schedule is wider now (3000 frames, free — the client is idle while they
+elapse) *and* the ordering is asserted from the log: three commands must have
+arrived before the press, or the run fails red as a precondition. Measured
+after: the margin is **17.2 s** and exactly 3 commands precede the press.
+
+**AND THE PRECONDITION WAS WATCHED TO FIRE, ON THE FAILURE IT EXISTS FOR.**
+`SECOND_NMI_FRAMES` is `?=`-overridable — the seam the `IP_MAX` / `RX_WAIT` /
+`LINK_IDS` family already uses, so the control is re-runnable rather than a
+story about a scratch tree. At `SECOND_NMI_FRAMES=901` the press lands before
+the client has spoken, and **the client duly reports `before=30 after=30`** —
+the exact green a corrupting ROM would produce — while the precondition goes
+red with *"0 commands had arrived, needed 3"*. That is the reviewer's scenario
+reproduced, and the demonstration that without the assertion this check would
+have passed on a broken stub.
+
+A margin nobody measured, called "by construction", is this file's recurring
+disease in its harness costume.
 
 **Two harness bugs, both found by the red-first run rather than by reading it**,
 and both worth recording because each would have produced a *wrong verdict*
@@ -96,9 +120,21 @@ reset restores **all eight MMU slots unconditionally**, slot 7 to bank `0x01`
 dependent on firmware habit.
 
 The same lookup **disproved** a candidate this session generated: NR `0x06`
-bit 3 is **not** cleared by a soft reset — it has no reset branch anywhere and
-goes only on the flashboot/hard-reset path. An M1 press after a soft reset
-therefore still generates an NMI, which is what makes #26 reachable at all.
+bit 3 is **not** cleared by a soft reset. It is untouched by **either** kind of
+runtime reset — the synchronous `if reset = '1'` block covering NR `0x06`
+resets `nr_06_hotkey_cpu_speed_en` and `nr_06_hotkey_5060_en` and does not
+mention bit 3 at all, and that `reset` is the same combined
+`reset_hard or reset_soft` the MMU reset above uses — so only FPGA
+configuration or power-on puts it back to its declared initial value. An M1
+press after a soft reset therefore still generates an NMI, which is what makes
+#26 reachable at all.
+
+*(A first version of this paragraph said bit 3 "goes only on the
+flashboot/hard-reset path", which overstates what a hard reset does and was
+caught in review. The conclusion is unchanged — a fortiori — but this project's
+first hard rule is that the VHDL is the authority, and a paraphrase that is
+directionally right and specifically wrong is exactly what [[ERRORS.md]]
+exists for.)*
 
 **A THIRD VARIANT IS REAL, UNFIXED, AND NOT FIXABLE IN THE BYTES AVAILABLE.**
 If `prgm_state` is stale **`PRGM_RUNNING`** — a machine reset while a debuggee

@@ -31,6 +31,14 @@
 #       DIVMMC_OFF=0 — DivMMC left mapped for the window, which is the ordinary
 #       context a dot command runs in — must report the write BLOCKED, and an
 #       NMI after it must bring up the stock monitor rather than the stub.
+#   I8  THE ROUND TRIP: `--configure uart` writes /mfselect/mfinstall.yml and
+#       `--auto` then reads it back and installs the UART stub. UART, not wifi,
+#       because wifi is the shipped default and a --configure that did nothing
+#       would pass on it.
+#   I9  what `--configure wifi` writes is BYTE-IDENTICAL to the default the
+#       build ships, and it says which default it set. Two separate sources — a
+#       checked-in file the Makefile copies, and C that composes the same line —
+#       and no screenshot can see the difference between them.
 #
 # WHY THE STUB'S SCREEN CARRIES AN ESP ERROR IN I2 AND I5, and why that is not
 # the subject: no --esp is passed, so there is no emulated module and the WiFi
@@ -324,7 +332,7 @@ screen_has() {
     return 1
 }
 
-log "== mfinstall bench (10 headless runs, ~5min)"
+log "== mfinstall bench (12 headless runs, ~6min)"
 log "   stock MF ROM CRC $stock_sum, dezogif_ng WiFi $wifi_sum"
 
 # --- run 1: the command line, with no NMI. The baseline the stock monitor is
@@ -382,6 +390,26 @@ img10=$OUT/sd-mfinstall-10.img
 prepare_image "$img10" "" "$DOT_DMOFF0"
 run_dot "$img10" "$shots/mfinstall-dmoff0-nmi.png" yes ".mfinstall --load wifi"
 
+# --- runs 11 and 12: --configure, which writes the config and NOTHING else --
+#
+# Two runs, and the split is what makes I8 and I9 separate claims rather than
+# one composite. Run 11 is the round trip: --configure writes the file, --auto
+# reads it back and acts on it, so a writer that produced something this
+# program's own parser cannot read goes red. Run 12 asks a question no screen
+# can answer — whether the bytes it writes are the bytes the build SHIPS.
+#
+# UART in run 11 on purpose: the shipped default is wifi, so a --configure that
+# wrote nothing at all would leave the file saying wifi and the run would pass
+# on the default it never changed.
+img11=$OUT/sd-mfinstall-11.img
+prepare_image "$img11" wifi
+run_dot "$img11" "$shots/mfinstall-configure.png" yes \
+    ".mfinstall --configure uart" ".mfinstall --auto"
+
+img12=$OUT/sd-mfinstall-12.img
+prepare_image "$img12" none
+run_dot "$img12" "$shots/mfinstall-configure-wifi.png" no ".mfinstall --configure wifi"
+
 log ""
 
 cmdline=$shots/mfinstall-cmdline.png
@@ -392,6 +420,8 @@ twice=$shots/mfinstall-twice.png
 unloadnmi=$shots/mfinstall-unload-nmi.png
 autowifi=$shots/mfinstall-auto-wifi.png
 autonone=$shots/mfinstall-auto-none.png
+configured=$shots/mfinstall-configure.png
+configuredw=$shots/mfinstall-configure-wifi.png
 dmoff0=$shots/mfinstall-dmoff0.png
 dmoff0nmi=$shots/mfinstall-dmoff0-nmi.png
 
@@ -555,6 +585,81 @@ if [ "$i7" -eq 0 ]; then
     pass "I7 with DivMMC left on the write is blocked, reported, and the stub does not come up"
 else
     fail "I7 the DIVMMC_OFF=0 probe did not behave as a blocked write ($i7_pct% unlike stock)"
+fi
+
+# --- I8 --------------------------------------------------------------------
+#
+# THE ROUND TRIP, and it is the only check that closes it: --configure writes
+# the file, and this program's OWN parser then reads it back and acts on it. A
+# writer that emitted something read_config() cannot parse — a stray byte, the
+# wrong separator, a line pushed out of the 511-byte window — goes red here and
+# nowhere else, because every other use of that file in this bench is a file the
+# bench itself wrote.
+#
+# It asks for UART deliberately. The image starts with the shipped default,
+# wifi, so a --configure that silently did nothing would leave the file saying
+# wifi and --auto would install the WiFi ROM; requiring UART means the check can
+# only pass if the WRITE happened.
+#
+# IT ASSERTS NOTHING ABOUT THE SCREEN, and that is forced rather than chosen:
+# this run must press the M1 button to show that --auto really installed, and
+# the stub then paints over the command line where --configure's message was.
+# Same reason I7 needs two runs. The message is judged in run 12, which has no
+# NMI — see I9.
+i8=0
+cfg_back=$OUT/mfinstall-card-conf.yml
+rm -f "$cfg_back"
+if mcopy -o -n -i "$img11@@$part_off" ::/mfselect/mfinstall.yml "$cfg_back" 2>/dev/null; then
+    case "$(tr -d '\r' < "$cfg_back")" in
+        "install: uart") ;;
+        *) i8=1; log "      the file on the card says: $(tr -d '\r\n' < "$cfg_back")" ;;
+    esac
+else
+    i8=1; log "      no mfinstall.yml could be read back off the card"
+fi
+i8_pct=$(diff_pct "$stocknmi" "$configured")
+if ! over "$i8_pct" "$TAKEOVER_PCT"; then
+    i8=1; log "      --auto did not then install the UART stub ($i8_pct% unlike stock)"
+fi
+if [ "$i8" -eq 0 ]; then
+    pass "I8 --configure uart writes the file and --auto then installs the UART stub"
+else
+    fail "I8 --configure uart did not round-trip through --auto"
+fi
+
+# --- I9 --------------------------------------------------------------------
+#
+# WHAT THE WRITER EMITS IS WHAT THE BUILD SHIPS, byte for byte — a question no
+# screenshot can answer and the one thing that stops the two drifting apart.
+# They are separate sources: tools/mfinstall/mfinstall.yml is a checked-in file
+# the Makefile copies, and write_config() is C that composes the same line. A
+# user who runs --configure wifi and a user who copies build/deploy/ must end up
+# with the same file, or one of them is following documentation written for the
+# other.
+#
+# The image starts at `none`, so `install: wifi` here cannot be the file that
+# was already there.
+# It also carries the MESSAGE check for both runs, because run 12 is the only
+# --configure run whose screen survives to the screenshot (I8 says why).
+i9=0
+cfg_wifi=$OUT/mfinstall-card-conf-wifi.yml
+rm -f "$cfg_wifi"
+if ! screen_has "$configuredw" "Boot default is now WiFi"; then
+    i9=1; log "      --configure did not report writing the WiFi default"
+fi
+if mcopy -o -n -i "$img12@@$part_off" ::/mfselect/mfinstall.yml "$cfg_wifi" 2>/dev/null; then
+    if ! cmp -s "$cfg_wifi" "$CONF_WIFI"; then
+        i9=1
+        log "      written: $(od -c "$cfg_wifi" | head -1)"
+        log "      shipped: $(od -c "$CONF_WIFI" | head -1)"
+    fi
+else
+    i9=1; log "      no mfinstall.yml could be read back off run 12's card"
+fi
+if [ "$i9" -eq 0 ]; then
+    pass "I9 --configure wifi says so, and writes exactly the file the build ships"
+else
+    fail "I9 --configure wifi did not write the shipped default"
 fi
 
 log ""

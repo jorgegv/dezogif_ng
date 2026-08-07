@@ -31,15 +31,20 @@ what gets loaded; mfinstall changes what is *there*, after the loading has happe
 - **Every power-on starts from whatever is on the card.** If you want the stub back, run
   `.mfinstall` again — which is what `--auto` in `AUTOEXEC.BAS` is for.
 
-**The SD card is never written.** That is the safety property worth having: the failure this
+**No install ever writes the SD card.** That is the safety property worth having: the failure this
 project already recorded as a data-loss bug — capturing the debug stub as your "original" and
-leaving no copy of the stock Multiface ROM anywhere — cannot happen through this path, because
-this path does not write files at all.
+leaving no copy of the stock Multiface ROM anywhere — cannot happen through this path, because no
+ROM ever travels towards the card.
+
+**`--configure` is the single exception, and it is not an install**: it writes one file,
+`/mfselect/mfinstall.yml`, and touches no ROM at all. This paragraph used to say "the SD card is
+never written" flatly, which `--configure` makes false as stated; what it was ever protecting is
+the ROM images, and that is unchanged.
 
 ## Building
 
     make mfinstall           # build/mfinstall + BOTH ROMs + both .sum files
-    make test-mfinstall      # the headless bench, 10 runs, 7 checks
+    make test-mfinstall      # the headless bench, 12 runs, 9 checks
 
 `make mfinstall` depends on `make mfselect`, because it installs the same ROMs from the same
 directory by a different means and a card with the command but not the ROMs is useless. Like
@@ -74,8 +79,8 @@ build/deploy/  →  the root of the card
 
 i.e. `cp -r build/deploy/* /path/to/card/`. The build prints the same listing when it finishes.
 
-`mfinstall.yml` is a **default** — it says `install: wifi`, and it is yours to edit on the card
-(below). `/mfselect/original.rom` and `/mfselect/original.sum` are the two files not shipped here:
+`mfinstall.yml` is a **default** — it says `install: wifi`, and `.mfinstall --configure` changes it
+on the machine, with no card reader (below). `/mfselect/original.rom` and `/mfselect/original.sum` are the two files not shipped here:
 they are captured by **mfselect** on its first run. `.mfinstall --unload` needs them and cannot
 create them, because capturing the stock ROM means reading the card, deciding whether what is there
 is really the stock ROM, and writing a file, all of which mfselect already does with a guard this
@@ -90,6 +95,7 @@ that it cannot open the ROM file, and a power cycle is your way back.
     .mfinstall --load uart     install the UART build
     .mfinstall --unload        put /mfselect/original.rom back
     .mfinstall --auto          do whatever /mfselect/mfinstall.yml says
+    .mfinstall --configure wifi|uart|none    set that file; install nothing
     .mfinstall --help
 
 Then **press the NMI button**. That is the only step; there is no reset and no power cycle.
@@ -97,29 +103,48 @@ Then **press the NMI button**. That is the only step; there is no reset and no p
 It prints what it is doing, and the last line it leaves on screen is the outcome. **The screen is
 blanked in the middle of the operation** and that is not a fault — see *How it works*.
 
-### The config file
+### The config file, and `--configure`
 
-`/mfselect/mfinstall.yml`, one key:
+`/mfselect/mfinstall.yml` is one line and nothing else:
 
 ```yaml
-install: wifi        # or: uart, or: none
+install: wifi
 ```
 
-**It ships with `wifi`**, from `tools/mfinstall/mfinstall.yml`, so `--auto` works out of the box and
-editing one word is the whole of the configuration. Three things about that file are deliberate and
-worth keeping if you rewrite it:
+`wifi`, `uart` or `none`. **It ships saying `wifi`**, from `tools/mfinstall/mfinstall.yml`, so
+`--auto` works out of the box.
 
-- **the key comes first.** `read_config()` reads 511 bytes once and scans only those, so a preamble
-  long enough to push `install:` past that would make the file unreadable to the very program it
-  configures. The build refuses a file over 511 bytes for that reason, which is a proxy for the real
-  bound rather than the bound itself;
+**You do not have to edit it by hand, and on a stock NextZXOS you cannot** — there is no editor on
+the machine that will open it (user, 2026-08-07). That is what `--configure` is for:
+
+    .mfinstall --configure uart
+
+It writes the file and **does nothing else** — no ROM is loaded, unloaded or touched. `--load` is
+the verb that installs now; `--auto` is the one that obeys this file; `--configure` decides what
+`--auto` will do at the *next* boot. Keeping the three orthogonal is what makes it safe to run
+mid-session.
+
+**No comments, by decision.** The documentation is this file, and a preamble is a thing that grows:
+`read_config()` reads 511 bytes **once** and scans only those, so enough explanatory text would push
+`install:` out of the window and make the file unreadable to the program it configures. The build
+refuses a shipped file over 511 bytes for that reason — a proxy for the real bound rather than the
+bound itself — and `--configure` rewrites the file in the same lean form, so the only way a preamble
+gets in now is if you put it there.
+
+Two more properties, if you do edit it by hand:
+
 - **CRLF line endings and plain ASCII**, which is what NextZXOS's own config files use
   (`/nextzxos/browser.cfg`, `/nextzxos/enBrowsext.cfg`) and what its editor expects. The parser
-  itself takes either;
+  itself takes either, and `--configure` writes CRLF;
 - **the name is nine characters, which needs a long-filename entry** on the card. That is ordinary
   here — NextZXOS reads its own `enBrowsext.cfg` and looks dot commands up by names like
   `DISPLAYEDGE` — and `make test-mfinstall`'s I5 copies this exact file into the image with `mcopy`,
   which writes the same kind of entry a PC would. Nothing has opened it on real hardware.
+
+**What `--configure` writes is byte-identical to what the build ships**, and that is checked rather
+than intended: they are two separate sources — a checked-in file the Makefile copies, and C that
+composes the same line — and bench check **I9** compares them. **I8** is the round trip:
+`--configure uart`, then `--auto`, and the UART stub has to come up.
 
 `install: none` is a success, not an error: `--auto` says so and exits cleanly, which is what makes
 it safe to leave in `AUTOEXEC.BAS` on a day you are not debugging.

@@ -515,6 +515,11 @@ mfinstall: $(MFINSTALL_DOT) mfselect
 	@# bytes ONCE (tools/mfinstall/mfinstall.c) and scans only those, so an
 	@# `install:` line pushed past byte 511 by a longer preamble is a file the
 	@# dot command reports as unreadable. Nothing else here bounds it.
+	@#
+	@# The shipped file is one line and has no preamble to grow, by decision
+	@# (user, 2026-08-07) — and `--configure` rewrites it in that same form. The
+	@# guard is therefore aimed at a file a USER has edited by hand, which is
+	@# the only way a preamble can get in now.
 	@test $$(wc -c < $(MFINSTALL_YML)) -le 511 || \
 	  { echo "$(MFINSTALL_YML) is over 511 bytes; read_config() would not see all of it"; exit 1; }
 	@cp -f $(MFINSTALL_YML) $(DEPLOY_MFSEL)/mfinstall.yml
@@ -525,9 +530,12 @@ mfinstall: $(MFINSTALL_DOT) mfselect
 	@echo
 	@echo "  i.e.  cp -r $(DEPLOY)/* /path/to/card/"
 	@echo
-	@echo "  mfinstall.yml is a DEFAULT, and it says wifi — edit it on the card."
-	@echo "  Then, on the Next:  .mfinstall --load wifi"
-	@echo "  It writes SRAM, never the SD card, and lasts until power-off."
+	@echo "  mfinstall.yml is a DEFAULT and says wifi. On the Next:"
+	@echo
+	@echo "    .mfinstall --load wifi        install now, until power-off"
+	@echo "    .mfinstall --configure uart   change what --auto does at boot"
+	@echo
+	@echo "  An install writes SRAM, never the card, and lasts until power-off."
 
 # NOT the Z80 unit tests, and calling this "the test suite" invited exactly that
 # reading. This boots a Next in jnext with our ROM installed as the Multiface
@@ -578,7 +586,7 @@ test-mfselect: mfselect
 # '# ' line before a target as its description.
 #
 
-# Run the mfinstall headless bench (10 jnext runs, 7 checks; not part of `make test`)
+# Run the mfinstall headless bench (12 jnext runs, 9 checks; not part of `make test`)
 test-mfinstall: mfinstall
 	@$(MAKE) --no-print-directory DIVMMC_OFF=0 $(OUT)/mfinstall-dmoff0
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" DOT="$(OUT)/mfinstall" \

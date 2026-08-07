@@ -10,6 +10,7 @@
  *     .mfinstall --load uart     the UART build does
  *     .mfinstall --unload        the captured original does
  *     .mfinstall --auto          whichever /mfselect/mfinstall.yml names
+ *     .mfinstall --configure wifi|uart|none   set that file, install nothing
  *     .mfinstall --help
  *
  * IT LIVES IN /dot/ AND ITS ROMs LIVE IN /mfselect/, and that split is not a
@@ -25,9 +26,14 @@
  *              the next POWER-ON, because tbblue.fw reads enNextMf.rom then.
  *   mfinstall  writes SRAM. The change is LIVE IMMEDIATELY and lasts until the
  *              next POWER-OFF, because tbblue.fw reloads that SRAM from the card
- *              every power-on. THE SD CARD IS NEVER WRITTEN — not even by
+ *              every power-on. NO INSTALL EVER WRITES THE SD CARD — not even
  *              --unload, which is why "unload" means "put the original back for
  *              the rest of this session" and nothing more. See doc/MFINSTALL.md.
+ *
+ * The one exception is --configure, and it is not an install: it writes exactly
+ * one file, /mfselect/mfinstall.yml, and touches no ROM at all. That claim used
+ * to read "the SD card is never written", which --configure makes false as
+ * stated; what it was protecting is the ROM images, and that is unchanged.
  *
  * THE MECHANISM IS MEASURED, NOT INHERITED FROM DOCUMENTATION. Two probes under
  * a booted NextZXOS in jnext established it, and the second one carried a
@@ -186,11 +192,13 @@
 #define M_U3      " --load uart  install UART ROM"
 #define M_U4      " --unload     restore original"
 #define M_U5      " --auto       use mfinstall.yml"
+#define M_UCFG    " --configure wifi|uart|none"
 #define M_U6      " --help       this text"
-#define M_U7      "ROMs in /mfselect/. Live until"
-#define M_U8      "power-off; the SD card is never"
-#define M_U9      "written. Takes effect on the"
-#define M_U10     "next NMI button press."
+#define M_U7      "ROMs in /mfselect/. An install"
+#define M_U8      "is live at the next NMI press,"
+#define M_U9      "lasts until power-off, and never"
+#define M_U10     "writes the card. --configure"
+#define M_U11     "writes one file and no ROM."
 
 #define M_LOADW   "Installing the WiFi ROM..."
 #define M_LOADU   "Installing the UART ROM..."
@@ -200,6 +208,10 @@
 #define M_LIVE    "Live now. Press NMI to enter."
 #define M_SAME    "Already loaded; nothing written."
 #define M_AUTONO  "mfinstall.yml says: none."
+#define M_SETW    "Boot default is now WiFi"
+#define M_SETU    "Boot default is now UART"
+#define M_SETN    "Boot default is now none"
+#define M_SETNXT  "--auto will obey it at boot"
 
 #define E_ARGS    "Bad arguments; try --help"
 #define E_NOSUM   "No .sum beside that ROM"
@@ -211,18 +223,24 @@
 #define E_BLOCKED "Write blocked: ROM unchanged"
 #define E_NOCONF  "No /mfselect/mfinstall.yml"
 #define E_CONFBAD "mfinstall.yml: bad install:"
+#define E_CONFWR  "Cannot write mfinstall.yml"
+#define E_CONFVER "mfinstall.yml did not read back"
 
 FITS(title,   M_TITLE);
 FITS(u1,  M_U1);  FITS(u2,  M_U2);  FITS(u3,  M_U3);  FITS(u4,  M_U4);
 FITS(u5,  M_U5);  FITS(u6,  M_U6);  FITS(u7,  M_U7);  FITS(u8,  M_U8);
-FITS(u9,  M_U9);  FITS(u10, M_U10);
+FITS(ucfg, M_UCFG);
+FITS(u9,  M_U9);  FITS(u10, M_U10);  FITS(u11, M_U11);
 FITS(loadw,   M_LOADW);   FITS(loadu,  M_LOADU);   FITS(unload, M_UNLOAD);
 FITS(check,   M_CHECK);   FITS(writing, M_WRITING); FITS(live,  M_LIVE);
 FITS(same,    M_SAME);    FITS(autono,  M_AUTONO);
+FITS(setw,    M_SETW);    FITS(setu,    M_SETU);    FITS(setn, M_SETN);
+FITS(setnxt,  M_SETNXT);
 FITS(eargs,   E_ARGS);    FITS(enosum, E_NOSUM);   FITS(eopen,  E_OPEN);
 FITS(esize,   E_SIZE);    FITS(ecrc,   E_CRC);     FITS(eread,  E_READ);
 FITS(ereloc,  E_RELOC);   FITS(eblocked, E_BLOCKED);
 FITS(enoconf, E_NOCONF);  FITS(econfbad, E_CONFBAD);
+FITS(econfwr, E_CONFWR);  FITS(econfver, E_CONFVER);
 
 /* The lead of the line that REPORTS which ROM is live. It is reporting and
  * nothing else: since the compare became the idempotence test (see load_rom),
@@ -624,6 +642,58 @@ static int8_t read_config(const char **why)
     return -1;
 }
 
+/* Write the config file, and write NOTHING else — `--configure` sets what the
+ * NEXT boot will do and does not touch the live ROM. `--load` is the verb that
+ * installs now, `--auto` the one that obeys this file; keeping the three
+ * orthogonal is what makes `--configure wifi` safe to run mid-session.
+ *
+ * IT EXISTS BECAUSE THE FILE CANNOT BE EDITED ON A STOCK NextZXOS (user,
+ * 2026-08-07). A config file only reachable by putting the card in a PC is a
+ * config file that defeats the purpose of a tool whose whole point is not
+ * needing a PC.
+ *
+ * ONE LINE, NO COMMENTS, by decision (user, same day): the documentation is
+ * doc/MFINSTALL.md, and a preamble is a thing that grows until it pushes
+ * `install:` past read_config()'s 511-byte window — which would make the file
+ * unreadable to the program that wrote it.
+ *
+ * CRLF, matching NextZXOS's own config files (/nextzxos/browser.cfg,
+ * enBrowsext.cfg) and therefore its editor. read_config() takes either.
+ */
+static const char *write_config(int8_t id)
+{
+    const char *val = (id == ID_WIFI) ? "wifi" : (id == ID_UART) ? "uart" : "none";
+    const char *why = 0;
+    uint8_t h, n = 0;
+
+    memcpy(buf, "install: ", 9);
+    n = 9;
+    memcpy(buf + n, val, 4);
+    n = (uint8_t)(n + 4);
+    buf[n++] = '\r';
+    buf[n++] = '\n';
+
+    h = esx_f_open(CONF_FILE, ESX_MODE_W | ESX_MODE_OPEN_CREAT_TRUNC);
+    if (h == BAD_HANDLE)
+        return E_CONFWR;
+    if (esx_f_write(h, buf, n) != n) {
+        esx_f_close(h);
+        return E_CONFWR;
+    }
+    esx_f_close(h);
+
+    /* READ IT BACK, and not as belt and braces. ESX_MODE_OPEN_CREAT_TRUNC
+     * destroys before it constructs — the shape ERRORS.md records as a
+     * data-loss bug in mfselect's backup — so a failure here leaves a file that
+     * is present, short, and unreadable to `--auto`. The ROM writes answer that
+     * with write-temp-then-rename, which is worth its complexity for 8192 bytes
+     * that cannot be recreated; this is fifteen bytes we have in hand, so the
+     * proportionate answer is to notice rather than to make it atomic. */
+    if (read_config(&why) != id)
+        return E_CONFVER;
+    return 0;
+}
+
 /* ------------------------------------------------------------------ */
 
 static void usage(void)
@@ -633,11 +703,13 @@ static void usage(void)
     say(M_U3);
     say(M_U4);
     say(M_U5);
+    say(M_UCFG);
     say(M_U6);
     say(M_U7);
     say(M_U8);
     say(M_U9);
     say(M_U10);
+    say(M_U11);
 }
 
 /* A custom esxdos error message: NextZXOS prints the string, and the LAST
@@ -665,6 +737,7 @@ static int fail(const char *msg)
 #define ACT_HELP    0
 #define ACT_LOAD    1
 #define ACT_UNLOAD  2
+#define ACT_CONFIG  3
 
 int main(int argc, char **argv)
 {
@@ -700,6 +773,27 @@ int main(int argc, char **argv)
                 return 0;
             }
             act = ACT_LOAD;
+        } else if (strcmp(a, "--configure") == 0 && (i + 1) < (uint8_t)argc) {
+            /* Handled HERE and returned from, the way --help is, rather than
+             * setting `act` and falling out of the loop. Nothing else this
+             * program does can be combined with it — it installs nothing — so
+             * finishing on the spot removes every question about what
+             * `--configure wifi --load uart` would mean. */
+            i++;
+            if (strcmp(argv[i], "wifi") == 0)
+                want = ID_WIFI;
+            else if (strcmp(argv[i], "uart") == 0)
+                want = ID_UART;
+            else if (strcmp(argv[i], "none") == 0)
+                want = ID_NOT_OURS;
+            else
+                return fail(E_ARGS);
+            why = write_config(want);
+            if (why)
+                return fail(why);
+            say(want == ID_WIFI ? M_SETW : want == ID_UART ? M_SETU : M_SETN);
+            say(M_SETNXT);
+            return 0;
         } else if (strcmp(a, "--load") == 0 && (i + 1) < (uint8_t)argc) {
             i++;
             if (strcmp(argv[i], "wifi") == 0)

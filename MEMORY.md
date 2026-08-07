@@ -5,6 +5,95 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-07 — `.mfinstall --configure` writes the config; the YAML loses its comments
+
+**Decided (user) and built.** `.mfinstall --configure wifi|uart|none` writes
+`/mfselect/mfinstall.yml` and **does nothing else** — no ROM is loaded, unloaded
+or touched — and the shipped file is now one line, `install: wifi`, with no
+comments at all.
+
+**IT EXISTS BECAUSE THE FILE CANNOT BE EDITED ON A STOCK NextZXOS** (user,
+2026-08-07, from using it). A config file only reachable by putting the card in
+a PC defeats the point of a tool whose whole argument is not needing one: #21's
+case against the file swap was that `AUTOEXEC.BAS` is changeable from the
+machine, and a config the machine cannot change puts the PC back in the loop one
+step along.
+
+**THE VERB IS ORTHOGONAL TO THE OTHER TWO, and that is the decision rather than
+the name.** `--load` installs now; `--auto` obeys the file; `--configure`
+decides what `--auto` will do at the **next** boot. It was offered as
+`--install` and the user renamed it — rightly, since `--install` next to
+`--load` reads as a second way to install, which is the one thing it does not
+do. It is handled in the argument loop and **returns there**, the way `--help`
+does, so `--configure wifi --load uart` has no meaning to argue about.
+
+**Comments are gone by decision, and the reason is mechanical rather than
+aesthetic.** `read_config()` reads 511 bytes **once** and scans only those, so a
+preamble is a thing that grows until `install:` falls out of the window and the
+file becomes unreadable to the program that wrote it. Documentation lives in
+[doc/MFINSTALL.md]; the file carries the value. The Makefile's 511-byte guard
+stays and now aims at a file a **user** has edited by hand, which is the only
+way a preamble can get in.
+
+**THE WRITE IS NOT ATOMIC, AND THAT IS A PROPORTIONALITY JUDGEMENT rather than
+an oversight.** `ESX_MODE_OPEN_CREAT_TRUNC` destroys before it constructs — the
+exact shape [[ERRORS.md]] records as a data-loss bug in mfselect's backup — so
+an interrupted write leaves a file that is present, short and unreadable to
+`--auto`. The ROM writes answer that with write-temp-then-rename, worth its
+complexity for 8192 bytes that cannot be recreated; this is **fifteen bytes we
+have in hand**, so the proportionate answer is to **notice** instead: the file
+is read back through `read_config()` and a mismatch is reported. Rejected:
+temp+rename for fifteen bytes; and saying nothing, which is what makes a
+truncated config look like a missing one.
+
+**A CLAIM THIS FALSIFIES, IN FOUR PLACES.** "The SD card is never written" was
+this tool's headline safety property — in the module docstring, in
+[doc/MFINSTALL.md], in `README.md` and **on the Next's own `--help` screen**.
+`--configure` makes it false as stated. It is now "no install ever writes the SD
+card", with `--configure` named as the exception in each place, because what the
+claim was ever protecting is the ROM images and that is unchanged. The
+`--help` rewrite is the one that had to fit 32 columns, and **the compile-time
+`FITS()` assert caught a 33-character line** on the first attempt — an assertion
+watched to fire rather than assumed.
+
+**Evidence: `make test-mfinstall` 9/9, two new checks, each shown red first and
+each blind to the other's fault.** That last part is what makes them two checks
+rather than one:
+
+| control | I8 | I9 |
+|---|---|---|
+| writer emits **LF** instead of CRLF | **green** | **RED** — `\n` against `\r\n` |
+| writer **ignores its argument**, always writes `wifi` | **RED** — the card says `install: wifi` | green |
+
+**I8 is the round trip** — `--configure uart`, then `--auto`, and the UART stub
+has to come up — and UART is deliberate: the image starts at the shipped `wifi`
+default, so a `--configure` that did nothing would pass on a value it never
+wrote. Its *install* half passed under the second control, which is what says
+the **file-content** assertion is the load-bearing one. **I9 is byte-identity
+with the shipped default**, a question no screenshot can answer, between two
+genuinely separate sources — a checked-in file the Makefile copies, and C that
+composes the same line.
+
+**I8 asserts nothing about the screen, and that is forced rather than chosen**:
+its run must press the M1 button to show the install happened, and the stub then
+paints over the command line where the message was. Same reason I7 needs two
+runs. The message is judged in run 12, which has no NMI, and that is why I9
+carries it.
+
+**NOT COVERED.** Nothing here has run on **hardware** — `--configure` has never
+written a file on a real Next, and the file it writes has never been read by a
+real NextZXOS. An **interrupted** write, which is the case the read-back exists
+for, is not produced by any test. And `CLAUDE.md`'s §Testing catalogue still has
+no entry for `test-mfinstall`, now nine checks over twelve runs.
+
+**No `make bump`: both ROMs are byte-identical to `main`'s** pinned with
+`build/*.bin` deleted first (`efc73695…`, `f065776c…`), and
+`git diff --name-only main..HEAD -- src/` is empty — nothing here reaches a ROM.
+
+[doc/MFINSTALL.md]: doc/MFINSTALL.md
+
+---
+
 ## 2026-08-07 — `.mfinstall` boots the debugger from AUTOEXEC.BAS on a real Next; issue #21 closes
 
 **Measured, not decided** (user's own machine), and it takes issue #21's last

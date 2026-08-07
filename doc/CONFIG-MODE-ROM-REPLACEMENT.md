@@ -484,7 +484,9 @@ Treat a green bench as necessary and not sufficient, as everywhere else.
 taylorza's worked example ends with `NEXTREG 2,1`, after which the replacement stuck, and it
 **survived** that reset. **That is a description of what they did, not a claim that a reset is
 required** — they said so at the time ("I am not sure what the actual clean-up should be so I just left my iterations in"),
-and an earlier version of this document read it as a requirement. The open question is ours. If true it is a genuine advantage over what we ship today, because the file-swap method
+and an earlier version of this document read it as a requirement. The open question is ours.
+
+If the survival claim holds it is a genuine advantage over what we ship today, because the file-swap method
 is measured to behave the *opposite* way: after installing our ROM, a Reset press followed by NMI
 brought up the **stock** Multiface menu, and only a power cycle brought up ours (MEMORY.md,
 2026-08-04, on hardware). The firmware reads `enNextMf.rom` at power-on only.

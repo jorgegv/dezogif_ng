@@ -796,8 +796,9 @@ int main(int argc, char **argv)
     liveid = id_of(live_id);
     say_id(M_LIVEIS, liveid, live_id);
 
-    /* NO SOFT RESET IS ISSUED, deliberately. taylorza reported needing
-     * `NEXTREG 2,1` for a config-mode replacement to take effect; issue #21's
+    /* NO SOFT RESET IS ISSUED, deliberately. taylorza's worked example ends
+     * with `NEXTREG 2,1` and the replacement stuck — what they did, not a
+     * stated requirement; issue #21's
      * open question 3 asks whether that is really required, and bench check I2
      * — an M1 button NMI immediately after an install, with no reset — is what
      * answers it. Adding a reset "just in case" would destroy the user's BASIC

@@ -11,9 +11,9 @@
 #       about the ROM.
 #   I2  after I1, an M1 button NMI brings up THE STUB'S OWN SCREEN and not the
 #       stock Multiface monitor. THE STRONGEST CHECK HERE, and it answers issue
-#       #21's open question 3 in the emulator: taylorza reported needing a soft
-#       reset (`NEXTREG 2,1`) for a config-mode replacement to take effect, and
-#       .mfinstall deliberately issues none. If the bytes were not LIVE this
+#       #21's open question 3 in the emulator: taylorza's worked example ends
+#       with a soft reset (`NEXTREG 2,1`) — what they did, not a stated
+#       requirement — and .mfinstall deliberately issues none. If the bytes were not LIVE this
 #       goes red.
 #   I3  `--unload` puts the original back: the same NMI then brings up the stock
 #       monitor. Its second clause is the control — see the note at I3.

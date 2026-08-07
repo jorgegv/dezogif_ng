@@ -169,8 +169,8 @@ the routine reads its own work back before leaving, and `Write blocked: ROM unch
 message that a real fault produces. The source ROM's CRC-16 is checked against its `.sum` first,
 as mfselect does, so a corrupt file on the card is never copied anywhere.
 
-**No soft reset is issued.** taylorza reported needing `NEXTREG 2,1` for a config-mode replacement
-to take effect; bench check I2 presses the NMI button straight after an install, with no reset, and
+**No soft reset is issued.** taylorza's worked example ends with `NEXTREG 2,1` and the replacement
+stuck — a description of what they did, not a claim that a reset is required; bench check I2 presses the NMI button straight after an install, with no reset, and
 requires the stub's own screen — so in the emulator the answer to that open question is that a
 reset is **not** required. On real hardware nobody has checked.
 

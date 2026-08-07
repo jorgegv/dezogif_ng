@@ -5,6 +5,141 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-07 — One byte answered two questions; issue #26's second defect
+
+**Built, issue #26, and it is the defect the independent reviewer of the first
+fix found by reading the routine the fix was in.** `mf_rom.asm`'s NMI entry
+path read the bank in `MAIN_SLOT` and wrote it to `slot_backup.slot7` on
+**every** button press, before the dispatch had decided anything. Two different
+questions were being answered from that one byte, and they only have the same
+answer on one of the three paths out:
+
+| asked by | means | true when |
+|---|---|---|
+| the dispatch (#26's first fix) | *who was executing?* | every press |
+| `restore_registers` | *which bank does the debuggee get back?* | a **running** debuggee was interrupted |
+
+While the **debugger** executes, slot 7 holds `MAIN_BANK`. So an M1 press taken
+while the debugger was **stopped at a breakpoint** overwrote the debuggee's
+bank — saved by `dbg_enter` when the `RST 0` was taken — with the debugger's
+own, and the next `CMD_CONTINUE` would page `MAIN_BANK` into the debuggee's
+slot 7 (`backup.asm:144` reads it, `breakpoints.asm:66` installs it).
+
+**THE FIX SEPARATES THE TWO QUESTIONS RATHER THAN CONDITIONALISING THE WRITE,
+and that ordering matters because the first fix reads the same byte.** The
+entry path now stores into `MF.nmi_slot7`; the dispatch tests *that*; and only
+`.break_into_debuggee` — the one path on which the value really is the
+debuggee's bank — copies it into `slot_backup.slot7`. Conditionalising the
+original write instead (`skip it when the value is MAIN_BANK`) was tried first
+in the design and is **wrong**: it would have left `slot_backup.slot7` holding
+the debuggee's bank at the moment the dispatch reads it, so #26's own guard
+would have seen "not MAIN_BANK" and sent every press taken while stopped
+through `init_main_bank`, destroying the live session. Two fixes in one routine
+reading one byte for opposite purposes is exactly how that goes wrong.
+
+**It lives in MF RAM, and that is a byte-budget decision as much as a semantic
+one.** `MF.nmi_slot7` sits beside `MF.backup_sp` at `0x2000+`, which is
+Multiface RAM and **not part of the 8192-byte ROM image**, so the storage is
+free. It also *is* NMI-entry-scoped state, like `backup_sp`, rather than
+debug-session state.
+
+**THE MF ROM HALF IS NOW EXACTLY FULL, and the next person needs to know
+before they try.** `mf_nmi.bin` is `ALIGN 16`-ed to `0x140`; the identity
+block's file offset is `0x140 + (0xFEA0 - 0xE000)` = `0x1FE0`, a permanent
+contract (#4). #26's first fix took the padding from 15 bytes to 6, and this
+one takes it to **0**. One byte more moves `main_prg_copy` to `0x150` and the
+block to `0x1FF0`. `main.asm`'s `ASSERT` catches it at assembly time, so the
+failure is loud — but "add a check to `nmi66h`" is no longer a free action, and
+that is now in CLAUDE.md §Building beside the contract it protects.
+
+**Evidence: bench check W6, a sixth run of `make test-dzrp-stub`, shown red
+first — and the red is the trace turned into a measurement.**
+
+| | slot 7 before the press | after |
+|---|---|---|
+| `main`'s ROM | 30 | **94** (`MAIN_BANK`) |
+| as built | 30 | **30** |
+
+**It is observable over a socket at all because `CMD_GET_REGISTERS` reports
+slot 7 from `slot_backup.slot7` rather than from the MMU** — the last byte of
+its payload. `CMD_SET_SLOT` for slot 7 is the mirror image: it writes only the
+saved value and touches no MMU register. So the whole check is DZRP in and DZRP
+out, with no screenshot and no emulator introspection.
+
+**THE PRESS IS LOCATED IN TIME BY jnext's OWN LOG, NOT BY A SLEEP.** It has to
+land between the two reads; `--delayed-nmi-frames` counts emulated frames while
+the client counts wall clock, and the frame rate collapses under DZRP traffic —
+the same mismatch that makes an NMI against a *running* debuggee unschedulable
+here (2026-08-05, below). A sleep would fail in the **green** direction: a press
+arriving after the second read leaves a broken stub looking clean. So the bench
+waits for the delivery line and only then releases the client through a
+sentinel, and asserts the count afterwards as W4 does.
+
+**Two harness bugs, both found by the red-first run rather than by reading it**,
+and both worth recording because each would have produced a *wrong verdict*
+rather than an error:
+
+1. `CMD_GET_REGISTERS`'s **payload is 37 bytes**, not the 38 in
+   `commands.asm` — that 38 is the *response length*, which counts from the
+   sequence byte. The two directions' length conventions have now cost this
+   project twice (the first is [[#DZRP's two length conventions]]).
+2. **The bench's own log level hid the evidence.** `--log-level warn,esp01=debug`
+   suppresses the `platform`/`info` line that reports a delivered NMI, so the
+   first run reported **0 of 2 presses** against a stub that had demonstrably
+   taken one. Raised for the runs that schedule a second press, and only those.
+
+**A VHDL LOOKUP MADE THE FIRST FIX'S DISCRIMINATOR STRONGER THAN IT WAS
+ARGUED.** #26's guard rests on slot 7 not being `MAIN_BANK` after a reset, which
+was justified as "whatever NextZXOS left there". It is better than that: a soft
+reset restores **all eight MMU slots unconditionally**, slot 7 to bank `0x01`
+(`zxnext.vhd:4610-4618`). So the guard is hardware-guaranteed on that path, not
+dependent on firmware habit.
+
+The same lookup **disproved** a candidate this session generated: NR `0x06`
+bit 3 is **not** cleared by a soft reset — it has no reset branch anywhere and
+goes only on the flashboot/hard-reset path. An M1 press after a soft reset
+therefore still generates an NMI, which is what makes #26 reachable at all.
+
+**A THIRD VARIANT IS REAL, UNFIXED, AND NOT FIXABLE IN THE BYTES AVAILABLE.**
+If `prgm_state` is stale **`PRGM_RUNNING`** — a machine reset while a debuggee
+was running — the dispatch still takes `.break_into_debuggee` and breaks into
+NextZXOS with stale state. It is **milder** than what #26 fixed (the debugger
+legitimately owns slot 7 on that path, so the fatal "MAIN_BANK left mapped
+under NextZXOS" mechanism is absent) and it is **unverified**: jnext has no
+headless reset button, so staging it needs a debuggee that resets the machine
+itself, which nothing here does. The VHDL offers one usable discriminator —
+`NR 0x8C`'s reset copies bits 3:0 into 7:4, and `altrom.asm` only ever writes
+the high nibble, so a soft reset effectively clears the AltROM enable the
+debugger sets and never removes. Not implemented: it needs ~8 bytes the MF ROM
+does not have, and this project does not put unverified mechanisms in the NMI
+path. Recorded on #26 instead.
+
+**Rejected.** Conditionalising the entry-path write (above — it breaks #26's
+own guard); a new byte in the debugger's data image rather than MF RAM (costs
+ROM the MF half no longer has); a unit test instead of a bench check
+(`ut_nmi.asm` patches `nmi66h.is_button_cause` precisely to avoid running the
+entry path, and running it for real under `MF_FAKE` would take
+`init_main_bank`'s `MEMCOPY` from an empty `main_prg_copy` and destroy the
+debugger under the test); asserting the press with a sleep (fails green).
+
+**Also observed, and it is NOT this branch's:** W5's precondition — the
+deliberately-raced `+IPD` collision — failed to arise in **1 of 3** runs today,
+on both the pre-fix and the fixed ROM. It reports that honestly as a FAIL
+rather than passing vacuously, which is the bench working as designed, but it
+is flaky and somebody will meet it.
+
+**Cost: +6 bytes of ROM, both variants, `main.bin` and `main-wifi.bin`
+byte-identical pinned** (`413f5172…`, `2748b387…` either side at build `0011`)
+— so nothing outside `mf_rom.asm` moved. ROMs: UART `92624073…` → `ea1379a2…`,
+WiFi `47435c37…` → `305fbd33…`. **This changes a ROM, so the merge carries a
+`make bump`.**
+
+**Regression: `make test` 7/7, `test-dzrp-stub` all green with W1-W6 and 15/15
+conformance, `test-unit` 5/5, both variants `check-reproducible`.** **Nothing
+here has run on hardware.**
+
+---
+
 ## 2026-08-07 — The NMI decline is keyed on who was EXECUTING, not on what RAM holds
 
 **Built, issue #26 — a five-year-old upstream defect, diagnosed the day before
@@ -93,6 +228,12 @@ the branch over it. A decision log this project tells every session to read
 as ground truth is the worst place to assert an action nobody took. The
 lesson is this file's oldest: **do not write down a thing as done because it
 is the thing that ought to happen next.**)*
+
+*(**RESOLVED the same day, and not by filing it.** The user's call was that it
+is part of getting the reset hang fixed and therefore stays on #26 rather than
+becoming a new issue — so "check that it was filed" above is answered: it was
+not, deliberately. It is **fixed**, with bench check W6, in the entry at the
+top of this file.)*
 
 **NOT COVERED.** The fixed ROM has not been through reset-then-NMI on
 **hardware** — the 2026-08-07 hardware breakage that opened #26 was build

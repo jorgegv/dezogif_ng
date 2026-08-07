@@ -164,6 +164,15 @@ DeZoGiFnG_UART_0001      DeZoGiFnG_WIFI_0001
 `ERRORS.md`. Anything asking "is this ROM ours?" matches the `DeZoGiFnG_` prefix and the variant
 field, and **never the build number**, which changes and is only ever displayed.
 
+**THAT CONTRACT MEANS THE MF ROM HALF CANNOT GROW, AND AS OF ISSUE #26 IT IS EXACTLY FULL.**
+`mf_nmi.bin` is `ALIGN 16`-ed to 320 bytes (`0x140`), the ROM is that followed by `main.bin`, and
+the block's file offset is `0x140 + (0xFEA0 - 0xE000)` — so a single byte over the boundary moves
+`main_prg_copy` to `0x150`, moves the block to `0x1FF0`, and breaks the offset. There is no
+padding left to absorb it: the `ASSERT` in `main.asm` is what catches this, and it fires at
+assembly time rather than shipping a ROM mfselect cannot parse. The debugger half (`main.bin`)
+has ~1.2 KB free and is not affected; this is a constraint on `mf_rom.asm` alone, which is why
+issue #26's second fix put its one byte of state in **MF RAM**, where it costs no ROM at all.
+
 **The block stores four BARE hex digits; every place a person reads the number shows `NN.NN`**
 — high byte, dot, low byte (issue #20). So the ROM above is `00.01` on the debugger's banner and
 in mfselect, and `0001` in the block those two are spelled from. That is one stored form with one
@@ -280,6 +289,17 @@ strongest:
    defect's other window — the wait for `SEND OK` — is unreachable here** (jnext answers
    instantly) and is hardware bench H3 — **confirmed green on a real Next, 3 runs of 3, build 000A**,
    which is the symmetric answer to the 3 failures of 3 that opened the issue.
+   A sixth run is **W6** (issue #26): the M1 button pressed while the debugger is **stopped**, which
+   used to overwrite the debuggee's saved slot-7 bank with `MAIN_BANK` — the NMI entry path saved
+   the bank it found on every press, and while the debugger executes that bank is its own, so the
+   next `CMD_CONTINUE` would have paged the debugger into the debuggee's slot 7. It is visible over
+   the socket because `CMD_GET_REGISTERS` reports slot 7 from that byte rather than from the MMU:
+   `CMD_SET_SLOT` puts a known bank there, the press lands, and the same read must still see it.
+   Shown red first, `before=30 after=94`. **The press is located in time by jnext's own log**, not
+   by a sleep — `--delayed-nmi-frames` counts emulated frames while the client counts wall clock, so
+   the bench waits for the delivery line and only then releases the client, and asserts the count
+   afterwards as W4 does. That line is `platform`/`info`, so this run alone raises the log level;
+   at the bench's usual `warn` it reported 0 of 2 presses against a stub that had taken one.
    **C2** was the standing red
    until issue #7 landed: `cmd_init` read the remote's program name until a NUL and ignored the
    frame's length field, so a length that disagreed with the payload desynchronised silently
@@ -524,7 +544,7 @@ read once; a document can be revised, cited and diffed.
 
 Two things the shortening may **never** touch, because they are interface rather than prose:
 
-- **The check id.** `T1`-`T7`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W5`, `C1`-`C15`, `B1`-`B2`,
+- **The check id.** `T1`-`T7`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W6`, `C1`-`C15`, `B1`-`B2`,
   `P1`-`P3`, `N1`-`N4`, `G1`-`G2`, `I1`-`I9`, `S1`-`S3`, `H1`-`H5` are cited by every document and
   issue, and two things match on
   them: `run-dzrp-stub.sh`'s W3 greps `^FAIL  C10 `, and `test/hardware-check.py` takes the code

@@ -147,6 +147,12 @@ CONFORMANCE=$(dirname "$0")/dzrp/conformance.py
 ORPHAN=$(dirname "$0")/dzrp/orphan-notify.py
 QUEUED=$(dirname "$0")/dzrp/queued-commands.py
 SPLIT=$(dirname "$0")/dzrp/split-command.py
+NMI_STOPPED=$(dirname "$0")/dzrp/nmi-while-stopped.py
+
+# W6's second M1 press, in frames after the first. It has to be late enough
+# that the client has connected and armed, and there is no upper bound to worry
+# about: EXIT_FRAMES is a backstop and the run ends when the bench kills jnext.
+SECOND_NMI_FRAMES=$((BOOT_FRAMES + 600))
 
 # Longer than the suite's own 5 s default. The loopback sweep now goes to 4096
 # bytes, which is ~8 KB over a 115200 link plus seventeen AT+CIPSEND round
@@ -230,11 +236,13 @@ jlog2=$OUT/dzrp-stub-w2.log
 jlog3=$OUT/dzrp-stub-w3.log
 jlog4=$OUT/dzrp-stub-w4.log
 jlog5=$OUT/dzrp-stub-w5.log
+jlog6=$OUT/dzrp-stub-w6.log
 shot=$OUT/screenshots/dzrp-stub.png
 shot2=$OUT/screenshots/dzrp-stub-w2.png
 shot3=$OUT/screenshots/dzrp-stub-w3.png
 shot4=$OUT/screenshots/dzrp-stub-w4.png
 shot5=$OUT/screenshots/dzrp-stub-w5.png
+shot6=$OUT/screenshots/dzrp-stub-w6.png
 
 jnext_pid=""
 cleanup() {
@@ -287,8 +295,20 @@ stop_stub() {
 # AT+CIPSERVER=1,<port> were both accepted — a chain in which every step gates
 # the next. Returns non-zero if it never appears.
 start_stub() {
-    local logfile=$1 shotfile=$2
+    local logfile=$1 shotfile=$2 second_nmi=${3:-}
     rm -f "$shotfile"
+    local -a extra_nmi=()
+    # `warn` hides the platform category's "Delayed NMI button ... pressed"
+    # line, which is INFO — and that line is W6's whole synchronisation and its
+    # precondition. Measured, not assumed: with the bench's usual level the
+    # first run reported 0 of 2 presses against a stub that had demonstrably
+    # taken one. Raised only for the runs that schedule a second press, so
+    # every other run's log stays as small as it was.
+    local levels="warn,esp01=debug"
+    if [ -n "$second_nmi" ]; then
+        extra_nmi=(--delayed-nmi-frames "$second_nmi" nmi)
+        levels="$levels,platform=info"
+    fi
 
     # Per run, not only at pre-flight: a foreign listener appearing between two
     # of this script's own runs would answer the client we are about to start,
@@ -299,9 +319,10 @@ start_stub() {
         --headless --machine next \
         --sdcard "$sd" \
         --rtc "2026-01-01 12:00:00" \
-        --log-level "warn,esp01=debug" \
+        --log-level "$levels" \
         --esp --esp-listen-address 127.0.0.1 \
         --delayed-nmi-frames "$BOOT_FRAMES" nmi \
+        "${extra_nmi[@]}" \
         --delayed-screenshot "$shotfile" --delayed-screenshot-frames "$SHOT_FRAMES" \
         --delayed-automatic-exit-frames "$EXIT_FRAMES" \
         >"$logfile" 2>&1 &
@@ -612,14 +633,90 @@ EOF
 fi
 
 # ===========================================================================
+# Run 6 — W6: an M1 press while the debugger is STOPPED
+#
+# Issue #26's second defect. mf_rom.asm's entry path stored the bank it found
+# in MAIN_SLOT into slot_backup.slot7 on EVERY press, before the dispatch had
+# decided anything — so a press taken while the DEBUGGER was executing wrote
+# MAIN_BANK over the debuggee's bank, which dbg_enter had saved when the
+# breakpoint was taken, and the next CMD_CONTINUE would have paged the
+# debugger's own bank into the debuggee's slot 7.
+#
+# It is observable over the socket because CMD_GET_REGISTERS reports slot 7
+# from that byte rather than from the MMU. See test/dzrp/nmi-while-stopped.py,
+# which carries the sequence and why each step is the one it is.
+#
+# THE SENTINEL IS THE VACUITY GUARD. The press must land BETWEEN the client's
+# two reads, and jnext schedules it in emulated FRAMES while the client counts
+# wall clock — the same mismatch that makes an NMI against a running debuggee
+# unschedulable here (MEMORY.md 2026-08-05). So the bench waits for jnext's own
+# log to report the second press and only then releases the client, which puts
+# the press inside the window by construction rather than by a sleep that fails
+# green. The count is asserted from the log again afterwards, as W4 does.
+# ===========================================================================
+
+log ""
+log "== run 6: an M1 press while the debugger is stopped, with a bank saved"
+
+sentinel6=$OUT/dzrp-stub-w6.sentinel
+rm -f "$sentinel6"
+
+if ! start_stub "$jlog6" "$shot6" "$SECOND_NMI_FRAMES"; then
+    fail "W6 the stub never listened on 127.0.0.1:$PORT for the stopped-press run"
+else
+    set +e
+    SENTINEL="$sentinel6" DZRP_PORT="$PORT" DZRP_TIMEOUT="$DZRP_TIMEOUT" \
+        python3 "$NMI_STOPPED" >"$OUT/dzrp-stub-w6.client" 2>&1 &
+    client6_pid=$!
+
+    # Wait for the second press to be REPORTED, not merely scheduled. A
+    # `Delayed NMI button ... pressed` line is written when it is delivered;
+    # the announcement lines jnext prints at startup say "will press", so this
+    # pattern cannot match them.
+    nmi_seen=0
+    for _ in $(seq $((RUN_TIMEOUT * 2))); do
+        kill -0 "$client6_pid" 2>/dev/null || break
+        if [ "$(grep -c 'Delayed NMI button' "$jlog6" 2>/dev/null || echo 0)" -ge 2 ]; then
+            nmi_seen=1
+            break
+        fi
+        sleep 0.5
+    done
+    # Released either way: a client left waiting on a sentinel that never comes
+    # would report the harness fault itself, but only after its own timeout.
+    printf 'go\n' > "$sentinel6"
+
+    wait "$client6_pid"
+    w6_rc=$?
+    set -e
+    stop_stub
+    sed 's/^/  | /' "$OUT/dzrp-stub-w6.client"
+
+    w6_presses=$(grep -c 'Delayed NMI button' "$jlog6" || true)
+    w6_connects=$(grep -c "accepted as cid" "$jlog6" || true)
+
+    if [ "$w6_connects" -gt 4 ]; then
+        fail "W6 CONTAMINATED: $w6_connects connections in $jlog6 where this fixture makes 1"
+    elif [ "$w6_presses" -ne 2 ]; then
+        fail "W6 harness: jnext delivered $w6_presses of 2 NMI presses, so no press was judged"
+    elif [ "$nmi_seen" -ne 1 ]; then
+        fail "W6 harness: the second press was never seen in the log while the client waited"
+    elif [ "$w6_rc" -ne 0 ]; then
+        fail "W6 an M1 press while stopped destroyed the debuggee's saved slot 7 bank (issue #26)"
+    else
+        pass "W6 an M1 press while the debugger is stopped leaves the debuggee's slot 7 bank intact"
+    fi
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 
 log ""
 if [ "$failures" -ne 0 ]; then
     log "Diagnosis:"
-    log "  jnext logs:   $jlog  $jlog2  $jlog3  $jlog4  $jlog5"
-    log "  screenshots:  $shot  $shot2  $shot3  $shot4  $shot5"
+    log "  jnext logs:   $jlog  $jlog2  $jlog3  $jlog4  $jlog5  $jlog6"
+    log "  screenshots:  $shot  $shot2  $shot3  $shot4  $shot5  $shot6"
 fi
 
 exit "$((failures > 0 ? 1 : 0))"

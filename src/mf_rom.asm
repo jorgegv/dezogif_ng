@@ -102,8 +102,22 @@ nmi66h:
 
     ; Page in slot 7
     nextreg REG_MMU+MAIN_SLOT,MAIN_BANK
-    ; Save previous bank
-    ld (slot_backup.slot7),a
+    ; Remember what slot 7 held — deliberately NOT in slot_backup.slot7.
+    ;
+    ; Two different questions are being answered from this one byte, and they
+    ; only have the same answer when the NMI interrupted a RUNNING debuggee:
+    ;   "who was executing?"        — asked below, on every press
+    ;   "which bank does the       — meant by slot_backup.slot7, which
+    ;    debuggee get back?"          restore_registers pages in on continue
+    ; Writing it straight to slot_backup.slot7 conflated them: pressing M1
+    ; while the debugger was STOPPED at a breakpoint overwrote the debuggee's
+    ; bank (saved by dbg_enter) with MAIN_BANK, because that is what slot 7
+    ; holds while the debugger itself executes — and the next CMD_CONTINUE
+    ; then paged the DEBUGGER's bank into the debuggee's slot 7.
+    ; It lives in MF RAM rather than in the debugger's data because it
+    ; describes this NMI entry, like MF.backup_sp beside it, and because MF
+    ; RAM costs no bytes of the 8192-byte ROM image.
+    ld (MF.nmi_slot7),a
 
     ; Save IO_NEXTREG_REG
     pop af
@@ -174,16 +188,25 @@ nmi66h:
     ; worse than useless, because the entry path above has already paged
     ; MAIN_BANK into slot 7 and the immediate return never restores it.
     ; The debugger executes FROM MAIN_BANK in slot 7, so what slot 7 held at
-    ; this NMI — saved to slot_backup.slot7 above — settles who was executing.
+    ; this NMI — MF.nmi_slot7, taken above — settles who was executing.
     ; This test must stay AFTER the PRGM_RUNNING one: while a debuggee runs,
     ; slot 7 holds the DEBUGGEE's bank, and testing it first would send every
     ; manual break through init_main_bank.
-    ld a,(slot_backup.slot7)
+    ld a,(MF.nmi_slot7)
     cp MAIN_BANK
     jr nz,init_main_bank	; Stale image, NextZXOS executing: re-initialize
     jp mf_nmi_button_pressed_immediate_return
 
 .break_into_debuggee:
+    ; The NMI interrupted a running debuggee, so slot 7 held the DEBUGGEE's
+    ; bank. THIS is the one path on which that value is what continue must
+    ; page back, and the only one that may write it: the immediate return
+    ; below leaves slot_backup.slot7 alone so that a press taken while
+    ; stopped cannot destroy what dbg_enter saved, and init_main_bank
+    ; recopies the image, which resets it anyway.
+    ld a,(MF.nmi_slot7)
+    ld (slot_backup.slot7),a
+
     ; Restore registers from MF stack
     pop af
 
@@ -260,5 +283,10 @@ stack:
 
 ; Used to backup the debugged program's SP.
 backup_sp:      defw 0
+
+; The bank that was in MAIN_SLOT when this NMI was taken, before the entry
+; path paged MAIN_BANK in over it. Scoped to the NMI entry, like backup_sp,
+; and NOT the same thing as slot_backup.slot7 — see nmi66h.
+nmi_slot7:      defb 0
 
     ENDMODULE

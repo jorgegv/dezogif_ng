@@ -243,6 +243,11 @@ strongest:
      asserted from jnext's own log (both queued NMIs really delivered — `--delayed-nmi-frames`
      queues, and a dropped first press would make run 8 a *first* press that passes vacuously)
      and from the reset run really leaving the stub's screen.
+     **T7's subject is one of the few things here CONFIRMED ON A REAL NEXT** (build `00.12`,
+     2026-08-07): reset→NMI re-initialises the debugger repeatably, and — the half no bench can
+     stage — a press with the stub *already up* correctly does **nothing** while `R` still works,
+     so both arms of the discriminator were seen on silicon. `reported on hardware`: one machine,
+     one reporter, no re-runnable artefact.
    Screen comparison is a **percentage of differing pixels** (`test/screen-diff.py`), not a byte
    compare: NextZXOS idling changes 0.01% of the screen and that once produced a false PASS.
 4. **`make test-mfselect`** — the mfselect bench, 6 headless runs, 10 checks, asserting on files
@@ -313,6 +318,10 @@ strongest:
    reports the exact green a corrupting ROM gives, and the precondition catches it. It is a *bench*
    seam, not one of the `IP_MAX` / `RX_WAIT` / `LINK_IDS` build-constant family — no probe ROM is
    built — but it exists for their reason: a red nobody can re-run is a story about a scratch tree.
+   **W6's subject has NOT run on hardware and is not going to**: it needs an M1 press timed against
+   a live DeZog session at the machine, and the user declined (2026-08-07). Unlike T7's, whose
+   subject *was* confirmed on a Next, this defect's whole evidence is this emulator check — so read
+   "issue #26 is fixed on hardware" as covering the decline and **not** the press-while-stopped.
    **C2** was the standing red
    until issue #7 landed: `cmd_init` read the remote's program name until a NUL and ignored the
    frame's length field, so a length that disagreed with the payload desynchronised silently

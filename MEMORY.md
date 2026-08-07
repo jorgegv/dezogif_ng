@@ -5,6 +5,70 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-07 — The reset path is fixed ON A REAL NEXT, and the run tested both arms
+
+**Measured, not decided** (user's own machine, build `00.12`), and it closes
+issue #26. `.mfinstall --auto` in `AUTOEXEC.BAS` throughout, so a soft reset
+reinstalls whatever the config says:
+
+| | action | result |
+|---|---|---|
+| 2 | power cycle — autoexec installs WiFi | |
+| 3 | NMI | stub appears |
+| 4 | **R** — the stub's own soft reset | machine reboots |
+| 5 | NextZXOS boots, autoexec reinstalls | |
+| 6 | NMI | **stub appears** |
+| 7 | `.mfinstall --configure none` | autoexec will install nothing |
+| 8 | NMI | stub appears |
+| 9 | NMI **again** | **nothing happens** |
+| 10 | **R** | reboots; autoexec installs **nothing** |
+| 11 | NMI | **stub appears** |
+| 12-13 | R, NMI | **stub appears**, repeatably |
+
+Before this fix, step 6 was the reported failure: the press did nothing and the
+machine locked up shortly afterwards, recoverable only by power-cycling.
+
+**STEP 9 IS THE MOST VALUABLE LINE IN THE RUN, AND IT IS NOT A DEFECT.** With
+the stub already up, the debugger *is* executing and slot 7 genuinely holds
+`MAIN_BANK`, so the guard takes the immediate return and does nothing — which
+is upstream's intent. **The risk in this change was always the other
+direction**: a test that sent *every* press to `init_main_bank` would have
+destroyed live sessions, which is why the ordering against `PRGM_RUNNING` was
+called the whole risk when it was written. Step 9 shows it declines correctly
+while 6/11/13 show it re-initialises correctly. **Both arms of the
+discriminator, on silicon** — and no bench here can produce the pair, because
+none of them presses the button twice with a machine in two different states.
+
+Step 9 also proves the machine was **alive**, not wedged: step 10's `R` worked.
+That is the discriminator KNOWN-ISSUES.md leans on for telling a live stub from
+a dead one, applied by hand.
+
+**STEPS 10-13 ARE THE CONFOUNDER-FREE HALF, and the user spotted the confounder
+before I did.** At step 6 `autoexec` reinstalls the ROM, so a sceptic could
+credit the reinstall. After `--configure none` nothing rewrites anything and the
+result is unchanged. (The reinstall was never a real confounder — `--load`
+writes Multiface SRAM while the stale state lives in bank 94, which it never
+touches — but 10-13 removes the argument rather than answering it.)
+
+**WHAT IS NOT VERIFIED ON HARDWARE, and it is a decision rather than an
+oversight.** The **second** defect — the M1 press taken while the debugger is
+stopped at a breakpoint, which used to overwrite the debuggee's saved slot-7
+bank — is **emulator-only**, by the user's call (2026-08-07): testing it needs a
+DeZog session driven proficiently, and they declined to learn DeZog for it. Its
+evidence is bench W6 and nothing else. The **stale `PRGM_RUNNING`** residual is
+untouched by this run too; nothing ran a debuggee.
+
+**Tier: `reported on hardware`.** One machine, one reporter, no artefact anyone
+can re-run — the rung this project added on 2026-08-04 for exactly this. It is
+the strongest evidence obtainable for the question and still weaker than a
+re-runnable check, and the distinction is kept because the emulator has twice
+sat on the safe side of us (a connection id of 0, a 15-character address).
+
+**Cost: nothing.** Documentation only — no `src/` file changed, so no `make
+bump`, checked mechanically.
+
+---
+
 ## 2026-08-07 — One byte answered two questions; issue #26's second defect
 
 **Built, issue #26, and it is the defect the independent reviewer of the first
@@ -171,8 +235,15 @@ WiFi `47435c37…` → `305fbd33…`. **This changes a ROM, so the merge carries
 `make bump`.**
 
 **Regression: `make test` 7/7, `test-dzrp-stub` all green with W1-W6 and 15/15
-conformance, `test-unit` 5/5, both variants `check-reproducible`.** **Nothing
-here has run on hardware.**
+conformance, `test-unit` 5/5, both variants `check-reproducible`.**
+
+**HARDWARE, added the same day and split deliberately.** The ROM this entry
+produces was run on a real Next and the **first** defect's path is confirmed
+there — see the entry at the top of this file. **This entry's own defect, the
+press taken while stopped, was NOT**: it needs a DeZog session driven at the
+machine, and the user declined (2026-08-07), so W6 in the emulator is the whole
+of its evidence and this paragraph is what stops a reader inferring otherwise
+from the run that happened.
 
 ---
 
@@ -271,8 +342,11 @@ becoming a new issue — so "check that it was filed" above is answered: it was
 not, deliberately. It is **fixed**, with bench check W6, in the entry at the
 top of this file.)*
 
-**NOT COVERED.** The fixed ROM has not been through reset-then-NMI on
-**hardware** — the 2026-08-07 hardware breakage that opened #26 was build
+**NOT COVERED — the first clause of this paragraph was OVERTAKEN the same day;
+see the entry at the top of this file.** ~~The fixed ROM has not been through
+reset-then-NMI on **hardware**~~ — it has, on the user's own machine at build
+`00.12`, repeatably and with the autoexec reinstall removed as a confounder.
+The 2026-08-07 hardware breakage that opened #26 was build
 `0010`, and T7's green is jnext's word. The testable prediction that
 upstream's own released `enNextMf.rom` fails the probe identically remains
 un-run. And T7 resets from the stub's `R` key only; a reset from NextZXOS's

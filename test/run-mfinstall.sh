@@ -14,8 +14,7 @@
 #       #21's open question 3 in the emulator: taylorza's worked example ends
 #       with a soft reset (`NEXTREG 2,1`) — what they did, not a stated
 #       requirement — and .mfinstall deliberately issues none. If the bytes
-#       were not LIVE this goes red. If the bytes were not LIVE this
-#       goes red.
+#       were not LIVE this goes red.
 #   I3  `--unload` puts the original back: the same NMI then brings up the stock
 #       monitor. Its second clause is the control — see the note at I3.
 #   I4  `--load wifi` twice: the second is a no-op and says so, which is what

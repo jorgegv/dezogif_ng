@@ -104,11 +104,15 @@ run 12, which installs nothing, and that is why I9 carries it.
 
 [doc/CONFIG-MODE-ROM-REPLACEMENT.md]: doc/CONFIG-MODE-ROM-REPLACEMENT.md
 
-**NOT COVERED.** Nothing here has run on **hardware** — `--configure` has never
-written a file on a real Next, and the file it writes has never been read by a
-real NextZXOS. An **interrupted** write, which is the case the read-back exists
-for, is not produced by any test. And `CLAUDE.md`'s §Testing catalogue still has
-no entry for `test-mfinstall`, now nine checks over twelve runs.
+**CONFIRMED ON A REAL NEXT the same day** (user), and all three settings: `wifi`,
+`uart` and `none` each written and each obeyed. So the file `--configure` writes
+is one a real NextZXOS has read, which every bench here can only model — and it
+lands on the rung this project reserves for one machine, one reporter, no
+re-runnable artefact.
+
+**NOT COVERED.** An **interrupted** write, which is the case the read-back
+exists for, is not produced by any test and was not produced on hardware
+either — what ran there is the happy path three times.
 
 **No `make bump`: both ROMs are byte-identical to `main`'s** pinned with
 `build/*.bin` deleted first (`efc73695…`, `f065776c…`), and
@@ -279,6 +283,125 @@ it running on a real Next. The rest stands — that run used a config file the
 user wrote, not this one.)* And `CLAUDE.md`'s §Testing catalogue still has **no entry for
 `test-mfinstall`** where every other bench has one, which is its own small
 branch and now has one more thing to say.
+
+---
+
+## 2026-08-07 — A dot command cannot write the Multiface ROM, BECAUSE it is a dot command
+
+**Measured, issue #21**, and written up late: this is the finding `.mfinstall`
+was built on, and the decision log had no record of it while
+`doc/CONFIG-MODE-ROM-REPLACEMENT.md` carried it in full. The mechanism is not
+the one that document originally described, and the difference is structural
+rather than a detail it got wrong.
+
+**THE FINDING.** Config mode (`NEXTREG 3,7` / `NEXTREG 4,5`) is the **only**
+door to the Multiface ROM's SRAM page — `mmu_A21_A13 <= page + 32`
+(`zxnext.vhd:2964`), so `NEXTREG 0x50` at any value lands at physical page 32 or
+above and page `0x0A` is unreachable from the MMU. And a **NextZXOS dot command
+cannot use that door**: it executes at `0x2000` out of DivMMC RAM,
+`divmmc.vhd:94-95` enables DivMMC's two halves **together** on the same
+`conmem or automap`, and page0 is unconditionally read-only there (`:100`). So
+`0x0000-0x1FFF` is DivMMC ROM whenever the command exists to ask, and the write
+is **silently discarded**.
+
+**There is no state in which your code is at `0x2000` and `0x0000` is free —
+given that DivMMC, and not an MMU RAM page, is what serves the command's own
+code.** That premise is a NextZXOS fact rather than an FPGA one and is confirmed
+only in jnext; the hedge belongs on the sentence rather than four paragraphs
+below it, which is where a first version of this entry put it.
+
+**AND CONFIG MODE OPTS BACK INTO BEING OVERRIDDEN, which is the part I would not
+have predicted.** Its own branch sets `sram_pre_override <= "110"` (`:3050`) —
+bit 2 leaves DivMMC eligible, bit 1 Layer 2 — and the second arbiter consults
+DivMMC **first** (`:3084`). Fourteen lines above, the Multiface branch sets
+`"000"` (`:3036`) and shuts every later override off. So the branch that hands
+you writable ROM-SRAM is the one that deliberately lets DivMMC take it back.
+
+**WHY FIVE ROUNDS OF VHDL REVIEW COULD NOT HAVE FOUND IT.** Every mechanical
+claim in that document was right. Whether a dot command runs out of DivMMC RAM
+or an MMU-mapped page is a fact about the **NextZXOS runtime**, not about the
+FPGA, and no amount of reading `zxnext.vhd` answers it. **The hardware spec
+bounds what can happen; the software you are running inside decides which of
+those you are standing in.** This project's first hard rule is that the VHDL is
+the authority for hardware behaviour — and this is the shape of question that
+rule does not reach. It was settled by a throwaway dot command in one evening.
+
+**THE FIX IS NOT THE OBVIOUS HALF OF ITSELF.** Relocate the copy above `0x4000`
+**and** turn DivMMC off. A control build identical in every respect except
+leaving DivMMC on — still relocated to `0x5000` — is **blocked**, reading back
+the esxdos ROM. So **relocating is not what fixes it; turning DivMMC off is, and
+relocating is only what makes turning it off survivable**, since otherwise you
+unmap the code you are executing. That control is the `DIVMMC_OFF` build seam
+and bench check **I7**, the seventh seam of the `IP_MAX` / `RX_WAIT` /
+`TX_PASSES` / `WAIT_SECS` / `FAULT_LIMIT` / `LINK_IDS` family and for the same
+reason: a red nobody can re-run is a story about a scratch tree.
+
+**A MEASUREMENT MADE IT CHEAPER THAN FEARED.** Port `0xE3` reads back — it is
+readable (`:2727`, `:2815`, `:4190`), unlike NR `0x04` — and gave **`0x82`**:
+CONMEM set, bank 2. **A dot command is CONMEM-mapped, not automapped**, so a
+byte-exact restore of `0xE3` brings DivMMC back and the `rst 8` automap re-arm
+reasoned out beforehand is unnecessary. **It is kept anyway**, and the reason is
+a limit of the measurement: `0x82` is what *that* invocation gave, and nobody
+has read `0xE3` back on any other. If a dot command is ever automapped with
+CONMEM clear, the bare restore leaves DivMMC **off** and the return to `0x2000`
+lands nowhere. Six bytes covers both.
+
+**TWO CORRECTIONS TO THE DOCUMENT, both from reading it again with a run in
+hand.** Leaving config mode is **read back and write back**, not "write back the
+machine type you want" (§1.3): NR `0x03` is readable (`:5894`) and
+`nr_03_machine_type` is only ever `001`/`010`/`011`/`100` (`:1103`,
+`:5139-5142`), never `000`, so the value read is always a valid exit **by
+construction**. And the `LDIR` writes *through* `0x0000`, `0x0008`, `0x0038`,
+`0x0066` — every automap entry point — but cannot re-trigger automap: the `_q`
+inputs are cleared whenever `cpu_m1_n = '1'` (`:4115-4119`) and `automap_hold`
+updates only on an M1 fetch (`divmmc.vhd:126-131`). Worth recording because the
+live `automap` expression at `divmmc.vhd:148` has had its `not i_cpu_m1_n` term
+**commented out**, so the gating is not where a reader looks for it.
+
+**THE SOFT RESET IS NOT REQUIRED, and this entry's first version got the
+attribution wrong on its way to saying so.** Bench **I2** paints the stub after
+`--load wifi` with no `NEXTREG 2,1` anywhere, and hardware has since agreed
+twice over. That first version called it "the opposite of taylorza's account
+that the reset was what made the replacement take" — **he never claimed that**.
+He said a reset "gave me the best results" and added "I am not sure what the
+actual clean-up should be so I just left my iterations in". The word *needed*
+came from this project's own issue body and propagated from there into a public
+write-up he objected to, rightly. This entry was the last carrier.
+
+**Rejected.** The MMU (`NEXTREG 0x50`) instead of config mode — unreachable,
+above; chunking the copy into windows small enough to avoid a buffer, which
+multiplies the DivMMC off/on transitions rather than paying the risk once;
+leaving CONMEM set on the way out instead of restoring `0xE3` exactly — the
+reason recorded here was that "esxdos keeps its own shadow of that register and
+would be lied to", which is **unsourced and is not what `mfwin.asm` says**; the
+justification that survives is the one in the code, that an exact restore needs
+no theory about who else is reading the register. A host-side model of the
+sequence instead of a dot command (it would have tested a transcription, which
+[[ERRORS.md]] already carries an entry about). And idempotence by identity
+block, replaced on the user's call by a **full 8 KB compare** — "would this
+write change anything" is a different question from "is this ours", and issue
+#4's block is for the latter.
+
+**The doc sweep found more stale sites than the review named**, and the extra
+ones were load-bearing: one was the sentence saying the MMU state "must be
+established rather than assumed", which survived the measurement that
+established it — a document still arguing for work it had already done. No count
+is given, because the artefact that would settle one no longer exists; what is
+reproducible is the rule. **A correction is not finished until the claim is gone
+from everywhere it was used as a premise, and the enumeration is a grep, not a
+memory.**
+
+**Cost: no `src/` file changed and both ROMs are byte-identical to `main`'s**
+pinned, verified with `build/*.bin` deleted first. **So no `make bump`** — the
+certain answer rather than the conservative one, taken deliberately (user,
+2026-08-07).
+
+**NOT COVERED AS OF THE DAY THIS DESCRIBES.** Every hardware item in that list
+has since been answered and the entries above this one carry the results, which
+is why they are not restated here. What is still open is the 8 KB copy with
+**anything thrown at the window** — it is ~1 ms and nothing has been aimed at
+it — and the Multiface handler's own behaviour if it ever ran with config mode
+active.
 
 ---
 

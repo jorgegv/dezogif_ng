@@ -139,7 +139,9 @@ Two more properties, if you do edit it by hand:
 - **the name is nine characters, which needs a long-filename entry** on the card. That is ordinary
   here — NextZXOS reads its own `enBrowsext.cfg` and looks dot commands up by names like
   `DISPLAYEDGE` — and `make test-mfinstall`'s I5 copies this exact file into the image with `mcopy`,
-  which writes the same kind of entry a PC would. Nothing has opened it on real hardware.
+  which writes the same kind of entry a PC would. **A real Next has since written and read this file
+  through `--configure`, at all three settings** (2026-08-07), so the long name is no longer an
+  inference from what NextZXOS does with its own files.
 
 **What `--configure` writes is byte-identical to what the build ships**, and that is checked rather
 than intended: they are two separate sources — a checked-in file the Makefile copies, and C that

@@ -60,7 +60,10 @@ to work.
 - **@doc/CONFIG-MODE-ROM-REPLACEMENT.md** — issue #21: writing the Multiface ROM at run time
   through config mode (NR `0x03`/`0x04`) instead of swapping the file on the SD card, as input to a
   dotcommand design. VHDL-verified mechanism, and it corrects both of the contradictory third-party
-  accounts the issue was filed from. Nothing in it has been run.
+  accounts the issue was filed from. **It HAS been run**: the tool it was input to is `.mfinstall`
+  (`make test-mfinstall`, `doc/MFINSTALL.md`), and it has installed a ROM on a real Next both from
+  the command line and from `AUTOEXEC.BAS`. The document's own table says which claims are jnext's,
+  which are the VHDL's and which came off hardware.
 - DZRP spec: https://github.com/maziac/DeZog/blob/main/design/DeZogProtocol.md
 - FPGA VHDL source (authoritative hardware spec):
   `/home/jorgegv/src/spectrum/ZX_Spectrum_Next_FPGA/cores/zxnext/src/`

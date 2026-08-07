@@ -534,7 +534,12 @@ merely calls it. A YAML form matches this project's existing `version.yaml` conv
 
 That gives the removal story the file swap does not have:
 
-* hold the key that skips `AUTOEXEC.BAS` → the machine boots with nothing installed;
+* ~~hold the key that skips `AUTOEXEC.BAS`~~ → **this half of the argument cannot be sourced.** No
+  key that skips `AUTOEXEC.BAS` is documented anywhere in the NextZXOS guides on the card, checked
+  across all eleven of them; BREAK stopping a running NextBASIC program is the obvious candidate and
+  nothing here has verified it applies at boot. What survives is the weaker and still sufficient
+  form: the config file is one line, editable on the Next, and `install: none` turns the whole thing
+  off. See [MFINSTALL.md](MFINSTALL.md);
 * a key checked by the dotcommand itself → an explicit uninstall path;
 * nothing is ever overwritten, so **the stock ROM cannot be lost** — which is the failure mode
   `mfselect`'s first-run guard exists to prevent and which `ERRORS.md` records as a data-loss bug.
@@ -580,8 +585,8 @@ the job issue #4 says it is for.
 
 ### 3.4 Open, and not investigated here
 
-**Two of the three below are now closed, and they are struck rather than deleted so a reader can see
-which questions the build answered.**
+**All three below are now closed — the third by hardware, 2026-08-07 — and they are struck rather
+than deleted so a reader can see which questions the build answered.**
 
 * ~~Where the ROM image lives once it is not at `machines/next/enNextMf.rom`~~ — **it stays exactly
   where it was.** `machines/next/enNextMf.rom` is never written and never moves; the images
@@ -622,8 +627,13 @@ Still open, and added by the build rather than inherited from the issue:
 the FPGA, because jnext's config-mode model cites the same VHDL lines this document reads and
 agreement between them is not independent evidence. It sits **above** `verified` for anything about
 the **NextZXOS runtime** — what a dot command's `0xE3`, MMU and SP actually are — which no amount of
-VHDL can answer and which is where §1.2c came from. Nothing below is `verified on hardware`; nothing
-here has run on a real Next.
+VHDL can answer and which is where §1.2c came from.
+
+**Three rows below are now hardware-sourced, and they are the ONLY ones**, so read every other row
+as an emulator or a VHDL claim exactly as before. They carry `reported on hardware` — the rung
+Appendix A of the plan defines for first-hand evidence from one machine, one reporter, with no
+artefact anyone can re-run — rather than `verified`, which this file's older mfselect-reset row
+spends more loosely than the ladder allows.
 
 | Claim | Source | Status |
 |---|---|---|
@@ -663,7 +673,7 @@ here has run on a real Next.
 | A soft reset is NOT enough for the **file-swap** method | hardware, 2026-08-04 (MEMORY.md) | **verified on hardware** |
 | A soft reset is **required** for the config-mode method | **our earlier misreading** of the Discord thread — taylorza described what they did, not a requirement, and said so | **DISPROVED**, in jnext by bench I2 and then **on a real Next** twice — `--load wifi` typed, and `--auto` from `AUTOEXEC.BAS` — each live on the next M1 press with no reset |
 | A soft reset is **enough** for it, i.e. the replacement survives one | taylorza, Discord | **reported by a third party** — not tested here, and not by anything this bench does: no run issues `NEXTREG 2,1` at all |
-| **`.mfinstall --auto` from `AUTOEXEC.BAS` installs at boot on a real Next**, which was the last untried invocation path | user's own machine, 2026-08-07: autoexec ran, the stub installed, the M1 press brought up the debugger | **verified on hardware** — one machine, one reporter, no re-runnable artefact |
-| **A soft reset after an install leaves the machine unusable** — NMI does nothing, NextZXOS locks up, power cycle recovers | same session: reset, `--auto` reinstalled the ROM, and the next NMI still did nothing | **verified on hardware**, and **NOT a config-mode fault**: the reinstall means the ROM bytes were freshly written and verified, and the stub's own `R` key does the same. Issue #26 |
+| **`.mfinstall --auto` from `AUTOEXEC.BAS` installs at boot on a real Next**, which was the last untried invocation path | user's own machine, 2026-08-07: autoexec ran, the stub installed, the M1 press brought up the debugger | **reported on hardware** — one machine, one reporter, no re-runnable artefact |
+| **A soft reset after an install leaves the machine unusable** — NMI does nothing, NextZXOS locks up, power cycle recovers | same session: reset, `--auto` reinstalled the ROM, and the next NMI still did nothing | **reported on hardware**, and **NOT a config-mode fault**: the reinstall means the ROM bytes were freshly written and verified, and the stub's own `R` key does the same. Issue #26 |
 | Config mode is re-enterable | `.mfinstall` enters and leaves it THREE times per install — one identity read plus two 4 KB passes — and the bench's run 5 does two installs in one session, six entries, without a reset between them | **measured in jnext** — was **inferred** from `:5147` having no one-way guard, and is now exercised on every run of `make test-mfinstall` |
 | The sequence in §1.5 works | it IS `tools/mfinstall/mfwin.asm`; bench `make test-mfinstall` I1 and I2 | **measured in jnext** — 8192 bytes installed in two passes, verified inside the window, and live on the next M1 press |

@@ -82,8 +82,17 @@ debuggee's slot 7. The immediate-return path this branch fixes is exactly the
 path such a press takes, and the fix keeps it correct — the clobber is the
 save it reads. **This is a trace, not a run**: nothing has executed it, no
 bench presses M1 while stopped, and the hardware manual break of 2026-08-05
-was against a *running* debuggee. Filed as its own issue rather than fixed
-on this branch, which is scoped to #26's decline.
+was against a *running* debuggee. It is **not fixed here** — this branch is
+scoped to #26's decline — and, as of this commit, **not filed either**: it
+needs its own issue, and a GitHub write needs the user's go-ahead, which was
+not available. Whoever reads this next should check that it was filed.
+
+*(An earlier version of this paragraph said "filed as its own issue", which
+was **false** — no such issue existed, and the independent reviewer rejected
+the branch over it. A decision log this project tells every session to read
+as ground truth is the worst place to assert an action nobody took. The
+lesson is this file's oldest: **do not write down a thing as done because it
+is the thing that ought to happen next.**)*
 
 **NOT COVERED.** The fixed ROM has not been through reset-then-NMI on
 **hardware** — the 2026-08-07 hardware breakage that opened #26 was build

@@ -52,10 +52,17 @@ nowhere in the repository.
    comment block, long-filename entry and all. Shown red: a shipped
    `install: none` turns I5's wifi half red at 0.00%, restored green.
 
-**CRLF and 64 columns, because that is what NextZXOS's own config files are** —
+**CRLF, because that is what NextZXOS's own config files are** —
 `/nextzxos/browser.cfg` and `/nextzxos/enBrowsext.cfg`, both checked on the
-reference image rather than assumed. The parser takes either ending; the
-editor on the machine is the reason to pick one.
+reference image rather than assumed. The parser takes either ending; the editor
+on the machine is the reason to pick one. **The 64-column wrap is OURS and
+nothing confirms it**: those two files are machine-parsed action specs with no
+prose in them at all and lines running to 127 characters, so there is no column
+convention there to follow. It is a choice about reading the file on a Next.
+*(A first version of this paragraph said "CRLF and 64 columns, both checked" —
+one measurement's authority lent to a second claim taken from the same
+sentence, which is this file's oldest disease. `doc/MFINSTALL.md`, written in
+the same change, made only the narrow claim and was right.)*
 
 **The nine-character name needs a long-filename entry, and that is ordinary
 here**: NextZXOS reads `enBrowsext.cfg` itself and looks dot commands up by
@@ -68,8 +75,8 @@ edits on the card, not a build product, and a generated file cannot be the one
 the bench parses); `rm -rf $(DEPLOY)` to clear the old flat files (the recipe's
 existing comment refuses a recursive delete of a variable-built path, and there
 is nothing here it buys); leaving the pre-hierarchy flat names in place (a tree
-built before this would list five loose files as instructions to copy something
-to the card's root).
+built before this would list six loose files as instructions to copy something
+to the card's root — the five ROM/`.sum`/`.nex` names and `mfinstall` itself).
 
 **A REVIEW FINDING AND A GREP FINDING, AND THEY ARE THE SAME DISEASE.** The
 reviewer rejected the first commit because `doc/MFSELECT.md` still tabulated the
@@ -80,6 +87,13 @@ plan's Appendix B A2/A3, which cited that very table. `MEMORY.md`'s own "the
 five files a card needs" is left alone deliberately: it records what was decided
 then, and editing evidence to match a later rendering is what this project
 refuses.
+
+The same review's second finding is the sweep above being **one name short**,
+and it was found the way this project asks for: by **making the stale tree**
+rather than by reading the list. `make mfselect` alone is a supported build, so
+a pre-hierarchy `mfinstall` left at the top of `build/deploy/` would be printed
+as `/mfinstall` beside the correct `/dot/mfinstall` — by the very listing whose
+recipe had just claimed there was nothing left to get wrong.
 
 **Evidence: `test-mfinstall` 7/7 and `test-mfselect` 10/10**, each re-run
 independently by the reviewer. **Both ROMs are byte-identical to `main`'s** with

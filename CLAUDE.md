@@ -116,7 +116,14 @@ make mf-rom                    build/enNextMf.rom       UART  (default)
 make TRANSPORT=wifi mf-rom     build/enNextMf-wifi.rom  WiFi
 make mf-rom-wifi               the same, spelled shorter
 make mfselect                  BOTH, + build/dezouart.sum, build/dezowifi.sum, mfselect.nex
+make mfinstall                 the .mfinstall dot command + everything it installs
 ```
+
+**`build/deploy/` is what actually goes on the card**, and it mirrors the card's own layout —
+`dot/` and `mfselect/` — so deployment is `cp -r build/deploy/* <card>/` with nothing renamed and
+nothing placed by hand. `make mfselect` fills the `mfselect/` half; `make mfinstall` adds
+`dot/mfinstall` and a default `mfselect/mfinstall.yml`. The build prints the listing when it
+finishes.
 
 **`make mfselect` is the one target that builds both**, whatever `TRANSPORT` it is invoked with,
 by recursing once per variant with a single shared `BUILD_TIME`. That is not a convenience: since
@@ -466,6 +473,27 @@ strongest:
    (measured on the user's Next, 2026-08-06) — the sweep is written not to care, and no run here
    can check that it was right to be. It also does not reproduce a **wedged** peer, only an
    occupied slot, and it is **not** a fix for #15.
+4k. **`make test-mfinstall`** — the `.mfinstall` dot command (issue #21), **12 headless jnext runs,
+   9 checks**, and the only bench here that drives a program from the **NextZXOS command line**
+   rather than through a socket or a screenshot alone: every run boots NextZXOS, types the command
+   and judges what happened. `.mfinstall` writes a ROM into Multiface **SRAM** through config mode,
+   so **no ROM ever reaches the SD card** — which is what **I6** asserts, byte for byte, and
+   without it every other check here is equally satisfied by a tool that simply wrote the file,
+   which is mfselect's job and not this one's.
+   **I2 is the strongest**: an M1 press straight after an install must bring up the stub's own
+   screen with **no soft reset**, which is what says the bytes are LIVE. **I7 is the control that
+   attributes the mechanism to one constant** — a probe built `DIVMMC_OFF=0`, with DivMMC left
+   mapped as it is for any ordinary dot command, must report the write **blocked**; that is the
+   seventh seam of the `IP_MAX` family and the reason "relocate above 0x4000" is known **not** to be
+   the load-bearing half of the fix. **I8/I9** cover `--configure`, which writes the config file and
+   installs nothing: I8 is the round trip through `--auto`, I9 requires what it writes to be
+   byte-identical to the default the build ships — two separate sources, and a question no
+   screenshot can answer.
+   Not part of `make test`, for `test-mfselect`'s reason rather than the usual one: it binds no port
+   and needs no external dependency, it is simply separate tooling. See `doc/MFINSTALL.md` and
+   `doc/CONFIG-MODE-ROM-REPLACEMENT.md`. **Unlike every other bench here it is NOT alone on
+   hardware**: `--load`, `--auto` from `AUTOEXEC.BAS` and `--configure` have all run on a real Next.
+   What has not is `--unload`, and an interrupted config write.
 5. **`build/ut.nex`** — the same tests, **DeZog-driven** (`"unitTests": true` + zsim + the
    `customCode` plugin) in VS Code. Still a manual layer, and still the only way to exercise the
    36 that 4d must skip. `make unit-tests` assembles it; nothing here runs it.
@@ -483,7 +511,8 @@ read once; a document can be revised, cited and diffed.
 Two things the shortening may **never** touch, because they are interface rather than prose:
 
 - **The check id.** `T1`-`T6`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W5`, `C1`-`C15`, `B1`-`B2`,
-  `P1`-`P3`, `N1`-`N4`, `H1`-`H5` are cited by every document and issue, and two things match on
+  `P1`-`P3`, `N1`-`N4`, `I1`-`I9`, `S1`-`S3`, `H1`-`H5` are cited by every document and issue, and
+  two things match on
   them: `run-dzrp-stub.sh`'s W3 greps `^FAIL  C10 `, and `test/hardware-check.py` takes the code
   from field 2 of every `FAIL` line. Shorten the prose after the id; never the id, and never
   renumber.

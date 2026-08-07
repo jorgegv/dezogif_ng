@@ -491,9 +491,10 @@ strongest:
    screenshot can answer.
    Not part of `make test`, for `test-mfselect`'s reason rather than the usual one: it binds no port
    and needs no external dependency, it is simply separate tooling. See `doc/MFINSTALL.md` and
-   `doc/CONFIG-MODE-ROM-REPLACEMENT.md`. **Unlike every other bench here it is NOT alone on
-   hardware**: `--load`, `--auto` from `AUTOEXEC.BAS` and `--configure` have all run on a real Next.
-   What has not is `--unload`, and an interrupted config write.
+   `doc/CONFIG-MODE-ROM-REPLACEMENT.md`. **Its subject has also run on a real Next**, which most of
+   what is benched here has not: `--load`, `--auto` from `AUTOEXEC.BAS` and `--configure` have all
+   been exercised there (mfselect has too — MEMORY.md 2026-08-04). What has not is `--unload`, and
+   an interrupted config write.
 5. **`build/ut.nex`** — the same tests, **DeZog-driven** (`"unitTests": true` + zsim + the
    `customCode` plugin) in VS Code. Still a manual layer, and still the only way to exercise the
    36 that 4d must skip. `make unit-tests` assembles it; nothing here runs it.
@@ -511,8 +512,8 @@ read once; a document can be revised, cited and diffed.
 Two things the shortening may **never** touch, because they are interface rather than prose:
 
 - **The check id.** `T1`-`T6`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W5`, `C1`-`C15`, `B1`-`B2`,
-  `P1`-`P3`, `N1`-`N4`, `I1`-`I9`, `S1`-`S3`, `H1`-`H5` are cited by every document and issue, and
-  two things match on
+  `P1`-`P3`, `N1`-`N4`, `G1`-`G2`, `I1`-`I9`, `S1`-`S3`, `H1`-`H5` are cited by every document and
+  issue, and two things match on
   them: `run-dzrp-stub.sh`'s W3 greps `^FAIL  C10 `, and `test/hardware-check.py` takes the code
   from field 2 of every `FAIL` line. Shorten the prose after the id; never the id, and never
   renumber.

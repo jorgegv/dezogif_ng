@@ -29,7 +29,7 @@ status of every claim, at its own tier, is in the table at the end.
 | **Run, with a control** | that **turning DivMMC off is the load-bearing step** — the identical routine with DivMMC left on, one assembler constant apart, reproduces the blocked result from the same code location |
 | **NOT run** | any of it on **real hardware**. jnext's config-mode model cites the same VHDL lines this document does, so agreement between them is not independent evidence |
 | **NOT run** | anything **thrown at the window** — no interrupt or NMI was aimed at it, and the expansion-bus hazard in §1.5 has never been provoked |
-| **Still open** | whether taylorza's `NEXTREG 2,1` is required **on silicon**. In the emulator it is not: bench I2 |
+| **Still open** | whether the `NEXTREG 2,1` in taylorza's example is required **on silicon**. In the emulator it is not: bench I2 |
 
 **The first version of this document was rejected in review for three defects of its own**, all
 found by reading the same VHDL more carefully: it described the priority contest as two-way when it
@@ -350,7 +350,7 @@ mechanism's entire failure mode** — it is what a naive dot command does, every
 tool that reported success on having reached the end of a routine would report success on doing
 nothing at all.
 
-**AND `NEXTREG 2,1` IS GONE FROM THE SEQUENCE.** taylorza reported needing it; bench check I2 presses
+**AND `NEXTREG 2,1` IS GONE FROM THE SEQUENCE.** taylorza's example ends with one; bench check I2 presses
 the M1 button straight after an install with no reset of any kind, and the stub takes the screen. So
 in the emulator the answer to §3.1 is that the soft reset is **not** required for the bytes to be
 live. On silicon, nobody has checked. Issuing one "just in case" would destroy the user's BASIC
@@ -481,8 +481,10 @@ Treat a green bench as necessary and not sufficient, as everywhere else.
 
 ### 3.1 Is the soft reset required, and what does it cost?
 
-taylorza reports needing `NEXTREG 2,1` for the replacement to take, and reports that it **survived**
-that reset. If true it is a genuine advantage over what we ship today, because the file-swap method
+taylorza's worked example ends with `NEXTREG 2,1`, after which the replacement stuck, and it
+**survived** that reset. **That is a description of what they did, not a claim that a reset is
+required** — they said so at the time ("I am not sure what the actual clean-up should be so I just left my iterations in"),
+and an earlier version of this document read it as a requirement. The open question is ours. If true it is a genuine advantage over what we ship today, because the file-swap method
 is measured to behave the *opposite* way: after installing our ROM, a Reset press followed by NMI
 brought up the **stock** Multiface menu, and only a power cycle brought up ours (MEMORY.md,
 2026-08-04, on hardware). The firmware reads `enNextMf.rom` at power-on only.
@@ -631,7 +633,7 @@ here has run on a real Next.
 | Bit 3 toggles `user_dt_lock`; any write clears `bootrom_en` | `zxnext.vhd:5122`, `:5135` | **verified** |
 | jnext models config mode including the writable path | jnext `src/memory/mmu.h:164-171`, `src/port/nextreg.*` | **verified**, in jnext's source |
 | A soft reset is NOT enough for the **file-swap** method | hardware, 2026-08-04 (MEMORY.md) | **verified on hardware** |
-| A soft reset is **required** for the config-mode method | taylorza, Discord | **DISPROVED in jnext** — bench I2 presses the M1 button after an install with no reset of any kind and gets the stub's screen. Untested on silicon, which is where taylorza's report comes from |
+| A soft reset is **required** for the config-mode method | **our earlier misreading** of the Discord thread — taylorza described what they did, not a requirement, and said so | **DISPROVED in jnext** — bench I2 presses the M1 button after an install with no reset of any kind and gets the stub's screen. Untested on silicon |
 | A soft reset is **enough** for it, i.e. the replacement survives one | taylorza, Discord | **reported by a third party** — not tested here, and not by anything this bench does: no run issues `NEXTREG 2,1` at all |
 | Config mode is re-enterable | `.mfinstall` enters and leaves it THREE times per install — one identity read plus two 4 KB passes — and the bench's run 5 does two installs in one session, six entries, without a reset between them | **measured in jnext** — was **inferred** from `:5147` having no one-way guard, and is now exercised on every run of `make test-mfinstall` |
 | The sequence in §1.5 works | it IS `tools/mfinstall/mfwin.asm`; bench `make test-mfinstall` I1 and I2 | **measured in jnext** — 8192 bytes installed in two passes, verified inside the window, and live on the next M1 press |

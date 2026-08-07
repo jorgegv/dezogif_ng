@@ -55,19 +55,28 @@ itself must stay sjasmplus.
 > [#6](https://github.com/jorgegv/dezogif_ng/issues/6) — see *Why the path is hardcoded* below
 > before trying to fix it.
 
-Copy five files into a new `/mfselect/` directory on the SD card — everything `make mfselect`
-produces:
+`make mfselect` puts everything into **`build/deploy/`, already in the card's own layout**, so
+there is nothing to rename and nothing to place by hand:
 
-| From | To |
-|---|---|
-| `build/mfselect.nex`      | `/mfselect/mfselect.nex` |
-| `build/enNextMf-wifi.rom` | `/mfselect/dezowifi.rom` |
-| `build/dezowifi.sum`      | `/mfselect/dezowifi.sum` |
-| `build/enNextMf.rom`      | `/mfselect/dezouart.rom` |
-| `build/dezouart.sum`      | `/mfselect/dezouart.sum` |
+~~~
+build/deploy/  →  the root of the card
+    mfselect/mfselect.nex
+    mfselect/dezowifi.rom
+    mfselect/dezowifi.sum
+    mfselect/dezouart.rom
+    mfselect/dezouart.sum
+~~~
 
-The names are **8.3-safe** because the card is FAT; that constraint already rejected
-`enNextMf.orig.rom` once (MEMORY.md), so the destination names do not simply mirror the build's.
+i.e. `cp -r build/deploy/* /path/to/card/`. The build prints that listing when it finishes.
+(`make mfinstall` adds `dot/mfinstall` and a default `mfselect/mfinstall.yml` to the same tree —
+see [MFINSTALL.md](MFINSTALL.md).)
+
+**The names on the card are not the names the build produces**, which is exactly why
+`build/deploy/` exists: `enNextMf.rom` is what the Next's firmware loads at boot, while mfselect
+looks for `dezouart.rom` beside itself. The same bytes wear a different name depending on which of
+the two jobs they are doing, and transcribing that by hand is the step at which somebody pairs
+`dezowifi.sum` with the UART ROM. The card's names are also **8.3-safe** because the card is FAT;
+that constraint already rejected `enNextMf.orig.rom` once (MEMORY.md).
 
 **Copy each `.rom` with its own `.sum`, from the same build.** `BUILD_TIME` is stamped into the
 ROM, so every build produces a different image and a different checksum; a mismatched pair makes

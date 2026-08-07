@@ -462,12 +462,17 @@ mfselect: $(MFSELECT_NEX)
 	       $(DEPLOY_MFSEL)/dezowifi.sum $(DEPLOY_MFSEL)/dezouart.rom \
 	       $(DEPLOY_MFSEL)/dezouart.sum
 	@# The pre-hierarchy names, in the one place they can still do harm: a tree
-	@# built before the layout changed has five files loose at the top of
+	@# built before the layout changed has SIX files loose at the top of
 	@# build/deploy/, and the listing below would print them as instructions to
 	@# copy something to the card's root. Deletable once no such tree exists,
 	@# which is not a thing this Makefile can know.
+	@#
+	@# The sixth is `mfinstall`, and it is swept HERE as well as in that target's
+	@# own recipe: `make mfselect` alone is a supported build, and a stale flat
+	@# copy left by it would be listed as `/mfinstall` beside the correct
+	@# `/dot/mfinstall`. Found by the reviewer, by making the stale tree.
 	@rm -f $(DEPLOY)/mfselect.nex $(DEPLOY)/dezowifi.rom $(DEPLOY)/dezowifi.sum \
-	       $(DEPLOY)/dezouart.rom $(DEPLOY)/dezouart.sum
+	       $(DEPLOY)/dezouart.rom $(DEPLOY)/dezouart.sum $(DEPLOY)/mfinstall
 	@cp -f $(MFSELECT_NEX) $(DEPLOY_MFSEL)/mfselect.nex
 	@cp -f $(ROM_WIFI)     $(DEPLOY_MFSEL)/dezowifi.rom
 	@cp -f $(SUM_WIFI)     $(DEPLOY_MFSEL)/dezowifi.sum

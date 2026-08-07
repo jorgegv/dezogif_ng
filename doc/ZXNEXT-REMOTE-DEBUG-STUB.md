@@ -976,8 +976,8 @@ happens.
 | # | Where | Operation |
 |---|---|---|
 | A1 | PC | Install VS Code + the DeZog extension |
-| A2 | PC | `make mfselect` — it builds **both** stub ROMs (`build/enNextMf-wifi.rom`, `build/enNextMf.rom`), their `.sum` sidecars and `build/mfselect.nex` |
-| A3 | PC | SD card into the PC; back up `machines/next/enNextMf.rom`; copy the five files above into a new `/mfselect/` directory as [MFSELECT.md](MFSELECT.md) tabulates. **Do not copy a stub over the official path by hand** — leave the stock ROM there and let mfselect capture it, or its first-run guard will refuse and you will have no backup |
+| A2 | PC | `make mfselect` — it builds **both** stub ROMs (`build/enNextMf-wifi.rom`, `build/enNextMf.rom`), their `.sum` sidecars and `build/mfselect.nex`, and gathers all five into `build/deploy/` under the names and in the directories the card wants |
+| A3 | PC | SD card into the PC; back up `machines/next/enNextMf.rom`; `cp -r build/deploy/* <card>/`, which is the whole of it — the tree already carries the layout, so nothing is renamed or placed by hand ([MFSELECT.md](MFSELECT.md)). **Do not copy a stub over the official path by hand** — leave the stock ROM there and let mfselect capture it, or its first-run guard will refuse and you will have no backup |
 | A3b | Next | Boot NextZXOS, `.nexload /mfselect/mfselect.nex`, let it capture the original, then pick **dezogif_ng WiFi (ESP-01)** and power-cycle. Switching to the UART build later, or back to the stock ROM, is the same three keystrokes and never needs a PC again |
 | A4 | Next | Confirm core ≥ 03.01.10 and Multiface enabled in the machine config |
 | **A5** | **Next** | **Get the Next onto WiFi**, with `/apps/wifi/setup/wifi2.bas`, and confirm it reports an IP address. **The stub never does this and holds no credentials** — see [WIFI-SETUP.md](WIFI-SETUP.md), which also covers what breaks it later. Once per machine — the ESP stores its own credentials, reported on hardware 2026-08-04 |

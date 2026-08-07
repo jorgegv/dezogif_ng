@@ -115,22 +115,26 @@ the stock ROM the first time it runs, so the backup is made for you rather than 
 must remember.
 
 Install it once. `make mfselect` (or `make all`) leaves everything it needs in **`build/deploy/`**,
-under the exact names the card expects — copy that directory's *contents* into a new `/mfselect/`
-directory on the card:
+under the exact names *and in the directories* the card expects — so copy the whole thing to the
+root of the card and keep the layout:
 
 ~~~
-build/deploy/  →  /mfselect/
-    mfselect.nex
-    dezowifi.rom
-    dezowifi.sum
-    dezouart.rom
-    dezouart.sum
+build/deploy/  →  the root of the card
+    mfselect/mfselect.nex
+    mfselect/dezowifi.rom
+    mfselect/dezowifi.sum
+    mfselect/dezouart.rom
+    mfselect/dezouart.sum
 ~~~
 
-**Nothing needs renaming.** The ROMs are built as `enNextMf.rom` and `enNextMf-wifi.rom`, because
-that is the name the Next's firmware loads at boot — but mfselect looks for them beside itself as
-`dezouart.rom` and `dezowifi.rom`. `build/deploy/` exists so that the same bytes wearing two
-different names is the build's problem rather than yours.
+i.e. `cp -r build/deploy/* /path/to/card/`.
+
+**Nothing needs renaming and nothing needs placing by hand.** The ROMs are built as `enNextMf.rom`
+and `enNextMf-wifi.rom`, because that is the name the Next's firmware loads at boot — but mfselect
+looks for them beside itself as `dezouart.rom` and `dezowifi.rom`. `build/deploy/` exists so that
+the same bytes wearing two different names, in two different directories, is the build's problem
+rather than yours. `make mfinstall` adds `dot/mfinstall` and a default `mfselect/mfinstall.yml` to
+the same tree — see [MFINSTALL.md](doc/MFINSTALL.md).
 
 One build produces all five with the same `BUILD_TIME`, which is what makes them a coherent set:
 the stamp goes into each ROM, so every build has a different checksum and a `.rom` paired with a

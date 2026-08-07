@@ -242,6 +242,12 @@ ESP_ASM     = $(TEST)/esp_server.asm
 MFSELECT_C  = $(TOOLS)/mfselect/mfselect.c
 MFINSTALL_C = $(TOOLS)/mfinstall/mfinstall.c
 MFWIN_ASM   = $(TOOLS)/mfinstall/mfwin.asm
+# The default config `.mfinstall --auto` reads. Checked in rather than printf'd
+# into the deploy directory: it is data a user edits on the card, not a build
+# product, and shipping the same bytes the bench parses is what makes "it can be
+# read" a measurement instead of a hope. See the mfinstall recipe for the one
+# thing about it a build CAN check.
+MFINSTALL_YML = $(TOOLS)/mfinstall/mfinstall.yml
 ROMSUM      = $(TOOLS)/romsum.py
 UT_GEN      = $(TOOLS)/ut-headless-gen.py
 
@@ -307,7 +313,17 @@ SUM_WIFI     = $(OUT)/dezowifi.sum
 # The names here are not this Makefile's invention and must not drift from
 # their source: they are the WIFI_ROM/WIFI_SUM/UART_ROM/UART_SUM #defines in
 # tools/mfselect/mfselect.c, which is the program that opens them.
+#
+# AND THE DIRECTORY IS THE CARD'S, NOT A FLAT BAG. It mirrors the layout the
+# files take on the Next — `dot/` and `mfselect/` — for the same reason the
+# names are right: so that following the instruction literally cannot put a file
+# somewhere it will not be found. The flat version needed a printed rule to say
+# that one of its six files went somewhere else, and a rule beside a listing is
+# a rule somebody can read past. Now `cp -r build/deploy/* <card>/` is the whole
+# procedure and there is nothing left to get wrong.
 DEPLOY       = $(OUT)/deploy
+DEPLOY_MFSEL = $(DEPLOY)/mfselect
+DEPLOY_DOT   = $(DEPLOY)/dot
 
 # mfinstall (issue #21) — the dot command that installs a ROM through config
 # mode instead of by swapping a file on the card.
@@ -438,36 +454,45 @@ mfselect: $(MFSELECT_NEX)
 	@t=$(BUILD_TIME); \
 	 $(MAKE) --no-print-directory TRANSPORT=uart BUILD_TIME=$$t mf-rom-sum; \
 	 $(MAKE) --no-print-directory TRANSPORT=wifi BUILD_TIME=$$t mf-rom-sum
-	@mkdir -p $(DEPLOY)
+	@mkdir -p $(DEPLOY_MFSEL)
 	@# Named individually rather than `rm -rf $(DEPLOY)`: a recursive delete of
 	@# a path built from variables is one typo away from deleting something
 	@# else, and there is nothing here it buys.
+	@rm -f $(DEPLOY_MFSEL)/mfselect.nex $(DEPLOY_MFSEL)/dezowifi.rom \
+	       $(DEPLOY_MFSEL)/dezowifi.sum $(DEPLOY_MFSEL)/dezouart.rom \
+	       $(DEPLOY_MFSEL)/dezouart.sum
+	@# The pre-hierarchy names, in the one place they can still do harm: a tree
+	@# built before the layout changed has five files loose at the top of
+	@# build/deploy/, and the listing below would print them as instructions to
+	@# copy something to the card's root. Deletable once no such tree exists,
+	@# which is not a thing this Makefile can know.
 	@rm -f $(DEPLOY)/mfselect.nex $(DEPLOY)/dezowifi.rom $(DEPLOY)/dezowifi.sum \
 	       $(DEPLOY)/dezouart.rom $(DEPLOY)/dezouart.sum
-	@cp -f $(MFSELECT_NEX) $(DEPLOY)/mfselect.nex
-	@cp -f $(ROM_WIFI)     $(DEPLOY)/dezowifi.rom
-	@cp -f $(SUM_WIFI)     $(DEPLOY)/dezowifi.sum
-	@cp -f $(ROM_UART)     $(DEPLOY)/dezouart.rom
-	@cp -f $(SUM_UART)     $(DEPLOY)/dezouart.sum
+	@cp -f $(MFSELECT_NEX) $(DEPLOY_MFSEL)/mfselect.nex
+	@cp -f $(ROM_WIFI)     $(DEPLOY_MFSEL)/dezowifi.rom
+	@cp -f $(SUM_WIFI)     $(DEPLOY_MFSEL)/dezowifi.sum
+	@cp -f $(ROM_UART)     $(DEPLOY_MFSEL)/dezouart.rom
+	@cp -f $(SUM_UART)     $(DEPLOY_MFSEL)/dezouart.sum
 	@echo
-	@echo "$(DEPLOY)/ is ready — copy its contents onto the card:"
+	@echo "$(DEPLOY)/ is ready — copy it onto the card, keeping the layout:"
 	@echo
 	@$(deploy_listing)
 	@echo
-	@echo "  Nothing to rename. Each .rom and its .sum come from this one build,"
-	@echo "  which is what makes them a coherent set."
+	@echo "  i.e.  cp -r $(DEPLOY)/* /path/to/card/"
+	@echo
+	@echo "  Nothing to rename and nothing to place by hand. Each .rom and its"
+	@echo "  .sum come from this one build, which makes them a coherent set."
 
 # The deploy listing, shared by `mfselect` and `mfinstall` because both print it
 # and two renderings of one layout is how they start to disagree.
 #
-# IT IS NOT A BLANKET /mfselect/ PREFIX ANY MORE, and that is a correctness fix
-# rather than a flourish: since issue #21 the directory holds one file — the
-# mfinstall DOT COMMAND — that goes to /dot/ instead, because that is where
-# NextZXOS looks dot commands up. A prefix applied to everything would have told
-# the user to put it somewhere it can never be found, in the one line they are
-# meant to follow literally.
-deploy_listing = ls -1 $(DEPLOY) | \
-	awk '{ printf "    %s/%s\n", ($$0 == "mfinstall" ? "/dot" : "/mfselect"), $$0 }'
+# IT NO LONGER DECIDES WHERE ANYTHING GOES, and that is the point of the
+# hierarchy. It used to map basename to destination with an awk conditional —
+# `mfinstall` to /dot/, everything else to /mfselect/ — which is a second copy
+# of a fact the build already knows, in the one line a user follows literally.
+# `%P` prints each file's path relative to $(DEPLOY), so the directory answers
+# the question and the listing only reads it back.
+deploy_listing = find $(DEPLOY) -type f -printf '    /%P\n' | sort
 
 # mfinstall needs BOTH ROMs and both .sums on the card exactly as mfselect does
 # — it installs the same files by a different route — so it depends on the
@@ -477,13 +502,25 @@ deploy_listing = ls -1 $(DEPLOY) | \
 
 # Build the .mfinstall dot command (issue #21) and everything it installs
 mfinstall: $(MFINSTALL_DOT) mfselect
-	@cp -f $(MFINSTALL_DOT) $(DEPLOY)/mfinstall
+	@mkdir -p $(DEPLOY_DOT)
+	@rm -f $(DEPLOY_DOT)/mfinstall $(DEPLOY)/mfinstall
+	@cp -f $(MFINSTALL_DOT) $(DEPLOY_DOT)/mfinstall
+	@# THE ONE THING A BUILD CAN CHECK ABOUT THE CONFIG FILE, and it is a real
+	@# failure mode rather than a formality: read_config() reads CHUNK-1 = 511
+	@# bytes ONCE (tools/mfinstall/mfinstall.c) and scans only those, so an
+	@# `install:` line pushed past byte 511 by a longer preamble is a file the
+	@# dot command reports as unreadable. Nothing else here bounds it.
+	@test $$(wc -c < $(MFINSTALL_YML)) -le 511 || \
+	  { echo "$(MFINSTALL_YML) is over 511 bytes; read_config() would not see all of it"; exit 1; }
+	@cp -f $(MFINSTALL_YML) $(DEPLOY_MFSEL)/mfinstall.yml
 	@echo
-	@echo "$(DEPLOY)/ is ready — copy its contents onto the card:"
+	@echo "$(DEPLOY)/ is ready — copy it onto the card, keeping the layout:"
 	@echo
 	@$(deploy_listing)
 	@echo
-	@echo "  /dot/mfinstall is the ONLY file here that does not go in /mfselect/."
+	@echo "  i.e.  cp -r $(DEPLOY)/* /path/to/card/"
+	@echo
+	@echo "  mfinstall.yml is a DEFAULT, and it says wifi — edit it on the card."
 	@echo "  Then, on the Next:  .mfinstall --load wifi"
 	@echo "  It writes SRAM, never the SD card, and lasts until power-off."
 
@@ -541,6 +578,7 @@ test-mfinstall: mfinstall
 	@$(MAKE) --no-print-directory DIVMMC_OFF=0 $(OUT)/mfinstall-dmoff0
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" DOT="$(OUT)/mfinstall" \
 	 DOT_DMOFF0="$(OUT)/mfinstall-dmoff0" \
+	 CONF_WIFI="$(DEPLOY_MFSEL)/mfinstall.yml" \
 	 ROM_UART="$(ROM_UART)" SUM_UART="$(SUM_UART)" \
 	 ROM_WIFI="$(ROM_WIFI)" SUM_WIFI="$(SUM_WIFI)" \
 	 ROMSUM="$(ROMSUM)" SCREENDIFF="$(TEST)/screen-diff.py" \

@@ -1,0 +1,12 @@
+# .mfinstall --auto reads this file. One key, and it comes FIRST
+# because only the first 511 bytes are read.
+
+install: wifi
+
+#   wifi   the WiFi build (ESP-01, TCP on port 11000)
+#   uart   the UART build (serial on the joy port)
+#   none   install nothing. A success, not an error, so it is
+#          safe to leave ".mfinstall --auto" in AUTOEXEC.BAS
+#          on a day you are not debugging.
+#
+# The ROMs this names live beside this file, in /mfselect/.

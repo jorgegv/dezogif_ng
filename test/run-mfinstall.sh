@@ -20,7 +20,9 @@
 #   I4  `--load wifi` twice: the second is a no-op and says so, which is what
 #       makes `--auto` from AUTOEXEC.BAS safe to run on every boot.
 #   I5  `--auto` obeys /mfselect/mfinstall.yml — `install: wifi` behaves as
-#       `--load wifi`, `install: none` installs nothing.
+#       `--load wifi`, `install: none` installs nothing. The wifi half uses the
+#       DEFAULT FILE THE BUILD SHIPS, so the config a user copies to the card is
+#       one a run has parsed rather than one nothing has read.
 #   I6  THE CONTROL FOR THE WHOLE BENCH: the SD card's machines/next/enNextMf.rom
 #       is byte-identical afterwards. Without it every check above is equally
 #       satisfied by a tool that simply wrote the file, which is mfselect's job
@@ -57,6 +59,8 @@ SUM_UART=${SUM_UART:-$OUT/dezouart.sum}
 ROM_WIFI=${ROM_WIFI:-$OUT/enNextMf-wifi.rom}
 SUM_WIFI=${SUM_WIFI:-$OUT/dezowifi.sum}
 DOT_DMOFF0=${DOT_DMOFF0:-$OUT/mfinstall-dmoff0}
+# The config file `make mfinstall` SHIPS, not one this script writes: see I5.
+CONF_WIFI=${CONF_WIFI:-$OUT/deploy/mfselect/mfinstall.yml}
 ROMSUM=${ROMSUM:-tools/romsum.py}
 SCREENDIFF=${SCREENDIFF:-test/screen-diff.py}
 SCREENTEXT=${SCREENTEXT:-test/screen-text.py}
@@ -152,6 +156,7 @@ die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [ -f "$SD_IMAGE" ] || die "SD card image not found: $SD_IMAGE"
 [ -s "$DOT" ]      || die "mfinstall not built: $DOT (run 'make mfinstall')"
 [ -s "$DOT_DMOFF0" ] || die "the DIVMMC_OFF=0 probe is not built: $DOT_DMOFF0 (run 'make test-mfinstall')"
+[ -s "$CONF_WIFI" ] || die "the shipped config is not there: $CONF_WIFI (run 'make mfinstall')"
 [ -f "$ROM_UART" ] || die "UART ROM not built: $ROM_UART (run 'make mfinstall')"
 [ -f "$SUM_UART" ] || die "UART checksum not built: $SUM_UART (run 'make mfinstall')"
 [ -f "$ROM_WIFI" ] || die "WiFi ROM not built: $ROM_WIFI (run 'make mfinstall')"
@@ -235,7 +240,17 @@ prepare_image() {
     mcopy -o -i "$image@@$part_off" "$stock"    ::/mfselect/original.rom
     mcopy -o -i "$image@@$part_off" "$OUT/mfinstall-stock.sum" ::/mfselect/original.sum
     mcopy -o -i "$image@@$part_off" "$dot"      ::/dot/mfinstall
-    if [ -n "$yml" ]; then
+    # THE wifi CASE USES THE FILE THE BUILD SHIPS, and that is not a detail.
+    # `make mfinstall` puts a default mfinstall.yml in build/deploy/mfselect/
+    # for the user to copy onto the card, so the file a run parses here is
+    # byte-for-byte the file they will be running — CRLF, comment block and
+    # all. A generated `install: wifi` would leave the shipped one checked by
+    # nothing, which is how a preamble long enough to push the key past
+    # read_config()'s 511-byte window would ship green. `none` is still
+    # generated: nothing ships a file saying that.
+    if [ "$yml" = wifi ]; then
+        mcopy -o -i "$image@@$part_off" "$CONF_WIFI" ::/mfselect/mfinstall.yml
+    elif [ -n "$yml" ]; then
         printf 'install: %s\n' "$yml" > "$OUT/mfinstall-conf.yml"
         mcopy -o -i "$image@@$part_off" "$OUT/mfinstall-conf.yml" ::/mfselect/mfinstall.yml
     fi
@@ -463,6 +478,14 @@ fi
 # Both halves are needed and neither implies the other: a tool that ignored the
 # config file entirely and always installed would pass the first, and one that
 # never installed would pass the second.
+#
+# The wifi half is also the only check anywhere on the DEFAULT config file the
+# build ships — see prepare_image. It reaches the card through mcopy, which
+# writes a long-filename entry for `mfinstall.yml` exactly as a PC copying it
+# there would, so the name and the CRLF content are both exercised rather than
+# assumed. What it cannot say is anything about a REAL Next: NextZXOS reads its
+# own long-named config files (/nextzxos/enBrowsext.cfg), which is why the name
+# is believed, but nothing here has opened this file on silicon.
 i5=0
 i5_wifi=$(diff_pct "$stocknmi" "$autowifi")
 i5_none=$(diff_pct "$stocknmi" "$autonone")
@@ -473,7 +496,7 @@ if over "$i5_none" "$MENU_PCT"; then
     i5=1; log "      install: none — something was installed anyway ($i5_none% unlike stock)"
 fi
 if [ "$i5" -eq 0 ]; then
-    pass "I5 --auto obeys mfinstall.yml: wifi installs the stub, none installs nothing"
+    pass "I5 --auto obeys the shipped mfinstall.yml: wifi installs the stub, none installs nothing"
 else
     fail "I5 --auto does not obey mfinstall.yml"
 fi

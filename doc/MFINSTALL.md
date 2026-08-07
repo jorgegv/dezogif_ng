@@ -58,22 +58,28 @@ assembled at a fixed address and cannot be a C function. See *How it works* belo
 > ROM paths are hardcoded to `/mfselect/`, exactly as mfselect's are, so the two tools share one
 > set of files and one `make mfselect` keeps them coherent.
 
-`make mfinstall` fills `build/deploy/` and prints the destination of every file. Six of them:
+`make mfinstall` fills `build/deploy/` **in the card's own layout**, so there is no table to
+transcribe and nothing to place by hand:
 
-| From | To |
-|---|---|
-| `build/deploy/mfinstall`    | `/dot/mfinstall` |
-| `build/deploy/dezowifi.rom` | `/mfselect/dezowifi.rom` |
-| `build/deploy/dezowifi.sum` | `/mfselect/dezowifi.sum` |
-| `build/deploy/dezouart.rom` | `/mfselect/dezouart.rom` |
-| `build/deploy/dezouart.sum` | `/mfselect/dezouart.sum` |
-| `build/deploy/mfselect.nex` | `/mfselect/mfselect.nex` |
+~~~
+build/deploy/  →  the root of the card
+    dot/mfinstall
+    mfselect/mfselect.nex
+    mfselect/dezowifi.rom
+    mfselect/dezowifi.sum
+    mfselect/dezouart.rom
+    mfselect/dezouart.sum
+    mfselect/mfinstall.yml
+~~~
 
-`/mfselect/mfinstall.yml` you write yourself (below), and `/mfselect/original.rom` plus
-`/mfselect/original.sum` are captured by **mfselect** on its first run — `.mfinstall --unload`
-needs them and cannot create them, because capturing the stock ROM means reading the card, deciding
-whether what is there is really the stock ROM, and writing a file, all of which mfselect already
-does with a guard this program deliberately does not duplicate.
+i.e. `cp -r build/deploy/* /path/to/card/`. The build prints the same listing when it finishes.
+
+`mfinstall.yml` is a **default** — it says `install: wifi`, and it is yours to edit on the card
+(below). `/mfselect/original.rom` and `/mfselect/original.sum` are the two files not shipped here:
+they are captured by **mfselect** on its first run. `.mfinstall --unload` needs them and cannot
+create them, because capturing the stock ROM means reading the card, deciding whether what is there
+is really the stock ROM, and writing a file, all of which mfselect already does with a guard this
+program deliberately does not duplicate.
 
 **So run mfselect once before relying on `--unload`.** Without `original.rom` the unload reports
 that it cannot open the ROM file, and a power cycle is your way back.
@@ -98,6 +104,22 @@ blanked in the middle of the operation** and that is not a fault — see *How it
 ```yaml
 install: wifi        # or: uart, or: none
 ```
+
+**It ships with `wifi`**, from `tools/mfinstall/mfinstall.yml`, so `--auto` works out of the box and
+editing one word is the whole of the configuration. Three things about that file are deliberate and
+worth keeping if you rewrite it:
+
+- **the key comes first.** `read_config()` reads 511 bytes once and scans only those, so a preamble
+  long enough to push `install:` past that would make the file unreadable to the very program it
+  configures. The build refuses a file over 511 bytes for that reason, which is a proxy for the real
+  bound rather than the bound itself;
+- **CRLF line endings and plain ASCII**, which is what NextZXOS's own config files use
+  (`/nextzxos/browser.cfg`, `/nextzxos/enBrowsext.cfg`) and what its editor expects. The parser
+  itself takes either;
+- **the name is nine characters, which needs a long-filename entry** on the card. That is ordinary
+  here — NextZXOS reads its own `enBrowsext.cfg` and looks dot commands up by names like
+  `DISPLAYEDGE` — and `make test-mfinstall`'s I5 copies this exact file into the image with `mcopy`,
+  which writes the same kind of entry a PC would. Nothing has opened it on real hardware.
 
 `install: none` is a success, not an error: `--auto` says so and exits cleanly, which is what makes
 it safe to leave in `AUTOEXEC.BAS` on a day you are not debugging.

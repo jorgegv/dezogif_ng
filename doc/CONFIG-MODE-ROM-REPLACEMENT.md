@@ -652,7 +652,7 @@ the thing that cannot silently go stale, so this paragraph no longer competes wi
 | The `rst 8` automap re-arm works | runs A and B | **measured in jnext**, and **not needed in this invocation** — B survived without it because CONMEM was already set. Kept for the unmeasured path |
 | **An 8192-byte ROM can be installed this way, in two 4 KB passes, and verified inside the window** | bench `make test-mfinstall`, I1 | **measured in jnext** |
 | **The bytes are LIVE with no soft reset**: an M1 button NMI straight after an install brings up the stub | bench I2 — 97% repainted, 95% unlike the stock monitor | **measured in jnext** — answers §3.1 for the emulator ONLY |
-| The SD card is never written | bench I6 — `machines/next/enNextMf.rom` byte-identical after a run in which the stub was demonstrably live | **measured in jnext** |
+| **No ROM is ever written to the SD card** | bench I6 — `machines/next/enNextMf.rom` byte-identical after a run in which the stub was demonstrably live | **measured in jnext**. The row used to say "the SD card is never written", which `--configure` falsifies as stated: it writes one file, `/mfselect/mfinstall.yml`, and no ROM |
 | Dot commands are looked up in `/dot/`, and a 9-character name is fine | the reference SD image carries `DISPLAYEDGE` and `ESPUPDATE` there | **verified** |
 | A dot command reports success/failure through **carry and A**, from `main`'s return value | z88dk `zxn_crt_286.asm.m4:332-346`; both probes' spurious "Path too long, 0:1" came from a `void main` | **verified** in z88dk's source, and the fix **measured in jnext** — `.mfinstall --help` returns cleanly with no trailing error |
 | MF ROM is the bottom 8 KB of 16 KB bank 5; MF RAM the top | `zxnext.vhd:3029-3035` | **verified** |

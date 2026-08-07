@@ -26,7 +26,7 @@ what gets loaded; mfinstall changes what is *there*, after the loading has happe
 - **`--load` is live at once.** Press the NMI button and the stub is there — no reset, no power
   cycle.
 - **`--unload` is a within-session operation.** It copies `/mfselect/original.rom` back over the
-  same SRAM. It does **not** repair anything on the card, because the card was never written; a
+  same SRAM. It does **not** repair anything on the card, because no ROM was ever written there; a
   power cycle would have done the same thing.
 - **Every power-on starts from whatever is on the card.** If you want the stub back, run
   `.mfinstall` again — which is what `--auto` in `AUTOEXEC.BAS` is for.

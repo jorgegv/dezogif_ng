@@ -601,11 +601,20 @@ fi
 # wifi and --auto would install the WiFi ROM; requiring UART means the check can
 # only pass if the WRITE happened.
 #
-# IT ASSERTS NOTHING ABOUT THE SCREEN, and that is forced rather than chosen:
-# this run must press the M1 button to show that --auto really installed, and
-# the stub then paints over the command line where --configure's message was.
-# Same reason I7 needs two runs. The message is judged in run 12, which has no
-# NMI — see I9.
+# IT ASSERTS NOTHING ABOUT THE SCREEN, and the reason is NOT the NMI — a first
+# version of this comment said it was, and a reviewer disproved it by running
+# the same two commands with no NMI at all and finding the message already
+# gone. The eraser is `--auto` itself: load_rom() borrows the display file at
+# 0x4000 as its read buffer and blank_pixels() afterwards, which
+# tools/mfinstall/mfinstall.c already documents where it explains why the
+# identity line is printed AFTER the install and not before. So --configure's
+# message cannot survive any run that goes on to install, NMI or no NMI.
+#
+# That also makes this a DIFFERENT mechanism from I7's two-run split, which the
+# same wrong comment claimed was the same one: there a blocked write leaves the
+# STOCK monitor to paint over the message, which really is the NMI.
+#
+# The message is judged in run 12, which installs nothing — see I9.
 i8=0
 cfg_back=$OUT/mfinstall-card-conf.yml
 rm -f "$cfg_back"

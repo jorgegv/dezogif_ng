@@ -46,15 +46,26 @@ is read back through `read_config()` and a mismatch is reported. Rejected:
 temp+rename for fifteen bytes; and saying nothing, which is what makes a
 truncated config look like a missing one.
 
-**A CLAIM THIS FALSIFIES, IN FOUR PLACES.** "The SD card is never written" was
-this tool's headline safety property — in the module docstring, in
-[doc/MFINSTALL.md], in `README.md` and **on the Next's own `--help` screen**.
-`--configure` makes it false as stated. It is now "no install ever writes the SD
-card", with `--configure` named as the exception in each place, because what the
-claim was ever protecting is the ROM images and that is unchanged. The
-`--help` rewrite is the one that had to fit 32 columns, and **the compile-time
-`FITS()` assert caught a 33-character line** on the first attempt — an assertion
-watched to fire rather than assumed.
+**A CLAIM THIS FALSIFIES, AND THE FIRST SWEEP FOR IT MISSED ONE.** "The SD card
+is never written" was this tool's headline safety property — in the module
+docstring, in [doc/MFINSTALL.md], in `README.md`, **on the Next's own `--help`
+screen**, and — found by the reviewer, not by me — in
+[doc/CONFIG-MODE-ROM-REPLACEMENT.md]'s Appendix A status table, where it was a
+whole row. `--configure` makes it false as stated. It is now "no ROM is ever
+written to the SD card", with `--configure` named as the exception in each
+place, because what the claim was ever protecting is the ROM images and that is
+unchanged.
+
+**I asserted "four places" in the commit message while the fifth was still
+there**, which is this file's most-repeated lesson wearing its usual costume: I
+greped the files I was thinking of rather than the repository. The count is not
+restated here on purpose — a `grep` for the phrase is the record, and a number
+in prose is a thing that goes stale the moment somebody writes the sentence
+again.
+
+The `--help` rewrite is the one that had to fit 32 columns, and **the
+compile-time `FITS()` assert caught a 33-character line** on the first attempt —
+an assertion watched to fire rather than assumed.
 
 **Evidence: `make test-mfinstall` 9/9, two new checks, each shown red first and
 each blind to the other's fault.** That last part is what makes them two checks
@@ -74,11 +85,24 @@ with the shipped default**, a question no screenshot can answer, between two
 genuinely separate sources — a checked-in file the Makefile copies, and C that
 composes the same line.
 
-**I8 asserts nothing about the screen, and that is forced rather than chosen**:
-its run must press the M1 button to show the install happened, and the stub then
-paints over the command line where the message was. Same reason I7 needs two
-runs. The message is judged in run 12, which has no NMI, and that is why I9
-carries it.
+**I8 asserts nothing about the screen, and MY REASON FOR THAT WAS WRONG.** I
+wrote that the M1 press paints over `--configure`'s message, "forced rather than
+chosen", and cited I7's two-run split as the same mechanism. The reviewer ran
+the same two commands **with no NMI at all** and the message was already gone.
+The eraser is `--auto` itself: `load_rom()` borrows the display file at 0x4000
+as its buffer and blanks it, which `mfinstall.c` **already documents** thirty
+lines from where I was reading, in the comment explaining why the identity line
+is printed after the install rather than before. So the message cannot survive
+any run that installs, NMI or not — and I7's split really is the NMI, so the two
+are different mechanisms and I had claimed they were one.
+
+A plausible mechanism asserted instead of a traced one, in a comment whose whole
+job is to say why a check does not assert something. It cost nothing here
+because the *conclusion* — I8 cannot judge that screen — is true either way,
+which is exactly what makes this kind of error survive. The message is judged in
+run 12, which installs nothing, and that is why I9 carries it.
+
+[doc/CONFIG-MODE-ROM-REPLACEMENT.md]: doc/CONFIG-MODE-ROM-REPLACEMENT.md
 
 **NOT COVERED.** Nothing here has run on **hardware** — `--configure` has never
 written a file on a real Next, and the file it writes has never been read by a

@@ -35,9 +35,23 @@ is upstream's intent. **The risk in this change was always the other
 direction**: a test that sent *every* press to `init_main_bank` would have
 destroyed live sessions, which is why the ordering against `PRGM_RUNNING` was
 called the whole risk when it was written. Step 9 shows it declines correctly
-while 6/11/13 show it re-initialises correctly. **Both arms of the
-discriminator, on silicon** — and no bench here can produce the pair, because
-none of them presses the button twice with a machine in two different states.
+while 6/11/13 show it re-initialises correctly: **both arms of the
+discriminator, on silicon**, which **no bench here does today** — T7 presses
+twice with a reset between, and nothing presses twice without one.
+
+**"No bench here CAN do it" is what this entry said first, and the reviewer
+disproved it by running it.** Two headless jnext runs, both shot at the same
+absolute frame, one with a single NMI at 900 and one with a second at 950:
+**byte-identical, 0.00%**. So the decline arm is perfectly producible with
+`--delayed-nmi-frames` — which queues, as this repository already knew — and
+the honest claim is about what is *written*, not about what is *possible*. It
+is a small addition to `run-headless.sh`'s existing machinery and is left as a
+follow-up rather than bolted onto a documentation commit, since a check whose
+PASS is "nothing changed" needs a control designed for it before it is worth
+anything. (The reviewer's first two attempts compared shots taken hundreds of
+frames apart and showed a spurious 40%, from a border artefact; shooting both
+at the same frame is what isolates the variable — the FLASH-alignment rule T7
+already follows, met again from the other side.)
 
 Step 9 also proves the machine was **alive**, not wedged: step 10's `R` worked.
 That is the discriminator KNOWN-ISSUES.md leans on for telling a live stub from

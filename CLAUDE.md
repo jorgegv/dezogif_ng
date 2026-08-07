@@ -244,10 +244,13 @@ strongest:
      queues, and a dropped first press would make run 8 a *first* press that passes vacuously)
      and from the reset run really leaving the stub's screen.
      **T7's subject is one of the few things here CONFIRMED ON A REAL NEXT** (build `00.12`,
-     2026-08-07): reset→NMI re-initialises the debugger repeatably, and — the half no bench can
-     stage — a press with the stub *already up* correctly does **nothing** while `R` still works,
-     so both arms of the discriminator were seen on silicon. `reported on hardware`: one machine,
-     one reporter, no re-runnable artefact.
+     2026-08-07): reset→NMI re-initialises the debugger repeatably, and — the half **no bench here
+     presently covers** — a press with the stub *already up* correctly does **nothing** while `R`
+     still works, so both arms of the discriminator were seen on silicon. `reported on hardware`:
+     one machine, one reporter, no re-runnable artefact. That second arm is **coverable headless
+     and simply is not covered**: measured in review, a second `--delayed-nmi-frames` press with no
+     reset between leaves the screen byte-identical (0.00%), so it is a follow-up rather than an
+     impossibility — which is what an earlier draft of this line called it.
    Screen comparison is a **percentage of differing pixels** (`test/screen-diff.py`), not a byte
    compare: NextZXOS idling changes 0.01% of the screen and that once produced a false PASS.
 4. **`make test-mfselect`** — the mfselect bench, 6 headless runs, 10 checks, asserting on files

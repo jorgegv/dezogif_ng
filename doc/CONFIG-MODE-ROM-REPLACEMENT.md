@@ -643,12 +643,17 @@ the **NextZXOS runtime** — what a dot command's `0xE3`, MMU and SP actually ar
 VHDL can answer and which is where §1.2c came from.
 
 **Some rows below now carry hardware evidence, and not all of it at the same tier**, so read the
-tag on each rather than a count in this paragraph. Two of the 2026-08-07 rows are `reported on
-hardware` — the rung Appendix A of the plan defines for first-hand evidence from one machine, one
-reporter, with no artefact anyone can re-run. The soft-reset-is-required row is a **join**, jnext
-and then hardware. The file-swap reset row predates all of this and says `verified on hardware`,
-which is looser than the ladder allows for the same kind of evidence and is left as it was found.
-And one row is a third party's report, which is weaker again.
+tag on each rather than a count in this paragraph — and this paragraph no longer offers one. The
+`reported on hardware` rows are the rung Appendix A of the plan defines for first-hand evidence
+from one machine, one reporter, with no artefact anyone can re-run. The soft-reset-is-required row
+is a **join**, jnext and then hardware. The file-swap reset row predates all of this and says
+`verified on hardware`, which is looser than the ladder allows for the same kind of evidence and is
+left as it was found. And one row is a third party's report, which is weaker again.
+
+*(This paragraph used to say "Two of the 2026-08-07 rows", and the commit that added a **third**
+left the two standing — caught in review. The paragraph had already confessed to precisely this
+disease one sentence earlier and prescribed the cure, which is the per-row tags; the count is now
+gone rather than corrected, because a corrected count is a count somebody has to maintain again.)*
 
 *(An earlier version of this paragraph said "three rows, and they are the ONLY ones", then named a
 fourth in its own next sentence. A count is a thing that has to be maintained; the per-row tags are

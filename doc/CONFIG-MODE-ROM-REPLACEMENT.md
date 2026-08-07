@@ -629,8 +629,8 @@ agreement between them is not independent evidence. It sits **above** `verified`
 the **NextZXOS runtime** — what a dot command's `0xE3`, MMU and SP actually are — which no amount of
 VHDL can answer and which is where §1.2c came from.
 
-**Some rows below now carry hardware evidence, and no two of them carry it the same way**, so read
-the tag on each rather than a count in this paragraph. Two of the 2026-08-07 rows are `reported on
+**Some rows below now carry hardware evidence, and not all of it at the same tier**, so read the
+tag on each rather than a count in this paragraph. Two of the 2026-08-07 rows are `reported on
 hardware` — the rung Appendix A of the plan defines for first-hand evidence from one machine, one
 reporter, with no artefact anyone can re-run. The soft-reset-is-required row is a **join**, jnext
 and then hardware. The file-swap reset row predates all of this and says `verified on hardware`,

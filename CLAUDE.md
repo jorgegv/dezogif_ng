@@ -295,11 +295,24 @@ strongest:
    next `CMD_CONTINUE` would have paged the debugger into the debuggee's slot 7. It is visible over
    the socket because `CMD_GET_REGISTERS` reports slot 7 from that byte rather than from the MMU:
    `CMD_SET_SLOT` puts a known bank there, the press lands, and the same read must still see it.
-   Shown red first, `before=30 after=94`. **The press is located in time by jnext's own log**, not
-   by a sleep — `--delayed-nmi-frames` counts emulated frames while the client counts wall clock, so
-   the bench waits for the delivery line and only then releases the client, and asserts the count
-   afterwards as W4 does. That line is `platform`/`info`, so this run alone raises the log level;
-   at the bench's usual `warn` it reported 0 of 2 presses against a stub that had taken one.
+   Shown red first, `before=30 after=94`. **The press has to land between the two reads, and the two
+   edges of that window are held by different means** — a distinction that cost a review round,
+   because getting it wrong makes this check fail **green**. The **right** edge is guaranteed: the
+   bench waits for jnext's own `Delayed NMI button` line and only then releases the client through a
+   sentinel, so the second read cannot precede the press. (`--delayed-nmi-frames` counts emulated
+   frames while a client counts wall clock, so a sleep would be a guess.) That line is
+   `platform`/`info`, so this run alone raises the log level; at the bench's usual `warn` it reported
+   0 of 2 presses against a stub that had taken one. The **left** edge — the press must not precede
+   `CMD_SET_SLOT` — is a frame margin **plus an assertion**, never "by construction": at the original
+   600 frames it measured 149 ms in one run and **2 ms** in the next, and inverted it would let
+   `CMD_SET_SLOT` overwrite what a corrupting press wrote, leaving `before=30 after=30` on a broken
+   ROM. So the margin is 3000 frames (17.2 s measured) *and* the bench requires **three `+IPD`
+   frames before the press** — the client's three setup commands — failing red as a precondition
+   otherwise. **`SECOND_NMI_FRAMES` is overridable so that control is re-runnable**:
+   `SECOND_NMI_FRAMES=901 make test-dzrp-stub` puts the press before the client speaks, the client
+   reports the exact green a corrupting ROM gives, and the precondition catches it. It is a *bench*
+   seam, not one of the `IP_MAX` / `RX_WAIT` / `LINK_IDS` build-constant family — no probe ROM is
+   built — but it exists for their reason: a red nobody can re-run is a story about a scratch tree.
    **C2** was the standing red
    until issue #7 landed: `cmd_init` read the remote's program name until a NUL and ignored the
    frame's length field, so a length that disagreed with the payload desynchronised silently

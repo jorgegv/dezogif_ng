@@ -170,7 +170,8 @@ message that a real fault produces. The source ROM's CRC-16 is checked against i
 as mfselect does, so a corrupt file on the card is never copied anywhere.
 
 **No soft reset is issued.** taylorza's worked example ends with `NEXTREG 2,1` and the replacement
-stuck — a description of what they did, not a claim that a reset is required; bench check I2 presses the NMI button straight after an install, with no reset, and
+stuck — a description of what they did, not a claim that a reset is required. Bench check I2
+presses the NMI button straight after an install, with no reset, and
 requires the stub's own screen — so in the emulator the answer to that open question is that a
 reset is **not** required. On real hardware nobody has checked.
 

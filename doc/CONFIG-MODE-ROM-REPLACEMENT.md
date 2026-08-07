@@ -350,12 +350,12 @@ mechanism's entire failure mode** — it is what a naive dot command does, every
 tool that reported success on having reached the end of a routine would report success on doing
 nothing at all.
 
-**AND `NEXTREG 2,1` IS GONE FROM THE SEQUENCE.** taylorza's example ends with one; bench check I2 presses
-the M1 button straight after an install with no reset of any kind, and the stub takes the screen. So
-in the emulator the answer to §3.1 is that the soft reset is **not** required for the bytes to be
-live. On silicon, nobody has checked. Issuing one "just in case" would destroy the user's BASIC
-session to work around something that may not be true — and would make the check unable to ask the
-question.
+**AND `NEXTREG 2,1` IS GONE FROM THE SEQUENCE.** taylorza's example ends with one; bench check
+I2 presses the M1 button straight after an install with no reset of any kind, and the stub
+takes the screen. So in the emulator the answer to §3.1 is that the soft reset is **not**
+required for the bytes to be live. On silicon, nobody has checked. Issuing one "just in case"
+would destroy the user's BASIC session to work around something that may not be true — and
+would make the check unable to ask the question.
 
 **THE INTERRUPT WINDOW, AND IT IS NARROWER THAN THIS DOCUMENT FIRST SAID.** Config mode remaps the
 whole of `0x0000-0x3FFF`, not merely the 8 KB being written — the branch is gated on
@@ -483,13 +483,15 @@ Treat a green bench as necessary and not sufficient, as everywhere else.
 
 taylorza's worked example ends with `NEXTREG 2,1`, after which the replacement stuck, and it
 **survived** that reset. **That is a description of what they did, not a claim that a reset is
-required** — they said so at the time ("I am not sure what the actual clean-up should be so I just left my iterations in"),
-and an earlier version of this document read it as a requirement. The open question is ours.
+required** — they said so at the time ("I am not sure what the actual clean-up should be so I
+just left my iterations in"), and an earlier version of this document read it as a requirement.
+The open question is ours.
 
-If the survival claim holds it is a genuine advantage over what we ship today, because the file-swap method
-is measured to behave the *opposite* way: after installing our ROM, a Reset press followed by NMI
-brought up the **stock** Multiface menu, and only a power cycle brought up ours (MEMORY.md,
-2026-08-04, on hardware). The firmware reads `enNextMf.rom` at power-on only.
+If the survival claim holds it is a genuine advantage over what we ship today, because the
+file-swap method is measured to behave the *opposite* way: after installing our ROM, a Reset
+press followed by NMI brought up the **stock** Multiface menu, and only a power cycle brought
+up ours (MEMORY.md, 2026-08-04, on hardware). The firmware reads `enNextMf.rom` at power-on
+only.
 
 Two things to establish, and the second is ours alone: whether the reset is genuinely required, and
 what it does to a machine that is **already** running a debug session — the stub's own `R = Reset`

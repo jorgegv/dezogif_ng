@@ -5,6 +5,62 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-07 — `.mfinstall` boots the debugger from AUTOEXEC.BAS on a real Next; issue #21 closes
+
+**Measured, not decided** (user's own machine), and it takes issue #21's last
+open question with it. `AUTOEXEC.BAS` calling `.mfinstall --auto` installs the
+stub at boot, the M1 press brings the debugger up, and no reset of any kind is
+involved. That was the **one invocation path nothing had ever exercised** — the
+bench and both hardware runs before it typed the command at the NextZXOS command
+line — and it is the path the whole design exists for.
+
+**WHAT IT DOES NOT ESTABLISH, and the distinction is one this project has been
+made to pay for before.** Nobody read port `0xE3` back on that path. So §1.2c's
+`0xE3 = 0x82` — a dot command is CONMEM-mapped, not automapped — is still a
+statement about **one typed invocation**, and `mfwin.asm`'s `rst 8` automap
+bridge is still six bytes covering a case nobody has observed rather than six
+bytes now known to be dead. "The sequence survived that path" and "we know which
+mapping it ran under" are different claims and the comments say so in place.
+
+**AND THE SAME EVENING PRODUCED THE ANSWER NOBODY WANTED, which is why #21
+closes and #26 does not.** After a **soft reset** the machine is broken: the NMI
+does nothing and NextZXOS locks up shortly afterwards, recoverable only by
+power-cycling. **`--auto` re-ran and reinstalled the ROM in between**, and that
+is the load-bearing part — the bytes were freshly written and verified inside the
+window, so **the damage is not in the Multiface ROM**, and no amount of
+reinstalling reaches it. Together with the stub's own `R` key producing the same
+state (#26, filed before any of this), that points away from `.mfinstall`
+entirely and towards state a soft reset does not clear. `MAIN_BANK EQU 94`, taken
+on the first NMI and never given back, remains #26's live candidate; this run
+does not confirm it, it removes a competitor.
+
+**Two things a user needs that the documentation did not say**, found the
+expensive way — the user's `autoexec.bas` worked when run by hand and never at
+boot. From the NextZXOS Guide on the card (`/docs/guides/NextZXOS.gde`, node
+`AUTOEXEC`): the file must be **`c:/nextzxos/autoexec.bas`**, not the card root,
+and it must be **SAVEd with an auto-run line** (`SAVE "…" LINE 10`) or it loads
+without starting. Both now in [doc/MFINSTALL.md]. Corroborated rather than
+quoted: the card's own `/nextzxos/autoexec.1st` carries `LINE 10` in bytes 18-19
+of its `PLUS3DOS` header, which is where a reader can check their own file from
+a PC.
+
+**A claim of ours that could NOT be sourced, and is now qualified rather than
+repeated.** `doc/MFINSTALL.md` carried Xalior's argument that an `AUTOEXEC.BAS`
+change "can be undone by holding the key that skips `AUTOEXEC.BAS`". **No such
+key is documented anywhere in the NextZXOS guide.** BREAK stopping a running
+NextBASIC program is the obvious candidate and nothing here has verified it
+applies at boot. It came into our docs from #21's discussion and was never
+checked — the same shape as the taylorza misquote, and caught the same way, by
+going to the primary source instead of the issue body.
+
+**NOT COVERED.** `--unload` has still never run on hardware; every hardware run
+is an install. And one machine, one reporter, no re-runnable artefact — the
+`reported on hardware` rung, not `verified`.
+
+[doc/MFINSTALL.md]: doc/MFINSTALL.md
+
+---
+
 ## 2026-08-07 — The deploy directory IS the card, and the config file it ships is one a run has parsed
 
 **Decided (user) and built.** `build/deploy/` mirrors the layout its contents
@@ -102,10 +158,12 @@ trap [[ERRORS.md]] records — re-derived by the reviewer as well, **so no `make
 bump`** even though the mechanical check lists `Makefile`.
 
 **NOT COVERED.** Nothing here has run on **real hardware**: no Next has opened
-this file, and `--auto` from `AUTOEXEC.BAS` remains the unmeasured invocation
-path it was before. `mcopy` writing an LFN entry is not proof that NextZXOS's
+this file. `mcopy` writing an LFN entry is not proof that NextZXOS's
 esxdos `f_open` will read one, only that the entry is the kind NextZXOS reads
-elsewhere. And `CLAUDE.md`'s §Testing catalogue still has **no entry for
+elsewhere. *(One line of this paragraph was overtaken within the day: it said
+`--auto` from `AUTOEXEC.BAS` remained unmeasured, and the entry below records
+it running on a real Next. The rest stands — that run used a config file the
+user wrote, not this one.)* And `CLAUDE.md`'s §Testing catalogue still has **no entry for
 `test-mfinstall`** where every other bench has one, which is its own small
 branch and now has one more thing to say.
 

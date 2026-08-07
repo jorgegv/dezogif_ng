@@ -131,8 +131,10 @@ window:
         ld      sp,STACK_TOP            ; Measured at 0xFF2B, i.e. already high,
                                         ; so this is defensive rather than
                                         ; load-bearing — for THIS invocation
-                                        ; path. `--auto` from AUTOEXEC.BAS was
-                                        ; not measured.
+                                        ; path. `--auto` from AUTOEXEC.BAS has
+                                        ; since been shown to SURVIVE on real
+                                        ; hardware, which is not the same as
+                                        ; having had its SP read back.
 
         xor     a
         ld      (w_res),a               ; RES_OK until something says otherwise
@@ -399,10 +401,14 @@ window:
         ; with the `rst 8` removed entirely also survived. IT IS KEPT ANYWAY,
         ; and the reason is a limit of the measurement rather than a preference:
         ; 0x82 is what THIS NextZXOS gave THIS dot command typed at THIS command
-        ; line. Nothing shows a dot command is always CONMEM-mapped, and `--auto`
-        ; from AUTOEXEC.BAS is a different invocation path that was not measured.
-        ; If one is ever automapped with CONMEM = 0, the exact restore alone puts
-        ; DivMMC back OFF and the return to 0x2000 lands nowhere. Six bytes.
+        ; line. Nothing shows a dot command is always CONMEM-mapped. If one is
+        ; ever automapped with CONMEM = 0, the exact restore alone puts DivMMC
+        ; back OFF and the return to 0x2000 lands nowhere. Six bytes.
+        ;
+        ; `--auto` from AUTOEXEC.BAS has since run on a real Next and the whole
+        ; sequence SURVIVED it — which retires the worry that that path might be
+        ; broken, and NOT the reason this is here: nobody read 0xE3 back there,
+        ; so which mapping it ran under is still unobserved.
         IF DIVMMC_OFF = 1
         ld      a,(v_e3)
         or      0x80                    ; CONMEM on, original MAPRAM and bank

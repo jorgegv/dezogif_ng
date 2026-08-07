@@ -27,9 +27,11 @@ status of every claim, at its own tier, is in the table at the end.
 |---|---|
 | **Run, in jnext** | the whole §1.5 sequence as `tools/mfinstall/mfwin.asm`, including entering and leaving config mode, the DivMMC bridge, the `rst 8` re-arm and the read-back; an 8192-byte ROM installed in two 4 KB passes and verified inside the window; the stub taken live by an M1 button NMI **with no soft reset** |
 | **Run, with a control** | that **turning DivMMC off is the load-bearing step** — the identical routine with DivMMC left on, one assembler constant apart, reproduces the blocked result from the same code location |
-| **NOT run** | any of it on **real hardware**. jnext's config-mode model cites the same VHDL lines this document does, so agreement between them is not independent evidence |
+| **Run, ON A REAL NEXT** | 2026-08-06: `.mfinstall --load wifi` typed at the command line, then an M1 press, and the debugger came up **with no reset of any kind** — a DZRP session then ran against it. 2026-08-07: the same through **`.mfinstall --auto` from `AUTOEXEC.BAS` at boot**, which was the last untried invocation path |
+| **NOT run** | `--unload` on real hardware, and the `0xE3` read-back on the `AUTOEXEC.BAS` path — the value `0x82` in §1.2c is what *one* typed invocation gave, so the `rst 8` bridge is still kept for a case nobody has observed |
 | **NOT run** | anything **thrown at the window** — no interrupt or NMI was aimed at it, and the expansion-bus hazard in §1.5 has never been provoked |
-| **Still open** | whether the `NEXTREG 2,1` in taylorza's example is required **on silicon**. In the emulator it is not: bench I2 |
+| **Answered on silicon** | the `NEXTREG 2,1` in taylorza's example is **not required** — not in the emulator (bench I2) and not on a real Next, where two invocation paths each went live on the next M1 press with no reset |
+| **Still open, and it is now the interesting one** | what a soft reset **costs**. On hardware it leaves the machine unusable until a power cycle, and that is [#26](https://github.com/jorgegv/dezogif_ng/issues/26) rather than a config-mode fault: `--auto` reinstalled the ROM in between and the stub's own `R` key does the same |
 
 **The first version of this document was rejected in review for three defects of its own**, all
 found by reading the same VHDL more carefully: it described the priority contest as two-way when it
@@ -220,10 +222,16 @@ at `0x0008`, where `i_automap_active` (= `sram_pre_override(2)`, `:3137`) is tru
 **Run B shows the `rst 8` was not needed in this invocation**, because CONMEM was already set and the
 byte-exact restore was sufficient on its own. It is kept anyway, and the reason is a limit of the
 measurement rather than a preference: `0xE3 = 0x82` is what *this* NextZXOS gave *this* dot command
-typed at *this* command line. Nothing shows a dot command is always CONMEM-mapped, and `--auto` from
-`AUTOEXEC.BAS` is a different invocation path that was not measured. If one is ever automapped with
-CONMEM = 0, the exact restore alone puts DivMMC back **off** and the return to `0x2000` lands
-nowhere. Six bytes.
+typed at *this* command line. Nothing shows a dot command is always CONMEM-mapped. If one is ever
+automapped with CONMEM = 0, the exact restore alone puts DivMMC back **off** and the return to
+`0x2000` lands nowhere. Six bytes.
+
+**`--auto` from `AUTOEXEC.BAS` has since run on a real Next, and it does NOT retire that
+reasoning** — the distinction is worth keeping straight. What was shown (2026-08-07, user's own
+machine) is that the whole sequence **survives** that invocation path: the install completed at
+boot and an M1 press brought the debugger up. What was *not* shown is which mapping it ran under,
+because nothing read `0xE3` back there. So the bridge is still six bytes covering a case nobody has
+observed either way, rather than six bytes covering a case now known not to arise.
 
 #### One hazard that would have been ugly, disarmed by the VHDL rather than by luck
 
@@ -504,11 +512,19 @@ M1 button straight after an install, with no reset of any kind, and the stub tak
 it repainted, 95% unlike the stock Multiface monitor. That is exactly the check that would be red if
 the bytes were not live.
 
-**NOT ANSWERED ON SILICON**, and this is the one place a difference would be expensive: taylorza's
-report is first-hand from real hardware, and jnext's config-mode model is written from the same VHDL
-this document reads, so it can only confirm what the VHDL implies. **If a reset turns out to be
-needed on a real Next, the fix is a line in `main()` and a change to I2 — not a redesign.** The
-second question is untouched either way: nothing has run a soft reset against a live debug session.
+**AND NOW ANSWERED ON SILICON TOO, 2026-08-06 and 2026-08-07: NO RESET IS NEEDED.** On the user's
+own Next, `--load wifi` typed at the command line and `--auto` from `AUTOEXEC.BAS` at boot each
+make the debugger come up on the next M1 press with **no reset of any kind**, and a DZRP session
+ran against the first of them. This was the one place a difference would have been expensive —
+jnext's config-mode model is written from the same VHDL this document reads, so it could only ever
+confirm what the VHDL implies.
+
+**THE SECOND QUESTION GOT AN ANSWER NOBODY WANTED.** It asked what a soft reset costs a machine
+with a live debug session, and the answer measured on hardware is that it **breaks it**: after a
+reset the NMI does nothing and NextZXOS locks up, recoverable only by power cycling — even though
+`--auto` re-ran and reinstalled the ROM in between. That reinstall is what makes this **not** a
+config-mode fault: the bytes were freshly written and verified, and the stub's own `R` key produces
+the same state. It is [#26](https://github.com/jorgegv/dezogif_ng/issues/26).
 
 ### 3.2 What the dotcommand is, and what it is not
 
@@ -572,10 +588,12 @@ which questions the build answered.**
   `.mfinstall` installs from are mfselect's, in `/mfselect/`. Nothing on the machine sees a change to
   any path, which is why bench I6 can assert byte-identity there. Only the **command** had to move,
   to `/dot/` (§1.2c).
-* Whether `AUTOEXEC.BAS` runs early and reliably enough, and what boot looks like to a user who is
-  not debugging that day. **STILL OPEN, and note that `--auto` from `AUTOEXEC.BAS` is also the
-  invocation path §1.2c's `0xE3 = 0x82` reading does NOT cover** — the bench types the command at the
-  command line, as the probes did. That is why the `rst 8` re-arm is kept.
+* ~~Whether `AUTOEXEC.BAS` runs early and reliably enough, and what boot looks like to a user who is
+  not debugging that day~~ — **ANSWERED ON A REAL NEXT, 2026-08-07.** `.mfinstall --auto` from
+  `AUTOEXEC.BAS` installs the stub at boot and an M1 press brings it up; on a day nobody is
+  debugging, `install: none` makes that a clean success with one line of output. Two things it
+  did not settle and §1.2c now says so in place: the `0xE3` value on that path (unread, so the
+  `rst 8` bridge stays), and **what a soft reset does afterwards** — see below.
 * ~~Whether the dotcommand can verify what it wrote~~ — **it does, and it is not optional.** The
   read-back happens **inside** the window, because outside it `0x0000` is the DivMMC ROM again. Shown
   working the only way that means anything: a build with DivMMC left on reports
@@ -583,7 +601,13 @@ which questions the build answered.**
 
 Still open, and added by the build rather than inherited from the issue:
 
-* **Anything on real hardware.** Nothing here has run on a Next.
+* **A SOFT RESET AFTER AN INSTALL LEAVES THE MACHINE BROKEN**, measured on a real Next 2026-08-07:
+  boot, `--auto`, NMI, debugger fine; **soft reset**, `--auto` runs again and reinstalls, and then
+  the NMI does nothing and NextZXOS locks up shortly afterwards. A power cycle always recovers.
+  **This is [#26](https://github.com/jorgegv/dezogif_ng/issues/26) and not a config-mode fault** —
+  the stub's own `R` key does the same, and the reinstall on the way past is what says the ROM
+  bytes are not where the damage is.
+* **`--unload` on real hardware.** Everything hardware has shown is an install.
 * **The window under load.** No interrupt or NMI has ever been aimed at it, and the expansion-bus NMI
   hazard §1.5 guards against has never been provoked.
 * **A partially written ROM.** If the second 4 KB pass fails there is nothing to roll back to — the
@@ -605,7 +629,7 @@ here has run on a real Next.
 |---|---|---|
 | **A dot command CANNOT write bank 5 through config mode as it stands** — DivMMC wins the second arbiter and the write is silently discarded | probe read back `enNxtmmc.rom`'s bytes at `0x0000` inside the window, byte-exact; `divmmc.vhd:94-95`, `:100` | **measured in jnext**, and the mechanism **verified** in the VHDL. §1.2c |
 | **DivMMC page0 and page1 are enabled together, so a command at `0x2000` necessarily has DivMMC at `0x0000`** | `divmmc.vhd:94-95` | **verified** — this is what makes the hazard structural rather than avoidable |
-| A dot command is mapped by **CONMEM**, not automap: port `0xE3` = `0x82` | read back in the window; decoded per `zxnext.vhd:4190` | **measured in jnext** — one invocation path (typed at the command line); `--auto` from `AUTOEXEC.BAS` was NOT measured |
+| A dot command is mapped by **CONMEM**, not automap: port `0xE3` = `0x82` | read back in the window; decoded per `zxnext.vhd:4190` | **measured in jnext** — one invocation path (typed at the command line). The `AUTOEXEC.BAS` path has since been shown on hardware to SURVIVE, but nothing read `0xE3` back there, so it is not a second measurement of this |
 | A dot command's SP is already high (`0xFF2B`), MMU2/3 are `0x0A`/`0x0B`, MMU0 is `0xFF` | same reading | **measured in jnext** |
 | **Relocating above `0x4000` and turning DivMMC OFF makes the write land, and the command survives** | `tools/mfinstall/mfwin.asm`; runs A and B | **measured in jnext** |
 | **Turning DivMMC off is the load-bearing step; relocation alone fixes nothing** | run C — the same routine with DivMMC left on, one assembler constant apart, reads back the DivMMC ROM from the same code location | **measured in jnext, with a control** |
@@ -637,7 +661,9 @@ here has run on a real Next.
 | Bit 3 toggles `user_dt_lock`; any write clears `bootrom_en` | `zxnext.vhd:5122`, `:5135` | **verified** |
 | jnext models config mode including the writable path | jnext `src/memory/mmu.h:164-171`, `src/port/nextreg.*` | **verified**, in jnext's source |
 | A soft reset is NOT enough for the **file-swap** method | hardware, 2026-08-04 (MEMORY.md) | **verified on hardware** |
-| A soft reset is **required** for the config-mode method | **our earlier misreading** of the Discord thread — taylorza described what they did, not a requirement, and said so | **DISPROVED in jnext** — bench I2 presses the M1 button after an install with no reset of any kind and gets the stub's screen. Untested on silicon |
+| A soft reset is **required** for the config-mode method | **our earlier misreading** of the Discord thread — taylorza described what they did, not a requirement, and said so | **DISPROVED**, in jnext by bench I2 and then **on a real Next** twice — `--load wifi` typed, and `--auto` from `AUTOEXEC.BAS` — each live on the next M1 press with no reset |
 | A soft reset is **enough** for it, i.e. the replacement survives one | taylorza, Discord | **reported by a third party** — not tested here, and not by anything this bench does: no run issues `NEXTREG 2,1` at all |
+| **`.mfinstall --auto` from `AUTOEXEC.BAS` installs at boot on a real Next**, which was the last untried invocation path | user's own machine, 2026-08-07: autoexec ran, the stub installed, the M1 press brought up the debugger | **verified on hardware** — one machine, one reporter, no re-runnable artefact |
+| **A soft reset after an install leaves the machine unusable** — NMI does nothing, NextZXOS locks up, power cycle recovers | same session: reset, `--auto` reinstalled the ROM, and the next NMI still did nothing | **verified on hardware**, and **NOT a config-mode fault**: the reinstall means the ROM bytes were freshly written and verified, and the stub's own `R` key does the same. Issue #26 |
 | Config mode is re-enterable | `.mfinstall` enters and leaves it THREE times per install — one identity read plus two 4 KB passes — and the bench's run 5 does two installs in one session, six entries, without a reset between them | **measured in jnext** — was **inferred** from `:5147` having no one-way guard, and is now exercised on every run of `make test-mfinstall` |
 | The sequence in §1.5 works | it IS `tools/mfinstall/mfwin.asm`; bench `make test-mfinstall` I1 and I2 | **measured in jnext** — 8192 bytes installed in two passes, verified inside the window, and live on the next M1 press |

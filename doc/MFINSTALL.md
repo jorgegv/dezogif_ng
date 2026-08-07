@@ -135,9 +135,32 @@ a BASIC error you can read and fix; `install: none` is how you say "do nothing" 
 10 .mfinstall --auto
 ```
 
-That is the whole of it, and it is why this exists. Xalior's objection to a file-swap installer was
-that it is a **ROM change**, where an `AUTOEXEC.BAS` change can be undone by holding the key that
-skips `AUTOEXEC.BAS` — no card in a PC, no file to remember replacing.
+**Confirmed on a real Next, 2026-08-07**: the stub is installed at boot and the next M1 press brings
+up the debugger, with no reset and nothing else typed.
+
+That is the whole of the program, and it is why this exists — but **two things about the file itself
+are easy to get wrong and neither is optional**, both from the NextZXOS Guide on the card
+(`/docs/guides/NextZXOS.gde`, node `AUTOEXEC`):
+
+- **it must be `c:/nextzxos/autoexec.bas`.** Not the root of the card. Nothing looks there;
+- **it must be SAVEd with an auto-run line**, or it is a program that loads and never starts:
+
+      SAVE "c:/nextzxos/autoexec.bas" LINE 10
+
+Either mistake gives the same symptom — it runs perfectly when you `LOAD` and `RUN` it yourself, and
+never runs at boot. The auto-run line lives in bytes 18-19 of the file's 128-byte `PLUS3DOS` header,
+so it is checkable from a PC: `0A 00` is line 10, anything ≥ `00 80` means no auto-run. The card's
+own `/nextzxos/autoexec.1st` reads `LINE 10` there, which is where that was confirmed rather than
+assumed. `ERASE` as a last line is safe and is what the guide recommends: with no arguments it
+erases the program from *memory*, not the file.
+
+Xalior's objection to a file-swap installer was that it is a **ROM change**, where an
+`AUTOEXEC.BAS` change is undone without a card reader. Note one part of that argument this project
+has not been able to source: it was put as "hold the key that skips `AUTOEXEC.BAS`", and **no such
+key is documented anywhere in the NextZXOS guide** — BREAK stopping a running NextBASIC program is
+the obvious candidate and nothing here has verified it applies at boot. What is certainly true is
+the weaker form: the file is one line, editable on the Next, and `install: none` turns the whole
+thing off without touching it.
 
 ### `--auto` is safe to run at every boot, and it is idempotent by construction
 

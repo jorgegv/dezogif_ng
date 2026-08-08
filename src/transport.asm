@@ -52,13 +52,20 @@
 ;   UART build's bytes do not move.
 ;
 ;   THEY REPORT EVENTS, NOT A LIVE CONNECTION. CMD_INIT and CMD_CLOSE are the
-;   only two moments a transport above the byte stream can observe, and neither
+;   only two moments a transport ABOVE THE BYTE STREAM can observe, and neither
 ;   is TCP: a socket can be open before the first and after the second, and a
-;   client that vanishes without CMD_CLOSE produces no event at all. Whatever an
+;   client that vanishes without CMD_CLOSE produces neither. Whatever an
 ;   implementation draws must therefore claim only what these two prove — see
 ;   esp_client_state in transport_esp.asm, where the wording is chosen for
-;   exactly that reason. Tracking the module's `<id>,CONNECT` / `<id>,CLOSED`
-;   lines is what would close the gap, and it is M3's reconnect work.
+;   exactly that reason.
+;
+;   A transport is free to learn more from BELOW, and the ESP one now does: it
+;   watches the module's `<id>,CONNECT` / `<id>,CLOSED` lines and matches them
+;   against the connection CMD_INIT arrived on, so a client that vanishes is
+;   reported instead of leaving the screen claiming a session that ended
+;   (issue #23). That is entirely inside the implementation — these two events
+;   are still the only thing common code hands it, and a transport with no such
+;   channel simply says less.
 ;
 ;   AF is free at both call sites (commands.asm), so an implementation may use
 ;   it without saving; nothing else is.

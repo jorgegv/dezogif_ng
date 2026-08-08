@@ -173,6 +173,41 @@
 ;    request/response. It takes a second client and a command split across
 ;    frames, which is bench check W5.
 ;
+; 10. THE MODULE'S `<id>,CONNECT` AND `<id>,CLOSED` LINES ARE WATCHED, BY AN
+;    OBSERVER THAT READS NOTHING. Issue #23.
+;
+;    Every wait here already steps over those lines; until now nothing looked at
+;    them, so the only way this transport learned a peer had gone was an
+;    AT+CIPSEND answered ERROR — after the fact, and only if it had something to
+;    send. The visible cost was the session line at row 8: a client that
+;    vanished without CMD_CLOSE left it reading "Session opened - CMD_INIT" for
+;    the rest of the session (issue #14, which offered exactly this as the
+;    honest alternative and built the cheap one).
+;
+;    ISSUE #11 IS WHY THIS IS SHAPED THE WAY IT IS. A second pattern in the RX
+;    hot path is what #11 and #16 both declined to add, and #11 is the record of
+;    what a scan that eats what it is not looking for costs: an inbound `+IPD`
+;    destroyed and a client answered by nothing. So esp_watch_line does not read
+;    the wire. It is handed each byte esp_read_scan has ALREADY read, keeps four
+;    bytes of state between calls, and returns the byte untouched. It cannot
+;    consume, cannot desynchronise a scan and cannot lose a frame, whatever it
+;    concludes — which is a property of its position, not of its logic.
+;
+;    AND IT WRITES ONLY THE SESSION LINE'S OWN STATE. Not esp_conn_id, not
+;    esp_conn_valid, not the latch, not esp_cmd_*: nothing the byte stream
+;    reads. One of those abstentions was measured rather than chosen — see
+;    esp_line_event, where clearing esp_conn_valid on a `<id>,CLOSED` is shown
+;    to break bench W2's own precondition. Acting on the observation is
+;    reconnect policy and belongs to issues #24 and #25; this is the state they
+;    are waiting on.
+;
+;    WHAT IT STILL CANNOT SEE: anything transport_drain swallows, because that
+;    reads with raw `in` and hands the bytes to nobody. So a line arriving
+;    inside a 100 ms drain is missed — which is why a `<id>,CONNECT` on the
+;    session's own id ends the session too: the module cannot hand an id to a
+;    new client while the old one holds it, so it is a second, independent
+;    witness for exactly the case where the CLOSED was eaten.
+;
 ;---------------------------------------------------------------------------
 ; What this file does NOT do, deliberately
 ;---------------------------------------------------------------------------
@@ -191,11 +226,19 @@
 ;===========================================================================
 ; TRANSPORT_DEACTIVATE — the debugger is about to resume the debuggee.
 ;
-; Nothing to do: this transport never took the joy ports, and the ESP holds
-; the listening socket across the resume, which is what lets a byte from the
-; PC arrive while the debuggee runs (plan §4).
+; Nothing to hand back: this transport never took the joy ports, and the ESP
+; holds the listening socket across the resume, which is what lets a byte from
+; the PC arrive while the debuggee runs (plan §4).
+;
+; What it does do is note that THE SCREEN IS NO LONGER OURS. The debuggee is
+; about to draw on it, so the session line must not be repainted over it later —
+; see esp_refresh_client_line, which is the only reader of this byte. Four
+; bytes, inline, at a site where AF is dead (backup.asm's restore_registers has
+; just returned from transport_flush).
 ;===========================================================================
     MACRO TRANSPORT_DEACTIVATE
+    xor a
+    ld (esp_ui_shown),a
     ENDM
 
 
@@ -237,17 +280,20 @@
 ; cmd_init calls it, cmd_close leaves through `jp main`. That is what keeps the
 ; line off the per-command path: nothing here repaints anything.
 ;
-; AF only, and it is free at both sites. See transport.asm for why these are
-; macros and what they are allowed to claim.
+; SINCE ISSUE #23 THEY ALSO RECORD WHICH CONNECTION THE SESSION IS ON, which is
+; what lets the module's own `<id>,CLOSED` be matched against it. That is more
+; than fits in a macro body worth reading, so both are calls now; AF is still
+; the only register touched, and it is free at both sites.
+;
+; See transport.asm for why these are the transport's own rather than an
+; `IF ROM_VARIANT` in commands.asm, and what they are allowed to claim.
 ;===========================================================================
     MACRO TRANSPORT_CLIENT_ATTACHED
-    ld a,ESP_CLIENT_ATTACHED
-    ld (esp_client_state),a
+    call esp_client_attached
     ENDM
 
     MACRO TRANSPORT_CLIENT_DETACHED
-    ld a,ESP_CLIENT_DETACHED
-    ld (esp_client_state),a
+    call esp_client_detached
     ENDM
 
 
@@ -417,11 +463,16 @@ ESP_FAULT_LIMIT:    equ 5
 ; is a promise the engine declines to make.
 ;
 ; THE SWEEP IS BLIND, AND THAT IS THE DESIGN RATHER THAN A SHORTCUT. This
-; program does not know which ids are open: learning that means tracking the
-; module's <id>,CONNECT / <id>,CLOSED lines, which is M3's reconnect work and a
-; second pattern in the RX hot path. AT+CIPCLOSE=<id> on an id with nothing
-; behind it is answered ERROR, which costs one line of RX and nothing else, so
-; asking about all five is cheaper than knowing which one to ask about.
+; program does not know which ids are open. Issue #23 watches the module's
+; `<id>,CONNECT` / `<id>,CLOSED` lines (esp_watch_line) but keeps no open-set
+; from them, on purpose: an open-set that nothing reads is state to maintain and
+; get wrong, and the sweep would not want it anyway. AT+CIPCLOSE=<id> on an id
+; with nothing behind it is answered ERROR, which costs one line of RX and
+; nothing else, so asking about all five stays cheaper than knowing which one to
+; ask about — and, crucially, a set built only from lines this stub HAPPENED to
+; be scanning when they arrived would be a set with holes in it (every byte
+; transport_drain eats is one the observer never sees), which is worse than no
+; set at all for a routine whose job is to leave nothing behind.
 ;
 ; It is also what keeps this NUMBERING-AGNOSTIC, which matters more here than
 ; the saving. jnext's inbound ids start at 1 because it reserves slot 0 for an
@@ -453,29 +504,35 @@ ESP_LINK_FAILED:        equ 2   ; the AT chain did not complete
 ; have one first move. Splitting them would need the module to have said
 ; something to tell them apart, which in the silent case it has not.
 
-; What the UI has to say about the debug SESSION (issue #14). Set by
-; TRANSPORT_CLIENT_ATTACHED / TRANSPORT_CLIENT_DETACHED, i.e. by CMD_INIT and
-; CMD_CLOSE and by nothing else.
+; What the UI has to say about the debug SESSION (issue #14, then #23).
 ;
-; THESE ARE EVENTS THAT HAPPENED, NOT A LIVE CONNECTION, AND THE WORDING BELOW
-; IS PICKED SO THE SCREEN CANNOT CLAIM MORE THAN THAT. What this transport can
-; see is frames, not connections: the id is refreshed by an inbound `+IPD` and a
-; departed peer is discovered only when an AT+CIPSEND is answered ERROR. So
+; THESE ARE EVENTS THAT HAPPENED, NOT A LIVE CONNECTION, AND THE WORDING OF
+; EVERY LINE BELOW IS PICKED SO THE SCREEN CANNOT CLAIM MORE THAN THAT. Three
+; of the four come from above the byte stream — CMD_INIT and CMD_CLOSE, the only
+; two moments a DZRP session can be seen to start and stop — and the fourth
+; comes from the module itself.
 ;
-;   * a client that opens TCP and says nothing is invisible — ATTACHED is about
-;     CMD_INIT, not about a socket;
-;   * a client that vanishes without CMD_CLOSE leaves ATTACHED standing, which
-;     is why that state's line says a session was OPENED rather than that one is
-;     open. It states what was observed and stops there.
+;   * a client that opens TCP and says nothing is still invisible. ATTACHED is
+;     about CMD_INIT, not about a socket, and bench check N1 asserts that;
+;   * a client that vanishes WITHOUT CMD_CLOSE used to leave ATTACHED standing
+;     for the rest of the session. That is what LOST closes: the module's own
+;     `<id>,CLOSED` (or a `<id>,CONNECT` handing that id to somebody else) is
+;     matched against the connection the session was opened on. Issue #23,
+;     point 10 in the header, esp_watch_line;
+;   * ATTACHED's line still says a session was OPENED rather than that one is
+;     open, and that is not a leftover. It is the state's whole meaning: this
+;     transport sees frames, not sockets, and between the last frame and a
+;     `<id>,CLOSED` there is a window in which nothing at all is known.
 ;
-; Closing the second gap means reading the module's unsolicited `<id>,CONNECT`
-; and `<id>,CLOSED` lines, which is the same tracking the "residual" note in
-; esp_flush_chunk's .no_client defers to M3's reconnect work. Until that exists,
-; saying less is the only honest option — a line reading "client connected" ten
-; minutes after the client left is worse than no line at all.
+; WHAT LOST DOES NOT MEAN. Not "the client crashed" — a clean socket close from
+; a client that simply did not send CMD_CLOSE produces exactly the same line.
+; Not "the debugger is idle" either: prgm_state, the breakpoints and the
+; debuggee's saved state are untouched by this, which is why the line names the
+; client rather than the session's contents.
 ESP_CLIENT_NONE:        equ 0   ; no CMD_INIT since the debugger came up
 ESP_CLIENT_ATTACHED:    equ 1   ; a CMD_INIT arrived, and no CMD_CLOSE since
 ESP_CLIENT_DETACHED:    equ 2   ; a CMD_CLOSE arrived
+ESP_CLIENT_LOST:        equ 3   ; the module says that connection has gone
 
 ; The row the session line is drawn on. Under the connect block at rows 6 and 7,
 ; which is where a reader looking for "has my session arrived" is already
@@ -564,6 +621,17 @@ esp_str_error:      defb "ERROR",0
 ; gone and the stub is on its way to idle anyway.
 esp_str_send_ok:    defb "SEND OK",13,10,0
 esp_str_cipsend:    defb "AT+CIPSEND=",0
+
+; The tails of the module's two unsolicited connection lines, `<id>,CONNECT` and
+; `<id>,CLOSED` — issue #23, and esp_watch_line, which is the only reader.
+;
+; THEY START AT THE SECOND LETTER because that is where the two words first
+; differ, and the observer branches there: `<digit>` `,` `C` then 'O' or 'L'
+; picks one of these and the rest is matched literally. The CR is part of the
+; pattern, so only a COMPLETE line fires the event — the same reason
+; esp_str_send_ok carries its own CRLF, one defect along.
+esp_str_connect_tail:   defb "NNECT",13,0
+esp_str_closed_tail:    defb "OSED",13,0
 
 ; The anchor in AT+CIFSR's answer, opening quote included. ESP-AT reports one
 ; `+CIFSR:<what>,"<value>"` line per interface — the access point's address and
@@ -667,6 +735,57 @@ esp_tx_conn_valid:  defb 0
 ;---------------------------------------------------------------------------
 esp_cmd_id:         defb 0
 esp_cmd_active:     defb 0
+
+;---------------------------------------------------------------------------
+; The connection-line observer — issue #23, point 10 in the header.
+;
+; esp_watch_line's position in `<id>,CONNECT` / `<id>,CLOSED`, kept between
+; calls because it is fed one byte at a time by whatever scan happens to be
+; running. It reads nothing itself; see there for why that is the whole safety
+; argument.
+;
+;   0  nothing seen             3  the 'C'; 'O' or 'L' picks a tail
+;   1  a digit (expect ',')     4  matching a tail at esp_line_ptr
+;   2  the ',' (expect 'C')
+;
+; A mismatch in any state re-tests the offending byte as a fresh leading digit,
+; so `11,CLOSED` and a line arriving straight after another one both work.
+;---------------------------------------------------------------------------
+esp_line_state:     defb 0
+esp_line_id:        defb 0
+esp_line_ptr:       defw 0      ; meaningful in state 4 only
+
+;---------------------------------------------------------------------------
+; Which connection the DZRP session is on — issue #23.
+;
+; Written by CMD_INIT and cleared by CMD_CLOSE, so it names a session rather
+; than a socket, and it is what the observer above matches an id against. The
+; validity flag is separate from the id for the reason point 3 in the header
+; cost a hardware evening: every value an id can take is a real connection, 0
+; included, so no value of esp_session_id can mean "nobody".
+;---------------------------------------------------------------------------
+esp_session_id:     defb 0
+esp_session_valid:  defb 0
+
+; The session line no longer says what esp_client_state says, and something
+; should redraw it. Set by esp_line_event, cleared by esp_show_client_line — so
+; ANY repaint satisfies it, including the show_ui that drain_main reaches after
+; a disconnect. See esp_refresh_client_line.
+esp_ui_dirty:       defb 0
+
+; Whether the screen currently holds the debugger's own UI. show_ui sets it;
+; TRANSPORT_DEACTIVATE clears it, because the debuggee is about to draw. Read
+; only by esp_refresh_client_line, and only so that one row of our UI is never
+; painted over a stopped debuggee's display.
+esp_ui_shown:       defb 0
+
+; Which state's string is currently ON the row. Not the same question as
+; esp_client_state, which is what the row SHOULD say, and the two differ for
+; exactly as long as esp_ui_dirty is set. It exists because ula.print_char XORs:
+; the only way to take a line off the screen without clearing the whole thing is
+; to draw it a second time, and that needs to know which line it was. See
+; esp_refresh_client_line.
+esp_client_drawn:   defb ESP_CLIENT_NONE
 
 ; Outer passes of the RX poll. One, except in the two windows where the module
 ; has been asked something and owes an answer: the whole of bring-up
@@ -816,14 +935,34 @@ esp_text_client_detached:
     defb 0
     ASSERT .end - .text <= 32
 
+; NOT "No debug session yet.", and the difference is the point of issue #23.
+; Reusing NONE would make this state indistinguishable from a stub that never
+; saw a CMD_INIT at all — so a bench check for it would go green against a ROM
+; that had simply failed to light the line in the first place, which is
+; mfselect's M9 in a new costume (ERRORS.md). A line of its own can only be
+; drawn by having observed the connection go.
+;
+; It names the CLIENT rather than the command, because unlike the three above it
+; is not a DZRP event: what was seen is the module reporting that a connection
+; is no longer there. "gone" covers both ways that happens — a socket closed
+; without CMD_CLOSE, and an id handed on to somebody else.
+esp_text_client_lost:
+    defb AT, 0, ESP_CLIENT_ROW*8
+.text:
+    defb "Session lost - client gone"
+.end:
+    defb 0
+    ASSERT .end - .text <= 32
+
 ; Indexed by esp_client_state, which esp_show_status does not range-check —
 ; same rule as the table above, and the assembler counts rather than a reader.
 esp_client_text_table:
     defw esp_text_client_none
     defw esp_text_client_attached
     defw esp_text_client_detached
+    defw esp_text_client_lost
 esp_client_text_table_end:
-    ASSERT (esp_client_text_table_end - esp_client_text_table) / 2 == ESP_CLIENT_DETACHED + 1
+    ASSERT (esp_client_text_table_end - esp_client_text_table) / 2 == ESP_CLIENT_LOST + 1
 
 esp_tx_len:         defb 0
 esp_tx_byte:        defb 0
@@ -1290,6 +1429,14 @@ esp_copy_string:
 ; `OK`, `<id>,CONNECT`, `<id>,CLOSED`, `busy`). So a '+' hands over to
 ; esp_capture_ipd and the scan then carries on looking for its own pattern.
 ;
+; IT IS ALSO WHERE THE CONNECTION-LINE OBSERVER IS FED, and that placement is
+; the whole of issue #23's safety argument: this routine is the one point every
+; byte of the module's own chatter passes through, and by the time
+; esp_watch_line sees a byte the byte has already been read. An observer that
+; reads nothing cannot destroy an inbound frame, which is what #11 and #16 both
+; declined to risk. What can and cannot reach it — including the one window in
+; which payload does — is in esp_watch_line's own header.
+;
 ; Returns:
 ;  NC and A = a byte that is not part of an inbound frame, or CY on timeout.
 ; Changes:
@@ -1298,6 +1445,7 @@ esp_copy_string:
 esp_read_scan:
     call esp_try_read_raw
     ret c
+    call esp_watch_line         ; preserves A and HL; reads nothing
     cp '+'
     jr z,.frame
     ; CARRY MUST BE CLEAR HERE. Both callers read it as "timed out", and `cp`
@@ -1318,6 +1466,193 @@ esp_read_scan:
     call esp_capture_ipd
     pop hl
     jr esp_read_scan
+
+
+;===========================================================================
+; Watches one byte of the module's chatter for `<id>,CONNECT` / `<id>,CLOSED`.
+; Issue #23, and point 10 in the header.
+;
+; IT CONSUMES NOTHING, AND THAT IS THE DESIGN RATHER THAN AN OPTIMISATION.
+; Every byte it sees has already been read by esp_read_scan and is handed to the
+; waiting scan afterwards untouched; this routine never goes near the UART. A
+; second pattern in the RX hot path is what issues #11 and #16 both declined to
+; add, and #11 is the record of the cost — a scan that ate an inbound `+IPD`
+; left a client answered by nothing at all. An observer positioned behind the
+; read cannot do that, whatever it decides, and the argument does not depend on
+; its logic being right.
+;
+; WHAT REACHES IT. esp_read_scan is on the path of the module's LINE-ORIENTED
+; output: `OK`, `ERROR`, `SEND OK`, `busy`, the leading '+' of a header, and the
+; two unsolicited lines wanted here. DZRP payload does not normally arrive —
+; transport_read_byte, esp_capture_ipd's header verify, esp_read_decimal and
+; esp_hold_frame's copy all read through esp_try_read_raw directly. Nor do the
+; `<id>,CLOSED` lines esp_recover's own AT+CIPCLOSE sweep produces: those are
+; drained with raw `in` and are ours rather than a peer's.
+;
+; "DOES NOT NORMALLY" AND NOT "CANNOT", because there is one window and it is
+; already known. A scan runs with the wire between frames on every ordinary
+; path, but a response long enough to fill ESP_TX_CHUNK mid-message flushes
+; while its own command's payload is still owed — the three handlers of issue
+; #13, at 240 response bytes — and then esp_wait_prompt's scan reads payload.
+; That is the window esp_capture_ipd has always lived in (a '+' in payload
+; already misleads it), not one this adds.
+;
+; SO THE WORST CASE HERE IS A WRONG LINE ON THE SCREEN, and it is worst because
+; of what esp_line_event refuses to touch rather than because the pattern is
+; improbable: it takes nine specific bytes in that window, and if they occur the
+; only thing that happens is that row 8 reports a session that is still open.
+;
+; The matching is naive and its restart re-tests the offending byte as a fresh
+; leading digit, which is what makes back-to-back lines and a two-digit id
+; harmless. Only a complete line — CR included — reaches esp_line_event.
+;
+; Parameter:
+;  A = the byte just read.
+; Returns:
+;  A and HL unchanged. The flags are not preserved: esp_read_scan re-tests the
+;  byte immediately afterwards.
+; Changes:
+;  F, D  (esp_read_scan already declares BC and DE, so this is inside its
+;  contract; it is stated narrowly because that is what is true)
+;===========================================================================
+esp_watch_line:
+    push af
+    push hl
+    ld d,a                      ; the byte, out of A's way
+    ld hl,(esp_line_ptr)
+    ld a,(esp_line_state)
+    dec a
+    jr z,.want_comma
+    dec a
+    jr z,.want_c
+    dec a
+    jr z,.want_word
+    dec a
+    jr z,.want_tail
+    ; State 0: nothing seen yet. Flow through.
+
+.first:
+    ; Also the restart: whatever broke a partial match may itself be the start
+    ; of the next line, and the module does put them back to back.
+    ld a,d
+    sub '0'
+    cp 10
+    jr nc,.reset
+    ld (esp_line_id),a
+    ld a,1
+    ld (esp_line_state),a
+    jr .out
+
+.reset:
+    xor a
+    ld (esp_line_state),a
+.out:
+    pop hl
+    pop af
+    ret
+
+.want_comma:
+    ld a,d
+    cp ','
+    jr nz,.first
+    ld a,2
+    ld (esp_line_state),a
+    jr .out
+
+.want_c:
+    ld a,d
+    cp 'C'
+    jr nz,.first
+    ld a,3
+    ld (esp_line_state),a
+    jr .out
+
+.want_word:
+    ; CONNECT and CLOSED first differ here, so this is where the tail is chosen.
+    ld a,d
+    cp 'O'
+    jr z,.connect
+    cp 'L'
+    jr nz,.first
+    ld hl,esp_str_closed_tail
+    jr .tail_start
+.connect:
+    ld hl,esp_str_connect_tail
+.tail_start:
+    ld (esp_line_ptr),hl
+    ld a,4
+    ld (esp_line_state),a
+    jr .out
+
+.want_tail:
+    ; WHICH of the two matched is deliberately not remembered: both mean the
+    ; same thing to the only consumer there is. See esp_line_event.
+    ld a,(hl)
+    cp d
+    jr nz,.first
+    inc hl
+    ld (esp_line_ptr),hl
+    ld a,(hl)
+    or a
+    jr nz,.out
+    call esp_line_event
+    jr .reset
+
+
+;===========================================================================
+; A complete `<id>,CONNECT` or `<id>,CLOSED` line has been seen — issue #23.
+;
+; WHAT IT IS ALLOWED TO TOUCH IS THE WHOLE OF THIS DESIGN, and the list is
+; three bytes long: esp_session_valid, esp_client_state and esp_ui_dirty. It
+; does NOT write esp_conn_id, esp_conn_valid, the esp_tx_conn_* latch, esp_cmd_*
+; or any of the esp_rx_* state. So no message in flight can be redirected, no
+; command being assembled can change owner and no frame can be lost — which is
+; what leaves bench checks W4 and W5, where two clients are served at once,
+; measuring exactly what they measured before.
+;
+; ONE OF THOSE ABSTENTIONS WAS MEASURED RATHER THAN CHOSEN, and it is the
+; interesting one. Clearing esp_conn_valid here — "the module says the peer has
+; gone, so stop sending to it" — is the obvious next step and it breaks bench
+; W2: that check's own PRECONDITION is that an AT+CIPSEND really was refused by
+; the module, and a stub that had already forgotten the connection never issues
+; one, so W2 would go red having tested nothing. The fact is still learned one
+; round trip later, in esp_flush_chunk's .no_client. Acting on it earlier is
+; reconnect policy and belongs to issues #24 and #25.
+;
+; BOTH LINES MEAN THE SAME THING HERE, AND CONNECT IS NOT REDUNDANT. `<id>,
+; CLOSED` says that connection went. `<id>,CONNECT` on the SAME id says the
+; module has handed that id to somebody else, which proves the previous holder
+; is gone just as well — and it is the only witness left when the CLOSED was
+; missed, which happens whenever one lands inside a transport_drain.
+;
+; Only the connection a DZRP session was opened on is interesting: any other id
+; belongs to a client this stub has never been introduced to, and reporting on
+; it would be the screen claiming to see sockets again.
+; Changes:
+;  AF, HL
+;===========================================================================
+esp_line_event:
+    ld a,(esp_session_valid)
+    or a
+    ret z
+    ld a,(esp_line_id)
+    ld hl,esp_session_id
+    cp (hl)
+    ret nz
+
+    xor a
+    ld (esp_session_valid),a
+    ld a,ESP_CLIENT_LOST
+    ld (esp_client_state),a
+    ; THE SCREEN IS NOT PAINTED FROM HERE. This runs inside a scan, several
+    ; frames deep, with the caller's pattern on the stack and the module owing
+    ; an answer — a screen write in the RX hot path is exactly the sort of thing
+    ; this file exists to keep out of it. The row is redrawn by whoever gets
+    ; there first: drain_main's show_ui after the scan times out, or
+    ; esp_refresh_client_line from main_loop's poll.
+    ld a,1
+    ld (esp_ui_dirty),a
+    ret
 
 
 ;===========================================================================
@@ -2125,6 +2460,13 @@ transport_byte_available:
 
     call esp_sync_ipd       ; CY here just means "not a header yet"
 
+    ; The module said something, which is the only way the connection-line
+    ; observer can have fired since the last time round this loop — so this is
+    ; where a session line invalidated by a departed client is put right.
+    ; Nothing is drawn unless it was, and a quiet wire never reaches this line
+    ; at all. See esp_refresh_client_line.
+    call esp_refresh_client_line
+
 .quiet:
     ld hl,(esp_rx_remaining)
     ld a,h
@@ -2498,9 +2840,16 @@ esp_flush_chunk:
     ; The message itself is still lost, and that is correct: there is nobody to
     ; receive it. What is NOT covered is a client that has reconnected but not
     ; yet sent anything — esp_conn_id is only refreshed by an inbound +IPD, so
-    ; an unprompted notification in that window still goes nowhere. Closing that
-    ; means tracking `<id>,CONNECT` as well, which belongs with M3's reconnect
-    ; work rather than here.
+    ; an unprompted notification in that window still goes nowhere.
+    ;
+    ; ISSUE #23 NOW WATCHES `<id>,CONNECT`, AND DELIBERATELY DOES NOT ADOPT IT
+    ; HERE. Seeing the line is the cheap half; deciding that a connection nobody
+    ; has spoken on is the one to answer is a policy question with two wrong
+    ; answers — adopt unconditionally and a second client's CONNECT redirects
+    ; the reply to a command already received (bench W5's subject), adopt only
+    ; when esp_conn_valid is clear and the case this paragraph describes is
+    ; still missed, because .no_client has not run yet. That is issue #24's, and
+    ; esp_watch_line is the state it is waiting on.
     ;
     ; BOTH VALIDITY FLAGS, and the latched one is not optional. Its own chunk is
     ; already lost; clearing it is what stops the REST of the same message
@@ -2707,13 +3056,153 @@ esp_show_status:
     add hl,a
     ld de,(hl)
     call text.ula.print_string
+    ; Flow through
 
-    ld hl,esp_client_text_table
+
+;===========================================================================
+; Draws the session line, row 8, ONTO A BLANK ROW.
+;
+; A separate entry point because esp_refresh_client_line redraws that row on its
+; own when the connection-line observer has invalidated it between two show_ui
+; calls (issue #23). Reached from show_ui, which has just MEMCLEARed the whole
+; screen, so there is nothing to erase here.
+;
+; Every path through here leaves the row agreeing with esp_client_state, which
+; is what lets the dirty flag be cleared unconditionally rather than only on the
+; path that noticed it was set.
+; Changes:
+;  AF, BC, DE, HL
+;===========================================================================
+esp_show_client_line:
+    ; Nothing is owed after this, and the debugger's own screen is what is on
+    ; the display — the second of those is what lets the refresh below draw over
+    ; it later without landing on a debuggee's picture.
+    xor a
+    ld (esp_ui_dirty),a
+    inc a
+    ld (esp_ui_shown),a
     ld a,(esp_client_state)
+    ld (esp_client_drawn),a
+    ; Flow through
+
+
+;===========================================================================
+; Prints the session line for the state in A, and keeps no bookkeeping.
+;
+; Parameter:
+;  A = one of the ESP_CLIENT_* states.
+; Changes:
+;  AF, BC, DE, HL
+;===========================================================================
+esp_put_client_line:
+    ld hl,esp_client_text_table
     add a                       ; *2
     add hl,a
     ld de,(hl)
     jp text.ula.print_string
+
+
+;===========================================================================
+; Redraws the session line if the observer has invalidated it — issue #23.
+;
+; WHY NOT WHERE THE OBSERVATION HAPPENS: see esp_line_event. The observer only
+; records; this is where the record reaches the screen on the paths that do not
+; repaint by themselves. The other path needs nothing — a scan that meets a
+; `<id>,CLOSED` and then finds no header times out into drain_main, whose
+; show_ui draws the row and clears the flag on the way past.
+;
+; IT IS CALLED ONLY WHERE THE MODULE HAS JUST SPOKEN, which is what keeps it off
+; the hot path entirely: main_loop spins on transport_byte_available thousands
+; of times a second and an observation can only have happened on the one branch
+; that ran a scan. A quiet wire costs nothing at all.
+;
+; AND ONLY WHILE OUR OWN SCREEN IS UP. main_loop is reachable with a debuggee
+; stopped and ITS display on the screen — transport_wait_rx's bound expires to
+; main_idle, which is below main_redraw's show_ui — so without esp_ui_shown this
+; would paint one row of the debugger's UI over the program being debugged.
+;
+; THAT GUARD IS DOING MORE THAN COSMETICS, WHICH IS WHY IT IS A FLAG RATHER THAN
+; A GUESS ABOUT prgm_state. Writing at 0x4000 is only writing at the DISPLAY FILE
+; while the debugger's own MMU slots 2 and 3 are mapped there; a debuggee is free
+; to have put its own banks in them. esp_ui_shown is set by show_ui — which
+; MEMCLEARs the whole screen through the same window, so it cannot be true while
+; that mapping is wrong — and cleared by TRANSPORT_DEACTIVATE on every resume. So
+; "our screen is up" and "0x4000 is the screen" are the same fact here, and this
+; routine cannot run without it.
+;
+; THE OLD LINE IS ERASED BY DRAWING IT AGAIN, and that is not a trick to be
+; clever with: text.asm's ula.print_char XORs its glyph onto the screen
+; (text.asm:100-108), so a second string written over a first leaves neither.
+; Measured, not reasoned — bench N5 read back `????e? ?l????I???e` from the first
+; version of this routine, which drew the new line straight over the old. show_ui
+; never has this problem because it clears the whole screen first; this is the
+; one caller that does not. esp_client_drawn is what says which string is up
+; there, and every writer of the row maintains it.
+; Changes:
+;  AF, BC, DE, HL
+;===========================================================================
+esp_refresh_client_line:
+    ld a,(esp_ui_dirty)
+    or a
+    ret z
+    ld a,(esp_ui_shown)
+    or a
+    ret z
+    ; IX, because text.asm's ula.print_char uses it as its font pointer and
+    ; transport_byte_available — the one caller — promises its own callers AF
+    ; and nothing else. Inside the two tests above, so a quiet poll does not pay
+    ; for it.
+    push ix
+    ld a,(esp_client_drawn)
+    call esp_put_client_line    ; XOR the old line off
+    call esp_show_client_line
+    pop ix
+    ret
+
+
+;===========================================================================
+; CMD_INIT was received: a debug client has opened a session.
+;
+; Invoked by TRANSPORT_CLIENT_ATTACHED, from cmd_init, BEFORE its show_ui — so
+; the redraw there is the one that draws the line and nothing here repaints on
+; its own account.
+;
+; esp_cmd_id AND NOT esp_conn_id. The two are the same at this instant and stop
+; being so a moment later: esp_cmd_id names the connection whose COMMAND this is
+; (issue #13) and is fixed for as long as CMD_INIT takes to receive, where the
+; live id follows whatever arrives next — a second client's frame included. The
+; session belongs to the client that asked for it.
+; Changes:
+;  AF
+;===========================================================================
+esp_client_attached:
+    ld a,ESP_CLIENT_ATTACHED
+    ld (esp_client_state),a
+    ld a,(esp_cmd_id)
+    ld (esp_session_id),a
+    ld a,1
+    ld (esp_session_valid),a
+    ret
+
+
+;===========================================================================
+; CMD_CLOSE was received: the client closed the session cleanly.
+;
+; THE OBSERVER IS SWITCHED OFF FOR THIS SESSION HERE, and it has to be. A client
+; that says CMD_CLOSE almost always drops its socket a moment afterwards, and
+; the `<id>,CLOSED` that follows would otherwise overwrite "Session closed -
+; CMD_CLOSE" with "Session lost - client gone" — replacing what the client said
+; with a weaker inference about the same event. Bench check N3 is what would go
+; red.
+; Changes:
+;  AF
+;===========================================================================
+esp_client_detached:
+    ld a,ESP_CLIENT_DETACHED
+    ld (esp_client_state),a
+    xor a
+    ld (esp_session_valid),a
+    ret
 
 
 ;===========================================================================

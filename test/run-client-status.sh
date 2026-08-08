@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# The session line on the Next's own screen — issue #14.
+# The session line on the Next's own screen — issues #14 and #23.
 #
-# Invoked by `make test-client-status`. Three headless jnext runs with the WiFi
+# Invoked by `make test-client-status`. Five headless jnext runs with the WiFi
 # ROM installed as the Multiface ROM and an emulated M1 button press, each one
 # putting the stub in a different session state and then reading row 8 of its
 # screen BACK AS TEXT.
@@ -10,6 +10,8 @@
 #   N1  a client connects over TCP and says NOTHING  ->  "No debug session yet."
 #   N2  a client sends CMD_INIT                      ->  "Session opened - CMD_INIT"
 #   N3  ... and then CMD_CLOSE                       ->  "Session closed - CMD_CLOSE"
+#   N4  ... or instead VANISHES, no CMD_CLOSE        ->  "Session lost - client gone"
+#   N5  the same, with the stub back in its idle loop first
 #
 # WHY IT READS THE ROW RATHER THAN COMPARING RUNS. A check that only requires
 # the three screens to differ cannot say which of them is right, and ERRORS.md
@@ -29,11 +31,35 @@
 # what this transport cannot see. N1's client stays connected while the
 # screenshot is taken, so it really is the "connected and silent" state.
 #
+# N4 AND N5 ARE ISSUE #23, and the fourth line is deliberately NOT N1's. Reusing
+# "No debug session yet." would make the state after a vanished client
+# indistinguishable from one where CMD_INIT was never seen at all, so a check
+# for it would go green against a ROM that had simply failed to light the line —
+# mfselect's M9 in a new costume (ERRORS.md). "Session lost - client gone" can
+# only be drawn by having observed the connection go.
+#
+# N5 IS NOT A SECOND COPY OF N4, and the difference is which code redraws the
+# row. N4's client vanishes while the stub sits in cmd_loop, so the scan that
+# meets the `<id>,CLOSED` finds no header afterwards, times out, and reaches
+# drain_main — whose show_ui draws the row. N5's waits for that same wait's bound
+# to expire into main_loop first, where a scan that finds nothing is not an error
+# and drain_main is never reached, so the ONLY thing that can have redrawn the
+# row is esp_refresh_client_line. That is asserted rather than reasoned: N5
+# requires the stub's error area to be CLEAN, which a run that had been through
+# drain_main could not be (it would carry "Last Error: RX Timeout"). Without
+# that line the two runs would exercise one path and claim two.
+#
 # WHAT IT DOES NOT COVER, and the code says the same thing in the same words:
-#   * a client that VANISHES without CMD_CLOSE. Nothing observes that, so N2's
-#     line stands until something else changes it. That is why the line is
-#     phrased as an event that happened rather than as a live state, and closing
-#     it needs `<id>,CONNECT` / `<id>,CLOSED` tracking — M3's reconnect work.
+#   * a client that stops answering WITHOUT its socket closing. The module emits
+#     no line for that, so nothing here can see it — a suspended peer that never
+#     sends FIN or RST is KNOWN-ISSUES.md #2, not this.
+#   * a `<id>,CLOSED` that arrives inside a transport_drain. That reads with raw
+#     `in` and hands the bytes to nobody, so the observer never sees it; the
+#     matching `<id>,CONNECT` when the module hands that id on is what covers it,
+#     and no run here produces the case.
+#   * what the stub DOES about a departed client. Nothing: the observation
+#     touches the session line and none of the transport's own state, on purpose
+#     (esp_line_event). Reconnect and recovery are issues #24 and #25.
 #   * UART mode, which has no connection event at all and deliberately draws
 #     nothing. There is nothing here to test.
 #   * real hardware. This is jnext, like every other bench in this repository.
@@ -180,6 +206,11 @@ mcopy -o -i "$sd@@$part_off" "$FONT_ROM_PATH" "$font" \
     || die "cannot read $FONT_ROM_PATH out of the SD image"
 
 failures=0
+# Counted by one_run rather than written down. The summary line here used to say
+# "3 of 3" whatever had run, and a bench that reports a fixed total is a bench
+# whose next check can go missing without anyone noticing — the same defect
+# run-headless.sh had at five.
+CHECKS=0
 pass() { printf 'PASS  %s\n' "$*"; }
 fail() { printf 'FAIL  %s\n' "$*"; failures=$((failures + 1)); }
 
@@ -268,11 +299,29 @@ read_row() {
     python3 "$SCREENTEXT" --font "$font" "$1" "$2"
 }
 
+# bright_red <png> — how many pixels are EXACTLY bright red.
+#
+# The same instrument run-dzrp-stub.sh's W2 uses, and for a different question:
+# there it is "did the stub report a fault", here it is "which code path
+# redrew the row". ui.asm colours the bottom nine rows RED+BRIGHT and prints
+# "Last Error: ..." into them, and nothing else on this screen is red at all;
+# the border cannot be mistaken for it, because `out (BORDER),a` carries no
+# bright bit. Zero means no error was reported, hence drain_main did not run.
+bright_red() {
+    python3 -c "
+from PIL import Image
+raw = Image.open('$1').convert('RGB').tobytes()
+print(sum(1 for i in range(0, len(raw), 3)
+          if raw[i] == 255 and raw[i+1] == 0 and raw[i+2] == 0))
+"
+}
+
 # ===========================================================================
-# one_run <name> <phase> <expected row 8 text> <why>
+# one_run <name> <phase> <expected row 8 text> <why> [require-clean-error-area]
 # ===========================================================================
 one_run() {
-    local name=$1 phase=$2 expected=$3 why=$4
+    local name=$1 phase=$2 expected=$3 why=$4 clean=${5:-}
+    CHECKS=$((CHECKS + 1))
     local jlog=$OUT/client-status-$name.log
     local shot=$OUT/screenshots/client-status-$name.png
     local cout=$OUT/client-status-$name.client.txt
@@ -349,6 +398,23 @@ one_run() {
         fail "$name row $CLIENT_ROW reads '$got', expected '$expected' (see $shot)"
         return
     fi
+
+    # THE PRECONDITION THAT SAYS WHICH PATH DREW THE ROW, for N5 only. Its
+    # client vanishes with the stub back in main_loop, where a scan that finds
+    # no header is not an error and drain_main is never reached — so a clean
+    # error area is what distinguishes this run from N4's, whose repaint comes
+    # from drain_main's show_ui and which therefore carries "RX Timeout". Read
+    # after the row so that a wrong line is still reported as a wrong line.
+    if [ -n "$clean" ]; then
+        local red
+        red=$(bright_red "$shot")
+        if [ "$red" -gt 0 ]; then
+            fail "$name the stub reported an error ($red bright-red pixels), so this run went through drain_main"
+            return
+        fi
+        pass "$name row $CLIENT_ROW reads '$got', error area clean"
+        return
+    fi
     pass "$name row $CLIENT_ROW reads '$got'"
 }
 
@@ -358,6 +424,10 @@ one_run N2 init "Session opened - CMD_INIT" \
     "a client sends CMD_INIT"
 one_run N3 close "Session closed - CMD_CLOSE" \
     "the same client then sends CMD_CLOSE"
+one_run N4 vanish "Session lost - client gone" \
+    "a client vanishes without CMD_CLOSE, from inside cmd_loop"
+one_run N5 vanish-idle "Session lost - client gone" \
+    "the same, with the stub back in its idle loop" clean
 
 log ""
 if [ "$failures" -ne 0 ]; then
@@ -367,6 +437,6 @@ if [ "$failures" -ne 0 ]; then
     log "  read any row of one with:"
     log "    python3 $SCREENTEXT --font $font $OUT/screenshots/client-status-N2.png 8"
 fi
-log "$(( 3 - failures )) of 3 checks passed"
+log "$(( CHECKS - failures )) of $CHECKS checks passed"
 
 exit "$((failures > 0 ? 1 : 0))"

@@ -461,14 +461,28 @@ strongest:
    `TX_PASSES`, which is what attributes the lost reply to the two waits the fix scopes. Not part
    of `make test`: it binds a host TCP port. **It says nothing about a real ESP-01** — the value 10
    is a judgement call, and only H3/H5 on hardware can settle it.
-4g. **`make test-client-status`** — WiFi mode's session line (issue #14), 3 headless jnext runs,
-   and the **only bench here that reads the screen back as TEXT** rather than comparing it with
+4g. **`make test-client-status`** — WiFi mode's session line (issues #14 and #23), 5 headless jnext
+   runs, and the **only bench here that reads the screen back as TEXT** rather than comparing it with
    another picture. **N1** a client connects over TCP and says nothing: the line must still read
    `No debug session yet.`, because the line reports a DZRP session and a socket is not one — that
    is the honesty check, not a baseline. **N2** after `CMD_INIT` it reads `Session opened
    - CMD_INIT`; **N3** after `CMD_CLOSE` it reads `Session closed - CMD_CLOSE`, with the client
    sending one further command first, because `cmd_close` answers *before* it reaches `show_ui` and
    so its response proves nothing about the screen.
+   **N4 and N5 are issue #23**: the client **vanishes** — drops its socket with no `CMD_CLOSE` —
+   and the line must read `Session lost - client gone`, which the stub can only say because it now
+   watches the module's own `<id>,CLOSED`. **A fourth string and not N1's**, deliberately: reusing
+   `No debug session yet.` would make this state indistinguishable from one where `CMD_INIT` was
+   never seen, so the check would go green against a ROM that had simply failed to light the line —
+   mfselect's M9 again. **N5 is not a second copy of N4**, and the difference is which code redraws
+   the row: N4's client vanishes with the stub inside `cmd_loop`, so the scan that meets the
+   `<id>,CLOSED` finds no header, times out and reaches `drain_main`, whose `show_ui` draws it;
+   N5 waits for that wait's own bound to expire into `main_loop` first, where nothing times out and
+   `drain_main` is never reached, so the only thing that can have drawn it is
+   `esp_refresh_client_line`. That is **asserted rather than reasoned** — N5 requires the error
+   area to be **clean**, which a run through `drain_main` could not be, since it carries
+   `RX Timeout`. Without that line the two runs would exercise one path and claim two.
+   Shown red first: N4 and N5 both red against `main`'s ROM, N1-N3 green in the same run.
    **Why not a cross-run comparison**: the two interesting states are adjacent lines of similar
    length, so **swapping them** is the obvious bug and is exactly what sailed through mfselect's
    first M9 (ERRORS.md). `cell-diff.py`'s answer there — find the correct glyphs elsewhere in the
@@ -479,11 +493,15 @@ strongest:
    The reader is validated **inside each image** before its verdict is used (row 12 must read
    `R = Reset`), and the capture's mtime is checked against the client's own timestamp, so a
    screenshot that came too early reports a harness fault rather than a wrong line.
-   **Scope**: it covers what `CMD_INIT`/`CMD_CLOSE` prove and nothing else. A client that vanishes
-   without `CMD_CLOSE` leaves the line at "opened" — that needs `<id>,CONNECT`/`<id>,CLOSED`
-   tracking, which is M3. **UART mode draws no such line at all**, deliberately: over a cable there
-   is no connection event to observe, so there is nothing here to test. **It says nothing about
-   hardware.**
+   **Scope**: it covers what `CMD_INIT`, `CMD_CLOSE` and the module's `<id>,CLOSED` prove, and
+   nothing else. **NOT covered**: a client that stops answering *without* its socket closing — the
+   module emits no line for that, so nothing can see it (KNOWN-ISSUES.md #2); a `<id>,CLOSED` that
+   lands inside a `transport_drain`, which reads with raw `in` and hands the bytes to nobody; and
+   what the stub *does* about a departed client, which is nothing at all — the observation touches
+   the session line and none of the transport's own state, on purpose, and reconnect and recovery
+   policy are issues #24 and #25. **UART mode draws no such line at all**, deliberately: over a
+   cable there is no connection event to observe, so there is nothing here to test. **It says
+   nothing about hardware.**
 4h. **`make test-no-hang`** — issue #16: waits that end, sends that are not abandoned, and a
    module the stub can bring back up by itself. 4 headless jnext runs, and the **third and fourth**
    benches to move a build-time constant to reach their subject. **N1** the loop as it was

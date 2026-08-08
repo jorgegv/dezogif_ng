@@ -681,10 +681,18 @@ def read_screen_then_close(host, port, timeout, results):
 
     THE CLOSE IS FOR THE MACHINE'S SCREEN. Issue #14's status line reports the
     last session event the stub actually observed, so a bench whose final act
-    is H5's connection leaves a Next reading "Session opened - CMD_INIT" after
-    a completed run — accurate, and confusing to walk up to. It is NOT a check:
-    C15 in the conformance suite already asserts CMD_CLOSE is answered and that
-    the remote serves on afterwards.
+    is H5's connection leaves a Next reporting a session that ended — accurate,
+    and confusing to walk up to. It is NOT a check: C15 in the conformance suite
+    already asserts CMD_CLOSE is answered and that the remote serves on
+    afterwards.
+
+    WHAT IT WOULD SAY WITHOUT THIS CHANGED WITH ISSUE #23, and the reason to
+    keep the close did not. It used to be "Session opened - CMD_INIT", left
+    standing for ever because nothing observed the client go; the stub now
+    watches the module's `<id>,CLOSED` and would read "Session lost - client
+    gone" instead. Both are true statements about a run that finished normally,
+    and neither is what a person walking up to the machine should have to
+    interpret.
 
     THE READ MUST COME FIRST, and not only because the close ends the session:
     `cmd_close` answers and then leaves through `jp main`, which repaints, so a
@@ -850,9 +858,10 @@ def main():
     # Read the screen, then leave the machine saying the session is closed.
     # H3-H5 run AFTER the conformance delegation and each open connections of
     # their own, so the suite's own teardown is not the last thing this bench
-    # does — without this, a completed hardware run leaves the Next reading
-    # "Session opened - CMD_INIT". H6 is taken on the same connection, before
-    # the close repaints.
+    # does — without this, a completed hardware run leaves the Next reporting a
+    # session that ended, which since issue #23 reads "Session lost - client
+    # gone" where it used to read "Session opened - CMD_INIT". H6 is taken on
+    # the same connection, before the close repaints.
     read_screen_then_close(args.host, args.port, args.timeout, results)
 
     total = len(results.rows)

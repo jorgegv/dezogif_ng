@@ -5,6 +5,48 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-08 — H1 closes its connection as a SESSION, not as a socket
+
+**Decided (user) and built.** The hardware bench's first check opened a TCP
+connection, confirmed the socket, and dropped it. That is a TCP event and not a
+DZRP one, so the module emits `<id>,CLOSED`, the idle stub's `cmd_loop` wait
+ends on it, it fails to parse as a `+IPD` header, and `drain_main` paints
+**`Last Error: RX Timeout`** — making the bench's own first act put a fault on
+the screen of a machine with nothing wrong with it. H1 now sends `CMD_INIT` and
+`CMD_CLOSE` on that same connection before it goes.
+
+**CONFIRMED ON REAL HARDWARE, both directions**, on the user's Next, with a
+reader that sends no `CMD_INIT` of its own — because `cmd_init` clears
+`last_error` and would erase the thing being measured:
+
+| what the bench did | the stub's error area, read back over DZRP |
+|---|---|
+| bare connect, drop the socket (**old H1**) | `Last Error:` / `RX Timeout` |
+| `CMD_INIT` then `CMD_CLOSE` (**new H1**) | **empty** |
+
+**That also upgrades an emulator finding to hardware.** MEMORY.md 2026-08-06
+recorded a client disconnect painting `RX Timeout` in jnext, and was careful to
+say it is **not unconditional** — probe A read a clean area after three closes.
+It is now seen on silicon, and the discriminator is visible: what leaves the
+error is a close with **no DZRP session**, which is exactly what the old H1 did.
+
+**THE SAME CONNECTION IS THE FIX, and a second one would not be.** Opening a
+fresh connection to close tidily would leave the first one's bare drop, and the
+error, exactly where they were.
+
+**H1 still FAILS only on the connect**, deliberately. Its subject is "is
+anything listening" and it gates the whole bench — a red H1 skips everything
+below. A stub that accepts TCP but will not speak DZRP is a real finding that
+belongs to H2, which has fifteen checks and a vocabulary for it; failing H1
+instead would skip H2 and report the one thing as the other. So a failed
+`CMD_INIT` here prints and passes, with the verdict line saying to see H2.
+
+**The timing still measures the connect alone**, taken before any DZRP traffic,
+so the number stays comparable with earlier runs.
+
+**Evidence: `make test-hardware NEXT_IP=192.168.100.136` — 6/6 unchanged**,
+15/15 conformance, H6 clean, and H1 now reads *"session opened and closed
+cleanly"*. Test-harness only: no `src/`, no bump.
 ## 2026-08-08 — The whole suite passes on real hardware: 15 of 15
 
 **Measured** (user's own Next, `192.168.100.136`, 12:37), and it retires a

@@ -23,7 +23,9 @@ because it asks the same questions of hardware that it asks of jnext, and gets
 the same answers when everything is fine. This script asks the questions whose
 answers are only interesting on silicon:
 
-  H1  Something is listening on the Next at all.
+  H1  Something is listening on the Next at all — and it then opens and closes a
+      DZRP session, so the bench does not begin by making a healthy Next report
+      an error. See h1_listener.
   H2  DZRP conformance — DELEGATED to conformance.py, not reimplemented.
   H3  The inbound connection id is read rather than assumed, on real firmware.
   H4  Round-trip latency, MEASURED. The plan calls 10-100 ms an "estimate".
@@ -102,7 +104,6 @@ now lives.
 import argparse
 import os
 import re
-import socket
 import statistics
 import subprocess
 import sys
@@ -291,17 +292,56 @@ class Results:
 
 
 def h1_listener(host, port, timeout, results):
-    """A completed TCP handshake, and what it proves is in the module docstring."""
+    """A completed TCP handshake, and what it proves is in the module docstring.
+
+    IT THEN OPENS AND CLOSES A DZRP SESSION ON THE SAME CONNECTION, and that is
+    a fix rather than a flourish. H1 used to connect and drop the socket, which
+    is a TCP event and not a DZRP one: the module emits `<id>,CLOSED`, the stub
+    is idle, and that line ends `cmd_loop`'s wait and then fails to parse as a
+    `+IPD` header — reaching `drain_main`, which paints `Last Error: RX Timeout`
+    on a machine with nothing wrong with it (MEMORY.md 2026-08-06, issue #16).
+    So the first thing a bench run did to a healthy Next was make it report a
+    fault, which is confusing at exactly the moment a reader is deciding whether
+    the machine is well.
+
+    THE SAME CONNECTION IS THE WHOLE POINT. Opening a second one to close
+    tidily would leave the first one's bare drop — and the error — in place.
+
+    THE TIMING STILL MEASURES THE CONNECT ALONE, taken before any DZRP traffic,
+    so the number this row reports means what it always did and stays comparable
+    with earlier runs.
+
+    A FAILED SESSION DOES NOT FAIL H1, deliberately. H1's subject is "is
+    anything listening", and it gates everything below it — a FAIL here skips
+    the rest of the bench. A stub that accepts TCP but will not speak DZRP is a
+    real finding and it belongs to H2, which tests exactly that with fifteen
+    checks and a proper vocabulary for what went wrong. Failing H1 instead would
+    skip H2 and report the one thing as the other.
+    """
     started = time.monotonic()
     try:
-        sock = socket.create_connection((host, port), timeout=timeout)
+        transport = dzrp.TcpTransport(host, port, timeout)
     except OSError as e:
         results.add("H1", FAIL, "no listener on %s:%d after %.1fs — %s" % (
             host, port, time.monotonic() - started, e))
         return False
-    sock.close()
-    results.add("H1", PASS, "connected to %s:%d in %.0f ms" % (
-        host, port, (time.monotonic() - started) * 1000))
+    elapsed_ms = (time.monotonic() - started) * 1000
+
+    d = dzrp.Dzrp(transport, start_byte=None, base_timeout=timeout)
+    try:
+        d.command(dzrp.CMD_INIT, dzrp.init_payload())
+    except (OSError, dzrp.DzrpError) as e:
+        # Reported here rather than interpolated into the verdict: a line whose
+        # length depends on its data cannot be held to the twenty-word budget.
+        print("  (H1: connected, but CMD_INIT was not answered: %s)" % e)
+        d.close()
+        results.add("H1", PASS, "connected to %s:%d in %.0f ms; DZRP did not answer, see H2" % (
+            host, port, elapsed_ms))
+        return True
+
+    dzrp.send_close_quietly(d)
+    results.add("H1", PASS, "connected to %s:%d in %.0f ms, session opened and closed cleanly" % (
+        host, port, elapsed_ms))
     return True
 
 

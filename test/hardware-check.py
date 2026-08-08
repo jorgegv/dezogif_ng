@@ -5,12 +5,15 @@
 
 WHY THIS EXISTS, AND WHY IT IS NOT JUST `make test-dzrp REMOTE=...`.
 
-Nothing in this project has ever run on a ZX Spectrum Next. Every layer of the
-test pyramid — screenshots, files on an SD image, bytes over a socket, and the
-DZRP conformance suite itself — runs inside jnext, and jnext is an emulator of
-the machine rather than the machine. Two of its fictions are known and written
-down: it models **baud as timing only**, so the stub's 115200 would have passed
-at any rate, and its ESP module is **permanently associated**, because jnext
+When this was written nothing in the project had ever run on a ZX Spectrum
+Next — that changed on 2026-08-04, and the whole conformance suite has since
+passed on one (see doc/HARDWARE-TESTING.md). The reason this script exists is
+unchanged: every layer of the test pyramid — screenshots, files on an SD image,
+bytes over a socket, and the DZRP conformance suite itself — CAN run inside
+jnext, and jnext is an emulator of the machine rather than the machine. Two of
+its fictions are known and written down: it models **baud as timing only**, so
+the stub's 115200 would have passed at any rate, and its ESP module is
+**permanently associated**, because jnext
 implements no `AT+CWJAP=` at all. A third is suspected rather than known: jnext
 numbers inbound connection ids from 1 as a consequence of reserving slot 0 for
 outbound, which is a jnext design choice and may not be what the real module
@@ -58,8 +61,10 @@ loaded our `enNextMf.rom` (open question 2 — whether the firmware checksums it
 `nmi66h` accepted the cause; that `MAIN` was relocated into a RAM bank at slot
 7 and is executing; that the core-version check passed; that UART0 came up at a
 rate the real ESP-01 actually answers at; and that the module accepted `ATE0`,
-`AT+CIPMUX=1` and `AT+CIPSERVER=1,11000`. Every one of those is inherited from
-jnext runs today and none of them has been seen on hardware.
+`AT+CIPMUX=1` and `AT+CIPSERVER=1,11000`. When this was written every one of
+those was inherited from a jnext run and none had been seen on hardware; all of
+them have now, many times. What H1 still buys is that it establishes the whole
+chain in ONE observation, so a failure below it has a known-good foundation.
 
 SO IF H1 FAILS, EVERYTHING BELOW IT IS SKIPPED AND SAYS SO. It is not reported
 as five failures. ERRORS.md carries an entry for exactly this mistake — a

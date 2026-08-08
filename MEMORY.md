@@ -107,6 +107,21 @@ that exists nowhere in the VHDL — invented while paraphrasing a correct line
 citation. **A citation is not a quotation**, and the ledger tier is exactly
 where that distinction has to hold.
 
+**AND THE FIX FOR THAT OVERCLAIM MISSED A FIFTH SITE, WHICH IS A NEW AND
+NAMEABLE VARIANT OF THIS FILE'S OLDEST DISEASE.** I reported "reworded in all
+four sites"; the plan's **M2 milestone paragraph** — the most prominent thing
+anyone picking up M2 reads — still said *any* write. It survived two greps, mine
+and the reviewer's first pass, because the other four sites wrote it `**any**`
+and this one wrote it `*any*`: **markdown emphasis defeated the pattern**. The
+enumeration that worked was to grep for the *subject* (`0x62`) and read every
+hit, rather than for the *phrasing* I remembered using. Same for the stale
+`copper.vhd:70-83` citation, which was found by grepping the line range instead
+of the claim.
+
+So the rule this file keeps restating needs one more clause: a correction is not
+finished until a grep says so, **and the grep must be for the thing being
+corrected, not for the words you think you wrote.**
+
 [doc/ASYNCHRONOUS-BREAK-DESIGN.md]: doc/ASYNCHRONOUS-BREAK-DESIGN.md
 
 ---

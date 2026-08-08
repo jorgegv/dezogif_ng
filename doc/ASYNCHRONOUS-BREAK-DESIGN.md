@@ -290,7 +290,7 @@ of a different kind from stolen cycles for anything doing contended-memory or be
   way.
 - **jnext's Copper model has not been checked against this document.** T5 shows the NMI path works;
   nothing here confirms the emulator reproduces the NR `0x62`-restarts-the-list behaviour of
-  `device/copper.vhd:70-83`, which is what §3.2's silent-failure claim rests on. A bench for M2 needs
+  `device/copper.vhd:69-78`, which is what §3.2's silent-failure claim rests on. A bench for M2 needs
   that to be true, or the failure mode cannot be tested headless.
 - **DMA as a third writer of NR `0x02` was not traced.** If a debuggee's DMA channel could target it,
   it would land on the same undifferentiated bus as CPU and Copper. Nobody has raised it; noted so

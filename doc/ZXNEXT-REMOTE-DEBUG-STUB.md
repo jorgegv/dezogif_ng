@@ -814,8 +814,8 @@ blocker it was briefly recorded as; and open question 5b is answered (you cannot
 causes, and a poll-shaped handler does not need to). What the evaluation adds to this milestone is
 two costs the plan did not carry: the Copper list is **write-only**, so enabling the break destroys
 any Copper program the debuggee had, irrecoverably; and the debuggee can switch the break off
-silently — NR `0x06` bit 3, or *any* write of NR `0x62`, which restarts the list
-(`device/copper.vhd:70-83`) — after which **the poll is what would have restored it**, so only a
+silently — NR `0x06` bit 3, or a write of NR `0x62` that **changes** the mode bits, which restarts
+the list (`device/copper.vhd:69-78`) — after which **the poll is what would have restored it**, so only a
 human pressing M1 gets it back. Read §3 and §7 of that document before starting.
 
 ### M3 — Robustness

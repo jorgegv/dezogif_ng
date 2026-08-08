@@ -40,8 +40,8 @@ interrupt mode**. The handler polls the RX FIFO and returns immediately if there
 | Copper `MOVE` to NR `0x02` bit 3 | `nmi_gen_nr_mf` → `nmi_sw_gen_mf` → `nmi_assert_mf` (`zxnext.vhd:3832`, `:3838`, `:2090`) | **yes** |
 | M1 button | `hotkey_m1`, from top-level pin `i_SPKEY_FUNCTION(9)` (`zxnext.vhd:6348`, `:69`) | no — manual |
 | I/O trap on `0x2FFD`/`0x3FFD` | gated on an actual `iord`/`iowr` cycle (`zxnext.vhd:2723-2725`) | no — fires on a debuggee *access*, not on time |
-| UART RX interrupt | `im2_int_source` (`zxnext.vhd:1943`) — the **maskable** INT bus | no — needs the debuggee's IM2 setup |
-| **line / raster interrupt** (NR `0x22`/`0x23`) | `line_int_pulse` → `im2_int_source` (`zxnext.vhd:1944`) | **no — never reaches NMI**, checked specifically |
+| UART RX interrupt | `im2_int_req` (`zxnext.vhd:1941-1944`) — the **maskable** INT bus | no — needs the debuggee's IM2 setup |
+| **line / raster interrupt** (NR `0x22`/`0x23`) | `line_int_pulse` → `im2_int_req` (`zxnext.vhd:1944`) | **no — never reaches NMI**, checked specifically |
 | DMA / CTC interrupt enables | `im2_int_en` / `im2_dma_int_en` only | no |
 | expansion-bus NMI | `i_BUS_NMI_n`, a physical pin (`zxnext.vhd:2089`, `:202`) | no — needs external hardware |
 
@@ -98,10 +98,12 @@ Two independent ways, and the second is worse than it looks:
 - **NR `0x06` bit 3** gates *every* Multiface NMI source, the Copper one included
   (`zxnext.vhd:2090`; written at `:5166`, power-on `'0'` at `:1110`). NextZXOS leaves it set, measured
   2026-08-04, so a guest inherits it — but a debuggee may clear it.
-- **NR `0x62`, on ANY write.** `device/copper.vhd:70-83`: the list pointer is reset to 0 whenever
-  `copper_en_i` *changes* — not merely when it is disabled. A debuggee that selects a different
-  Copper mode, for its own reasons, silently restarts our list from index 0; mode `"00"` stops it
-  outright.
+- **NR `0x62`, whenever the mode bits CHANGE.** `device/copper.vhd:69-78`: the guard is
+  `if last_state_s /= copper_en_i`, and inside it the pointer is reset only when the *new* mode is
+  `"01"` or `"11"`. So a debuggee that switches the Copper to a different running mode silently
+  restarts our list from index 0, and mode `"00"` stops it outright — while a write of NR `0x62`
+  carrying the **same** mode (re-asserting the address bits, say) leaves the pointer alone.
+  Writing the list content through NR `0x60` overwrites ours in place regardless of the mode.
 
 **The bootstrap problem is the real finding.** The plan's mitigation for NR `0x06` bit 3 is to
 "re-assert from the poll". That cannot work for the Copper case and cannot work for either case once
@@ -233,8 +235,9 @@ clean, keeps the ROM at 8192 bytes, and leaves the identity block readable at fi
 The permanent contract is the **file offset**, which is what `tools/mfselect/mfselect.c` parses — not
 the address. `main.asm`'s `ASSERT` enforces exactly the relationship that preserves it, so the
 failure mode is a build error rather than a silently misplaced block. The half grows in 16-byte
-quanta at the cost of one constant, and the debugger half has room for **76** such steps in the
-tighter WiFi build.
+quanta at the cost of one constant, and the debugger half has over a kilobyte of headroom in the
+tighter WiFi build — many such steps, deliberately not counted here, since a count is a thing
+somebody then has to maintain (this file's neighbours carry two entries about exactly that).
 
 ---
 
@@ -252,6 +255,22 @@ which is not Copper-specific.
 Harmless for a periodic poll — the next frame's fire serves — but it means the handler's duration
 directly reduces the poll rate, and a handler that ran longer than a frame would poll at half rate or
 worse.
+
+**CONFIG MODE SUPPRESSES THE POLL WHILE IT IS ACTIVE, and this repository already ships a tool that
+uses config mode.** `zxnext.vhd:2102-2105` clears `nmi_mf`/`nmi_divmmc`/`nmi_expbus` continuously for
+as long as `nr_03_config_mode = '1'`, and `:2156-2157` forces `nmi_state` back to `S_NMI_IDLE` — this
+was established for the *button* case in
+[CONFIG-MODE-ROM-REPLACEMENT.md](CONFIG-MODE-ROM-REPLACEMENT.md) §1.5 and applies identically to a
+Copper-sourced pulse, which nothing had connected until now. `.mfinstall` opens that window twice per
+install, and NextZXOS's own boot ROM load uses it too, so a `MOVE $02,$08` landing inside one is
+silently lost with no makeup event.
+
+It is **self-recovering** — the Copper keeps running, `.mfinstall` never touches NR `0x60`-`0x64`, and
+the next frame's fire is accepted — so the consequence is a poll or two missed, not a dead break. It
+is recorded because "deterministic, and the only jitter is Z80 NMI latency" would otherwise be read
+as stronger than it is. It is **adjacent to, and not a substitute for, the plan's still-open question
+5** (does the poll interact badly with esxdos's NMI menu or DivMMC automap?), which remains
+unanswered.
 
 **Cost is an estimate, not a measurement.** The plan's ~100-200 T-states/frame (≈0.3%) is plausible
 for a fast path but has never been measured, and the current entry path is far larger than that. Two

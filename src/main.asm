@@ -284,8 +284,10 @@ main_end:
 
 ;===========================================================================
 ; ROM identity block. See constants.asm for what it is for and why it lives
-; at the end of the image. Placed with an explicit ORG because its ADDRESS is
-; the contract — everything else here may move, this may not.
+; at the end of the image. Placed with an explicit ORG so that its FILE OFFSET
+; — which is the contract, mfselect reading the file — stays at 0x1FE0. The
+; address itself is derived and may move by 16 if mf_nmi.bin grows past its
+; ALIGN boundary; the ASSERT below is what keeps the two in step.
 ;===========================================================================
     ORG ROM_MAGIC_ADDR
 rom_magic:

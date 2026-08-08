@@ -50,9 +50,22 @@ BUILD_TIME16: equ BUILD_TIME & 0xFFFF
 ;   (the image is mf_nmi.bin, 0x140 bytes, followed by main.bin from 0xE000,
 ;    so offset = 0x140 + address - 0xE000)
 ;
-; NEVER MOVE THIS. Its only value is being in the same place in every release
-; we have ever shipped and will ever ship. A build that cannot fit below it
-; must shrink, which is what the ASSERT in main.asm enforces.
+; THE FILE OFFSET IS THE CONTRACT — NOT THIS ADDRESS. Its only value is being
+; at the same place in the FILE in every release we have ever shipped and will
+; ever ship, because tools/mfselect/mfselect.c reads the file. The address is
+; derived: offset = main_prg_copy + address - 0xE000.
+;
+; So this constant MAY be moved, in one case and only one: if mf_nmi.bin grows
+; past its ALIGN 16 boundary, main_prg_copy moves up 16 and this must move
+; DOWN 16 to keep the offset at 0x1FE0. The ASSERT in main.asm enforces exactly
+; that relationship, so getting it wrong is a build error and never a silently
+; misplaced block. Probed 2026-08-08: +16 with this moved builds clean, the ROM
+; stays 8192 bytes and the block still reads at 0x1FE0.
+;
+; An earlier version of this comment said "NEVER MOVE THIS", which was wrong
+; and sat directly above the constant that M2's entry path may have to move.
+; What is true is that a build which cannot fit below it must shrink.
+; See doc/ASYNCHRONOUS-BREAK-DESIGN.md §4.5.
 ;===========================================================================
 ;   DeZoGiFnG_UART_00A3
 ;   DeZoGiFnG_WIFI_00A3

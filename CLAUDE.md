@@ -179,7 +179,7 @@ the same 16 keeps the file offset at `0x1FE0`**, which is the thing `tools/mfsel
 actually parses. The `ASSERT` in `main.asm` enforces exactly that relationship, so it is a build
 error and never a silently misplaced block. **Probed 2026-08-08**: +16 bytes with the constant moved
 builds clean, the ROM stays 8192 bytes and the block still reads at `0x1FE0`; the WiFi build has
-room for 76 such steps.
+over a kilobyte of headroom, i.e. many such steps.
 
 *(This paragraph previously said the half "CANNOT GROW" and called the address the contract. That was
 wrong and would have told a future session that M2's entry path is blocked when it is not — see

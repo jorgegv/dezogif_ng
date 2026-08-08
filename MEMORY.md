@@ -32,8 +32,10 @@ ports (#9), and just as easy to miss because `ram/dpram2.vhd` *does* offer a
 port-A read; the instantiation throws it away.
 
 **AND THE BREAK CAN BE SWITCHED OFF SILENTLY, WITH NO WAY BACK.** NR `0x06`
-bit 3 gates every MF NMI source, and **any** write of NR `0x62` restarts the
-list from index 0 (`device/copper.vhd:70-83`) — not just a disable. The plan's
+bit 3 gates every MF NMI source, and a write of NR `0x62` that **changes** the
+mode bits restarts the list from index 0 (`device/copper.vhd:69-78`) — not just
+a disable, though not every write either: the guard is `last_state_s /=
+copper_en_i` and the reset sits inside a further test for mode `01`/`11`. The plan's
 mitigation was "re-assert from the poll", and that **cannot work**: once the
 Copper stops, the poll is the thing that would have re-asserted it. Recovery is
 an M1 press, i.e. the button the feature exists to remove. Best-effort, and the
@@ -84,6 +86,26 @@ has a user-visible cost either way; **jnext's Copper model has not been checked
 against the NR `0x62` restart behaviour** the silent-failure claim rests on,
 which a headless M2 bench would need; and DMA as a third writer of NR `0x02` was
 not traced.
+
+**Cost: two source files touched, COMMENTS ONLY, and no `make bump`.** The
+mechanical check lists `src/constants.asm` and `src/main.asm` because the
+byte-budget correction had to reach the two comments that contradicted it —
+`NEVER MOVE THIS` sat directly above the constant M2's entry path may have to
+move, which is precisely the reader it would have misled. So the **certain**
+answer was taken rather than the conservative one, as on 2026-08-07: both ROMs
+hash identically to `main`'s pinned with `build/*.bin` deleted first
+(`b6ab6a13…`, `14c82d7f…`). Comments do not assemble.
+
+**Three review findings, and the one that matters is a lesson this file already
+carries.** A claim of "any write of NR `0x62` restarts the list" reached the
+plan's Appendix A **verified** ledger; the VHDL guards it on the mode bits
+*changing*, and on the new mode being `01`/`11` (`device/copper.vhd:69-78`) —
+and my own document said the correct thing one line below the wrong headline.
+The reviewer also found the two contradicting source comments above, which my
+"corrected in three places" had missed, and a signal name (`im2_int_source`)
+that exists nowhere in the VHDL — invented while paraphrasing a correct line
+citation. **A citation is not a quotation**, and the ledger tier is exactly
+where that distinction has to hold.
 
 [doc/ASYNCHRONOUS-BREAK-DESIGN.md]: doc/ASYNCHRONOUS-BREAK-DESIGN.md
 
@@ -221,7 +243,7 @@ block at file offset `0x1FE0`, which is what mfselect parses — the **address**
 is not the contract, the **offset** is, and the `ASSERT` enforces precisely the
 relationship that preserves it. Probed rather than argued: +16 bytes with the
 constant moved builds clean, the ROM stays 8192 and the block still reads.
-76 such steps are available in the WiFi build. "No longer a free action" stands;
+The WiFi build has over a kilobyte of headroom, i.e. many such steps. "No longer a free action" stands;
 "cannot" was wrong. See [doc/ASYNCHRONOUS-BREAK-DESIGN.md] §4.5.)*
 
 [doc/ASYNCHRONOUS-BREAK-DESIGN.md]: doc/ASYNCHRONOUS-BREAK-DESIGN.md

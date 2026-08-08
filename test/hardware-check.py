@@ -78,9 +78,13 @@ fail for a reason outside its own subject has to say so.
 
 WHAT THIS SCRIPT CANNOT SEE, and none of it is hidden:
 
-  * The Next's screen. Whether the stub drew its UI, whether the error area is
-    clear, and what the core version reads are observations for the human at
-    the machine. doc/HARDWARE-TESTING.md carries them as a checklist.
+  * MOST of the Next's screen. Whether the stub drew its UI at all, and what
+    the core version reads, are observations for the human at the machine, and
+    doc/HARDWARE-TESTING.md carries them as a checklist. **The error area is
+    NOT** — H6 reads it over DZRP and reports the text, which is why a run
+    prints "the error area is CLEAN" rather than asking you to look. This
+    bullet said the whole screen was unreachable until 2026-08-08; it was true
+    when written and H6, added to this same file on 2026-08-06, made it false.
   * THE RESUME PATH IS COVERED, and an earlier version of this comment said it
     was not. This script sends no CMD_CONTINUE of its own — a bare one against
     an unloaded machine is a crash, not a test — but H2 DELEGATES to

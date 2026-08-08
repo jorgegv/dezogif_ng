@@ -14,9 +14,11 @@ jnext, and jnext is an emulator of the machine rather than the machine. Two of
 its fictions are known and written down: it models **baud as timing only**, so
 the stub's 115200 would have passed at any rate, and its ESP module is
 **permanently associated**, because jnext implements no `AT+CWJAP=` at all. A
-third is suspected rather than known: jnext numbers inbound connection ids from
-1 as a consequence of reserving slot 0 for outbound, which is a jnext design
-choice and may not be what the real module does.
+third was suspected when this was written and is now established: jnext numbers
+inbound connection ids from 1, having reserved slot 0 for outbound, and real
+firmware gives the first inbound connection id **0**. Verified indirectly on
+2026-08-04, by the failure it caused — the stub used `esp_conn_id == 0` as its
+"no client" marker and discarded every reply on a real Next.
 
 `make test-dzrp REMOTE=tcp:<ip>:11000` already speaks DZRP to anything, real
 hardware included, and it is the right tool for "are the command handlers
@@ -51,9 +53,10 @@ document claimed otherwise twice. H3 shows that the connection id is READ from
 the `+IPD` header rather than assumed. It does NOT observe what the module's
 ids actually ARE, and no PC-side check can: the headers are consumed by the
 stub, and what reaches this script is DZRP frames with the id already stripped.
-So MEMORY.md's open question — whether real ESP-AT firmware numbers inbound
-connections from 1 as jnext does — is NOT answerable from here, by this bench
-or any successor to it that talks only over the socket.
+So the ids are NOT observable from here, by this bench or any successor to it
+that talks only over the socket. What real firmware numbers them from is
+nevertheless known — the first inbound connection is id 0 — and it was learnt
+the expensive way rather than by a check: see the paragraph at the top.
 
 H1 IS LOAD-BEARING FAR BEYOND ITS ONE LINE OF CODE. A TCP connection that
 completes proves, in a single observation and on real hardware: that tbblue
@@ -741,11 +744,11 @@ def h5_throughput(host, port, timeout, results, nbytes):
     """Bytes per second through a large CMD_LOOPBACK.
 
     Appendix A filed ESP TCP throughput as an ESTIMATE ("tens of KB/s") until
-    this check measured it on 2026-08-05, and the
-    plan works out 115200 baud as roughly 11.5 KB/s, making a 64 KB read about
-    six seconds. A loopback moves the payload TWICE — out and back — so the
-    figure reported here is the round-trip rate, and the one-way rate is
-    stated beside it rather than left for the reader to halve.
+    this check measured it on 2026-08-05, and the plan works out 115200 baud
+    as roughly 11.5 KB/s, making a 64 KB read about six seconds. A loopback
+    moves the payload TWICE — out and back — so the figure reported here is
+    the round-trip rate, and the one-way rate is stated beside it rather than
+    left for the reader to halve.
 
     The size crosses jnext's 2048-byte +IPD split several times over. On
     hardware the module's own framing is whatever it is, which is the point:

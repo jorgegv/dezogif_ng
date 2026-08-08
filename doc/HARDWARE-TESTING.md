@@ -760,6 +760,22 @@ predictions. These are the results.**
 | Inbound connection ids on real firmware | unverified | **verified indirectly: the first client gets id 0.** Not by observation — no PC-side check can see the ids — but by the failure it caused, which is only possible if the id was 0. See the divergence table at the top |
 | The `+IPD` id is read rather than assumed | emulator only | **verified on hardware** — H3, two simultaneous connections, each getting its own payload |
 | DZRP conformance | emulator only | **12 of 12 on hardware** (build 000A). It was 11 of 12 when first run, the red being `CMD_PAUSE` — issue #8, fixed and now re-measured on a Next |
+| **The AltROM patch works on hardware** | C10's `RST 0` breakpoint, which reaches the debugger only through `copy_altrom`'s code at 0x0000, with slot 0 = `ROM_BANK` and the AltROM enabled while the debuggee runs | **verified on hardware** — it was listed as emulator-only until someone followed what H2 actually runs |
+| A command arriving while the stub is answering another survives | **red on hardware, 3 runs of 3** — the `SEND OK` window, which no emulator here can reach | **verified on hardware, 3 runs of 3** (build 000A, issue #11). Median round trip and throughput unchanged by the fix: 11.3-11.5 ms and 6.1-8.2 KB/s against 11.5 ms and 8.3 before it |
+| The debuggee resumes | emulator only | **verified on hardware** — C10/C11 through H2's delegation |
+| The connect string shows a correct address | never read on hardware | **reported on hardware** — correct at **15 characters**, the length the parser used to refuse and one jnext cannot produce |
+
+**The throughput figure deserves reading carefully, because the obvious reading is wrong.** 8.0 KB/s
+sounds far below 115200 baud until you count what actually moved: a loopback carries the payload
+**twice**, so 8192 bytes crossed the wire in 1.01 s. At 8N1 the line itself can carry 11520 bytes/s,
+so the transport achieved **71% of line rate** — the framing and round trips cost the other 29%.
+The wire is the bottleneck, not the `AT+CIPSEND` overhead, which is what makes M3's baud
+negotiation worth doing and roughly bounds what it can win: about 2.5x before the fixed costs
+dominate.
+
+An earlier draft of this section reported that as "about a third of the estimate", by comparing a
+one-way payload figure against a line rate. It is recorded here because the arithmetic error
+pointed at the wrong optimisation.
 
 ## The suite at its full size — measured 2026-08-08 12:37, on a real Next
 
@@ -781,19 +797,3 @@ up to 8.3 KB/s) rather than with the 13.0 ms of 2026-08-05, so the `+IPD` captur
 cost nothing measurable. **The build number was not captured** — the DZRP `PROGRAM_NAME` reports
 upstream's `dezogif v2.2.1`, not our identity block, which is read off the stub's screen. So this
 row cannot be tied to a specific build the way the 000A run can.
-| **The AltROM patch works on hardware** | C10's `RST 0` breakpoint, which reaches the debugger only through `copy_altrom`'s code at 0x0000, with slot 0 = `ROM_BANK` and the AltROM enabled while the debuggee runs | **verified on hardware** — it was listed as emulator-only until someone followed what H2 actually runs |
-| A command arriving while the stub is answering another survives | **red on hardware, 3 runs of 3** — the `SEND OK` window, which no emulator here can reach | **verified on hardware, 3 runs of 3** (build 000A, issue #11). Median round trip and throughput unchanged by the fix: 11.3-11.5 ms and 6.1-8.2 KB/s against 11.5 ms and 8.3 before it |
-| The debuggee resumes | emulator only | **verified on hardware** — C10/C11 through H2's delegation |
-| The connect string shows a correct address | never read on hardware | **reported on hardware** — correct at **15 characters**, the length the parser used to refuse and one jnext cannot produce |
-
-**The throughput figure deserves reading carefully, because the obvious reading is wrong.** 8.0 KB/s
-sounds far below 115200 baud until you count what actually moved: a loopback carries the payload
-**twice**, so 8192 bytes crossed the wire in 1.01 s. At 8N1 the line itself can carry 11520 bytes/s,
-so the transport achieved **71% of line rate** — the framing and round trips cost the other 29%.
-The wire is the bottleneck, not the `AT+CIPSEND` overhead, which is what makes M3's baud
-negotiation worth doing and roughly bounds what it can win: about 2.5x before the fixed costs
-dominate.
-
-An earlier draft of this section reported that as "about a third of the estimate", by comparing a
-one-way payload figure against a line rate. It is recorded here because the arithmetic error
-pointed at the wrong optimisation.

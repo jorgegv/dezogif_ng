@@ -14,7 +14,7 @@ contradiction three documents were carrying.
     H2  PASS  15 of 15 conformance, 0 failed, 0 unsupported
     H3  PASS  two simultaneous connections each got their own payload
     H4  MEAS  20 samples: min 10.8, median 11.2, max 13.4 ms
-    H5  MEAS  4096 bytes in 0.97 s — 8.3 KB/s round trip
+    H5  MEAS  4096 bytes in 0.97 s — 8.3 KB/s round trip, 4.1 KB/s one way
     H6  MEAS  error area CLEAN, 0 bright-red pixels
     3 passed, 0 failed, 3 measured, 0 skipped of 6
 

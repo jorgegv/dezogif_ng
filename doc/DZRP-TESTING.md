@@ -519,17 +519,19 @@ distinction is fine enough to be worth writing down rather than left to be infer
    sentence "every result on this page is jnext's" was true when written and is the reason the
    hardware bench exists.
 
-   **The suite has since grown to 15 checks and HAS been run against a real Next several times**
-   (user, 2026-08-08). Earlier revisions of this page and of
-   [HARDWARE-TESTING.md](HARDWARE-TESTING.md) disagreed about whether the checks added after the
-   12-check run had ever been driven at hardware; that question is closed by the runs since, and the
-   argument is not worth preserving. Individual totals below remain records of the run that produced
-   them.
+   **The suite has since grown to 15 checks, and all 15 have passed on a real Next — 15 of 15,
+   2026-08-08 12:37**, at `192.168.100.136`, with H1-H3 green and H4-H6 measured. Earlier revisions
+   of this page and of [HARDWARE-TESTING.md](HARDWARE-TESTING.md) disagreed about whether the checks
+   added after the 12-check run had ever been driven at hardware; that is settled. Individual totals
+   below remain records of the run that produced them.
 
-4. **C15 has run on hardware**, with the rest of the 15 (user, 2026-08-08). Note also what the real
-   client does with this command: DeZog's `CSpectRemote.disconnect()` sends `CMD_PAUSE` and
-   `CMD_CLOSE`, and the 2026-08-05 tap shows **both answered** on a Next — so the response half had
-   been seen there by a person watching a session before any check covered it.
+4. ~~**C15 has not run on hardware.**~~ **It has**: 2026-08-08, in the 15-of-15 run above, with the
+   Length=1 response and a `CMD_INIT` answered in sync afterwards. Its expectation was that it would
+   pass — `cmd_close` is common code and `hardware-check.py`'s `KNOWN_RED` table is deliberately
+   empty — and it did. Note also what the real client does with this command: DeZog's
+   `CSpectRemote.disconnect()` sends `CMD_PAUSE` and `CMD_CLOSE`, and the 2026-08-05 tap shows
+   **both answered** on a Next, so the response half had been seen by a person watching a session
+   before any check covered it.
 
 ## Two things this established that were not obvious
 

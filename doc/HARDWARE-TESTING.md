@@ -9,10 +9,10 @@ answering another, which is the one thing it demonstrably could not do this morn
 are at the bottom of this page, with the numbers.
 
 **That "12" is the count the suite had on the day, and it has grown since**: C13/C14 (issue #9) and
-C15 (`CMD_CLOSE`) were added afterwards, so H2 now delegates **15** checks, and **the 15-check
-suite has since been run against a real Next several times** (user, 2026-08-08). Read every
-conformance total on this page as a record of the run that produced it, not as the size of the
-suite today — `python3 test/dzrp/conformance.py --help` lists
+C15 (`CMD_CLOSE`) were added afterwards, so H2 now delegates **15** checks — and **the full 15
+have since passed on a real Next: 15 of 15, 2026-08-08 12:37**, see the second results table at the
+bottom of this page. Read every conformance total on this page as a record of the run that produced
+it, not as the size of the suite today — `python3 test/dzrp/conformance.py --help` lists
 what it actually carries.
 
 This page is the procedure for repeating that, and `test/hardware-check.py` is the part a PC can
@@ -760,6 +760,27 @@ predictions. These are the results.**
 | Inbound connection ids on real firmware | unverified | **verified indirectly: the first client gets id 0.** Not by observation — no PC-side check can see the ids — but by the failure it caused, which is only possible if the id was 0. See the divergence table at the top |
 | The `+IPD` id is read rather than assumed | emulator only | **verified on hardware** — H3, two simultaneous connections, each getting its own payload |
 | DZRP conformance | emulator only | **12 of 12 on hardware** (build 000A). It was 11 of 12 when first run, the red being `CMD_PAUSE` — issue #8, fixed and now re-measured on a Next |
+
+## The suite at its full size — measured 2026-08-08 12:37, on a real Next
+
+The run above was 12 checks because that is the size the suite was that day. C13/C14 (issue #9) and
+C15 (`CMD_CLOSE`) were added afterwards, and this is the first recorded run carrying all of them.
+**`192.168.100.136`, 3 passed / 0 failed / 3 measured / 0 skipped of 6.**
+
+| check | result |
+|---|---|
+| **H1** | PASS — connected in **242 ms** |
+| **H2** | PASS — **15 of 15** conformance, 0 failed, 0 unsupported. C13, C14 and C15 included, so every check in the suite has now run on silicon |
+| **H3** | PASS — two simultaneous connections each got their own payload back |
+| **H4** | 20 samples: min **10.8**, median **11.2**, max **13.4 ms** |
+| **H5** | 4096 bytes in **0.97 s** — 8.3 KB/s round trip, 4.1 KB/s one way |
+| **H6** | the error area is **CLEAN**, 0 bright-red pixels on the stub's own screen |
+
+**The latency and throughput agree with the post-issue-#11 measurements** (11.3-11.5 ms median,
+up to 8.3 KB/s) rather than with the 13.0 ms of 2026-08-05, so the `+IPD` capture fix continues to
+cost nothing measurable. **The build number was not captured** — the DZRP `PROGRAM_NAME` reports
+upstream's `dezogif v2.2.1`, not our identity block, which is read off the stub's screen. So this
+row cannot be tied to a specific build the way the 000A run can.
 | **The AltROM patch works on hardware** | C10's `RST 0` breakpoint, which reaches the debugger only through `copy_altrom`'s code at 0x0000, with slot 0 = `ROM_BANK` and the AltROM enabled while the debuggee runs | **verified on hardware** — it was listed as emulator-only until someone followed what H2 actually runs |
 | A command arriving while the stub is answering another survives | **red on hardware, 3 runs of 3** — the `SEND OK` window, which no emulator here can reach | **verified on hardware, 3 runs of 3** (build 000A, issue #11). Median round trip and throughput unchanged by the fix: 11.3-11.5 ms and 6.1-8.2 KB/s against 11.5 ms and 8.3 before it |
 | The debuggee resumes | emulator only | **verified on hardware** — C10/C11 through H2's delegation |

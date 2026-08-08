@@ -5,29 +5,50 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
-## 2026-08-08 — The 15-check suite has run on real hardware; a doc argument closed by fact
+## 2026-08-08 — The whole suite passes on real hardware: 15 of 15
 
-**Reported by the user**, and it retires a contradiction three documents were
-carrying. `make test-hardware` now delegates **15** conformance checks and
-**has been run against a real Next several times**.
+**Measured** (user's own Next, `192.168.100.136`, 12:37), and it retires a
+contradiction three documents were carrying.
 
-**What this corrects.** Four sites said the checks added after the 12-check run
-of 2026-08-05 (C13/C14 from issue #9, C15 from `CMD_CLOSE`) had never been
-driven at hardware: `CLAUDE.md`'s NOT-run list, `doc/HARDWARE-TESTING.md`'s
-top-of-page summary, and two places in `doc/DZRP-TESTING.md`. All four are now
-wrong and all four are fixed.
+    H1  PASS  connected in 242 ms
+    H2  PASS  15 of 15 conformance, 0 failed, 0 unsupported
+    H3  PASS  two simultaneous connections each got their own payload
+    H4  MEAS  20 samples: min 10.8, median 11.2, max 13.4 ms
+    H5  MEAS  4096 bytes in 0.97 s — 8.3 KB/s round trip
+    H6  MEAS  error area CLEAN, 0 bright-red pixels
+    3 passed, 0 failed, 3 measured, 0 skipped of 6
 
-**A forensic paragraph written hours earlier is deleted rather than kept.** An
-independent review had found `doc/DZRP-TESTING.md` claiming "12 of 12 and then
-14 of 14" against `HARDWARE-TESTING.md`'s "never run on silicon", and I removed
-the unsupported half with a careful note about resting on absence of
-corroboration. **The user's answer was that the question is irrelevant** — the
-suite is 15 now and has run — so the argument goes with it. Preserved
-history is worth keeping; a preserved *argument about which of two stale
-sentences was right* is not.
+**THE FIRST RUN CARRYING C13, C14 AND C15.** The 2026-08-05 run was 12 checks
+because that was the suite's size then; #9 added C13/C14 and `CMD_CLOSE` added
+C15 afterwards. Every check in the conformance suite has now executed on
+silicon, which four documents said had not happened.
 
-**Tier: `reported on hardware`** — one reporter, no build numbers, no captured
-artefact, so no result counts are claimed here. Only that the runs happened.
+**What it corrects.** `CLAUDE.md`'s NOT-run list, `doc/HARDWARE-TESTING.md`'s
+summary and two places in `doc/DZRP-TESTING.md` all claimed the newest checks
+had never been driven at a Next. All four are fixed, and
+`doc/HARDWARE-TESTING.md` now carries this run as its own results table beside
+the 2026-08-05 one.
+
+**A FORENSIC PARAGRAPH WRITTEN HOURS EARLIER IS DELETED, and that is the
+process lesson.** A review had found `doc/DZRP-TESTING.md` claiming "12 of 12
+and then 14 of 14" against `HARDWARE-TESTING.md`'s "never run on silicon"; I
+removed the unsupported half and wrote a careful paragraph reconstructing which
+sentence to believe, then asked the user to adjudicate. **The answer was that
+the question was irrelevant** — the suite is 15 now and it runs. Preserved
+*history* earns its place in this file; a preserved *argument about which of two
+stale sentences was right* does not, once a measurement settles it. **When a
+contradiction can be resolved by running the thing, run the thing rather than
+reasoning about which document to trust.**
+
+**The measurements agree with the post-#11 figures**, not with 2026-08-05's:
+median 11.2 ms against 11.3-11.5 then and 13.0 before, 8.3 KB/s against 8.3. So
+the `+IPD` capture fix still costs nothing measurable, now at the suite's full
+size.
+
+**NOT captured: the build number.** DZRP's `PROGRAM_NAME` reports upstream's
+`dezogif v2.2.1`, not our identity block, which is only readable off the stub's
+screen. So this run cannot be tied to a build the way the `000A` one can, and
+the docs say so rather than assuming it was `0012`.
 
 **Cost: documentation only**, no `src/`, no bump.
 

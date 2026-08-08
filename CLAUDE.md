@@ -37,7 +37,9 @@ H3 included; **C10/C11 passed there, so a debuggee was resumed on silicon**; and
 drove the stub — attach, disassemble, registers, memory, single-step, an M1 **manual break** that
 came back `MANUAL_BREAK` with the right `PC` on an uncorrupted stack, clean disconnect, reattach.
 Measured rather than estimated: median **13.0 ms** round trip, 8192 bytes in 1.01 s = **71%** of
-what 115200 8N1 can carry.
+what 115200 8N1 can carry. **The bench has since passed at its full size — 15 of 15 conformance on
+a real Next, 2026-08-08** (`doc/HARDWARE-TESTING.md`), with the median down to 11.2 ms and the
+stub's error area clean.
 
 **What has NOT run on hardware**, stated so "it runs on hardware" is still not over-read:
 `.mfinstall --unload` has never run there, and every ESP timing constant remains a judgement call

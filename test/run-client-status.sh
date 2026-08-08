@@ -49,6 +49,20 @@
 # drain_main could not be (it would carry "Last Error: RX Timeout"). Without
 # that line the two runs would exercise one path and claim two.
 #
+# AND THAT SAME ASSERTION IS WHAT MAKES N5'S ONE MARGIN FAIL SAFELY. Its client
+# waits IDLE_WAIT wall seconds for a bound counted in EMULATED ones — the
+# mismatch this project has been caught by before (W6's SECOND_NMI_FRAMES). The
+# margin is wide, roughly 4x at the rate headless jnext runs at, but it is a
+# margin. If it were ever lost the stub would still be in cmd_loop, the repaint
+# would come from drain_main, and the error area would carry RX Timeout: N5 goes
+# RED. It cannot fail green, which is the only property a margin has to have.
+#
+# IDLE_WAIT is overridable, so that is MEASURED rather than argued and anyone can
+# re-run it: `IDLE_WAIT=0 make test-client-status` puts N5's client back inside
+# cmd_loop, and N5 duly fails with 848 bright-red pixels of "RX Timeout" while
+# its row-8 verdict is still correct. So the clean-area line is what separates
+# the two paths, and it is the only thing that does.
+#
 # WHAT IT DOES NOT COVER, and the code says the same thing in the same words:
 #   * a client that stops answering WITHOUT its socket closing. The module emits
 #     no line for that, so nothing here can see it — a suspended peer that never

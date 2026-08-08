@@ -218,13 +218,13 @@ def connect(host, port, timeout, socket_attempts=20, protocol_attempts=2, budget
     protocol-level stall aborted immediately with every remaining attempt
     unused, while this docstring claimed the retry protected against exactly
     that. It matters most on the target this bench is for. The stub's own RX
-    budget is about 100 ms (`ESP_RX_WAIT` in transport_esp.asm), against a WiFi
-    round trip the plan budgeted at 10-100 ms and this check has since
+    budget is about 100 ms (`ESP_RX_WAIT` in transport_esp.asm), against a
+    WiFi round trip the plan budgeted at 10-100 ms and this check has since
     measured at 10.8-23.6 ms (Appendix A, verified 2026-08-05) — so a jitter
     spike past that budget makes the *stub* reset through `rx_timeout` and
     drop the exchange, which is a transient this must ride out rather than
-    report as
-    a dead machine. Found in review, by measurement rather than by reading.
+    report as a dead machine. Found in review, by measurement rather than by
+    reading.
     """
     if budget is None:
         budget = max(40.0, timeout * 3.0)

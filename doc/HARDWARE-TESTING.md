@@ -9,9 +9,10 @@ answering another, which is the one thing it demonstrably could not do this morn
 are at the bottom of this page, with the numbers.
 
 **That "12" is the count the suite had on the day, and it has grown since**: C13/C14 (issue #9) and
-C15 (`CMD_CLOSE`) were added afterwards, so H2 now delegates **15** checks. The added ones have
-never run on silicon. Read every conformance total on this page as a record of the run that
-produced it, not as the size of the suite today — `python3 test/dzrp/conformance.py --help` lists
+C15 (`CMD_CLOSE`) were added afterwards, so H2 now delegates **15** checks, and **the 15-check
+suite has since been run against a real Next several times** (user, 2026-08-08). Read every
+conformance total on this page as a record of the run that produced it, not as the size of the
+suite today — `python3 test/dzrp/conformance.py --help` lists
 what it actually carries.
 
 This page is the procedure for repeating that, and `test/hardware-check.py` is the part a PC can

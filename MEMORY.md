@@ -5,6 +5,34 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-08 — The 15-check suite has run on real hardware; a doc argument closed by fact
+
+**Reported by the user**, and it retires a contradiction three documents were
+carrying. `make test-hardware` now delegates **15** conformance checks and
+**has been run against a real Next several times**.
+
+**What this corrects.** Four sites said the checks added after the 12-check run
+of 2026-08-05 (C13/C14 from issue #9, C15 from `CMD_CLOSE`) had never been
+driven at hardware: `CLAUDE.md`'s NOT-run list, `doc/HARDWARE-TESTING.md`'s
+top-of-page summary, and two places in `doc/DZRP-TESTING.md`. All four are now
+wrong and all four are fixed.
+
+**A forensic paragraph written hours earlier is deleted rather than kept.** An
+independent review had found `doc/DZRP-TESTING.md` claiming "12 of 12 and then
+14 of 14" against `HARDWARE-TESTING.md`'s "never run on silicon", and I removed
+the unsupported half with a careful note about resting on absence of
+corroboration. **The user's answer was that the question is irrelevant** — the
+suite is 15 now and has run — so the argument goes with it. Preserved
+history is worth keeping; a preserved *argument about which of two stale
+sentences was right* is not.
+
+**Tier: `reported on hardware`** — one reporter, no build numbers, no captured
+artefact, so no result counts are claimed here. Only that the runs happened.
+
+**Cost: documentation only**, no `src/`, no bump.
+
+---
+
 ## 2026-08-08 — M2 is feasible, is the only mechanism, and costs the debuggee its Copper
 
 **Evaluated before writing any code** (user's ask), and written up as

@@ -39,10 +39,9 @@ came back `MANUAL_BREAK` with the right `PC` on an uncorrupted stack, clean disc
 Measured rather than estimated: median **13.0 ms** round trip, 8192 bytes in 1.01 s = **71%** of
 what 115200 8N1 can carry.
 
-**What has NOT run on hardware**, stated so "it runs on hardware" is still not over-read: the
-conformance suite has grown to **15** checks since that run, and the newest have never been driven
-at a Next; `--unload` in `.mfinstall` has never run there; and every ESP timing constant remains a
-judgement call that only a real module can settle. The reset path of issue #26 **was** confirmed
+**What has NOT run on hardware**, stated so "it runs on hardware" is still not over-read:
+`.mfinstall --unload` has never run there, and every ESP timing constant remains a judgement call
+that only a real module can settle. The reset path of issue #26 **was** confirmed
 there (2026-08-07, build `00.12`), the press-while-stopped half of it was not.
 
 It is deployed by replacing `machines/next/enNextMf.rom` on the Next's SD card — the stub *is* the

@@ -519,24 +519,17 @@ distinction is fine enough to be worth writing down rather than left to be infer
    sentence "every result on this page is jnext's" was true when written and is the reason the
    hardware bench exists.
 
-   **THE "AND THEN 14 OF 14" THIS LINE USED TO CARRY IS UNSUPPORTED AND HAS BEEN REMOVED.** It
-   contradicted [HARDWARE-TESTING.md](HARDWARE-TESTING.md), whose top-of-page summary says C13/C14
-   and C15 "have never run on silicon" — and that sentence is the later of the two, written the same
-   day. Nothing anywhere corroborates a 14-check hardware run: no build number, no date, no
-   measurements, and `MEMORY.md`'s entry for issue #9, which added C13/C14, records only a
-   *prediction* of what a Next would show. Every other hardware **conformance-run count** here is
-   cited with a build number — `000A`, `000B`, `00.12` — and this one carries no date, no build and
-   no measurement at all. (Some hardware claims of other kinds do carry a date without a build
-   number, so the comparison is to the same class of claim, not to all of them.) Found by review, 2026-08-08, while checking a `CLAUDE.md` paragraph
-   whose accuracy depends on which of the two is right. **If somebody does remember running the suite
-   at 14, restore the claim WITH its build number** — this removal rests on absence of corroboration,
-   which is weaker than a measurement in either direction.
-4. **C15 has not run on hardware.** It is expected to pass there — `cmd_close` is common code and
-   `test/hardware-check.py`'s `KNOWN_RED` table is deliberately empty, so nothing excuses it — but
-   the next hardware run is 15 checks, not 14, and that is where it gets measured. Note what the
-   real client does with this command: DeZog's `CSpectRemote.disconnect()` sends `CMD_PAUSE` and
-   `CMD_CLOSE`, and the 2026-08-05 tap shows **both answered** on a Next, so the response half has
-   in fact been seen there — by a person watching a session, not by a check.
+   **The suite has since grown to 15 checks and HAS been run against a real Next several times**
+   (user, 2026-08-08). Earlier revisions of this page and of
+   [HARDWARE-TESTING.md](HARDWARE-TESTING.md) disagreed about whether the checks added after the
+   12-check run had ever been driven at hardware; that question is closed by the runs since, and the
+   argument is not worth preserving. Individual totals below remain records of the run that produced
+   them.
+
+4. **C15 has run on hardware**, with the rest of the 15 (user, 2026-08-08). Note also what the real
+   client does with this command: DeZog's `CSpectRemote.disconnect()` sends `CMD_PAUSE` and
+   `CMD_CLOSE`, and the 2026-08-05 tap shows **both answered** on a Next — so the response half had
+   been seen there by a person watching a session before any check covered it.
 
 ## Two things this established that were not obvious
 

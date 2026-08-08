@@ -19,7 +19,10 @@ server and speaks DZRP through it (`src/transport_esp.asm`). A DZRP client talks
 under jnext and gets correct answers: `make test-dzrp-stub`. The two ROMs now also **draw different
 screens**: WiFi mode reports the ESP's own baud rate and the address to connect to
 (`AT+CIFSR` → `Connect at <ip>:11000`) where UART mode keeps upstream's cable baud rate and
-joy-port selector. What is **not** built yet is M2's asynchronous break.
+joy-port selector. What is **not** built yet is M2's asynchronous break — **evaluated 2026-08-08
+before any code, and the evaluation changed its shape**: it is feasible and must be **opt-in**,
+because the Copper instruction list is write-only and enabling the break therefore destroys any
+Copper program the debuggee had. See @doc/ASYNCHRONOUS-BREAK-DESIGN.md.
 
 **It has now run on a real ZX Spectrum Next**, 2026-08-04 — the stub takes the M1 NMI and paints
 its UI on core 03.02.01, and mfselect installed it. That single evening found **two bugs no
@@ -28,9 +31,19 @@ a connection id of 0 (jnext numbers from 1, real ESP-AT from 0) that made the st
 reply, and a 15-character IP address (jnext's is 12) that the connect-string parser refused. See
 MEMORY.md and ERRORS.md.
 
-**What has NOT run on hardware is a DZRP session.** The listener comes up and answers a TCP
-connect; no client has yet completed the conformance suite against a Next, and nothing has resumed
-a debuggee there. Do not read "it runs on hardware" as more than the entry path.
+**A FULL DZRP SESSION HAS SINCE RUN ON HARDWARE**, and this paragraph said the opposite until
+2026-08-08. On 2026-08-05 a real Next answered **12 of 12** conformance checks at build `000A`,
+H3 included; **C10/C11 passed there, so a debuggee was resumed on silicon**; and **DeZog itself**
+drove the stub — attach, disassemble, registers, memory, single-step, an M1 **manual break** that
+came back `MANUAL_BREAK` with the right `PC` on an uncorrupted stack, clean disconnect, reattach.
+Measured rather than estimated: median **13.0 ms** round trip, 8192 bytes in 1.01 s = **71%** of
+what 115200 8N1 can carry.
+
+**What has NOT run on hardware**, stated so "it runs on hardware" is still not over-read: the
+conformance suite has grown to **15** checks since that run, and the newest have never been driven
+at a Next; `--unload` in `.mfinstall` has never run there; and every ESP timing constant remains a
+judgement call that only a real module can settle. The reset path of issue #26 **was** confirmed
+there (2026-08-08, build `00.12`), the press-while-stopped half of it was not.
 
 It is deployed by replacing `machines/next/enNextMf.rom` on the Next's SD card — the stub *is* the
 Multiface ROM. The PC-side client is **DeZog** in VS Code, speaking **DZRP**.
@@ -262,10 +275,21 @@ strongest:
      2026-08-07): reset→NMI re-initialises the debugger repeatably, and — the half **no bench here
      presently covers** — a press with the stub *already up* correctly does **nothing** while `R`
      still works, so both arms of the discriminator were seen on silicon. `reported on hardware`:
-     one machine, one reporter, no re-runnable artefact. That second arm is **coverable headless
-     and simply is not covered**: measured in review, a second `--delayed-nmi-frames` press with no
-     reset between leaves the screen byte-identical (0.00%), so it is a follow-up rather than an
-     impossibility — which is what an earlier draft of this line called it.
+     one machine, one reporter, no re-runnable artefact.
+     **T7 TESTS ONE ARM OF THAT GUARD, AND THE OTHER IS THE ONE M2 IS ABOUT TO EDIT.** The
+     dispatch branches on the bank slot 7 held: not `MAIN_BANK` → re-initialise, which is T7;
+     `MAIN_BANK` → decline, because the debugger itself was executing. A regression that sent
+     *every* press to `init_main_bank` would destroy live debug sessions and **T7 would still
+     pass** — and teaching `nmi66h` to accept a software cause, M2's first act, touches exactly
+     this code. The decline arm is currently guarded by one hardware observation and nothing else.
+     **It is coverable headless and simply is not covered**: measured in review, a second
+     `--delayed-nmi-frames` press with no reset between leaves the screen byte-identical (0.00%).
+     What stops that being a check on its own is that **"nothing changed" is also what a machine
+     that HUNG on the press looks like** — the stub's screen is already painted and a wedged Z80
+     repaints nothing, which is ERRORS.md's "the screen changed is not the stub took over" in its
+     mirror image. It needs a **liveness control**: on hardware `R` supplied that for free, and the
+     headless equivalent is `test-no-hang`'s N1/N2 trick — press a key the stub polls and judge the
+     **border**, which is yellow when `main_loop` was never reached and black when it was.
    Screen comparison is a **percentage of differing pixels** (`test/screen-diff.py`), not a byte
    compare: NextZXOS idling changes 0.01% of the screen and that once produced a false PASS.
 4. **`make test-mfselect`** — the mfselect bench, 6 headless runs, 10 checks, asserting on files

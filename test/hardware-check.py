@@ -5,19 +5,18 @@
 
 WHY THIS EXISTS, AND WHY IT IS NOT JUST `make test-dzrp REMOTE=...`.
 
-When this was written nothing in the project had ever run on a ZX Spectrum
-Next — that changed on 2026-08-04, and the whole conformance suite has since
-passed on one (see doc/HARDWARE-TESTING.md). The reason this script exists is
+When this was written nothing in the project had ever run on a ZX Spectrum Next
+— that changed on 2026-08-04, and the whole conformance suite has since passed
+on one (see doc/HARDWARE-TESTING.md). The reason this script exists is
 unchanged: every layer of the test pyramid — screenshots, files on an SD image,
 bytes over a socket, and the DZRP conformance suite itself — CAN run inside
 jnext, and jnext is an emulator of the machine rather than the machine. Two of
 its fictions are known and written down: it models **baud as timing only**, so
 the stub's 115200 would have passed at any rate, and its ESP module is
-**permanently associated**, because jnext
-implements no `AT+CWJAP=` at all. A third is suspected rather than known: jnext
-numbers inbound connection ids from 1 as a consequence of reserving slot 0 for
-outbound, which is a jnext design choice and may not be what the real module
-does.
+**permanently associated**, because jnext implements no `AT+CWJAP=` at all. A
+third is suspected rather than known: jnext numbers inbound connection ids from
+1 as a consequence of reserving slot 0 for outbound, which is a jnext design
+choice and may not be what the real module does.
 
 `make test-dzrp REMOTE=tcp:<ip>:11000` already speaks DZRP to anything, real
 hardware included, and it is the right tool for "are the command handlers

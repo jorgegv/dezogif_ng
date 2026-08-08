@@ -49,6 +49,13 @@ to work.
   start of every session; add to it after any architecture/logic/format decision.
 - **@ERRORS.md** — approaches that failed and the fix. Check it before attempting anything it
   covers; add to it whenever something takes more than two attempts to work.
+- **@doc/ASYNCHRONOUS-BREAK-DESIGN.md** — M2 (issue #22), evaluated 2026-08-08 **before any code
+  exists**. Verdict: feasible and it should be **opt-in**, because the Copper instruction list is
+  write-only and so enabling asynchronous break **destroys** any Copper program the debuggee had.
+  It answers the plan's open question 5b (a Copper-caused NMI cannot be distinguished from a
+  CPU-caused one — and a poll-shaped handler does not need to), establishes that the Copper is the
+  **only** periodic NMI source on the machine, and carries the NR `0x02` read-modify-write reset
+  landmine. Read §3 and §7 before starting M2.
 - **@KNOWN-ISSUES.md** — faults that are real, reproduced, understood and deliberately **WONTFIX**,
   each with what causes it, what does *not*, what to do about it, and what would reopen it. Read it
   before investigating odd behaviour on hardware: two of the states it describes look exactly like
@@ -164,14 +171,22 @@ DeZoGiFnG_UART_0001      DeZoGiFnG_WIFI_0001
 `ERRORS.md`. Anything asking "is this ROM ours?" matches the `DeZoGiFnG_` prefix and the variant
 field, and **never the build number**, which changes and is only ever displayed.
 
-**THAT CONTRACT MEANS THE MF ROM HALF CANNOT GROW, AND AS OF ISSUE #26 IT IS EXACTLY FULL.**
-`mf_nmi.bin` is `ALIGN 16`-ed to 320 bytes (`0x140`), the ROM is that followed by `main.bin`, and
-the block's file offset is `0x140 + (0xFEA0 - 0xE000)` — so a single byte over the boundary moves
-`main_prg_copy` to `0x150`, moves the block to `0x1FF0`, and breaks the offset. There is no
-padding left to absorb it: the `ASSERT` in `main.asm` is what catches this, and it fires at
-assembly time rather than shipping a ROM mfselect cannot parse. The debugger half (`main.bin`)
-has ~1.2 KB free and is not affected; this is a constraint on `mf_rom.asm` alone, which is why
-issue #26's second fix put its one byte of state in **MF RAM**, where it costs no ROM at all.
+**AS OF ISSUE #26 THE MF ROM HALF IS EXACTLY FULL — AND IT GROWS IN 16-BYTE STEPS, WHICH AN EARLIER
+VERSION OF THIS PARAGRAPH DENIED.** `mf_nmi.bin` is `ALIGN 16`-ed to 320 bytes (`0x140`), the ROM is
+that followed by `main.bin`, and the block's file offset is `0x140 + (0xFEA0 - 0xE000)` = `0x1FE0`.
+One byte over the boundary moves `main_prg_copy` to `0x150` — **and moving `ROM_MAGIC_ADDR` down by
+the same 16 keeps the file offset at `0x1FE0`**, which is the thing `tools/mfselect/mfselect.c`
+actually parses. The `ASSERT` in `main.asm` enforces exactly that relationship, so it is a build
+error and never a silently misplaced block. **Probed 2026-08-08**: +16 bytes with the constant moved
+builds clean, the ROM stays 8192 bytes and the block still reads at `0x1FE0`; the WiFi build has
+room for 76 such steps.
+
+*(This paragraph previously said the half "CANNOT GROW" and called the address the contract. That was
+wrong and would have told a future session that M2's entry path is blocked when it is not — see
+[doc/ASYNCHRONOUS-BREAK-DESIGN.md](doc/ASYNCHRONOUS-BREAK-DESIGN.md) §4.5. What remains true is that
+growth is not free: it costs 16 bytes of the debugger half and a deliberate edit to a constant that
+guards a permanent contract, which is why issue #26's second fix still put its one byte of state in
+**MF RAM**, where it costs no ROM at all.)*
 
 **The block stores four BARE hex digits; every place a person reads the number shows `NN.NN`**
 — high byte, dot, low byte (issue #20). So the ROM above is `00.01` on the debugger's banner and

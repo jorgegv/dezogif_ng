@@ -5,6 +5,90 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-08 — M2 is feasible, is the only mechanism, and costs the debuggee its Copper
+
+**Evaluated before writing any code** (user's ask), and written up as
+[doc/ASYNCHRONOUS-BREAK-DESIGN.md]. **Verdict: buildable, and OPT-IN rather
+than default.** The evaluation moved three things and added two.
+
+**ANSWERED — open question 5b, which the plan said to settle before writing
+M2's entry path: a Copper-caused NMI CANNOT be told from a CPU-caused one.**
+`zxnext.vhd:4775-4777` muxes both onto one bus with no tag before
+`nmi_gen_nr_mf` computes, and the latch is one untagged bit; nothing in NR
+`0x02`, NR `0xC0`, NR `0xDA`, `nmi_state` or `device/multiface.vhd` records a
+source. **But the question presumed a need the design does not have**: if the
+handler's contract is "poll, and break only if there is traffic", a debuggee's
+own write costs one wasted poll. Shape the entry path around the poll and the
+impossibility stops mattering. That reframing is the decision; the VHDL is just
+the fact.
+
+**THE COST THE PLAN UNDERSTATED: the Copper list is WRITE-ONLY.** Both
+instruction RAMs discard their CPU-side read output (`data_a_o => open`,
+`zxnext.vhd:3959-3976`, `:3980-3998`) and NR `0x60`/`0x63` have no read decode
+(`:6286-6287`). So the debugger cannot save and restore a debuggee's Copper
+program — installing ours **destroys** it. "Consumes the Copper, which the
+debuggee may want" is now struck in §4.3. The same asymmetry as the sprite
+ports (#9), and just as easy to miss because `ram/dpram2.vhd` *does* offer a
+port-A read; the instantiation throws it away.
+
+**AND THE BREAK CAN BE SWITCHED OFF SILENTLY, WITH NO WAY BACK.** NR `0x06`
+bit 3 gates every MF NMI source, and **any** write of NR `0x62` restarts the
+list from index 0 (`device/copper.vhd:70-83`) — not just a disable. The plan's
+mitigation was "re-assert from the poll", and that **cannot work**: once the
+Copper stops, the poll is the thing that would have re-asserted it. Recovery is
+an M1 press, i.e. the button the feature exists to remove. Best-effort, and the
+user documentation has to say so.
+
+**No fallback exists, which raises the stakes on accepting those costs.** Every
+other candidate was traced to where it lands: the line interrupt (NR
+`0x22`/`0x23`), the UART RX interrupt and the DMA/CTC sources all terminate in
+the **maskable** INT bus and never reach `nmi_activated`; the I/O trap fires on
+a debuggee access rather than on time; the expansion-bus NMI needs hardware
+plugged in. **The Copper is the only periodic NMI source on the machine.**
+
+**A landmine found on the way, and upstream's code survives it by one mask.**
+NR `0x02` bits 1:0 *written* trigger a soft/hard reset (`zxnext.vhd:6370-6371`)
+while *read* they are reset history and are non-zero in ordinary operation
+(`:1306`, `:1732-1739`). The handler clears the cause latch every frame, so
+read-modify-write of that register would reset the machine 50 times a second.
+`nmi66h`'s existing `and 10000000b` is what prevents it — **load-bearing, and
+M2 must not lose it**.
+
+**A CLAIM OF MINE FROM YESTERDAY, CORRECTED BY EXPERIMENT.** I recorded that
+the MF ROM half "cannot grow". It grows in 16-byte steps: moving
+`ROM_MAGIC_ADDR` down by the same 16 keeps the identity block at file offset
+`0x1FE0`, and **the offset is the contract, not the address** — mfselect parses
+the file. Probed: builds clean, ROM still 8192, block still readable, 76 steps
+available in the WiFi build. Left standing, that claim would have told the next
+session M2's entry path was blocked when it is not. Corrected in place in
+CLAUDE.md and beside the original here.
+
+**Two things this hands M2 for free, both from #26.** `MF.nmi_slot7` is exactly
+the state the poll's exit needs — the poll fires while the *debuggee* runs, so
+unlike the existing immediate return it must restore slot 7, and getting that
+wrong is #26 again. And MF RAM is established as the place for NMI-entry state
+that must be readable before `MAIN_BANK` is paged in, which is where the
+"is a debuggee running" flag belongs.
+
+**Rejected.** Making async break default (it destroys the Copper silently);
+using the UART RX interrupt as the poll (it is maskable and depends on the
+debuggee's IM2 setup — the plan already ranks it third, and the trace confirms
+why); trying to preserve the debuggee's Copper list (there is no read path, so
+this is not a trade-off but an impossibility); leaving 5b open (it is answerable
+and the answer changes the design's shape).
+
+**NOT ESTABLISHED, and §6 of the document says so at length.** No M2 code
+exists; the ~0.3%/frame figure is unmeasured and the current entry path is 82
+instructions, far larger; the unsolicited-`+IPD` decision in §4.3 is unmade and
+has a user-visible cost either way; **jnext's Copper model has not been checked
+against the NR `0x62` restart behaviour** the silent-failure claim rests on,
+which a headless M2 bench would need; and DMA as a third writer of NR `0x02` was
+not traced.
+
+[doc/ASYNCHRONOUS-BREAK-DESIGN.md]: doc/ASYNCHRONOUS-BREAK-DESIGN.md
+
+---
+
 ## 2026-08-07 — The reset path is fixed ON A REAL NEXT, and the run tested both arms
 
 **Measured, not decided** (user's own machine, build `00.12`), and it closes
@@ -129,6 +213,18 @@ one takes it to **0**. One byte more moves `main_prg_copy` to `0x150` and the
 block to `0x1FF0`. `main.asm`'s `ASSERT` catches it at assembly time, so the
 failure is loud — but "add a check to `nmi66h`" is no longer a free action, and
 that is now in CLAUDE.md §Building beside the contract it protects.
+
+*(**CORRECTED 2026-08-08, and the correction matters because this paragraph
+would otherwise have blocked M2.** It reads as though the half cannot grow at
+all. It can: moving `ROM_MAGIC_ADDR` down by the same 16 keeps the identity
+block at file offset `0x1FE0`, which is what mfselect parses — the **address**
+is not the contract, the **offset** is, and the `ASSERT` enforces precisely the
+relationship that preserves it. Probed rather than argued: +16 bytes with the
+constant moved builds clean, the ROM stays 8192 and the block still reads.
+76 such steps are available in the WiFi build. "No longer a free action" stands;
+"cannot" was wrong. See [doc/ASYNCHRONOUS-BREAK-DESIGN.md] §4.5.)*
+
+[doc/ASYNCHRONOUS-BREAK-DESIGN.md]: doc/ASYNCHRONOUS-BREAK-DESIGN.md
 
 **Evidence: bench check W6, a sixth run of `make test-dzrp-stub`, shown red
 first — and the red is the trace turned into a measurement.**

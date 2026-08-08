@@ -461,7 +461,7 @@ strongest:
    `TX_PASSES`, which is what attributes the lost reply to the two waits the fix scopes. Not part
    of `make test`: it binds a host TCP port. **It says nothing about a real ESP-01** — the value 10
    is a judgement call, and only H3/H5 on hardware can settle it.
-4g. **`make test-client-status`** — WiFi mode's session line (issues #14 and #23), 5 headless jnext
+4g. **`make test-client-status`** — WiFi mode's session line (issues #14 and #23), 6 headless jnext
    runs, and the **only bench here that reads the screen back as TEXT** rather than comparing it with
    another picture. **N1** a client connects over TCP and says nothing: the line must still read
    `No debug session yet.`, because the line reports a DZRP session and a socket is not one — that
@@ -483,6 +483,20 @@ strongest:
    area to be **clean**, which a run through `drain_main` could not be, since it carries
    `RX Timeout`. Without that line the two runs would exercise one path and claim two.
    Shown red first: N4 and N5 both red against `main`'s ROM, N1-N3 green in the same run.
+   **N6 is the only check here judged over the SOCKET rather than off the screen, and it is about
+   memory rather than text.** N5's repaint is autonomous and network-triggered, and it writes at
+   `0x4000` — which is the display file only while the debugger's own **MMU slot 2** is mapped
+   there. `CMD_SET_SLOT 2,<bank>` is an ordinary DZRP command that retargets it, so N6 is N5 with
+   one command in between: a 2 KB probe is parked where row 8's eight scanlines land, the client
+   vanishes, and the probe must read back **unchanged** over a fresh connection. Its **third**
+   outcome is a precondition and not a verdict: all-zeros means `show_ui`'s `MEMCLEAR` reached that
+   bank, i.e. the run went through `drain_main` and never stood in the state under test — which is
+   why the probe contains no zero byte and why the second connection sends no `CMD_INIT` (that
+   would put bank 10 back). **Shown red against this branch's own first commit**, which has the
+   writer and not the guard: `96 of 2048 bytes changed, first at 0x4908`. **The first version of
+   N6 was 32 bytes at `0x4800` and passed against that same ROM** — scanline 0 is the one scanline
+   two text strings cannot differ on, because the top row of essentially every ZX glyph is blank.
+   Measured against the font, not reasoned.
    **Why not a cross-run comparison**: the two interesting states are adjacent lines of similar
    length, so **swapping them** is the obvious bug and is exactly what sailed through mfselect's
    first M9 (ERRORS.md). `cell-diff.py`'s answer there — find the correct glyphs elsewhere in the

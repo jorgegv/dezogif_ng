@@ -779,6 +779,19 @@ esp_ui_dirty:       defb 0
 ; painted over a stopped debuggee's display.
 esp_ui_shown:       defb 0
 
+; The 8K bank MMU slot 2 held the last time we drew that row, i.e. the bank
+; 0x4000 MEANT then. Read back from NR 0x52 at draw time and compared against
+; NR 0x52 again before any redraw — see esp_refresh_client_line, where it is the
+; guard that stops a redraw becoming a write into somebody else's memory.
+;
+; CAPTURED RATHER THAN A CONSTANT, and not for tidiness. cmd_init writes bank 10
+; there (commands.asm), so `cp 10` would work today — and it would be this file
+; encoding a fact that lives in another one, which is how two renderings of one
+; number drift apart. What is actually wanted is "the window still points where
+; it pointed when the row was drawn", and that is answerable without knowing
+; which bank it was.
+esp_ui_bank:        defb 0
+
 ; Which state's string is currently ON the row. Not the same question as
 ; esp_client_state, which is what the row SHOULD say, and the two differ for
 ; exactly as long as esp_ui_dirty is set. It exists because ula.print_char XORs:
@@ -1512,8 +1525,8 @@ esp_read_scan:
 ;  A and HL unchanged. The flags are not preserved: esp_read_scan re-tests the
 ;  byte immediately afterwards.
 ; Changes:
-;  F, D  (esp_read_scan already declares BC and DE, so this is inside its
-;  contract; it is stated narrowly because that is what is true)
+;  F, C, DE  (D carries the byte; esp_read_scan already declares BC and DE, so
+;  this is inside its contract)
 ;===========================================================================
 esp_watch_line:
     push af
@@ -1554,7 +1567,37 @@ esp_watch_line:
 .want_comma:
     ld a,d
     cp ','
-    jr nz,.first
+    jr z,.have_comma
+
+    ; A FURTHER DIGIT IS ACCUMULATED, NOT A RESTART, so that nothing here encodes
+    ; how many digits an id has. ESP-AT numbers connections 0-4 and jnext 1-4, so
+    ; "10,CONNECT" cannot arrive today — and MEMORY.md 2026-08-05 is explicit
+    ; that no value of a connection id is special and that this transport must
+    ; "encode nothing anywhere about its range, its first value or how the module
+    ; allocates it". That entry exists because a reserved id cost a hardware
+    ; evening; taking only the last digit would be the same assumption wearing a
+    ; parser's clothes. esp_read_decimal, which parses the id in a real `+IPD`
+    ; header, already accumulates and already refuses what will not fit a byte —
+    ; this is the same rule in the same file.
+    ld a,d
+    sub '0'
+    cp 10
+    jr nc,.first            ; not a digit at all: it may start a new line
+    ld e,a
+    ld a,(esp_line_id)
+    cp 26                   ; anything larger cannot survive the *10 below
+    jr nc,.reset
+    add a,a                 ; x2
+    ld c,a
+    add a,a                 ; x4
+    add a,a                 ; x8
+    add a,c                 ; x10
+    add a,e
+    jr c,.reset             ; ...nor the final digit
+    ld (esp_line_id),a
+    jr .out
+
+.have_comma:
     ld a,2
     ld (esp_line_state),a
     jr .out
@@ -3074,6 +3117,17 @@ esp_show_status:
 ;  AF, BC, DE, HL
 ;===========================================================================
 esp_show_client_line:
+    ; WHAT 0x4000 MEANS RIGHT NOW, recorded so that a later redraw can check it
+    ; has not changed. Taken here because this is reached from show_ui, which has
+    ; just MEMCLEARed the screen through that same window — so whatever slot 2
+    ; holds at this instant is, demonstrably, the memory the UI is being drawn
+    ; into. NR 0x50-0x57 read back the live MMU registers (zxnext.vhd:6059-6081,
+    ; returning the same MMUn that decodes CPU addresses at :2952-2964), which is
+    ; a mechanism this stub already uses — send_ntf_pause reads a slot's bank the
+    ; same way to report it.
+    ld a,REG_MMU+2
+    call read_tbblue_reg
+    ld (esp_ui_bank),a
     ; Nothing is owed after this, and the debugger's own screen is what is on
     ; the display — the second of those is what lets the refresh below draw over
     ; it later without landing on a debuggee's picture.
@@ -3121,14 +3175,47 @@ esp_put_client_line:
 ; main_idle, which is below main_redraw's show_ui — so without esp_ui_shown this
 ; would paint one row of the debugger's UI over the program being debugged.
 ;
-; THAT GUARD IS DOING MORE THAN COSMETICS, WHICH IS WHY IT IS A FLAG RATHER THAN
-; A GUESS ABOUT prgm_state. Writing at 0x4000 is only writing at the DISPLAY FILE
-; while the debugger's own MMU slots 2 and 3 are mapped there; a debuggee is free
-; to have put its own banks in them. esp_ui_shown is set by show_ui — which
-; MEMCLEARs the whole screen through the same window, so it cannot be true while
-; that mapping is wrong — and cleared by TRANSPORT_DEACTIVATE on every resume. So
-; "our screen is up" and "0x4000 is the screen" are the same fact here, and this
-; routine cannot run without it.
+; AND ONLY WHILE 0x4000 STILL MEANS WHAT IT MEANT WHEN THE ROW WAS DRAWN, which
+; is a SECOND guard and not a restatement of the first. AN EARLIER VERSION OF
+; THIS COMMENT CLAIMED THEY WERE THE SAME FACT — that esp_ui_shown could not be
+; set while the mapping was wrong, because show_ui MEMCLEARs through the same
+; window. That is false, and the counterexample is an ordinary DZRP command:
+;
+;     CMD_INIT                  -> show_ui runs, esp_ui_shown := 1
+;     CMD_SET_SLOT 2,<bank X>   -> commands.asm's self-modifying `nextreg
+;                                  REG_MMU+<slot>` retargets slot 2, and touches
+;                                  nothing this file reads
+;     the client's connection is reported <id>,CLOSED while the stub is idle
+;
+; which is N4/N5's scenario with one command in between. The guard would still
+; read 1, and this routine would XOR the session line INTO BANK X — permanently,
+; since no per-bank backup exists (only slot_backup.slot0 and .slot7 are saved),
+; and visibly to the debuggee afterwards. A network-triggered writer with no
+; backstop, which is what the independent review of this branch rejected.
+;
+; SO IT ASKS THE MACHINE INSTEAD OF TRACKING EVENTS THAT IMPLY THE ANSWER.
+; NR 0x52 reads back the live MMU2 (zxnext.vhd:6059-6081, :2952-2964), so the
+; question "does 0x4000 still address what it addressed when I drew this row"
+; is answerable directly, in ten bytes, from inside this file.
+;
+; WHY NOT A MACRO FROM cmd_set_slot, which is the shape issue #14 established
+; and the reviewer's own first preference. Two reasons, and the second is the
+; one that decided it. It would put transport-specific state into commands.asm,
+; which CLAUDE.md's hard rule says must not be able to tell which transport it
+; was assembled against. And it would only be correct for as long as the
+; enumeration behind it stayed correct: there are FORTY `nextreg REG_MMU...`
+; sites across eight files in this tree, one of them self-modifying and able to
+; write any slot, and a macro has to be invoked from every present and future
+; one that can leave slot 2 elsewhere. ERRORS.md already carries that failure
+; twice — "Enumerating a control flow's exits by reading the ones you expected"
+; and "Clearing a flag in the obvious routine, which one caller bypasses". A
+; register read cannot be forgotten by the next person to add an MMU write.
+;
+; WHAT IS NOT FIXED HERE, and it is not this routine's: show_ui itself has the
+; same hazard and is older. `check_key_border`'s "B" reaches main_redraw with
+; slot 2 wherever CMD_SET_SLOT left it, and its MEMCLEAR then wipes 8K of that
+; bank. It is in common code, it needs a human at the machine, and it is
+; reported rather than fixed on a branch scoped to issue #23.
 ;
 ; THE OLD LINE IS ERASED BY DRAWING IT AGAIN, and that is not a trick to be
 ; clever with: text.asm's ula.print_char XORs its glyph onto the screen
@@ -3148,6 +3235,16 @@ esp_refresh_client_line:
     ld a,(esp_ui_shown)
     or a
     ret z
+    ; Does 0x4000 still address what it addressed when this row was drawn? If a
+    ; client has retargeted slot 2 — CMD_SET_SLOT — the answer is no and the
+    ; redraw is ABANDONED, not adapted: esp_ui_dirty is deliberately left set, so
+    ; the row is put right by the next show_ui instead, which draws through a
+    ; window it has just proved by clearing.
+    ld a,REG_MMU+2
+    call read_tbblue_reg
+    ld hl,esp_ui_bank
+    cp (hl)
+    ret nz
     ; IX, because text.asm's ula.print_char uses it as its font pointer and
     ; transport_byte_available — the one caller — promises its own callers AF
     ; and nothing else. Inside the two tests above, so a quiet poll does not pay

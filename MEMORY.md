@@ -5,6 +5,155 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-09 — The screen stops claiming a session that ended; and a redraw learned to ask where it is writing
+
+**Built, issue #23.** `esp_watch_line` watches the module's unsolicited
+`<id>,CONNECT` and `<id>,CLOSED` lines and matches the id against the connection
+`CMD_INIT` arrived on. A client that vanishes without `CMD_CLOSE` now takes row 8
+to **`Session lost - client gone`** instead of leaving it reading `Session opened
+- CMD_INIT` for the rest of the session — the honest half issue #14's acceptance
+criterion offered and this project deliberately did not build then.
+
+**THE OBSERVER'S SAFETY IS ITS POSITION, NOT ITS LOGIC.** A second pattern in the
+RX hot path is what #11 and #16 both declined to add, #11 being the record of a
+scan eating an inbound `+IPD` and leaving a client answered by nothing at all. So
+it never reads the wire: `esp_read_scan` hands it each byte it has **already**
+read and gets the byte back untouched. It cannot consume, desynchronise or lose a
+frame whatever it concludes, and that argument survives its logic being wrong.
+
+**AND IT WRITES ONLY THREE BYTES, NONE OF WHICH THE BYTE STREAM READS.** Not
+`esp_conn_id`, not `esp_conn_valid`, not the tx latch, not `esp_cmd_*`. **One of
+those abstentions was measured rather than chosen**: clearing `esp_conn_valid` on
+a `<id>,CLOSED` is the obvious next step and it **breaks bench W2**, whose own
+precondition is that an `AT+CIPSEND` really was refused — a stub that had already
+forgotten the connection never issues one, so W2 would go red having tested
+nothing. The fact is still learned one round trip later in `.no_client`.
+
+**CONNECT IS NOT REDUNDANT WITH CLOSED, AND IT IS NOT ADOPTED EITHER.** A
+`<id>,CONNECT` on the session's own id proves the previous holder is gone just as
+well, and it is the only witness left when the CLOSED landed inside a
+`transport_drain`. What it does **not** do is become the current connection:
+unconditional adoption lets a second client's CONNECT redirect a reply to a
+command already received, which is W5's exact subject, and adoption guarded on
+`esp_conn_valid` misses the case it exists for. That is #24's.
+
+### The blocker: an autonomous writer that did not know where 0x4000 pointed
+
+**The first version of this was REJECTED in review, and the defect was mine.**
+The redraw is triggered by the network, from `main_loop`'s poll, and it writes at
+`0x4000`. I guarded it with `esp_ui_shown` — "show_ui has run since the debuggee
+last had the machine" — and wrote in the header that this made *"our screen is
+up"* and *"0x4000 is the screen"* **the same fact**, because `show_ui` MEMCLEARs
+through that same window.
+
+**That is false, and the counterexample is an ordinary DZRP command.**
+`CMD_SET_SLOT 2,<bank X>` retargets the debugger's own MMU slot 2 — `cmd_set_slot`
+self-modifies a `nextreg REG_MMU+<slot>` and writes it directly for every slot but
+7 — and touches nothing this transport reads. So: `CMD_INIT`, `CMD_SET_SLOT`, then
+the client's connection is reported `<id>,CLOSED` while the stub is idle. The
+guard still read 1 and the session line was XORed **into bank X**, permanently:
+no per-bank backup exists, only `slot_backup.slot0` and `.slot7`, and the
+debuggee gets that bank back corrupted.
+
+**THE FIX ASKS THE MACHINE INSTEAD OF TRACKING EVENTS THAT IMPLY THE ANSWER.**
+`esp_show_client_line` records what NR `0x52` said at the moment it drew, and the
+refresh compares NR `0x52` again before writing a byte. **Verified in the VHDL
+first, not assumed**: NR `0x50`-`0x57` have real read cases in the NextREG read
+multiplexer (`zxnext.vhd:6059-6081`) returning the live `MMUn` — the same signal
+that decodes CPU addresses (`:2952-2964`) — and slot 2's decode is immune to the
+Multiface and config-mode overrides, which are structurally scoped to slots 0/1
+(`:3029-3066`). The negative control validating that method is NR `0x04`, which
+has no read case at all. It is also not a new mechanism here: `send_ntf_pause`
+already reads a slot's bank back the same way to report it.
+
+**THE BANK IS CAPTURED, NOT A CONSTANT.** `cp 10` would work today, because
+`cmd_init` maps bank 10 there — and it would be `transport_esp.asm` encoding a
+number that lives in `commands.asm`, which is how two renderings of one fact
+drift apart. What is wanted is "the window still points where it pointed when the
+row was drawn", and that is answerable without knowing which bank it was.
+
+**REJECTED — a macro invoked from `cmd_set_slot`**, which was the reviewer's own
+first preference and is the shape issue #14 established. Two reasons, and the
+second decided it. It puts transport-specific state into `commands.asm`, which
+CLAUDE.md's hard rule says must not be able to tell which transport it was
+assembled against. And it is correct only for as long as an enumeration stays
+correct: there are **forty** `nextreg REG_MMU...` sites across eight files here,
+one of them self-modifying and able to write any slot, and a macro must be
+invoked from every present and future one that can leave slot 2 elsewhere.
+[[ERRORS.md]] carries that failure twice already — "Enumerating a control flow's
+exits by reading the ones you expected" and "Clearing a flag in the obvious
+routine, which one caller bypasses". A register read cannot be forgotten by the
+next person to add an MMU write. Also rejected: dropping the poll redraw
+altogether, which removes the writer and with it the case the feature exists for.
+
+**NOT FIXED, AND OLDER THAN THIS BRANCH: `show_ui` HAS THE SAME HAZARD.**
+`check_key_border`'s "B" reaches `main_redraw` with slot 2 wherever
+`CMD_SET_SLOT` left it, and its `MEMCLEAR` then wipes 8 KB of that bank. It is
+common code, it needs a human at the machine, and it is recorded rather than
+fixed on a branch scoped to #23.
+
+### The check, and the reason it was watched to go red twice
+
+**N6**, and it is the only check in that bench judged **over the socket** rather
+than off the screen. `CMD_INIT`, `CMD_SET_SLOT 2,60`, a probe parked where row
+8's scanlines land, vanish as N5 does, and read the probe back over a fresh
+connection that sends **no** `CMD_INIT` — one would put bank 10 back and hide the
+answer. Its **third** outcome is a precondition rather than a verdict: all-zeros
+means `show_ui`'s `MEMCLEAR` reached that bank, i.e. the run went through
+`drain_main` and never stood in the state under test, which is why the probe
+contains no zero byte.
+
+**Red-first against this branch's own first commit**, which has the writer and
+not the guard — a re-runnable control rather than a scratch tree: **96 of 2048
+bytes changed, first at 0x4908**.
+
+**AND THE FIRST N6 PASSED AGAINST THAT SAME ROM, which is the lesson worth more
+than the fix.** It probed 32 bytes at `0x4800`. Character row 8's eight scanlines
+sit at `0x4800`, `0x4900` … `0x4F00`, so that is scanline 0 alone — and measured
+against the very font the stub prints with, XORing `Session opened - CMD_INIT`
+off and `Session lost - client gone` on differs in 12-17 columns on scanlines 1-6
+and in **none** on scanline 0, because the top row of essentially every ZX glyph
+is blank. **I had picked the one scanline on which two different strings cannot
+differ.** The probe now covers the whole 2 KB the row can reach, which needs no
+argument about which byte is safe to sample and survives any rewording of those
+strings. The 96 is exactly 12+16+16+16+16+17+3, so the check measures precisely
+what it claims to.
+
+**A green check that cannot fail is worth less than no check**, and this one was
+green for two runs. What caught it was refusing to accept the green: the control
+was *known* to be a broken ROM, so a pass was a fact about the instrument.
+
+**Also fixed, MINOR, and it is this file's own rule pointed at a parser.**
+`esp_watch_line` kept only the last digit of an id, so `10,CONNECT` would have
+recorded 0. Not reachable today — ESP-AT ids are 0-4 — but the 2026-08-05 entry
+below says in terms that no value of a connection id is special and that this
+transport must "encode nothing anywhere about its range, its first value or how
+the module allocates it", and a single-digit parse **is** an encoding of range.
+It accumulates now and refuses what will not fit a byte, exactly as
+`esp_read_decimal` already does for a real `+IPD` header.
+
+**Cost: WiFi +310 bytes**, `main_end` `0xF9CC` → `0xFB02`, 926 free to the
+identity block. **The UART ROM is byte-identical** pinned (`b6ab6a13…`), which is
+what says nothing shared moved — no common-code file was touched at all. **This
+changes a ROM, so the merge carries a `make bump`.**
+
+**Regression: `test-client-status` 6/6, `test-dzrp-stub` 15/15 with W1-W6,
+`make test` 7/7, `test-unit` 5/5, `test-no-hang` 4/4, `test-screen-agreement`
+all green, both variants `check-reproducible`.**
+
+**NOT COVERED, and none of it is hidden.** A peer that stops answering *without*
+its socket closing — the module emits no line, so nothing here can see it, and
+that is KNOWN-ISSUES.md #2. A `<id>,CLOSED` eaten by a `transport_drain`; the
+`<id>,CONNECT` fallback executes on every run but never as the *only* witness.
+Payload **can** reach the observer in one window — a response filling
+`ESP_TX_CHUNK` mid-message while its own payload is still owed (#13's three
+handlers) — where nine specific bytes would give a wrong line and nothing else;
+the first version of that comment claimed it could not. The `show_ui` hazard
+above. And **real hardware**: nothing here has run on a Next, and the two line
+spellings are jnext's.
+
+---
+
 ## 2026-08-08 — H1 closes its connection as a SESSION, not as a socket
 
 **Decided (user) and built.** The hardware bench's first check opened a TCP

@@ -7,6 +7,8 @@
     session-client.py vanish        CMD_INIT, then drop the socket — no CMD_CLOSE
     session-client.py vanish-idle   the same, but only after the stub has gone
                                     back to its idle loop
+    session-client.py vanish-slot   the same again, with MMU slot 2 retargeted
+                                    first, and the bank checked afterwards
 
 Bench test/run-client-status.sh reads the verdict off the Next's own screen
 (issue #14), so all this has to do is put the stub in a known state and then be
@@ -37,23 +39,48 @@ command is what makes the repaint an observed fact instead of an assumption.
 CMD_LOOPBACK is the one used because it changes no state and repaints nothing:
 it ends `jp main_loop.continue`.
 
-WHY THE FIRST THREE PHASES NEVER CLOSE THE SOCKET, and the last two exist to.
+WHY THE FIRST THREE PHASES NEVER CLOSE THE SOCKET, and the last three exist to.
 Closing it makes the module emit `<id>,CLOSED`, and until issue #23 the stub did
 not look at that line at all — so N1-N3 hold their connections open precisely to
-keep an event they could not see out of the runs that are not about it. The two
+keep an event they could not see out of the runs that are not about it. The
 phases below are the other half: they drop the socket WITHOUT sending CMD_CLOSE,
 which is what a crashed client, a suspended laptop or a dropped link produce, and
 the screen must stop claiming the session that ended.
 
-THE TWO OF THEM DIFFER ONLY IN WHERE THE STUB IS STANDING WHEN IT HAPPENS, and
-that is the whole reason there are two. `vanish` drops the socket at once, so the
-stub is inside cmd_loop's transport_wait_rx and the scan that meets the
-`<id>,CLOSED` then finds no header, times out and reaches drain_main — whose
+`vanish` AND `vanish-idle` DIFFER ONLY IN WHERE THE STUB IS STANDING WHEN IT
+HAPPENS, and that is the whole reason there are two. `vanish` drops the socket at
+once, so the stub is inside cmd_loop's transport_wait_rx and the scan that meets
+the `<id>,CLOSED` then finds no header, times out and reaches drain_main — whose
 show_ui is what redraws the row. `vanish-idle` waits first, long enough for that
 wait's own bound to expire into main_loop, so the line arrives at the idle poll
 instead, where nothing times out and nothing reports: there the ONLY thing that
 can redraw the row is esp_refresh_client_line. The bench tells the two apart by
 the stub's error area — see run-client-status.sh.
+
+`vanish-slot` IS NOT ABOUT THE SCREEN AT ALL. It is the memory-safety check for
+that same redraw, and its verdict comes back over the socket rather than off a
+picture. `CMD_SET_SLOT 2,<bank>` retargets the debugger's OWN MMU slot 2, so
+address 0x4000 stops being the display file and becomes somebody else's memory;
+a redraw that went ahead anyway would XOR the session line into that bank, where
+nothing would ever undo it — no per-bank backup exists, only slot_backup.slot0
+and .slot7. So this phase parks a known 32-byte pattern where the row's first
+scanline lands, vanishes exactly as `vanish-idle` does, and reads it back.
+
+THE THREE OUTCOMES ARE ALL DISTINGUISHABLE, which is what makes it worth
+running:
+
+    intact          nothing wrote through that window — the guard held
+    changed         the stub XORed the line into the bank — the defect itself
+    all zeros       show_ui's MEMCLEAR ran, so this run reached drain_main and
+                    never tested its subject: a PRECONDITION failure, not a pass
+
+The third is why the pattern contains no zero byte, and why the second
+connection sends no CMD_INIT: cmd_init writes bank 10 back into slot 2, which
+would hide the very thing being read.
+
+AND IT COVERS THE WHOLE 2 KB THE ROW CAN REACH, because a narrower probe was
+measured to be blind — see PROBE below. That mistake is the reason this check
+was watched to go red before it was believed.
 """
 import os
 import sys
@@ -62,6 +89,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from dzrp import (CMD_CLOSE, CMD_INIT, CMD_LOOPBACK,  # noqa: E402
+                  CMD_READ_MEM, CMD_SET_SLOT, CMD_WRITE_MEM,
                   Dzrp, init_payload, open_remote)
 
 HOST = os.environ.get("DZRP_HOST", "127.0.0.1")
@@ -80,6 +108,34 @@ HOLD = float(os.environ.get("HOLD", "120"))
 # scheduled thousands of frames later.
 IDLE_WAIT = float(os.environ.get("IDLE_WAIT", "4"))
 
+# How long `vanish-slot` leaves the stub alone after dropping its socket, so the
+# idle poll has met the `<id>,CLOSED` and done whatever it is going to do before
+# anything looks. Same currency as IDLE_WAIT and the same argument: emulated time
+# runs faster than the wall clock here, so this is generous.
+SETTLE_AFTER = float(os.environ.get("SETTLE_AFTER", "3"))
+
+# The bank `vanish-slot` parks under 0x4000, and the probe it writes there.
+#
+# NOT one of the stub's own (TMP_BANK 92, TMP_BANKB 93, MAIN_BANK 94,
+# LOOPBACK_BANK 91, ROM_BANK 0xFF) and not one cmd_init maps (10, 11, 4, 5, 0, 1).
+# NO ZERO BYTE, because all-zeros is a distinct verdict: it means show_ui's
+# MEMCLEAR reached this bank and the run took the path this check is not about.
+#
+# IT COVERS 0x4800-0x4FFF, WHICH IS EVERY BYTE A REDRAW OF ROW 8 CAN REACH, and
+# the first version covered 32 of them and was BLIND. Character row 8 starts at
+# 0x4800 and text.asm's print_char walks down with PIXELDN, so the row's eight
+# scanlines are at 0x4800, 0x4900 ... 0x4F00 — 32 bytes of each. The probe was
+# 32 bytes at 0x4800, i.e. scanline 0 alone, and MEASURED against the 48.rom font
+# the stub prints with: XORing "Session opened - CMD_INIT" off and
+# "Session lost - client gone" on differs in 12-17 columns on scanlines 1-6, in 3
+# on scanline 7 — and in NONE on scanline 0, because the top row of essentially
+# every ZX glyph is blank. So the check went green against a ROM that really was
+# corrupting the bank. Taking the whole 2 KB needs no argument about which
+# scanline is safe to sample, and survives any future rewording of those strings.
+SLOT2_BANK = int(os.environ.get("SLOT2_BANK", "60"))
+PROBE_ADDR = 0x4800
+PROBE = bytes((i * 7 + 1) & 0xFF for i in range(2048))
+
 
 def done():
     print("EXCHANGE_DONE %.3f" % time.time())
@@ -88,7 +144,68 @@ def done():
     return 0
 
 
-PHASES = ("silent", "init", "close", "vanish", "vanish-idle")
+PHASES = ("silent", "init", "close", "vanish", "vanish-idle", "vanish-slot")
+
+
+def _w(v):
+    return v.to_bytes(2, "little")
+
+
+def read_probe(conv):
+    """The 32 bytes at PROBE_ADDR, through whatever slot 2 currently holds."""
+    return conv.command(CMD_READ_MEM, b"\x00" + _w(PROBE_ADDR) + _w(len(PROBE)))
+
+
+def vanish_slot(t, d):
+    """N6: retarget slot 2, vanish, and require the bank to be untouched."""
+    # Retarget slot 2 and park the probe in the retargeted bank. cmd_set_slot
+    # writes the MMU register directly for every slot but 7, so from here on
+    # 0x4000 is bank SLOT2_BANK for the debugger itself as well as for us.
+    d.command(CMD_SET_SLOT, bytes([2, SLOT2_BANK]))
+    d.command(CMD_WRITE_MEM, b"\x00" + _w(PROBE_ADDR) + PROBE)
+
+    # The precondition, asserted rather than assumed: without this a bank that
+    # was never writable would give a "corrupt" verdict that means nothing.
+    before = read_probe(d)
+    if before != PROBE:
+        print("PRECONDITION the probe did not survive its own write to bank %d: %s"
+              % (SLOT2_BANK, before.hex()), file=sys.stderr)
+        return 1
+    print("bank %d holds the probe at 0x%04X" % (SLOT2_BANK, PROBE_ADDR))
+    sys.stdout.flush()
+
+    # Vanish from main_loop, exactly as vanish-idle does — the path on which the
+    # idle poll, and nothing else, meets the <id>,CLOSED.
+    print("staying quiet for %.1fs, so the stub's cmd_loop wait expires" % IDLE_WAIT)
+    sys.stdout.flush()
+    time.sleep(IDLE_WAIT)
+    t.close()
+    print("socket dropped with no CMD_CLOSE")
+    sys.stdout.flush()
+    time.sleep(SETTLE_AFTER)
+
+    # A NEW CONNECTION AND NO CMD_INIT. cmd_init would write bank 10 back into
+    # slot 2 and read the display file instead of the bank under test.
+    t2 = open_remote(f"tcp:{HOST}:{PORT}", timeout=TIMEOUT)
+    d2 = Dzrp(t2, start_byte=None, base_timeout=TIMEOUT)
+    d2.command(CMD_SET_SLOT, bytes([2, SLOT2_BANK]))
+    after = read_probe(d2)
+
+    if after == PROBE:
+        print("SLOT_PROBE OK bank %d unchanged across %d bytes from 0x%04X"
+              % (SLOT2_BANK, len(PROBE), PROBE_ADDR))
+    elif after == bytes(len(PROBE)):
+        print("SLOT_PROBE WIPED bank %d zeroed: show_ui's MEMCLEAR ran, so this "
+              "run reached drain_main and tested nothing" % SLOT2_BANK)
+    else:
+        # A DIGEST AND NOT A DUMP. 2 KB of hex is 4096 characters in the bench
+        # log, which buries every other line of the run; what identifies the
+        # fault is how much moved and where it starts.
+        changed = sum(1 for a, b in zip(PROBE, after) if a != b)
+        first = next(i for i, (a, b) in enumerate(zip(PROBE, after)) if a != b)
+        print("SLOT_PROBE CORRUPT bank %d: %d of %d bytes changed, first at 0x%04X"
+              % (SLOT2_BANK, changed, len(PROBE), PROBE_ADDR + first))
+    return done()
 
 
 def main(argv):
@@ -113,6 +230,9 @@ def main(argv):
         # Deliberately no close, and the socket stays up: this is a live
         # session, which is the only state ATTACHED is entitled to describe.
         return done()
+
+    if phase == "vanish-slot":
+        return vanish_slot(t, d)
 
     if phase in ("vanish", "vanish-idle"):
         if phase == "vanish-idle":

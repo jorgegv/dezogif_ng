@@ -2,16 +2,17 @@
 #
 # The session line on the Next's own screen — issues #14 and #23.
 #
-# Invoked by `make test-client-status`. Five headless jnext runs with the WiFi
-# ROM installed as the Multiface ROM and an emulated M1 button press, each one
-# putting the stub in a different session state and then reading row 8 of its
-# screen BACK AS TEXT.
+# Invoked by `make test-client-status`. Six headless jnext runs with the WiFi
+# ROM installed as the Multiface ROM and an emulated M1 button press. Five put
+# the stub in a different session state and read row 8 of its screen BACK AS
+# TEXT; the sixth judges memory over the socket instead.
 #
 #   N1  a client connects over TCP and says NOTHING  ->  "No debug session yet."
 #   N2  a client sends CMD_INIT                      ->  "Session opened - CMD_INIT"
 #   N3  ... and then CMD_CLOSE                       ->  "Session closed - CMD_CLOSE"
 #   N4  ... or instead VANISHES, no CMD_CLOSE        ->  "Session lost - client gone"
 #   N5  the same, with the stub back in its idle loop first
+#   N6  the same again with MMU slot 2 retargeted    ->  that bank is UNTOUCHED
 #
 # WHY IT READS THE ROW RATHER THAN COMPARING RUNS. A check that only requires
 # the three screens to differ cannot say which of them is right, and ERRORS.md
@@ -442,6 +443,73 @@ one_run N4 vanish "Session lost - client gone" \
     "a client vanishes without CMD_CLOSE, from inside cmd_loop"
 one_run N5 vanish-idle "Session lost - client gone" \
     "the same, with the stub back in its idle loop" clean
+
+# ===========================================================================
+# N6 — the redraw must not write into a bank a client has paged in
+#
+# THE ONLY CHECK HERE JUDGED OVER THE SOCKET RATHER THAN OFF THE SCREEN, and it
+# is about memory rather than about text. N5's repaint happens autonomously,
+# triggered by the network, from main_loop's poll — and it writes at 0x4000.
+# 0x4000 is the display file only while the debugger's own MMU slot 2 is mapped
+# there, and `CMD_SET_SLOT 2,<bank>` is an ordinary DZRP command that retargets
+# it (commands.asm's cmd_set_slot writes the MMU register directly for every
+# slot but 7). A redraw that went ahead anyway would XOR the session line into
+# that bank permanently: nothing backs up a bank, only slot_backup.slot0 and
+# .slot7, and the debuggee gets it back corrupted.
+#
+# So this is N5 with one command in between: CMD_INIT, CMD_SET_SLOT 2,<bank>, a
+# 32-byte probe parked where the row's first scanline lands, vanish, and read the
+# probe back over a fresh connection.
+#
+# ITS THIRD OUTCOME IS A PRECONDITION AND NOT A VERDICT, which is what stops it
+# passing or failing for the wrong reason. An all-zero read means show_ui's
+# MEMCLEAR reached that bank, i.e. the run went through drain_main and never
+# stood in the state being tested — reported as a precondition failure. The
+# probe therefore contains no zero byte. See test/dzrp/session-client.py.
+# ===========================================================================
+slot_run() {
+    local name=$1 why=$2
+    CHECKS=$((CHECKS + 1))
+    local jlog=$OUT/client-status-$name.log
+    local shot=$OUT/screenshots/client-status-$name.png
+    local cout=$OUT/client-status-$name.client.txt
+
+    log ""
+    log "== $name: $why"
+
+    if ! start_stub "$jlog" "$shot"; then
+        fail "$name the stub never listened on 127.0.0.1:$PORT (see $jlog)"
+        stop_all
+        return
+    fi
+
+    : >"$cout"
+    HOLD=5 DZRP_PORT="$PORT" python3 "$CLIENT" vanish-slot >"$cout" 2>&1 &
+    client_pid=$!
+
+    local i verdict=""
+    for i in $(seq 240); do
+        verdict=$(awk '/^SLOT_PROBE /{print $2; exit}' "$cout" 2>/dev/null || true)
+        [ -n "$verdict" ] && break
+        kill -0 "$client_pid" 2>/dev/null || break
+        sleep 0.25
+    done
+    sed 's/^/  | /' "$cout"
+    stop_all
+
+    case "$verdict" in
+        OK)
+            pass "$name a client's bank survived the redraw: slot 2 bank untouched across 2 KB" ;;
+        CORRUPT)
+            fail "$name the stub wrote the session line into the client bank paged in at slot 2" ;;
+        WIPED)
+            fail "$name PRECONDITION: show_ui cleared the bank, so this run never reached the redraw" ;;
+        *)
+            fail "$name the client reached no verdict — see $cout and $jlog" ;;
+    esac
+}
+
+slot_run N6 "a client retargets MMU slot 2, then vanishes"
 
 log ""
 if [ "$failures" -ne 0 ]; then

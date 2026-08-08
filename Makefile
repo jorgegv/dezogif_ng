@@ -608,17 +608,22 @@ test-dzrp-stub:
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
 	 ROM="$(OUT)/enNextMf-wifi.rom" DZRP_ARGS="$(DZRP_ARGS)" $(TEST)/run-dzrp-stub.sh
 
-# The session line on the Next's own screen (issues #14 and #23): five jnext
-# runs, one per state, each judged by READING row 8 back as text with the ZX ROM
-# font rather than by comparing runs. Comparing runs cannot tell a correct pair
-# of labels from a swapped one — see ERRORS.md and test/run-client-status.sh.
+# The session line on the Next's own screen (issues #14 and #23): six jnext runs.
+# Five are judged by READING row 8 back as text with the ZX ROM font rather than
+# by comparing runs — comparing runs cannot tell a correct pair of labels from a
+# swapped one, see ERRORS.md and test/run-client-status.sh.
 #
 # N4 and N5 are the client that VANISHES without CMD_CLOSE, which is what the
 # module's `<id>,CLOSED` line is tracked for. They differ in where the stub is
 # standing when it arrives, and N5 asserts a clean error area so that the two
 # runs cannot silently exercise one code path and claim two.
 #
-# Run the client-session status line bench (5 jnext runs; not part of `make test`)
+# N6 is the sixth run and the only one judged over the SOCKET: the repaint N5
+# exercises writes at 0x4000, which is the screen only while MMU slot 2 says so,
+# and CMD_SET_SLOT lets any client move it. It parks a probe in the retargeted
+# bank and requires it back untouched.
+#
+# Run the client-session status line bench (6 jnext runs; not part of `make test`)
 test-client-status:
 	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \

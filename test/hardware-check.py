@@ -219,9 +219,11 @@ def connect(host, port, timeout, socket_attempts=20, protocol_attempts=2, budget
     unused, while this docstring claimed the retry protected against exactly
     that. It matters most on the target this bench is for. The stub's own RX
     budget is about 100 ms (`ESP_RX_WAIT` in transport_esp.asm), against a WiFi
-    round trip the plan files as an unmeasured 10-100 ms ESTIMATE — so a jitter
-    spike past that budget makes the *stub* reset through `rx_timeout` and drop
-    the exchange, which is a transient this must ride out rather than report as
+    round trip the plan budgeted at 10-100 ms and this check has since
+    measured at 10.8-23.6 ms (Appendix A, verified 2026-08-05) — so a jitter
+    spike past that budget makes the *stub* reset through `rx_timeout` and
+    drop the exchange, which is a transient this must ride out rather than
+    report as
     a dead machine. Found in review, by measurement rather than by reading.
     """
     if budget is None:
@@ -666,7 +668,7 @@ def h3_connection_id(host, port, timeout, results):
 
 
 # --------------------------------------------------------------------------
-# H4 / H5 — the two numbers the documents currently estimate
+# H4 / H5 — the two numbers these checks moved from estimate to verified
 # --------------------------------------------------------------------------
 
 

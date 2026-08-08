@@ -77,11 +77,25 @@ left up, anything that frees a slot came from the module's side.
     mechanism, and although a vanished peer is traced to raise no fault and so
     to trigger no sweep, this probe cannot OBSERVE that it did not. B4's error
     area is the nearest thing to a check on it.
+  * IT CANNOT SEE `<id>,CLOSED`, and no probe on this side ever will. That line
+    is the module talking to the Z80 over the UART; this is a TCP client on the
+    other side of the module, so whether a reaped connection announces itself
+    that way is NOT DETERMINABLE from anything here — not from a recovery, and
+    not from its absence. It matters to issue #23, whose subject is watching
+    for that line, and the honest answer is that it needs the stub's own eyes
+    or a real module, never this. Nothing is claimed about it either way.
   * It says nothing at all unless the ceiling was actually reached in phase 1.
     A fresh client served after a walk that never ran out of slots is a client
     taking a slot that was free the whole time. The B3 reading below branches
-    on that, because reading it as a reclaim would be the probe inventing its
-    own headline.
+    on that, AND SO DOES THE CLOSING PARAGRAPH — which asserted a reclaim
+    unconditionally in the first version of this flag and printed it on a run
+    that had none, under a B3 that had reported the refusal correctly.
+  * "No ceiling was observed" is NOT "the module never ran out", and one stop
+    makes the difference visible. A walk that ends on `NOFIREWALL` — our own
+    iptables call failing — leaves `ceiling_hit` false having stopped LOOKING
+    rather than having looked and found none. B1 has always reported that stop
+    as outside its subject; B3's wording is written to cover both causes
+    without claiming the stronger one.
 
 THE CLOCK --recover IS MEASURED FROM, which is not the same moment on the two
 paths. Peers are made to vanish ONE AT A TIME, so peer 1 has been silent for
@@ -451,8 +465,10 @@ def main():
         # wrapper's EXIT teardown removes them, exactly as it does on every
         # other path — that teardown is unconditional and is not touched by
         # this flag. What the flag buys is that no FIN, no RST and no
-        # retransmission of ours reaches the module during the wait below, so
-        # anything that frees a slot came from the module's own side.
+        # retransmission of ours reaches the module ABOUT THE ABANDONED PEERS —
+        # our fresh clients still open and close normally, and their FINs do
+        # reach it — so anything that frees one of THOSE slots came from the
+        # module's own side.
         #
         # AND THE WAIT RUNS FROM THE LAST PEER, not from now and not from the
         # start of the run. Timing it from here would give the last peer
@@ -486,6 +502,23 @@ def main():
     rstate, rms, rwhy = fresh_client(args.host, args.port, args.timeout,
                                      "dezogif_ng-recovered")
 
+    # DID THIS RUN ACTUALLY SEE A RECLAIM? Computed ONCE, here, and consulted
+    # by both B3 below and the closing paragraph at the end of this function.
+    #
+    # It is a variable rather than a condition repeated in two places because
+    # the first version of this branch DID repeat it — and got the second copy
+    # wrong, printing "a recovery in phase 2 IS the module reclaiming
+    # unprompted" as an unconditional sentence, eight lines under a B3 that had
+    # correctly reported a REFUSED client. It shipped that way on the user's
+    # own hardware run. Two renderings of one fact drifting apart is this
+    # project's most-repeated failure, and the paragraph it happened in exists
+    # precisely to stop a reader over-reading the result.
+    #
+    # All three conjuncts are load-bearing. A served client is a reclaim only
+    # if the module really ran out (`ceiling_hit`) of slots this run really
+    # abandoned (`silent_at`); otherwise it took a slot nobody was holding.
+    reclaimed = args.no_lift and rstate == SERVED and ceiling_hit and bool(silent_at)
+
     if args.no_lift:
         if silent_at:
             where = ("blackhole still UP, last peer silent %.0f s"
@@ -495,21 +528,30 @@ def main():
         if rstate == SERVED:
             row("B3", MEASURED,
                 "%s: a fresh client was served in %.0f ms" % (where, rms))
-            # THREE READINGS, AND ONLY ONE OF THEM IS THE HEADLINE. A served
-            # client here is a reclaim only if this run really filled the
-            # module with its own vanished peers and was then refused; the
-            # other two are a client taking a slot nobody was holding.
-            if ceiling_hit and silent_at:
+            # THREE READINGS, AND ONLY ONE OF THEM IS THE HEADLINE.
+            if reclaimed:
+                # "ABOUT THOSE PEERS" IS NOT PADDING, and the unqualified form
+                # of this line was literally false: `fresh_client` opens and
+                # cleanly closes a connection after every vanished peer, so our
+                # FINs certainly do reach the module during the run. What the
+                # per-source-port rules guarantee is narrower and is the whole
+                # claim — nothing of ours reaches it about the ABANDONED ones.
                 detail("THE MODULE FREED A SLOT UNPROMPTED: the rule never came down, "
-                       "so no FIN, RST or retransmission of ours reached it. Something "
-                       "on the module's own side let the peer go.")
+                       "so no FIN, RST or retransmission of ours reached it ABOUT THOSE "
+                       "PEERS. Something on the module's own side let one go.")
                 detail("It does NOT say which slot, or what freed it — an idle timeout "
                        "is the hypothesis, the stub's own sweep is a second one, and no "
                        "PC-side check can see connection ids.")
             elif not ceiling_hit:
-                detail("READ NOTHING INTO THIS: the module never stopped serving during "
-                       "phase 1, so this client took a slot that was free the whole "
-                       "time. No reclaim is in evidence because none was needed.")
+                # COVERS TWO CAUSES, and the second is weaker than it sounds:
+                # the walk either served every peer, or ended early because our
+                # own tooling broke (`NOFIREWALL`) and stopped looking. "No
+                # ceiling was observed" is true of both; "the module never ran
+                # out" is only true of the first, and claiming it would assert
+                # a negative this run did not go far enough to earn.
+                detail("READ NOTHING INTO THIS: phase 1 never SAW the module run out — "
+                       "it either served throughout, or the walk ended early and stopped "
+                       "looking. With no ceiling observed, nothing here is a reclaim.")
             else:
                 detail("READ NOTHING INTO THIS: the module was already refusing before "
                        "this run abandoned anybody, so whatever was holding those slots "
@@ -576,14 +618,25 @@ AT THE MACHINE — what B4 still cannot reach:
   * WHETHER the screen changed DURING the run. B4 is one point sample.
 Photograph it, and say what it looked like BEFORE and AFTER.""")
 
-    if args.no_lift:
+    # BRANCHED ON WHAT HAPPENED, not on which flag was passed. See `reclaimed`
+    # above for why that distinction cost a review round.
+    if reclaimed:
         print("""
 WHAT THIS RUN DOES NOT ESTABLISH. It shows what a vanished peer costs, not that
-a vanished peer is what happened on 2026-08-05. The blackhole stayed UP, so a
-recovery in phase 2 IS the module reclaiming unprompted — but it does not say
-WHICH slot came back, or WHAT freed it, and no reading here can rule out the
-stub's own sweep. Issue #15 must not be closed on this. See
-doc/HARDWARE-TESTING.md.""")
+a vanished peer is what happened on 2026-08-05. The blackhole stayed UP and a
+fresh client was served after the module had run out, so THIS run's recovery is
+the module reclaiming unprompted — but it does not say WHICH slot came back, or
+WHAT freed it, and no reading here can rule out the stub's own sweep. Issue #15
+must not be closed on this. See doc/HARDWARE-TESTING.md.""")
+    elif args.no_lift:
+        print("""
+WHAT THIS RUN DOES NOT ESTABLISH. It shows what a vanished peer costs, not that
+a vanished peer is what happened on 2026-08-05. The blackhole stayed UP, so
+nothing of ours told the module its peers were gone — and NO RECLAIM WAS SEEN:
+either no client was served at the end, or no ceiling was ever observed for one
+to be reclaimed from. B3 above says which. A run that ends unrecovered is a
+LOWER BOUND on any idle timer the module may have, never evidence it has none.
+Issue #15 must not be closed on this. See doc/HARDWARE-TESTING.md.""")
     else:
         print("""
 WHAT THIS RUN DOES NOT ESTABLISH. It shows what a vanished peer costs, not that

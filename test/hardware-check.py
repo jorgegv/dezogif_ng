@@ -30,13 +30,15 @@ answers are only interesting on silicon:
       an error. See h1_listener.
   H2  DZRP conformance — DELEGATED to conformance.py, not reimplemented.
   H3  The inbound connection id is read rather than assumed, on real firmware.
-  H4  Round-trip latency, MEASURED. The plan calls 10-100 ms an "estimate".
-  H5  Throughput, MEASURED. The plan calls "tens of KB/s" an "estimate".
+  H4  Round-trip latency, MEASURED. The plan called 10-100 ms an "estimate".
+  H5  Throughput, MEASURED. The plan called "tens of KB/s" an "estimate".
 
-H4 and H5 exist to move two rows of the plan's Appendix A off the "estimate"
-rung of its evidence ladder. Their *numbers* are reported as MEASURED rather
-than PASS, because a figure is not a verdict and a check that cannot fail must
-not be allowed to look like one that can.
+H4 and H5 moved two rows of the plan's Appendix A off the "estimate" rung of its
+evidence ladder on 2026-08-05, with these checks' own numbers, and they keep
+re-measuring because a figure from one evening is not a property of the link.
+Their *numbers* are reported as MEASURED rather than PASS, because a figure is
+not a verdict and a check that cannot fail must not be allowed to look like one
+that can.
 
 That is a statement about the numbers, NOT about the whole of H5. H5 also
 carries a real FAIL: a large payload that comes back corrupted is the
@@ -702,8 +704,9 @@ def read_screen_then_close(host, port, timeout, results):
 def h4_latency(host, port, timeout, results, samples):
     """Round-trip time for a small CMD_LOOPBACK, reported as a distribution.
 
-    The plan budgets "10-100 ms per round trip" and Appendix A files it as an
-    ESTIMATE. One number is not a measurement of a WiFi link, so this reports
+    The plan budgets "10-100 ms per round trip", and Appendix A filed it as an
+    ESTIMATE until 2026-08-05, when this check's own numbers moved it to
+    verified. One number is not a measurement of a WiFi link, so this reports
     min/median/max: the spread is the part that decides whether stepping is
     comfortable, and DeZog spends one round trip per single step.
     """
@@ -737,7 +740,8 @@ def h4_latency(host, port, timeout, results, samples):
 def h5_throughput(host, port, timeout, results, nbytes):
     """Bytes per second through a large CMD_LOOPBACK.
 
-    Appendix A files ESP TCP throughput as an ESTIMATE ("tens of KB/s") and the
+    Appendix A filed ESP TCP throughput as an ESTIMATE ("tens of KB/s") until
+    this check measured it on 2026-08-05, and the
     plan works out 115200 baud as roughly 11.5 KB/s, making a 64 KB read about
     six seconds. A loopback moves the payload TWICE — out and back — so the
     figure reported here is the round-trip rate, and the one-way rate is
@@ -795,8 +799,8 @@ def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", required=True,
-                    help="the Next's IP address (there is no discovery; the connect-string "
-                         "UI that would show it on screen is not built yet)")
+                    help="the Next's IP address (there is no discovery; the stub's "
+                         "connect-string UI shows it, but a human has to read and type it)")
     ap.add_argument("--port", type=int, default=11000,
                     help="DeZog's cspect default, and what the stub listens on (default: 11000)")
     ap.add_argument("--timeout", type=float, default=15.0,

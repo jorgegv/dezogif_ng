@@ -3,6 +3,7 @@
 # PROBE B — the vanished-peer probe. Issue #15 / issue #19.
 #
 #     sudo test/run-vanished-peer.sh --host 192.168.1.42
+#     sudo test/run-vanished-peer.sh --host X --no-lift --recover 210
 #     sudo test/run-vanished-peer.sh --clean        # remove everything, do nothing else
 #     test/run-vanished-peer.sh --host X --dry-run  # print the plan, touch nothing
 #
@@ -106,15 +107,42 @@
 # So it answers: is an abandoned slot EVER reclaimed without a power cycle?
 #
 # ===========================================================================
+# --no-lift, AND WHY IT IS A DIFFERENT QUESTION RATHER THAN A LOUDER ONE
+# ===========================================================================
+#
+# By default phase 2 takes the blackhole down and THEN waits. That order is
+# what bounds the claim: our kernel starts answering the module's
+# retransmissions the instant the rule goes, so a fresh client served
+# afterwards says the slot comes back once the module is TOLD.
+#
+# --no-lift leaves the rule up across that wait. Nothing of ours — no FIN, no
+# RST, no retransmission — reaches the module about those peers, so a fresh
+# client served afterwards is the module reclaiming a slot BY ITSELF. That is
+# the question an enforced AT+CIPSTO idle timeout raises and the default path
+# structurally cannot ask.
+#
+# THE TEARDOWN IS UNCHANGED AND UNCONDITIONAL. The rules still come down in the
+# same EXIT trap, in the same three commands, whatever happens and whatever
+# flags were passed. What --no-lift changes is only WHEN inside the run they
+# stop being the last word: never, rather than at the start of phase 2.
+#
+# The probe's wait then runs from the LAST peer going silent rather than from
+# the lift, since with nothing lifted there is no lift to time from — and
+# because the peers vanish one at a time, so timing from anywhere earlier would
+# give the last of them less than --recover seconds.
+#
+# ===========================================================================
 # WHAT IT CANNOT ESTABLISH
 # ===========================================================================
 #
 # * It cannot show that a vanished peer is what happened on 2026-08-05. It
 #   shows what a vanished peer COSTS. Issue #15 must not be closed on it.
-# * Its phase 3 recovery is not the module recovering by itself: taking the
-#   blackhole down lets our own kernel RST the module's retransmissions, which
-#   is new information arriving from outside. Read it as "the slot comes back
-#   once the module is TOLD", never as "it comes back on its own".
+# * Its phase 2 recovery, ON THE DEFAULT PATH, is not the module recovering by
+#   itself: taking the blackhole down lets our own kernel RST the module's
+#   retransmissions, which is new information arriving from outside. Read it as
+#   "the slot comes back once the module is TOLD", never as "it comes back on
+#   its own". Under --no-lift that reading inverts — and still does not say
+#   WHICH slot came back or WHAT freed it.
 # * Nothing here reads the Next's screen.
 #
 # ===========================================================================
@@ -134,6 +162,11 @@ PEER_SETTLE=0.5
 EXPECT_CEILING=0
 DRY_RUN=""
 CLEAN_ONLY=""
+# An ARRAY rather than a string, so the flag is passed through as one argv
+# element or as nothing at all — no word splitting, and no second copy of the
+# probe's long command line under an `if`. Empty-array expansion under `set -u`
+# is safe from bash 4.4 and this repository's benches are bash 5.
+NO_LIFT=()
 PROBE=$(dirname "$0")/vanished-peer-probe.py
 
 usage() {
@@ -145,7 +178,14 @@ usage: sudo $0 --host <ip> [options]
   --host <ip>      the Next (or 127.0.0.1 for a headless jnext)
   --port <n>       default $PORT
   --peers <n>      how many peers to make vanish, default $PEERS
-  --recover <s>    seconds to wait after the blackhole is lifted, default $RECOVER
+  --recover <s>    seconds to wait before asking one last time, default $RECOVER.
+                   Measured from the LIFT by default, and from the LAST peer
+                   going silent under --no-lift
+  --no-lift        do NOT take the blackhole down before that wait. Nothing of
+                   ours then tells the module the peers are gone, so a fresh
+                   client served afterwards is the module reclaiming a slot BY
+                   ITSELF rather than being told. The teardown below is
+                   unchanged and still removes every rule
   --peer-settle <s>
                    seconds between one iteration's fresh client closing and the
                    next doomed peer connecting, default $PEER_SETTLE. A module
@@ -171,6 +211,7 @@ while [ "$#" -gt 0 ]; do
         --peer-settle) PEER_SETTLE=$2; shift 2 ;;
         --timeout) TIMEOUT=$2; shift 2 ;;
         --expect-ceiling) EXPECT_CEILING=$2; shift 2 ;;
+        --no-lift) NO_LIFT=(--no-lift); shift ;;
         --dry-run) DRY_RUN=1; shift ;;
         --clean)   CLEAN_ONLY=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -192,6 +233,26 @@ PROBE B will make these firewall changes, and undo them on the way out:
   $IPT -N $CHAIN
   $IPT -I OUTPUT 1 -j $CHAIN
   $IPT -A $CHAIN -p tcp -d ${HOST:-<host>} --sport <local-port> --dport $PORT -j DROP   (x$PEERS)
+EOF
+    # The mid-run flush is a firewall change like any other and belongs in the
+    # plan, so that "what --no-lift does" is visible here rather than only in
+    # the prose. It is the ONE line that differs between the two paths.
+    if [ ${#NO_LIFT[@]} -eq 0 ]; then
+        cat <<EOF
+
+  ...then, at the start of phase 2, the blackhole comes down mid-run:
+
+  $IPT -F $CHAIN
+EOF
+    else
+        cat <<EOF
+
+  ...and with --no-lift there is NO mid-run flush. Every DROP above stays in
+  place through phase 2's wait, so nothing of ours tells the module its peers
+  are gone. They come down only in the teardown below.
+EOF
+    fi
+    cat <<EOF
 
   ...then, always:
 
@@ -201,6 +262,7 @@ PROBE B will make these firewall changes, and undo them on the way out:
 
 Nothing outside the chain $CHAIN is touched, and unhooking it is the first
 thing the teardown does — so even a failed teardown leaves your traffic alone.
+That teardown runs from an EXIT trap and is not affected by --no-lift.
 EOF
 }
 
@@ -359,7 +421,8 @@ python3 "$PROBE" \
     --chain "$CHAIN" --peers "$PEERS" \
     --recover "$RECOVER" --timeout "$TIMEOUT" \
     --peer-settle "$PEER_SETTLE" \
-    --expect-ceiling "$EXPECT_CEILING" &
+    --expect-ceiling "$EXPECT_CEILING" \
+    "${NO_LIFT[@]}" &
 probe_pid=$!
 
 rc=0

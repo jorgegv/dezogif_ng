@@ -424,6 +424,32 @@ machine keeps working.
 module: that is news arriving from outside. A fresh client being served afterwards says the slot
 comes back once the module is **told**, never that the module heals on its own.
 
+**`--no-lift` asks the other question, and it is the module's own timer.** With that flag phase 2
+does **not** take the blackhole down: the DROP rules stay up across the wait, so no FIN, no RST and
+no retransmission of ours ever reaches the module about those peers, and a fresh client served
+afterwards is the module reclaiming a slot **by itself**. That is what an enforced `AT+CIPSTO` idle
+timeout would look like from here. The teardown is unchanged — the same `EXIT` trap removes the same
+three things, whatever flags were passed.
+
+    sudo test/run-vanished-peer.sh --host <ip> --no-lift --recover 210
+
+Three limits, all of them in the probe's own output rather than only here. It says nothing unless
+the ceiling was really reached in phase 1 — a client served after a walk that never ran out took a
+slot that was free the whole time, and **B3 branches on that** rather than announcing a reclaim it
+did not see. It cannot say **which** slot came back, since no PC-side check sees connection ids. And
+it cannot say **what** freed it: an idle timeout is the hypothesis, the stub's own `esp_recover`
+sweep is a second one, and although a vanished peer is traced to raise no fault and so to trigger no
+sweep, nothing here observes that it did not.
+
+**`--recover` is measured from a different moment on the two paths, and `B5` is why that matters.**
+Peers are made to vanish **one at a time**, so peer 1 has been silent for the whole length of the
+walk by the time the last one is abandoned. Under `--no-lift` the wait therefore runs from the
+**last** peer going silent, so every peer has had at least `--recover` seconds; on the default path
+it still runs from the lift, because there the thing being timed is how long the module takes to act
+on news it has just been given. **B5** reports the oldest and newest peer's age at the end of the
+walk on **both** paths — a walk that outlasted the module's idle timeout could free a slot *during*
+phase 1, and B1 would then report a ceiling nobody observed.
+
 #### RUN ON A REAL NEXT, 2026-08-06 — a vanished peer's slot is never given back
 
 The measurement this probe was written for, on the user's Next at build `00.0F`. Until this it was
@@ -591,7 +617,7 @@ Three things still need eyes, and the first two are not a formality:
 
 | Observation | Why it matters |
 |---|---|
-| the **error area DURING phase 1 of probe B** | **This is the one the probes cannot reach.** B4 reads at the END, after phase 2 has lifted the blackhole; reading it while fresh clients are being refused would take one of the very slots being exhausted. Clean at that moment is the whole #15-is-#19 hypothesis — it says the stub is not faulting, so what is refusing connections is on the module's side of the UART. Probe A's **A5** *does* reach the equivalent moment, because it reads over a connection already open |
+| the **error area DURING phase 1 of probe B** | **This is the one the probes cannot reach.** B4 reads at the END, after phase 2's wait (on the default path, after it has lifted the blackhole); reading it while fresh clients are being refused would take one of the very slots being exhausted. Clean at that moment is the whole #15-is-#19 hypothesis — it says the stub is not faulting, so what is refusing connections is on the module's side of the UART. Probe A's **A5** *does* reach the equivalent moment, because it reads over a connection already open. And on a `--no-lift` run that ends with the module still refusing, **B4's own connection is refused too and the row does not print at all** — so the screen is the only place the answer exists |
 | the **border** | **Not in the display file, so no `CMD_READ_MEM` can ever see it.** Moving means the stub is still cycling; frozen yellow means it is parked in a read (`transport_read_byte` writes yellow after every byte) |
 | whether anything changed **DURING** the run | A5, A6 and B4 are point samples. A screen that reddened between two of them and was repainted is invisible to all three |
 

@@ -47,11 +47,51 @@ THE PHASES.
                abandon it — and then ask whether a FRESH ordinary client is
                still served, and how long its connect took. That pair of
                numbers, per vanished peer, is the whole measurement.
-  2  LIFT      the blackhole comes down and a fresh client is tried again after
-               a wait. WHAT THIS MEANS IS NARROW: taking the rule down lets our
-               kernel finally answer the module, so a recovery here says the
-               slot comes back once the module is TOLD. It does NOT say the
-               module recovers on its own, and it is not a power cycle.
+  2  RECOVER   a fresh client is tried once more after a wait. WHAT THAT MEANS
+               DEPENDS ENTIRELY ON --no-lift, and the two readings are
+               opposites rather than shades of one claim:
+
+               default     the blackhole comes DOWN first, so our own kernel
+                           finally answers the module's retransmissions. A
+                           recovery here says the slot comes back once the
+                           module is TOLD. It does NOT say the module recovers
+                           on its own, and it is not a power cycle.
+               --no-lift   the blackhole STAYS UP, so no FIN, no RST and no
+                           retransmission of ours ever reaches the module about
+                           those peers. A recovery here is the module
+                           reclaiming a slot UNPROMPTED — which is what an
+                           enforced AT+CIPSTO idle timeout would look like from
+                           here. See below for what it still does not say.
+
+--no-lift, AND THE THREE THINGS IT DOES NOT ESTABLISH EVEN WHEN IT RECOVERS.
+
+The reason to have it is that the default path cannot ask the question at all:
+it hands the module the news first and then measures the answer. With the rule
+left up, anything that frees a slot came from the module's side.
+
+  * It does not say WHICH slot came back, or that the oldest peer's did. No
+    PC-side check can see connection ids — that limit is everywhere in this
+    project and it applies here too.
+  * It does not say WHAT freed it. An idle timeout on the module is the
+    hypothesis; the stub's own esp_recover sweep (issue #19) is a second
+    mechanism, and although a vanished peer is traced to raise no fault and so
+    to trigger no sweep, this probe cannot OBSERVE that it did not. B4's error
+    area is the nearest thing to a check on it.
+  * It says nothing at all unless the ceiling was actually reached in phase 1.
+    A fresh client served after a walk that never ran out of slots is a client
+    taking a slot that was free the whole time. The B3 reading below branches
+    on that, because reading it as a reclaim would be the probe inventing its
+    own headline.
+
+THE CLOCK --recover IS MEASURED FROM, which is not the same moment on the two
+paths. Peers are made to vanish ONE AT A TIME, so peer 1 has been silent for
+the whole length of the walk by the time the last one is abandoned. On the
+--no-lift path the wait therefore runs from the LAST peer going silent, so that
+every peer has had at least --recover seconds; on the default path it runs from
+the lift, unchanged, because there the thing being timed is how long the module
+takes to act on news it has just been given. B5 reports the spread either way,
+because a walk longer than the module's idle timeout could free a slot DURING
+phase 1 and inflate the ceiling — on both paths.
 
 WHAT A RESULT WOULD AND WOULD NOT ESTABLISH.
 
@@ -73,6 +113,8 @@ EXIT CODES. The wrapper passes these through, so they are what a caller sees.
      result, whatever they are.
   1  the blackhole could not be lifted. The wrapper's EXIT teardown still
      removes the whole chain; this says the measurement is incomplete.
+     UNREACHABLE under --no-lift, which never lifts anything — the chain then
+     comes down only in that same teardown, which runs whatever happens.
   2  it could not measure at all: not run as root (so run it through the
      wrapper), or nothing answered on the port.
   3  `--expect-ceiling` was passed and the measurement disagreed with it. Only
@@ -240,6 +282,13 @@ def main():
     ap.add_argument("--chain", required=True, help="the iptables chain the wrapper created")
     ap.add_argument("--peers", type=int, default=6)
     ap.add_argument("--recover", type=float, default=20.0)
+    ap.add_argument("--no-lift", action="store_true",
+                    help="do NOT take the blackhole down before phase 2's wait. The "
+                         "rules stay in place until the wrapper's teardown, so nothing "
+                         "of ours ever tells the module the peers are gone — which is "
+                         "what makes a recovery there the MODULE reclaiming a slot "
+                         "rather than the module being told. The wait then runs from "
+                         "the LAST peer going silent, not from now")
     ap.add_argument("--timeout", type=float, default=10.0)
     ap.add_argument("--peer-settle", type=float, default=0.5,
                     help="seconds between one iteration's fresh client closing and "
@@ -283,6 +332,18 @@ def main():
     survived = 0
     fresh_times = [ms]
     stopped_at = None
+    # WHEN EACH PEER STOPPED BEING ABLE TO REACH THE MODULE, one entry per peer
+    # really abandoned. It is what B5 and --no-lift's wait are computed from,
+    # and it exists because the peers vanish ONE AT A TIME: peer 1 is already
+    # ageing while peer 4 is still being connected, so "the walk" is not one
+    # moment and a module that reclaims on a timer could act inside it.
+    #
+    # Taken at the close rather than at the CMD_INIT, which is the SAFE
+    # direction and not merely the convenient one. The module last HEARD from
+    # this peer a few tens of milliseconds earlier, when its CMD_INIT arrived,
+    # so any idle timer on its side is fractionally AHEAD of what we record —
+    # i.e. we under-report the age and wait fractionally longer than we claim.
+    silent_at = []
 
     for i in range(1, args.peers + 1):
         if i > 1:
@@ -316,6 +377,7 @@ def main():
         # measuring a clean disconnect, which is already known to be harmless.
         conv.close()
         vanished += 1
+        silent_at.append(time.monotonic())
 
         fstate, fms, fwhy = fresh_client(args.host, args.port, args.timeout,
                                          "dezogif_ng-after-%d" % i)
@@ -333,6 +395,12 @@ def main():
             stopped_at = (i, fstate, fwhy)
             break
 
+    walk_end = time.monotonic()
+    # DID THE MODULE ACTUALLY RUN OUT? Everything phase 2 can claim rests on
+    # this. `NOFIREWALL` is the one stop that is not the module refusing
+    # anybody — the walk ended for a reason outside its own subject.
+    ceiling_hit = stopped_at is not None and stopped_at[1] != "NOFIREWALL"
+
     if stopped_at and stopped_at[1] in (SERVED, DROPPED, SILENT, REFUSED):
         row("B1", MEASURED,
             "fresh clients were served after %d vanished peers; the next one stopped them"
@@ -349,26 +417,117 @@ def main():
     row("B2", MEASURED, "fresh-client accept latency, %d connects: %s"
                         % (len(fresh_times), trend(fresh_times)))
 
+    # B5 IS NUMBERED AFTER B4 AND PRINTED BEFORE B3, deliberately: check ids are
+    # interface here (they are cited in doc/HARDWARE-TESTING.md and in issues)
+    # so an id may not be reused or renumbered to suit print order. The row
+    # belongs with phase 1's numbers, which is where it is printed.
+    #
+    # WHY IT IS A ROW AND NOT PROSE. The ceiling B1 reports is only a ceiling if
+    # nothing gave a slot back while it was being measured, and the peers age
+    # one after another. Against a module with an idle timeout — AT+CIPSTO — a
+    # walk that took longer than that timeout could free peer 1's slot before
+    # the last peer was even connected, and B1 would report a ceiling nobody
+    # observed. These two numbers are what let a reader rule that out, and they
+    # are printed on BOTH paths because the hazard belongs to phase 1 rather
+    # than to phase 2's flag.
+    if not silent_at:
+        row("B5", NOTE, "no peer was abandoned, so there is no ageing to report")
+    elif len(silent_at) == 1:
+        row("B5", MEASURED,
+            "one peer vanished; it had been silent %.0f s when the walk ended"
+            % (walk_end - silent_at[0]))
+    else:
+        row("B5", MEASURED,
+            "at the walk's end the oldest vanished peer had been silent %.0f s, the newest %.0f s"
+            % (walk_end - silent_at[0], walk_end - silent_at[-1]))
+        detail("Compare the first figure against the module's idle timeout "
+               "(AT+CIPSTO). If the walk outlasted it, a slot may have been freed "
+               "during phase 1 and B1's ceiling is not one.")
+
     # --- phase 2 ----------------------------------------------------------
     print("")
-    try:
-        lift_all(args.chain)
-    except RuntimeError as e:
-        row("B3", NOTE, "could not lift the blackhole: %s" % e)
-        print("\nThe wrapper's EXIT teardown still removes the whole chain.")
-        return 1
+    if args.no_lift:
+        # NOTHING IS LIFTED HERE. The DROP rules stay in the chain and the
+        # wrapper's EXIT teardown removes them, exactly as it does on every
+        # other path — that teardown is unconditional and is not touched by
+        # this flag. What the flag buys is that no FIN, no RST and no
+        # retransmission of ours reaches the module during the wait below, so
+        # anything that frees a slot came from the module's own side.
+        #
+        # AND THE WAIT RUNS FROM THE LAST PEER, not from now and not from the
+        # start of the run. Timing it from here would give the last peer
+        # --recover seconds and every earlier one more, which is the direction
+        # that cannot report a false recovery; timing it from the START of the
+        # walk would give the last peer LESS than --recover, which is the
+        # direction that can.
+        if silent_at:
+            elapsed = time.monotonic() - silent_at[-1]
+            wait = max(0.0, args.recover - elapsed)
+            detail("blackhole STILL UP. The last peer has been silent %.0f s; waiting "
+                   "%.0f s more to make that %.0f s."
+                   % (elapsed, wait, max(elapsed, args.recover)))
+        else:
+            wait = args.recover
+            detail("blackhole STILL UP. No peer was abandoned, so this waits %.0f s "
+                   "from now and there is nothing ageing." % wait)
+        time.sleep(wait)
+    else:
+        try:
+            lift_all(args.chain)
+        except RuntimeError as e:
+            row("B3", NOTE, "could not lift the blackhole: %s" % e)
+            print("\nThe wrapper's EXIT teardown still removes the whole chain.")
+            return 1
 
-    detail("blackhole lifted; waiting %.0f s before asking again" % args.recover)
-    time.sleep(args.recover)
+        detail("blackhole lifted; waiting %.0f s before asking again" % args.recover)
+        time.sleep(args.recover)
+
+    attempt = time.monotonic()
     rstate, rms, rwhy = fresh_client(args.host, args.port, args.timeout,
                                      "dezogif_ng-recovered")
-    if rstate == SERVED:
+
+    if args.no_lift:
+        if silent_at:
+            where = ("blackhole still UP, last peer silent %.0f s"
+                     % (attempt - silent_at[-1]))
+        else:
+            where = "nothing was ever blackholed"
+        if rstate == SERVED:
+            row("B3", MEASURED,
+                "%s: a fresh client was served in %.0f ms" % (where, rms))
+            # THREE READINGS, AND ONLY ONE OF THEM IS THE HEADLINE. A served
+            # client here is a reclaim only if this run really filled the
+            # module with its own vanished peers and was then refused; the
+            # other two are a client taking a slot nobody was holding.
+            if ceiling_hit and silent_at:
+                detail("THE MODULE FREED A SLOT UNPROMPTED: the rule never came down, "
+                       "so no FIN, RST or retransmission of ours reached it. Something "
+                       "on the module's own side let the peer go.")
+                detail("It does NOT say which slot, or what freed it — an idle timeout "
+                       "is the hypothesis, the stub's own sweep is a second one, and no "
+                       "PC-side check can see connection ids.")
+            elif not ceiling_hit:
+                detail("READ NOTHING INTO THIS: the module never stopped serving during "
+                       "phase 1, so this client took a slot that was free the whole "
+                       "time. No reclaim is in evidence because none was needed.")
+            else:
+                detail("READ NOTHING INTO THIS: the module was already refusing before "
+                       "this run abandoned anybody, so whatever was holding those slots "
+                       "was not ours and this says nothing about a vanished peer.")
+        else:
+            row("B3", MEASURED,
+                "%s: a fresh client still got %s" % (where, rstate))
+            detail(rwhy or "no detail")
+            detail("Within this wait the module reclaimed nothing by itself. That is a "
+                   "LOWER BOUND on any idle timer it may have, not evidence that it has "
+                   "none — wait longer before concluding otherwise.")
+    elif rstate == SERVED:
         row("B3", MEASURED,
             "with the blackhole down and %.0f s elapsed, a fresh client was served in %.0f ms"
             % (args.recover, rms))
         detail("READ THIS NARROWLY: lifting the rule lets our kernel answer the "
                "module, which is news arriving from outside. It is not the module "
-               "recovering on its own.")
+               "recovering on its own — pass --no-lift to ask that instead.")
     else:
         row("B3", MEASURED,
             "with the blackhole down and %.0f s elapsed, a fresh client still got %s"
@@ -406,19 +565,32 @@ def main():
     print("""
 AT THE MACHINE — what B4 still cannot reach:
   * the ERROR AREA WHILE FRESH CLIENTS ARE BEING REFUSED. B4 reads it at the
-    END, after phase 2 lifted the blackhole; reading it during phase 1 would
-    cost one of the slots being counted. That moment is still the load-bearing
-    one for the #15-is-#19 hypothesis, and it is still yours to watch.
+    END, after phase 2's wait; reading it during phase 1 would cost one of the
+    slots being counted. That moment is still the load-bearing one for the
+    #15-is-#19 hypothesis, and it is still yours to watch. Note that with the
+    module refusing everybody, B4's own connection is refused too and the row
+    does not print at all — so on a run that ends refused, the screen is the
+    ONLY place the answer exists.
   * the BORDER. It is not in the display file, so no CMD_READ_MEM can see it:
     moving, or frozen, and at what colour.
   * WHETHER the screen changed DURING the run. B4 is one point sample.
 Photograph it, and say what it looked like BEFORE and AFTER.""")
 
-    print("""
+    if args.no_lift:
+        print("""
+WHAT THIS RUN DOES NOT ESTABLISH. It shows what a vanished peer costs, not that
+a vanished peer is what happened on 2026-08-05. The blackhole stayed UP, so a
+recovery in phase 2 IS the module reclaiming unprompted — but it does not say
+WHICH slot came back, or WHAT freed it, and no reading here can rule out the
+stub's own sweep. Issue #15 must not be closed on this. See
+doc/HARDWARE-TESTING.md.""")
+    else:
+        print("""
 WHAT THIS RUN DOES NOT ESTABLISH. It shows what a vanished peer costs, not that
 a vanished peer is what happened on 2026-08-05. Phase 2's recovery, if any, is
-the module being TOLD the peers are gone, not the module healing. Issue #15
-must not be closed on this. See doc/HARDWARE-TESTING.md.""")
+the module being TOLD the peers are gone, not the module healing — pass
+--no-lift to ask whether it heals on its own. Issue #15 must not be closed on
+this. See doc/HARDWARE-TESTING.md.""")
 
     if args.expect_ceiling:
         if survived == args.expect_ceiling:

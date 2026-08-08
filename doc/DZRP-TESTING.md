@@ -524,8 +524,10 @@ distinction is fine enough to be worth writing down rather than left to be infer
    and C15 "have never run on silicon" — and that sentence is the later of the two, written the same
    day. Nothing anywhere corroborates a 14-check hardware run: no build number, no date, no
    measurements, and `MEMORY.md`'s entry for issue #9, which added C13/C14, records only a
-   *prediction* of what a Next would show. Every other hardware claim in this project is cited with a
-   build number and specifics. Found by review, 2026-08-08, while checking a `CLAUDE.md` paragraph
+   *prediction* of what a Next would show. Every other hardware **conformance-run count** here is
+   cited with a build number — `000A`, `000B`, `00.12` — and this one carries no date, no build and
+   no measurement at all. (Some hardware claims of other kinds do carry a date without a build
+   number, so the comparison is to the same class of claim, not to all of them.) Found by review, 2026-08-08, while checking a `CLAUDE.md` paragraph
    whose accuracy depends on which of the two is right. **If somebody does remember running the suite
    at 14, restore the claim WITH its build number** — this removal rests on absence of corroboration,
    which is weaker than a measurement in either direction.

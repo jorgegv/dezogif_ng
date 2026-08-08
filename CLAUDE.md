@@ -281,7 +281,8 @@ strongest:
      `MAIN_BANK` → decline, because the debugger itself was executing. A regression that sent
      *every* press to `init_main_bank` would destroy live debug sessions and **T7 would still
      pass** — and teaching `nmi66h` to accept a software cause, M2's first act, edits the same
-     routine and reuses the same `MF.nmi_slot7` this branch turns on. The decline arm is currently guarded by one hardware observation and nothing else.
+     routine and reuses the same `MF.nmi_slot7` this branch turns on. The decline arm is
+     currently guarded by one hardware observation and nothing else.
      **It is coverable headless and simply is not covered**: measured in review, a second
      `--delayed-nmi-frames` press with no reset between leaves the screen byte-identical (0.00%).
      What stops that being a check on its own is that **"nothing changed" is also what a machine

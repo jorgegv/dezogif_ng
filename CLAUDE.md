@@ -43,7 +43,7 @@ what 115200 8N1 can carry.
 conformance suite has grown to **15** checks since that run, and the newest have never been driven
 at a Next; `--unload` in `.mfinstall` has never run there; and every ESP timing constant remains a
 judgement call that only a real module can settle. The reset path of issue #26 **was** confirmed
-there (2026-08-08, build `00.12`), the press-while-stopped half of it was not.
+there (2026-08-07, build `00.12`), the press-while-stopped half of it was not.
 
 It is deployed by replacing `machines/next/enNextMf.rom` on the Next's SD card — the stub *is* the
 Multiface ROM. The PC-side client is **DeZog** in VS Code, speaking **DZRP**.
@@ -280,8 +280,8 @@ strongest:
      dispatch branches on the bank slot 7 held: not `MAIN_BANK` → re-initialise, which is T7;
      `MAIN_BANK` → decline, because the debugger itself was executing. A regression that sent
      *every* press to `init_main_bank` would destroy live debug sessions and **T7 would still
-     pass** — and teaching `nmi66h` to accept a software cause, M2's first act, touches exactly
-     this code. The decline arm is currently guarded by one hardware observation and nothing else.
+     pass** — and teaching `nmi66h` to accept a software cause, M2's first act, edits the same
+     routine and reuses the same `MF.nmi_slot7` this branch turns on. The decline arm is currently guarded by one hardware observation and nothing else.
      **It is coverable headless and simply is not covered**: measured in review, a second
      `--delayed-nmi-frames` press with no reset between leaves the screen byte-identical (0.00%).
      What stops that being a check on its own is that **"nothing changed" is also what a machine

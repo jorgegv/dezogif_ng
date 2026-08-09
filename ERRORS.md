@@ -57,6 +57,51 @@ which is what the two final verification runs of that branch do, and which turns
 correct throughout; the word-count audit was green; the compile was green. A
 harness fault does not show up as a fault, it shows up as a *finding*.
 
+### The same branch, one round later: a correct sweep that looked in the wrong place
+
+**Symptom.** Issue #24 merged while that branch was in review, so the value the
+shipped stub sends changed from "nothing, the module's own 180" to
+`AT+CIPSTO=1800`. Every place the probe suggested an expectation had to lead with
+1800 instead. Two whitespace-flattened sweeps were run and both were thorough —
+the `Makefile`'s usage block, the `doc/` section, the run table, even a stale
+sentence of `main`'s 140 lines above the new one. **Both missed the tool's own
+module docstring**, whose first example line still led with 180 — and that line is
+what `--help` prints as its **second visible line**, ahead of anything in the
+Makefile and far ahead of a document.
+
+**Cause.** The sweeps enumerated *files I had edited*. The docstring was in a file
+I had edited, in a region the commit did not touch, so it never entered the
+candidate set. Nothing about the grep was wrong; it was pointed at the wrong
+population.
+
+**THE RULE THIS FILE ALREADY HAS TWO-THIRDS OF.** MEMORY.md's version reads: grep
+for the **thing being corrected**, not for the words you think you wrote; and
+flatten whitespace first, because prose wraps and markdown emphasis breaks a
+pattern. The third clause is this one:
+
+> **Enumerate the SURFACES a reader meets, and start with the one they hit first.**
+
+For a command-line tool that order is `--help` (which for a Python tool means the
+module docstring), then the `make` target's usage block, then the document. For a
+library it is the exported symbol's docstring before the README. The failure mode
+is not "I did not grep hard enough" — it is finishing a correction in the places
+that were *on my mind* and calling the set complete.
+
+Cheap check, and it is the one that would have caught this in a second: **run the
+thing and read what it prints.** `--help` is a user-facing surface with an
+executable rendering; there is no reason to audit it by reading source.
+
+**It paid off on its first use, which is the reason this paragraph is not
+advice.** Running `--help` to confirm the corrected example immediately showed a
+SECOND defect that reading had never found: the two-line `make` example ended a
+line with a backslash, and inside an ordinary Python docstring a trailing
+backslash is a **line continuation**, so argparse printed the two lines joined
+into one unusable command. Invisible in the source, where it looks exactly like
+the shell it is imitating. Fixed with a raw docstring — and the note explaining
+*why* it is raw went into a `#` comment rather than the docstring, because
+`--help` is a user's surface and Python string semantics are not a user's
+business. Two defects on one screen, both found by looking at the screen.
+
 ---
 
 ## A running shell script is read by BYTE OFFSET, so editing it mid-run corrupts it

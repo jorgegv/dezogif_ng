@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
-"""PROBE C — does the module drop an IDLE inbound connection, and after how long?
+# A RAW docstring, for one reason: the shell example in it ends a line with a
+# backslash, and in an ordinary string that is a line CONTINUATION — argparse
+# then prints the two lines joined, which is what `--help` did the first time it
+# was RUN rather than read. No escape sequences here for `r` to change. This note
+# is a comment and not part of the docstring on purpose: `--help` is a
+# user-facing surface and Python string semantics are not a user's business.
+r"""PROBE C — does the module drop an IDLE inbound connection, and after how long?
 
+    # a current ROM: the stub sets AT+CIPSTO=1800 itself since issue #24
+    make probe-idle-drop NEXT_IP=192.168.1.42 \
+         PROBE_ARGS="--expect-timeout 1800 --deadline 400"
+    # a build before #24, or one whose AT+CIPSTO the module refused
     make probe-idle-drop NEXT_IP=192.168.1.42 PROBE_ARGS="--expect-timeout 180"
 
 THIS IS AN INSTRUMENT, NOT A GATE. It prints one number and says what that
@@ -19,9 +29,11 @@ questions this project has answered wrongly in both directions:
   * a DeZog session parked at a breakpoint while somebody READS CODE is silent
     for minutes and perfectly healthy. The stub sends nothing unprompted and the
     client sends nothing while you think, so both ends are quiet — which is
-    exactly the condition an idle timeout measures. Issue #24 lengthens it
-    deliberately for that reason, and this probe is how a build carrying #24 is
-    shown to have taken.
+    exactly the condition an idle timeout measures. Issue #24 lengthened it
+    deliberately for that reason: the shipped ROM sets `AT+CIPSTO=1800` as of
+    build 00.14, and this probe is the only thing on the PC side that can show a
+    real module then OBEYS it. A current build that drops a silent client at
+    ~182 s is the regression.
 
 NOTHING ABOUT THE TIMEOUT IS ASSUMED, AND THAT IS THE POINT OF `--expect-timeout`.
 This probe CANNOT read `AT+CIPSTO?` — that needs `.UART` at the machine, or the

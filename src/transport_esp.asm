@@ -254,11 +254,15 @@
 ;    v1.5.4's list of commands that write to flash: the module's 180 is the
 ;    firmware's compiled-in default and not something a previous session left.
 ;
-;    AND ITS ANSWER IS READ. See esp_command_ok_or_error: a module too old for
-;    the command answers ERROR, which is not a reason to refuse to debug, so
-;    neither arm fails bring-up — but which arm was taken is recorded in
-;    esp_sto_state rather than thrown away, because a run where the command
-;    silently did nothing must not look like one where it worked.
+;    AND ITS ANSWER IS READ, THOUGH NOT RECORDED. See esp_command_ok_or_error:
+;    a module too old for the command answers ERROR, which is not a reason to
+;    refuse to debug, so neither arm fails bring-up. Reading it is what keeps
+;    the chain synchronous — an answer left in the FIFO is matched by the NEXT
+;    step's scan — and that, rather than any byte of state, is what this buys.
+;    NOTHING ANYWHERE OBSERVES WHICH ARM WAS TAKEN, which is a real gap and is
+;    measured rather than assumed: the bench passes 4 of 4 against a build that
+;    sends the command and never waits. Closing it means putting a refusal on
+;    the screen, and that is its own issue.
 ;
 ;---------------------------------------------------------------------------
 ; What this file does NOT do, deliberately
@@ -585,13 +589,6 @@ ESP_SERVER_TIMEOUT: equ 1800
  IFNDEF ESP_CIPSTO_STRICT
 ESP_CIPSTO_STRICT:  equ 0
  ENDIF
-
-; Which arm AT+CIPSTO's answer took, recorded so that a run where the command
-; silently did nothing cannot look like one where it worked. Nothing above the
-; transport reads it; see esp_command_ok_or_error for why it is kept anyway.
-ESP_STO_SILENT:     equ 0   ; the module said neither, inside the read budget
-ESP_STO_SET:        equ 1   ; OK — the timeout is ours
-ESP_STO_REFUSED:    equ 2   ; ERROR — too old a firmware, or a value it dislikes
 
 ; What the UI has to say about the link. Decided once, during bring-up, because
 ; show_ui is re-entered on every redraw and an AT round trip per redraw would
@@ -932,25 +929,6 @@ esp_fault_count:    defb 0
 ; zeroing the count is NOT enough on its own: it makes the very next fault the
 ; first of a new run, which is exactly what re-triggers a limit of one.
 esp_recovering:     defb 0
-
-; Which arm AT+CIPSTO's answer took on the last bring-up — issue #24, point 11.
-;
-; IT IS WRITTEN AND NOT YET READ, WHICH IS DELIBERATE AND IS THE POINT OF IT.
-; The alternative was to send the command fire-and-forget, and this project
-; refuses that for one reason: a run where the module silently did nothing would
-; then be indistinguishable from a run where the timeout really changed. Reading
-; the answer is what makes the two different, and the byte is where the answer
-; goes; a REFUSED here says the session will still be dropped at whatever the
-; firmware's own default is, which is a fact about the machine and not a
-; transport fault.
-;
-; It is NOT raised into last_error, and that is a decision rather than an
-; omission: the error table lives in data_const.asm, which is common code, so a
-; new code would move the UART ROM's bytes for a WiFi-only condition — the same
-; argument that kept bring-up failure reporting as RX Timeout (MEMORY.md
-; 2026-08-04). Putting it on the screen is worth doing and belongs with whatever
-; change is allowed to move both ROMs.
-esp_sto_state:      defb ESP_STO_SILENT
 
 ; Which of the three status blocks below show_ui draws. NO_MODULE is the state
 ; before transport_init has run, so a UI drawn without a bring-up says "the
@@ -3083,7 +3061,9 @@ transport_init:
     ; ERROR, and the only consequence is that an idle session will still be
     ; dropped at whatever that firmware's default is — a worse debugger, not a
     ; broken one, and refusing to come up over it would be strictly worse again.
-    ; Which arm it took is in esp_sto_state.
+    ; The answer is read rather than left on the wire, which is what keeps the
+    ; rest of the chain's scans matching their own replies; nothing records
+    ; which arm it was, and esp_command_ok_or_error says why not.
  IF ESP_CIPSTO_STRICT == 0
     ld hl,esp_cmd_cipsto
     call esp_command_ok_or_error
@@ -3499,11 +3479,34 @@ esp_command_ok:
 ; is another scan, and a scan skips what it is not looking for. AT+CIPSERVER's
 ; wait for "OK\r\n" steps over CR and LF without matching either.
 ;
+; IT REPORTS NOTHING, AND THE FIRST VERSION OF IT DID — a byte recording which
+; arm was taken. It was dropped rather than kept, because nothing read it and
+; nothing here CAN: no bench reads the debugger's own RAM, and the value is not
+; drawn. A byte whose only justification is a distinction that nothing can make
+; is residue, and residue outlives its reason. If a refusal should be visible —
+; and it should, since it means an idle session will still be dropped at the
+; firmware's own default — the place is this file's own WiFi status block, which
+; would not move the UART ROM, and it wants its own issue and its own check.
+;
+; SO WHAT DOES THE WAIT BUY, IF IT RECORDS NOTHING? Two things, and only the
+; second is checked here:
+;
+;   * IT KEEPS THE CHAIN SYNCHRONOUS. Fire-and-forget leaves the module's answer
+;     in the RX FIFO, so AT+CIPSERVER's own wait for "OK\r\n" matches the OK
+;     that belongs to AT+CIPSTO, and every answer for the rest of bring-up is
+;     off by one. That is the desynchronisation class this transport has already
+;     been bitten by twice, and it is REASONED here rather than measured: see
+;     the NOT COVERED note in test/run-cipsto.sh, which records that the bench
+;     passes 4 of 4 against a fire-and-forget build.
+;   * IT BOUNDS THE COST OF A REFUSAL AND DOES NOT ACT ON IT. esp_command_ok
+;     spends the whole of ESP_INIT_PASSES and then abandons bring-up — measured,
+;     as bench check K4, where AT+CIPSERVER is never sent and nothing listens.
+;
 ; Parameter:
 ;  HL = NUL-terminated command, CRLF included.
 ; Returns:
-;  esp_sto_state = ESP_STO_SET / ESP_STO_REFUSED / ESP_STO_SILENT.
-;  No carry contract: there is nothing here a caller has to act on.
+;  Nothing. There is no carry contract and no state: both answers are ordinary,
+;  and the caller has no decision to make either way.
 ; Changes:
 ;  AF, BC, DE, HL
 ;===========================================================================
@@ -3513,43 +3516,27 @@ esp_command_ok_or_error:
     ld (esp_scan_hold),a
 .hunt:
     call esp_read_scan          ; A = the byte read; HL is preserved
-    jr c,.silent
+    ret c                       ; silence: neither answer came, and neither acts
 .classify:
-    ; Does this byte start either pattern? The state byte is written HERE rather
-    ; than at the match, so that no second variable is needed — and only HL
-    ; survives esp_read_scan, so a second cursor would have had to be one. It is
-    ; sound because the ONLY way to reach the `ret z` below is through the
-    ; classification that chose the pattern which then completed, and a partial
-    ; match that times out instead is overwritten by .silent.
+    ; Does this byte start either pattern? One cursor is enough because only HL
+    ; survives esp_read_scan, and it is EXACT rather than merely usually right
+    ; for the reason in the header: neither pattern repeats its own first letter.
     ld hl,esp_str_ok+1          ; the 'O' has just been consumed
     cp 'O'
-    jr z,.chose_ok
+    jr z,.body
     ld hl,esp_str_error+1       ; likewise the 'E'
     cp 'E'
     jr nz,.hunt
-    ld a,ESP_STO_REFUSED
-    jr .chose
-.chose_ok:
-    ld a,ESP_STO_SET
-.chose:
-    ld (esp_sto_state),a
 .body:
     ld a,(hl)
     or a
-    ret z                       ; the whole pattern matched; the state says which
+    ret z                       ; the whole of one pattern matched
     call esp_read_scan
-    jr c,.silent
+    ret c
     cp (hl)
     jr nz,.classify             ; a mismatching byte may start a pattern itself
     inc hl
     jr .body
-
-.silent:
-    ; A partial match that then timed out is NOT a refusal, so this overwrites
-    ; whatever .classify guessed.
-    ld a,ESP_STO_SILENT
-    ld (esp_sto_state),a
-    ret
 
 
 ;===========================================================================

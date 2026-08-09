@@ -74,10 +74,11 @@ the third is the one that made it a routine rather than a line:
    `AT+CIPSERVER` is never sent and **nothing listens at all**. A firmware too
    old for the command would have turned this fix into "the debugger will not
    start";
-3. **it is not fire-and-forget**, which this project refuses for its usual
-   reason: a run where the module silently did nothing must not look like one
-   where the timeout really changed. Which arm was taken is recorded in
-   `esp_sto_state`.
+3. **it keeps the chain synchronous.** Fire-and-forget leaves the module's
+   answer in the RX FIFO, so `AT+CIPSERVER`'s own wait for `"OK\r\n"` matches
+   the OK belonging to `AT+CIPSTO` and every reply for the rest of bring-up is
+   off by one — the desynchronisation class this transport has been bitten by
+   twice.
 
 **THE MATCHER IS THE NAIVE RESTART SHAPE GENERALISED TO TWO PATTERNS BY
 COMMITTING ON THE FIRST CHARACTER**, and it is exact rather than usually-right
@@ -87,13 +88,36 @@ by re-testing the offending byte against both starts. `"ERROK\r\n"` still
 matches OK. A general two-cursor matcher was rejected because `esp_read_scan`
 preserves only HL.
 
-**`esp_sto_state` IS WRITTEN AND NOT YET READ, DELIBERATELY.** Raising it into
-`last_error` was rejected on a byte-identity argument rather than a design one:
+**A BYTE RECORDING WHICH ARM WAS TAKEN WAS BUILT, AND THEN DROPPED, AND THE
+DELETION IS THE MORE USEFUL HALF OF THIS ENTRY.** `esp_sto_state` held
+SET / REFUSED / SILENT, on the reading that "not fire-and-forget" means "keep
+the answer". It was written by the transport and read by **nothing**, and
+nothing here *can* read it: no bench reads the debugger's own RAM, and the value
+was drawn nowhere. So the distinction it existed to preserve was one that
+nothing could make, and **the manager was right to ask whether it earned its
+byte**: a byte with no reader is residue, and residue outlives its reason.
+Dropped, ~15 bytes back.
+
+**WHAT SETTLED IT WAS A MEASUREMENT, NOT THE ARGUMENT.** A scratch build whose
+CIPSTO step is `call esp_send_string` and nothing else — genuinely
+fire-and-forget — **passes the whole bench, 4 of 4**. Every check here observes
+the *module*, and the module behaves identically either way. So the byte was not
+what distinguished the two cases, and neither is anything else we have.
+
+**Which leaves the honest justification for reading the answer at all, and it is
+NOT the one the issue's wording suggests.** It is synchrony (above), a real
+property that a real module would punish and jnext does not — the same "the
+emulator sits on the safe side of us" shape as the connection id and the
+15-character address. That is now written into the routine, the bench header and
+the NOT COVERED list rather than left as an implication.
+
+Raising a refusal into `last_error` was rejected separately, on byte-identity:
 the error table is in `data_const.asm`, which is **common code**, so a new code
-would move the UART ROM for a WiFi-only condition — the same argument that kept
-bring-up failure reporting as `RX Timeout` (MEMORY.md 2026-08-04). Putting a
-refusal on the screen is worth doing and belongs with a change allowed to move
-both ROMs.
+would move the UART ROM for a WiFi-only condition — the argument that kept
+bring-up failure reporting as `RX Timeout` (MEMORY.md 2026-08-04). **The WiFi
+status block is not common code**, so putting a refusal on the screen there
+costs no UART bytes and is the way to make this observable. It needs new text, a
+row, and a check of its own, so it is a separate issue and not this one.
 
 **Ordering: BEFORE `AT+CIPSERVER`, and that buys two things.** No client can be
 accepted while the firmware's 180 still governs it; and, since nothing is
@@ -170,7 +194,12 @@ constants live there rather than in `constants.asm`. WiFi `ffd2878f…` →
   value, which is not the same event as a firmware with no `AT+CIPSTO` at all.
   The stub cannot tell them apart and does not try; nothing here has met the
   second.
-* **`esp_sto_state` reaching a human.** It is written and read by nothing.
+* **WHETHER THE STUB READ THE ANSWER AT ALL.** Measured: a fire-and-forget
+  build passes 4 of 4. Nothing on the machine or in the bench observes which arm
+  was taken, and the byte that used to has been dropped precisely because it did
+  not close this. K4 is the nearest guard — a build that waits for `OK` alone
+  stops dead — so the step's answer is consumed by *something*, which is weaker
+  than it sounds.
 * **KNOWN-ISSUES.md #19's bound.** This change lengthens it from ~3 minutes to
   ~30, and the entry is **not edited here**: branch `known-issues-19-bounded`
   owns that correction and already names #24 and the figure. Two branches

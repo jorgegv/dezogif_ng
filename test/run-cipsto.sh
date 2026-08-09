@@ -61,6 +61,20 @@
 #
 # WHAT THIS BENCH DOES NOT DO.
 #
+#   * IT CANNOT TELL A STUB THAT READS THE ANSWER FROM ONE THAT FIRES AND
+#     FORGETS, and that is measured rather than suspected: a scratch build whose
+#     CIPSTO step is `call esp_send_string` and nothing else passes **4 of 4**.
+#     The reason is that every check here observes the MODULE — the value it was
+#     given, and whether it enforces it — and the module behaves identically
+#     either way. What a fire-and-forget stub really breaks is the SYNCHRONY of
+#     the rest of bring-up: its answer stays in the FIFO, so AT+CIPSERVER's own
+#     wait matches AT+CIPSTO's OK and every reply afterwards is off by one. jnext
+#     survives that, because the remaining scans skip what they are not looking
+#     for; a real module is where it would bite, which is the same "the emulator
+#     sits on the safe side of us" shape that cost this project a night over a
+#     connection id. K4 is the nearest thing to a guard — it shows the step's
+#     answer really is consumed by SOMETHING, since a build that waits for `OK`
+#     alone stops dead on the refusal.
 #   * It says nothing about a real ESP-01. jnext models `AT+CIPSTO` from the
 #     hardware measurement above (its own GH #240), so this shows the stub sends
 #     the command and reads the answer, not that a module obeys. The hardware

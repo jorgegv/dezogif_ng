@@ -25,4 +25,4 @@
 # It is NOT part of identity. mfselect matches the "DeZoGiFnG_" prefix and the
 # variant field, never this number: matching a per-build value is precisely the
 # fragility the identity block exists to remove.
-build_number: "0017"
+build_number: "0018"

@@ -296,16 +296,23 @@ done. It landed, so C2 goes green on its own and the entry went with it.
 
 So every failure here is now new on this remote, and is the part worth investigating.
 
-## Step 4b — the issue #15 probes (optional, and NOT part of the bench)
+## Step 4b — the module probes (optional, and NOT part of the bench)
 
     make probe-jnext                             # FIRST. Always. See below
     make probe-slots      NEXT_IP=192.168.1.42   # probe A
     make probe-vanished   NEXT_IP=192.168.1.42   # probe B — needs sudo
+    make probe-idle-drop  NEXT_IP=192.168.1.42 \
+         PROBE_ARGS="--expect-timeout 180"       # probe C
 
-These two are **instruments, not gates**. They print numbers and observations and render no
-verdict, they are not part of `make test`, and **neither can close
+These are **instruments, not gates**. They print numbers and observations and render no verdict,
+they are not part of `make test`, and **none of them can close
 [issue #15](https://github.com/jorgegv/dezogif_ng/issues/15) on its own.** Nobody has reproduced
-that wedge deliberately; their job is to make a positive reproduction possible.
+that wedge deliberately; A and B's job is to make a positive reproduction possible.
+
+**Probe C is here for the family rather than for #15.** Its subject is the module's own idle
+timeout, which is what *bounds* #19's slot leak at about three minutes and which
+[issue #24](https://github.com/jorgegv/dezogif_ng/issues/24) lengthens deliberately. It is also
+the only way, from the PC, to show that a build carrying #24 really took.
 
 ### The hypothesis they test
 
@@ -582,6 +589,10 @@ probe: a DZRP client that connected, sent `CMD_INIT` and then said nothing was d
 after **182.5 s** and **181.8 s** in two runs. That figure sits inside the bracket the probe gives,
 from the opposite direction.
 
+**Those two runs are now re-runnable as `make probe-idle-drop`** — see probe C below, which is
+that client promoted out of a scratch script, and which carries a third run against an issue #24
+build.
+
 **It is not `esp_recover`, and that is ruled out rather than assumed away.** The sweep is
 **fault-counted** — `ESP_FAULT_LIMIT` consecutive faults through `rxtx_error` — and has no timer in
 it at all. During phase 2 nothing transmits and the blackholed peers are silent, so no fault can be
@@ -720,6 +731,96 @@ made, because the fault it declines to fix clears itself in about three minutes 
 the power switch. Closing the criterion properly still needs a sweep reachable from a quiet stub —
 periodic, or at connect time — which is a separate change, and one with distinctly less to buy now.
 
+### Probe C — the idle-drop probe (`make probe-idle-drop`, no root)
+
+Opens one connection, gets a `CMD_INIT` answered, then **says nothing and never closes it** — and
+times how long the remote leaves it alone. It ends by reading the stub's own screen on a second
+connection.
+
+    make probe-idle-drop NEXT_IP=<ip> PROBE_ARGS="--expect-timeout 180"
+    make probe-idle-drop NEXT_IP=<ip> PROBE_ARGS="--expect-timeout 1800 --deadline 400"
+
+**`--expect-timeout` HAS NO DEFAULT, AND THAT IS THE WHOLE DESIGN.** The probe cannot read
+`AT+CIPSTO?` — that needs `.UART` at the machine — so a number baked into it would be the tool
+asserting a property of a module it never asked. Given one, `R2` says whether the measurement and
+the expectation agree; given none, `R1`'s number is printed and **nothing is attributed to it**.
+Either way the exit code is the same: this renders no verdict, and a disagreement is a *finding*
+rather than a failure.
+
+*(An earlier scratch version printed `module reports +CIPSTO:180` unconditionally and concluded
+from it. Run against a stub that had raised the value, it announced that no timeout existed — a
+conclusion printed without consulting what happened, which is the defect two reviewers had just
+rejected elsewhere in this bench. The measurements below were taken with that version; the numbers
+are unaffected, the wording around them is not, and this paragraph is why.)*
+
+**"SURVIVED" IS A LOWER BOUND, NEVER AN ABSENCE.** A connection still open at the deadline says the
+timeout is *longer than the deadline* and nothing more, and no length of wait can ever say there is
+none. The probe words every survival branch that way, and tells you up front when the deadline you
+chose is too short for a survival to mean anything.
+
+**AND A MATCH IS CONSISTENCY, NOT ATTRIBUTION.** From the PC every mechanism that closes an idle
+inbound link looks identical. What rules `esp_recover` out is the argument two sections up — it is
+fault-counted, nothing transmits during the wait, and a fault-counted mechanism cannot produce a
+result that varies with elapsed time alone — and that argument is *traced*, not observed by this
+probe.
+
+**The rows.** `R0` the `CMD_INIT` round trip, which is also the instrument check: a probe that
+reports a survival with `R0` green and a validated screen reader at the end was demonstrably working
+at both ends of its wait. `R1` the measurement. `R2` the comparison, or a note that none was asked
+for. `R3`-`R5` the closing screen read — the error area, the session line, and the **identity
+line**, which is the only thing here that ties a hardware result to a build number, since DZRP's
+`PROGRAM_NAME` reports upstream's `dezogif v2.2.1` for every ROM we ship.
+
+#### RUN ON A REAL NEXT — three runs, and the third is an issue #24 build
+
+All on the user's own machine, an Ai-Thinker ESP-01 reporting `AT version:1.2.0.0`:
+
+| date | ROM | expected | outcome | session line afterwards |
+|---|---|---:|---|---|
+| 2026-08-08 | shipped — the stub never sends `AT+CIPSTO`, so the module's own default | 180 s | **dropped after 182.5 s** | `Session opened - CMD_INIT` |
+| 2026-08-08 | the same, second run | 180 s | **dropped after 181.8 s** | `Session opened - CMD_INIT` |
+| 2026-08-09 | `issue-24-cipsto` — the stub sends `AT+CIPSTO=1800` at bring-up | 1800 s | **survived 400 s**, the deadline | **`Session lost - client gone`** |
+
+**What these establish.** A real ESP-01 enforces `AT+CIPSTO` against a server-accepted inbound
+connection, at its documented default; and it honours a value the **stub** sets, since the same
+client that was dropped at ~182 s twice was still connected at 400 s once the stub raised it. That
+second half is issue #24's whole acceptance criterion, and nothing else in this tree can observe it.
+
+**What they do NOT establish**, and the first two are easy to over-read:
+
+* **The third run did not measure 1800 s** — it measured "longer than 400 s". Confirming 1800 needs
+  a deadline past it, which is a half-hour run nobody has made. Consistent with #24; not a
+  measurement of it.
+* **Neither says whether the module emits `<id>,CLOSED` when it REAPS.** The 2026-08-09 session line
+  is the first hardware sighting of issue #23's observer working — but the close it saw was **our
+  own clean FIN**, sent when the probe gave up at its deadline, not a reap. The 2026-08-08 runs
+  *were* reaps and their session line did not move, which is equally uninformative: that build
+  predates #23 and had nothing watching. The question in "#19's residual" above stays open.
+* **One machine, one reporter, no captured artefact.** These sit on this project's
+  **reported on hardware** rung, not on `verified`.
+* Nothing about **another module**. `AT+CIPSTO` is settable over 0-7200 and `0` disables it.
+* Nothing about a **wedged-but-reachable** peer, or about whether the timer is per-connection or
+  global. One connection is timed; probe B's bracket is what bears on the second question.
+
+#### Probe C has no `make probe-jnext` validation, and here is what stands in for it
+
+The rule below is that an instrument is pointed first at a target whose answer is known. There is
+no such target for C: **whether jnext models `AT+CIPSTO` at all has never been checked**, so the
+emulator has no known answer to check against, and a probe pointed at a module with no timeout
+would report the same survival as a broken one.
+
+Two things stand in. In-band, `R0` and the closing screen read bracket the wait with two working
+exchanges. Out of band, `test/idle-drop-fake-peer.py` is a ~150-line fake DZRP peer with one
+property — an **idle** timer that closes a connection after a settable delay, or never — against
+which every branch of the probe's wording is exercised in seconds instead of minutes:
+
+    test/idle-drop-fake-peer.py --port 11987 --drop-after 20 &
+    test/idle-drop-probe.py --host 127.0.0.1 --port 11987 --expect-timeout 20 --deadline 60
+
+It is **not a stub and not an emulator**, and a green run against it says only that the probe
+describes a peer that behaved in a known way correctly. That is exactly the claim the wording
+needed, and nothing wider.
+
 ### `make probe-jnext` FIRST, always
 
 **A probe that never worked reports a negative result indistinguishable from a real one.** This
@@ -728,7 +829,8 @@ project has already been handed one: the first hardware sweep of the CRLF swallo
 where it counts from the sequence byte, so every trial died on its first command and the verdict
 logic scored that as "answered" (`ERRORS.md`). The numbers were real; the instrument was not.
 
-So both probes are pointed first at a machine whose ceiling is **known**, and checked against it.
+So probes A and B are pointed first at a machine whose ceiling is **known**, and checked against it.
+**Probe C is not covered by this target** and cannot be, for the reason in its own section above.
 The numbers are derived from jnext's own source, not chosen:
 
 | | jnext | why |
@@ -761,7 +863,8 @@ and a probe that insisted on an answer would not be an instrument.
 
 **The probes now read the screen themselves, and this list is what is LEFT.** Since the DZRP screen
 reader landed, probe A prints the error area twice — **A5** at the moment the ceiling is hit, over
-the connection it already holds, and **A6** at teardown — and probe B prints it once, as **B4**, at
+the connection it already holds, and **A6** at teardown — probe B prints it once, as **B4**, at
+teardown, and probe C prints it plus the session and identity lines as **R3**-**R5**, also at
 teardown. So the observation this section used to ask a human for, and which was once lost by not
 being asked, arrives in the output by itself.
 
@@ -771,21 +874,25 @@ Three things still need eyes, and the first two are not a formality:
 |---|---|
 | the **error area DURING phase 1 of probe B** | **This is the one the probes cannot reach.** B4 reads at the END, after phase 2's wait (on the default path, after it has lifted the blackhole); reading it while fresh clients are being refused would take one of the very slots being exhausted. Clean at that moment is the whole #15-is-#19 hypothesis — it says the stub is not faulting, so what is refusing connections is on the module's side of the UART. Probe A's **A5** *does* reach the equivalent moment, because it reads over a connection already open. And on a `--no-lift` run that ends with the module still refusing, **B4's own connection is refused too and the row does not print at all** — so the screen is the only place the answer exists |
 | the **border** | **Not in the display file, so no `CMD_READ_MEM` can ever see it.** Moving means the stub is still cycling; frozen yellow means it is parked in a read (`transport_read_byte` writes yellow after every byte) |
-| whether anything changed **DURING** the run | A5, A6 and B4 are point samples. A screen that reddened between two of them and was repainted is invisible to all three |
+| whether anything changed **DURING** the run | A5, A6, B4 and R3-R5 are point samples. A screen that reddened between two of them and was repainted is invisible to every one |
 
 Photograph it before and after anyway — it costs nothing and it is the only artefact of the three
 rows above. Note that `Last Error: RX Timeout` on its own is **not** necessarily a finding here: a
 client hanging up can produce it (issue #16), and the probes open and close connections by design.
 What would be a finding is any *other* text, or a clean area, and reading the text is exactly what
-A5/A6/B4 do that a pixel count cannot.
+A5/A6/B4/R3 do that a pixel count cannot.
 
 In the emulator the same reading is also taken from the screenshot by `make probe-jnext`, as a
 bright-red pixel count — **0** through both validation runs, i.e. jnext reproduces #15's row 4
 (screen intact) alongside rows 1 and 5.
 
-### What neither probe can establish
+### What the probes cannot establish
 
-- **Neither reproduces issue #15.** (It was closed anyway, by the user on 2026-08-06, before probe
+- **Probe C measures WHEN an idle connection ended, never WHAT ended it**, and its own section
+  above says what a match against `--expect-timeout` is worth. It also cannot see `<id>,CLOSED`,
+  so it cannot say whether the module announces a reap to the stub — `R4` reads only what the stub
+  concluded.
+- **None of the three reproduces issue #15.** (It was closed anyway, by the user on 2026-08-06, before probe
   B had run — recorded above. Read that as the user's call and not as either probe having settled
   it; nothing here reproduces #15 and nothing here refutes it.) Probe A finds a
   ceiling under *cleanly closed* connections, which are measured not to leak. Probe B shows what a
@@ -795,15 +902,16 @@ bright-red pixel count — **0** through both validation runs, i.e. jnext reprod
   produce it differently and with different timing.
 - **No PC-side check can see connection ids**, so "which slot" is unanswerable from here, exactly as
   it is for H3.
-- **Neither says anything about `esp_recover`**, issue #16's part C. `AT+CIPSERVER=0` does **not**
+- **None says anything about `esp_recover`**, issue #16's part C. `AT+CIPSERVER=0` does **not**
   close established connections (`esp_at.cpp:619-621`), which is the correction #19 was filed on —
   so a probe finding a wedge is not evidence that the recovery mechanism is broken.
   **Since #19 that recovery DOES sweep every link id with `AT+CIPCLOSE=<id>`**, so it can now
   reclaim what these probes strand — but only when it *runs*, and it runs on `ESP_FAULT_LIMIT`
-  consecutive faults. Neither probe produces a fault at all: probe A's peers are answered and then
-  quiet, probe B's are blackholed behind a firewall rule, and in both cases the stub is healthy
-  throughout. So a probe still measures the module with nothing reclaiming, which is the state
-  that matters here.
+  consecutive faults. **No probe here produces a fault at all**: probe A's peers are answered and
+  then quiet, probe B's are blackholed behind a firewall rule, probe C's is answered and then
+  silent, and in every case the stub is healthy throughout. So a probe still measures the module
+  with nothing reclaiming, which is the state that matters here — and for probe C it is also what
+  keeps `esp_recover` out of the running as the thing that closed its connection.
 - **A green `make probe-jnext` says the instruments can find a ceiling in the emulator.** jnext's
   ceiling is four integers in a header file and its "connection" is a host TCP socket; a real
   ESP-01's is firmware with its own buffers, timers and failure modes.

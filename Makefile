@@ -8,7 +8,8 @@
         test-unit test-mfselect mfinstall test-mfinstall \
         test-esp test-dzrp test-dzrp-stub test-ip-boundary test-tx-patience \
         test-client-status test-no-hang test-screen-agreement \
-        test-hardware probe-jnext probe-slots probe-vanished read-screen \
+        test-hardware probe-jnext probe-slots probe-vanished probe-idle-drop \
+        read-screen \
         bump bump-major check-reproducible \
         check-reproducible-wifi clean
 
@@ -843,16 +844,23 @@ test-hardware:
 	python3 $(TEST)/hardware-check.py --host "$(NEXT_IP)" $(HW_ARGS)
 
 # ---------------------------------------------------------------------------
-# Issue #15 investigation probes. INSTRUMENTS, NOT GATES.
+# ESP-module probes. INSTRUMENTS, NOT GATES.
 #
-# `make test` is a gate: it says whether the thing still works. These three
-# targets are not, and must never be folded into one. They MEASURE — how many
-# clients the module will hold, and what a peer that vanishes without a FIN or
-# a RST costs — because issue #15 has never been reproduced deliberately and the
-# first job is to make a positive reproduction possible. They print numbers, not
-# verdicts: a probe that said PASS would be asserting a conclusion nobody has.
+# `make test` is a gate: it says whether the thing still works. These targets
+# are not, and must never be folded into one. They MEASURE — how many clients
+# the module will hold, what a peer that vanishes without a FIN or a RST costs,
+# and how long the module leaves an idle connection alone — because issue #15
+# has never been reproduced deliberately and the first job is to make a positive
+# reproduction possible. They print numbers, not verdicts: a probe that said
+# PASS would be asserting a conclusion nobody has.
 #
-# The hypothesis they test is that #15 IS #19. #15's `RX Timeout`, frozen border
+# Probe C is the odd one of the three and is here for the family rather than for
+# #15: its subject is the module's own idle timeout (`AT+CIPSTO`), which BOUNDS
+# #19's slot leak at about three minutes and which issue #24 lengthens on
+# purpose. It is also the only way to show, from the PC, that a build carrying
+# #24 really took.
+#
+# The hypothesis A and B test is that #15 IS #19. #15's `RX Timeout`, frozen border
 # and hung client are explained by the CRLF swallow band fixed in 000E; its
 # POWER CYCLE and its degrading TCP accept latency (83 ms -> 389 ms -> timeout)
 # are not, and both sit on the module's side of the UART where the Z80 cannot
@@ -862,13 +870,20 @@ test-hardware:
 # `probe-jnext` FIRST, ALWAYS. A probe that never worked reports a negative
 # result indistinguishable from a real one, and this project has already been
 # handed one of those (ERRORS.md, the hardware sweep whose harness misread a
-# DZRP response length). It checks both probes find jnext's OWN documented
+# DZRP response length). It checks probes A and B find jnext's OWN documented
 # ceiling before either is pointed at a machine whose ceiling is the unknown.
+#
+# IT DOES NOT COVER PROBE C, and cannot as things stand: whether jnext models
+# `AT+CIPSTO` at all is unknown, so the emulator has no known answer for C to be
+# checked against. What stands in for it is in-band — C's own R0 and its closing
+# screen read, which say the probe was working at both ends of its wait — plus
+# `test/idle-drop-fake-peer.py`, against which its branch wordings are exercised
+# in seconds rather than minutes.
 #
 # See doc/HARDWARE-TESTING.md.
 # ---------------------------------------------------------------------------
 
-# Validate BOTH issue #15 probes against jnext before trusting them on hardware
+# Validate probes A and B against jnext before trusting them on hardware
 probe-jnext:
 	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
@@ -898,6 +913,30 @@ probe-vanished:
 	  echo "  Run 'make probe-jnext' FIRST. Read doc/HARDWARE-TESTING.md."; \
 	  exit 2; }
 	sudo $(TEST)/run-vanished-peer.sh --host "$(NEXT_IP)" $(PROBE_ARGS)
+
+# THE EXPECTED TIMEOUT IS AN ARGUMENT AND HAS NO DEFAULT, deliberately. The
+# probe cannot read `AT+CIPSTO?` — that needs `.UART` at the machine — so a
+# built-in number would be this tool asserting a property of a module it never
+# asked. Without one it prints the measurement and attributes nothing; with one
+# it says whether the two agree, and a disagreement is a FINDING and still not a
+# failure. It never exits non-zero on the comparison.
+#
+# Minutes, not seconds: at the ESP-AT default of 180 s the whole run is about
+# four. Against a build carrying issue #24 (`AT+CIPSTO=1800`) a run that CONFIRMS
+# the value takes over half an hour, so a shorter --deadline is the ordinary
+# thing to pass — the probe then reports a lower bound and says so.
+#
+# Probe C: how long the module leaves an IDLE connection alone (NEXT_IP=<ip>)
+probe-idle-drop:
+	@test -n "$(NEXT_IP)" || { \
+	  echo "usage: make probe-idle-drop NEXT_IP=<ip>   (the Next's address, port 11000)"; \
+	  echo "  Pass what you expect, or nothing is attributed to the number:"; \
+	  echo "    PROBE_ARGS=\"--expect-timeout 180\"    the ESP-AT default"; \
+	  echo "    PROBE_ARGS=\"--expect-timeout 1800 --deadline 400\"   an issue #24 build"; \
+	  echo "  Read the real value at the machine with .UART:  AT+CIPSTO?"; \
+	  echo "  Minutes per run, and it renders no verdict. Read doc/HARDWARE-TESTING.md."; \
+	  exit 2; }
+	python3 $(TEST)/idle-drop-probe.py --host "$(NEXT_IP)" $(PROBE_ARGS)
 
 # The build number is two bytes and, since issue #20, is READ as two: the high
 # one says which series and is moved deliberately, the low one counts the merges

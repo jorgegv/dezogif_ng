@@ -165,6 +165,13 @@ slow_border_change:	defb 1
 ; I.e. you can safely set this 8 bytes below character at index 1.
 font_address:   defw    ROM_START+ROM_SIZE-ROM_FONT_SIZE-0x20*8
 
+; NR 0x8C and MMU slot 1 as text.font_map found them, so text.font_unmap can put
+; them back exactly. Two bytes rather than the stack because font_map and
+; font_unmap sit either side of a `call`, and the saved state must not be under
+; the return address. ONE save area is enough because the two painters never
+; nest: show_ui does not call esp_refresh_client_line and vice versa.
+font_map_backup:    defb 0, 0
+
 
 ;===========================================================================
 ; Used by: mf_rom.asm

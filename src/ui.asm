@@ -136,7 +136,25 @@ wait_on_key_release:
 ; Switches to ULA mode and shows the intro text.
 ; Displaying which keys can be used to change the joy port.
 ;===========================================================================
+; A SHELL, AND THE SHELL IS THE POINT. Since issue #31 the glyphs are read live
+; from the ROM rather than from a copy in this bank, so painting needs the window
+; text.font_map opens — and needs it given back, because MMU slot 1 has no backup
+; anywhere and is what cmd_get_registers reports and what the debuggee resumes
+; with.
+;
+; IT IS A SHELL RATHER THAN A PROLOGUE AND EPILOGUE INSIDE THE BODY because the
+; body has TWO exits: an early `ret z` when there is no error to report, and a
+; tail `jp` into print_string. A restore written at "the end" of the routine runs
+; on one of them, and ERRORS.md carries that failure twice already
+; ("Enumerating a control flow's exits by reading the ones you expected").
+; Wrapping a `call` cannot miss an exit that has not been thought of.
 show_ui:
+    call text.font_map
+    call show_ui_body
+    jp text.font_unmap
+
+
+show_ui_body:
     ; Switch to ULA
     nextreg REG_ULA_X_OFFSET, 0
     nextreg REG_ULA_Y_OFFSET, 0

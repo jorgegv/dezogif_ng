@@ -62,15 +62,13 @@ main_bank_entry:
     ; Initialize the bank for slot 0 with the required code.
     call copy_altrom
 
-    ; Copy the ZX character font from address ROM_FONT (0x3D00)
-    ; to the debugger area at the end of the bank (0x2000-ROM_FONT_SIZE).
-    ; Switch in ROM bank
-    nextreg REG_MMU+0,ROM_BANK
-    nextreg REG_MMU+1,ROM_BANK
-    MEMCOPY MAIN_ADDR+0x2000-ROM_FONT_SIZE+MF_ORIGIN_ROM-MF.main_prg_copy, ROM_FONT, ROM_FONT_SIZE
-
-    ; Restore SWAP_SLOT bank
-    ;nextreg REG_MMU+SWAP_SLOT,a
+    ; NO FONT COPY HERE ANY MORE — issue #31. This used to copy 0x300 bytes from
+    ; ROM_FONT to the top of this bank, into a buffer nothing in the source
+    ; declared, so the assembler could not see it and a debugger that grew past
+    ; its start address silently aliased its own variables onto the glyphs. The
+    ; print routines now read the ROM directly; text.init points at it and
+    ; text.font_map is what makes the window valid. That gives the bank its top
+    ; 768 bytes back, which is most of the headroom M2 was told it already had.
 
     ; Set baudrate
     call transport_init
@@ -281,21 +279,14 @@ main_end:
     ; beyond that would have been silently truncated rather than rejected.
     ASSERT main_end <= ROM_MAGIC_ADDR
 
-    ; AND THIS IS TIGHTER STILL, BY 736 BYTES, WHICH IS WHY THE ONE ABOVE WAS
-    ; NOT ENOUGH. `main_bank_entry` copies the ZX font into the top of this bank
-    ; at the address below (0xFBC0) — see the MEMCOPY at the head of this file
-    ; and `text.init`, which points `font_address` 0x100 lower so a character
-    ; code indexes it directly. That buffer is 0x300 bytes and it runs to the
-    ; end of the image, so the identity block is its last four glyphs.
-    ;
-    ; NOTHING IN THE SOURCE EMITS A BYTE THERE, so the assembler cannot see the
-    ; collision and the two regions silently become the same memory: the font
-    ; copy destroys the variables at boot, and every later write to one of them
-    ; draws itself into the glyph. Issue #31 — at BAUD_HIGH=460800 `main_end`
-    ; reached 0xFBCF, and `text_core_version.major` landed on bytes 6 and 7 of
-    ; the SPACE glyph, so every space printed on the stub's own screen carried
-    ; the core version's "03" as stray pixels while every check stayed green.
-    ASSERT main_end <= MAIN_ADDR+0x2000-ROM_FONT_SIZE+MF_ORIGIN_ROM-MF.main_prg_copy
+    ; AND THAT IS AGAIN THE TRUE BOUND, WHICH IT HAD NOT BEEN SINCE THE FORK.
+    ; Between the fork and issue #31 the real ceiling was 736 bytes lower, at
+    ; 0xFBC0, because main_bank_entry copied the ZX font into the top of this
+    ; bank and nothing in the source emitted a byte there for the assembler to
+    ; notice. Growth past it aliased the debugger's own variables onto the space
+    ; and '!' glyphs, in both directions, and no check anywhere could see it.
+    ; The copy is gone; the font is read from the ROM. Do not reintroduce a
+    ; buffer here without an ASSERT that names its start address.
 
 
 ;===========================================================================

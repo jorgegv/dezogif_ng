@@ -194,22 +194,22 @@ actually parses. The `ASSERT` in `main.asm` enforces exactly that relationship, 
 error and never a silently misplaced block. **Probed 2026-08-08**: +16 bytes with the constant moved
 builds clean, the ROM stays 8192 bytes and the block still reads at `0x1FE0`.
 
-**BUT THE HEADROOM IS 119 BYTES, NOT "OVER A KILOBYTE", AND EVERY 16-BYTE STEP SPENDS 16 OF THEM.**
-That sentence stood here until 2026-08-09 and was wrong twice over — read it before planning M2,
-which grows both halves. `main_bank_entry` copies the 0x300-byte ZX font into the **top of the
-debugger's bank**, at `0xFD00 - MF.main_prg_copy` = **`0xFBC0`**, and `font_address` points 0x100
-lower so a character code indexes it directly. So:
+**THE HEADROOM IS THE ONE NUMBER HERE MOST WORTH GETTING RIGHT, AND IT WAS WRONG UNTIL 2026-08-09.**
+This paragraph used to end "the WiFi build has over a kilobyte of headroom, i.e. many such steps".
+It had **119 bytes**, because of a 768-byte buffer nothing declared. Issue #31 removed the buffer;
+the current figures, measured, are **UART 3201, WiFi 818** free to the identity block.
 
-- **The real ceiling is `0xFBC0`, not `ROM_MAGIC_ADDR` (`0xFEA0`)** — 736 bytes lower. The identity
-  block is not the top of the usable region; it is the *last four glyphs of the font buffer*.
-  Measured: UART **2496** bytes free, WiFi **119**.
-- **Growing the MF ROM half moves that ceiling DOWN**, because the address is derived from
-  `MF.main_prg_copy`. Probed 2026-08-09: one step took the buffer to `0xFBB0` with `main_end`
-  unmoved. So the two halves share **one** 119-byte budget in the WiFi build — at most seven steps,
-  and only if the debugger half grows by nothing.
-- **Nothing in the source emits a byte in `0xFBC0-0xFEBF`**, so until 2026-08-09 the assembler could
-  not see the collision at all: growing past it silently made the debugger's variables and the glyph
-  bitmaps the same memory. That is issue #31, and `main.asm` now `ASSERT`s the real bound.
+- **`ROM_MAGIC_ADDR` really is the ceiling again** — it had not been since the fork.
+  `main_bank_entry` used to copy the ZX font into the top of the bank at `0xFD00 -
+  MF.main_prg_copy` = `0xFBC0`, 736 bytes lower, and **nothing in the source emitted a byte there**,
+  so the assembler could not see it and the asserts on `main_end` were all far too loose. Growth
+  past it aliased the debugger's variables onto the space and `!` glyphs — silently, in both
+  directions. The font is now read live from the ROM (`text.init`, `text.font_map`), so the buffer
+  is gone rather than guarded. **Do not reintroduce a buffer at the top of this bank without an
+  `ASSERT` naming its start address.**
+- **Growing the MF ROM half still spends 16 bytes of the debugger half**, and that is unchanged by
+  #31: the image ends at `0xE000 + 0x2000 - MF.main_prg_copy`, so a step moves `ROM_MAGIC_ADDR` down
+  by 16 as well. The two halves share **one** budget. M2 grows both, so plan against 818, not 3201.
 
 *(This paragraph previously said the half "CANNOT GROW" and called the address the contract. That was
 wrong and would have told a future session that M2's entry path is blocked when it is not — see

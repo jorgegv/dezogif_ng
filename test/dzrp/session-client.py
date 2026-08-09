@@ -88,7 +88,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from dzrp import (CMD_CLOSE, CMD_INIT, CMD_LOOPBACK,  # noqa: E402
+from dzrp import (CMD_CLOSE, CMD_GET_REGISTERS, CMD_INIT, CMD_LOOPBACK,  # noqa: E402
                   CMD_READ_MEM, CMD_SET_SLOT, CMD_WRITE_MEM,
                   Dzrp, init_payload, open_remote)
 
@@ -144,7 +144,26 @@ def done():
     return 0
 
 
-PHASES = ("silent", "init", "close", "vanish", "vanish-idle", "vanish-slot")
+# The bank `vanish-slot1` parks at 0x2000-0x3FFF, chosen on SLOT2_BANK's rules —
+# not one of the stub's own and not one cmd_init maps.
+SLOT1_BANK = int(os.environ.get("SLOT1_BANK", "62"))
+
+# CMD_GET_REGISTERS's payload is 37 bytes: 14 register words (28), a slot count
+# (1), then the eight slot values. So slot n is byte 29+n. Slots 0-6 are read
+# LIVE from the MMU (commands.asm's `.slot_loop` over REG_MMU) — which is exactly
+# why this check works: there is no shadow copy to hide a clobbered register.
+SLOTS_AT = 29
+
+
+def slot1_of(body):
+    if len(body) != 37:
+        raise SystemExit("PRECONDITION CMD_GET_REGISTERS answered %d payload bytes, "
+                         "expected 37" % len(body))
+    return body[SLOTS_AT + 1]
+
+
+PHASES = ("silent", "init", "close", "vanish", "vanish-idle", "vanish-slot",
+          "vanish-slot1")
 
 
 def _w(v):
@@ -154,6 +173,56 @@ def _w(v):
 def read_probe(conv):
     """The 32 bytes at PROBE_ADDR, through whatever slot 2 currently holds."""
     return conv.command(CMD_READ_MEM, b"\x00" + _w(PROBE_ADDR) + _w(len(PROBE)))
+
+
+def vanish_slot1(t, d):
+    """N7: retarget slot 1, vanish, and require the MMU register to be given back.
+
+    THE INVARIANT ISSUE #31 INTRODUCED. The glyphs are no longer copied into
+    MAIN_BANK; text.font_map pages ROM into slot 1 to read them and font_unmap
+    puts back what was there. Slot 1 has no backup anywhere — slot_backup holds
+    slots 0 and 7 only — so a paint that forgot to restore it would both report
+    the wrong bank to DeZog and hand the wrong bank to the debuggee on its next
+    CMD_CONTINUE. That is issue #26 one slot along, and it would be SILENT.
+
+    It is judged over the socket rather than off the screen because
+    cmd_get_registers reads slots 0-6 straight out of the MMU, so the clobber is
+    directly readable. The painter under test is the AUTONOMOUS one —
+    esp_refresh_client_line, from main_loop's poll — which is the harder of the
+    two: show_ui is reached from cmd_init, which resets slot 1 itself and would
+    mask the answer.
+
+    A failure reads 255 (ROM_BANK), which is what font_map leaves behind.
+    """
+    d.command(CMD_SET_SLOT, bytes([1, SLOT1_BANK]))
+
+    before = slot1_of(d.command(CMD_GET_REGISTERS))
+    if before != SLOT1_BANK:
+        print("PRECONDITION CMD_SET_SLOT did not take: slot 1 reads %d, wanted %d"
+              % (before, SLOT1_BANK), file=sys.stderr)
+        return 1
+    print("armed: slot 1 = %d" % before)
+    sys.stdout.flush()
+
+    print("staying quiet for %.1fs, so the stub's cmd_loop wait expires" % IDLE_WAIT)
+    sys.stdout.flush()
+    time.sleep(IDLE_WAIT)
+    t.close()
+    print("socket dropped with no CMD_CLOSE")
+    sys.stdout.flush()
+    time.sleep(SETTLE_AFTER)
+
+    # A NEW CONNECTION AND NO CMD_INIT, for vanish_slot's reason: cmd_init writes
+    # ROM_BANK into slot 1 itself, which is the very value a failure produces.
+    t2 = open_remote(f"tcp:{HOST}:{PORT}", timeout=TIMEOUT)
+    d2 = Dzrp(t2, start_byte=None, base_timeout=TIMEOUT)
+    after = slot1_of(d2.command(CMD_GET_REGISTERS))
+
+    if after == SLOT1_BANK:
+        print("SLOT1 OK slot 1 still reads %d after the redraw" % after)
+    else:
+        print("SLOT1 CLOBBERED slot 1 reads %d, was %d" % (after, SLOT1_BANK))
+    return done()
 
 
 def vanish_slot(t, d):
@@ -233,6 +302,9 @@ def main(argv):
 
     if phase == "vanish-slot":
         return vanish_slot(t, d)
+
+    if phase == "vanish-slot1":
+        return vanish_slot1(t, d)
 
     if phase in ("vanish", "vanish-idle"):
         if phase == "vanish-idle":

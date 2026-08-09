@@ -13,6 +13,7 @@
 #   N4  ... or instead VANISHES, no CMD_CLOSE        ->  "Session lost - client gone"
 #   N5  the same, with the stub back in its idle loop first
 #   N6  the same again with MMU slot 2 retargeted    ->  that bank is UNTOUCHED
+#   N7  the same again with MMU slot 1 retargeted    ->  that SLOT is given back
 #
 # WHY IT READS THE ROW RATHER THAN COMPARING RUNS. A check that only requires
 # the three screens to differ cannot say which of them is right, and ERRORS.md
@@ -510,6 +511,66 @@ slot_run() {
 }
 
 slot_run N6 "a client retargets MMU slot 2, then vanishes"
+
+
+# N7 — the redraw must give MMU slot 1 back
+#
+# THE INVARIANT ISSUE #31 INTRODUCED, and the only check that covers it. The
+# glyphs used to be copied into MAIN_BANK, which made printing immune to the MMU
+# entirely; they are now read from the ROM, so text.font_map pages ROM into slot
+# 1 for the duration of a paint and font_unmap puts back what was there.
+#
+# Slot 1 has NO BACKUP ANYWHERE — slot_backup holds slots 0 and 7 only — so the
+# MMU register is itself the debuggee's storage for it. A paint that forgot the
+# restore would report the wrong bank to DeZog AND hand the wrong bank to the
+# debuggee on its next CMD_CONTINUE, silently. That is issue #26 one slot along.
+#
+# Judged over the socket, not off the screen: cmd_get_registers reads slots 0-6
+# live out of the MMU, so the clobber is directly readable. The painter under
+# test is the AUTONOMOUS one, esp_refresh_client_line — show_ui is reached from
+# cmd_init, which resets slot 1 itself and would mask the answer.
+#
+# Shown red first by deleting the font_unmap call from esp_refresh_client_line:
+# slot 1 came back 255, ROM_BANK, which is exactly what font_map leaves.
+# ===========================================================================
+slot1_run() {
+    local name=$1 why=$2
+    CHECKS=$((CHECKS + 1))
+    local jlog=$OUT/client-status-$name.log
+    local shot=$OUT/screenshots/client-status-$name.png
+    local cout=$OUT/client-status-$name.client.txt
+
+    log ""
+    log "== $name: $why"
+
+    if ! start_stub "$jlog" "$shot"; then
+        fail "$name the stub never listened on 127.0.0.1:$PORT (see $jlog)"
+        stop_all
+        return
+    fi
+
+    : >"$cout"
+    HOLD=5 DZRP_PORT="$PORT" python3 "$CLIENT" vanish-slot1 >"$cout" 2>&1 &
+    client_pid=$!
+
+    local i verdict=""
+    for i in $(seq 240); do
+        verdict=$(awk '/^SLOT1 /{print $2; exit}' "$cout" 2>/dev/null || true)
+        [ -n "$verdict" ] && break
+        kill -0 "$client_pid" 2>/dev/null || break
+        sleep 0.25
+    done
+    sed 's/^/  | /' "$cout"
+    stop_all
+
+    case "$verdict" in
+        OK)         pass "$name the redraw gave MMU slot 1 back to the client unchanged" ;;
+        CLOBBERED)  fail "$name the redraw left ROM in MMU slot 1: the debuggee's bank is lost" ;;
+        *)          fail "$name the client reached no verdict — see $cout and $jlog" ;;
+    esac
+}
+
+slot1_run N7 "a client retargets MMU slot 1, then vanishes"
 
 log ""
 if [ "$failures" -ne 0 ]; then

@@ -426,22 +426,26 @@ the address. `main.asm`'s `ASSERT` enforces exactly the relationship that preser
 failure mode is a build error rather than a silently misplaced block. The half grows in 16-byte
 quanta at the cost of one constant.
 
-**THE SECOND HALF OF THIS PARAGRAPH WAS WRONG UNTIL 2026-08-09, AND IT WAS WRONG IN THE DIRECTION
-THAT MATTERS TO M2.** It said the debugger half "has over a kilobyte of headroom in the tighter WiFi
-build — many such steps". It has **119 bytes**, and a step costs 16 of them.
+**THE SECOND HALF OF THIS PARAGRAPH WAS WRONG UNTIL 2026-08-09, IN THE DIRECTION THAT MATTERS TO
+M2.** It said the debugger half "has over a kilobyte of headroom in the tighter WiFi build — many
+such steps". It had **119 bytes**.
 
-`main_bank_entry` copies the 0x300-byte ZX font into the top of the debugger's bank at
-`0xFD00 - MF.main_prg_copy` = **`0xFBC0`**, so the usable region ends 736 bytes below
-`ROM_MAGIC_ADDR` — the identity block is the font buffer's last four glyphs, not the ceiling. And
-because that address is *derived from `MF.main_prg_copy`*, every 16-byte step of the MF ROM half
-moves it **down** by 16: probed 2026-08-09, one step put the buffer at `0xFBB0` with `main_end`
-unmoved. **The two halves therefore share one 119-byte budget**, which is the number M2's §4.1 fast
-path and its slot-7-restoring exit have to fit inside, together, in the WiFi build.
+`main_bank_entry` used to copy the 0x300-byte ZX font into the top of the debugger's bank at
+`0xFD00 - MF.main_prg_copy` = `0xFBC0`, so the usable region really ended 736 bytes below
+`ROM_MAGIC_ADDR`. **Nothing in the source emitted a byte there**, so the assembler could not see the
+collision, and growth past it silently aliased the debugger's variables onto the glyph bitmaps —
+issue #31, which is what the 460800 screen artefacts were.
 
-Nothing in the source emits a byte in that region, so the assembler could not see the collision and
-growth past it silently aliased the debugger's variables onto the glyph bitmaps — issue #31, now
-`ASSERT`ed in `main.asm`. **Do not plan M2's byte budget from the old sentence**; §4.5's conclusion
-that the half *can* grow still stands, but "many such steps" does not.
+**Issue #31 removed the buffer rather than guarding it**: the glyphs are read live from the ROM, so
+the bank got its top 768 bytes back. Measured now: **WiFi 818 bytes free, UART 3201.** What is
+*unchanged* is that a 16-byte step of the MF ROM half still spends 16 of them, because the image
+ends at `0xE000 + 0x2000 - MF.main_prg_copy` and `ROM_MAGIC_ADDR` moves down with it. **The two
+halves share one budget**, and 818 is the number M2's §4.1 fast path and its slot-7-restoring exit
+have to fit inside together in the WiFi build.
+
+One thing M2 inherits from that fix: printing now depends on MMU slot 1 and on NR `0x8C`'s Alt ROM
+half, held open by `text.font_map` / `text.font_unmap`. **A poll-shaped handler that paints anything
+must hold that window too** — and must give slot 1 back, which is bench check N7.
 
 ---
 

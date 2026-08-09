@@ -3651,9 +3651,15 @@ esp_refresh_client_line:
     ; and nothing else. Inside the two tests above, so a quiet poll does not pay
     ; for it.
     push ix
+    ; Since issue #31 the glyphs come from the ROM, so this needs the same window
+    ; show_ui does — and this is the AUTONOMOUS painter, driven by the network
+    ; from main_loop's poll, so it must hand it back on the one path out. It has
+    ; exactly one, below, unlike show_ui's body.
+    call text.font_map
     ld a,(esp_client_drawn)
     call esp_put_client_line    ; XOR the old line off
     call esp_show_client_line
+    call text.font_unmap
     pop ix
     ret
 

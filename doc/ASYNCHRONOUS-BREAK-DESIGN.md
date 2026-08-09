@@ -14,6 +14,190 @@ design opinion it says so.
 
 ---
 
+## User story — a Pause click, end to end
+
+**NONE OF THIS HAS BEEN BUILT.** No M2 code exists, so what follows is a walkthrough of the design
+in §2-§5, not a description of working code. Read it as *what would happen*. Every step is either
+cited to the VHDL or to `src/` — which describe what exists **today**, before M2 touches it — or is
+marked as a decision M2 has not made. §6's list of what this document does not establish governs
+this section as much as the rest, and two of the twelve steps below are open rather than settled.
+
+### Before anything runs: what opting in costs
+
+The stub installs a two-instruction Copper program (§2, §4.4):
+
+```
+WAIT line,N        ; N is the raster line; not fixed anywhere here.
+MOVE $02,$08       ; NR 0x02 bit 3 = generate Multiface NMI. T5's fixture uses line 100.
+```
+
+**That is destructive, and it is why the feature is opt-in rather than default.** The Copper's
+1024-instruction list is write-only — both instruction RAMs discard their CPU-side read output
+(`zxnext.vhd:3959-3976`, `:3980-3998`) and NR `0x60`/`0x63` have no read decode (`:6286-6287`) — so
+the debugger cannot save and restore whatever the debuggee had there. Installing this destroys it,
+irrecoverably, for the rest of the session. §3.1 has the full argument, including the escape hatch:
+a Copper-using program can carry these two instructions in **its own** list instead.
+
+### The walkthrough
+
+1. **The user clicks Pause in VS Code.** DeZog sends `CMD_PAUSE` — command 7 — over TCP to
+   `<next-ip>:11000`.
+
+2. **It crosses the WiFi link to the ESP-01**, which emits `+IPD,<id>,<len>:` and the frame on its
+   UART TX line.
+
+3. **The bytes land in UART0's Rx FIFO**, which is 512 entries deep (`serial/uart.vhd:24`, and the
+   9-bit FIFO addresses at `:148-149`). **Nothing is reading them.** The debuggee owns the CPU and
+   the debugger is not executing between polls, which is exactly why a byte cannot wake anything by
+   itself — §1.
+
+4. **Meanwhile, 50 times a second, the Copper reaches line N and executes `MOVE $02,$08`.**
+
+5. **The FPGA turns that into an NMI.** The write raises `nmi_gen_nr_mf` (`zxnext.vhd:3832`), which
+   sets the latch `nr_02_generate_mf_nmi` (`:3840-3851`) and reaches `nmi_assert_mf` — ANDed there
+   with **NR `0x06` bit 3** (`:2090`), the gate that catches every Multiface NMI source. Its
+   power-on value is `'0'`, but NextZXOS leaves it set (§3.2), so a guest inherits it. The Z80
+   samples `/NMI` at an instruction boundary (`cpu/t80n.vhd:1663-1669`, `:1765`).
+
+6. **The NMI is taken, and the return address does not go on the debuggee's stack.** In stackless
+   mode it lands in NR `0xC2`/`0xC3` instead — the plan's §3.4, which is where that mechanism is
+   documented rather than here. MF ROM pages in at `0x0000` and MF RAM at `0x2000`
+   (`zxnext.vhd:3029-3035`), and execution starts at `0x0066`.
+
+7. **`nmi66h` runs — the routine M2 has to change.** Today it reads NR `0x02`, masks `00011100b`
+   and returns unless the result is zero: button causes only, which bench **T4** asserts. M2 teaches
+   it to accept a software cause and **inverts T4 in the same change** (§4.1).
+
+   It also needs a **fast path**, not a widening of the existing one. The current entry runs **82
+   instructions** before the dispatch decides anything — saving the NextREG select, reading and
+   changing the turbo mode, polling the keyboard for Symbol Shift, comparing six magic bytes.
+   Reasonable once per button press; wrong 50 times a second.
+
+8. **Is a debuggee running?** Answered from a flag in **MF RAM**, because the decision has to happen
+   *before* `MAIN_BANK` is paged in and so cannot live in the debugger's own bank. MF RAM is
+   addressable throughout `nmi66h` and costs no ROM bytes — the same reasoning that put
+   `MF.nmi_slot7` there for issue #26 (§4.1).
+
+9. **`MAIN_BANK` is paged into slot 7 and the FIFO is polled.** `transport_byte_available` is O(1)
+   in the UART build and, in the ESP build, gates its expensive `+IPD` scan behind the same O(1)
+   check (§4.3).
+
+   9a. **Empty — the common case, ~50 times a second.** Clear the NMI cause latch and return. **Two
+   traps, both of which have bitten this project already.** NR `0x02`'s bits 1:0 *written* trigger a
+   reset (`zxnext.vhd:6370-6371`) while *read* they are reset history (`:1306`, `:1732-1739`), so a
+   read-modify-write would reset the machine 50 times a second — upstream's `and 10000000b` mask is
+   what prevents it and **must not be lost** (§3.4). And the exit **must restore MMU slot 7**,
+   unlike the existing immediate return, which deliberately does not because it only ever runs while
+   the debugger itself is executing. Getting that wrong is issue #26 again (§4.2).
+
+   9b. **Non-empty — the Pause has arrived.** The full entry path runs:
+   `save_nmi_return_address` reads the PC back out of NR `0xC2`/`0xC3` (`src/mf.asm`), registers are
+   saved, and per §4.4 the Copper list is stopped on the way in.
+
+10. **The break is reported.** `send_ntf_pause` (`src/message.asm:325`) sets `prgm_state` to
+    `PRGM_STOPPED` and writes `NTF_PAUSE`; VS Code shows the program stopped, with PC and registers.
+
+11. **What becomes of the `CMD_PAUSE` itself is NOT settled here.** The shape the design implies is
+    the one the M1 button path already produces — notification first, then `cmd_loop` reads the
+    pending command and answers it with the Length=1 response the specification requires, since
+    `mf_nmi_button_pressed` sends the notification and falls straight into `cmd_loop`
+    (`src/mf.asm`). **Two things stop that being a settled sequence, and each is M2 work rather than
+    a detail:**
+
+    - **The existing break path drains the link immediately before notifying.**
+      `mf_nmi_button_pressed` calls `transport_drain` — discard everything until 100 ms of quiet
+      (`src/transport_uart.asm:174`) — and then `send_ntf_pause`. That is right for a *button*
+      press, where there is no pending command and junk on the link should go. **Reused unchanged
+      for an asynchronous break it would discard the very `CMD_PAUSE` that caused the break**, and
+      DeZog would block on a response that never comes.
+    - **Whether the command is still in the FIFO at all depends on §4.3's open question.** "Break on
+      any byte" leaves it there for `cmd_loop` to read normally. "Parse first, break only on a real
+      command" has already consumed at least the header inside the NMI handler, so something has to
+      carry the partly-read frame across into `cmd_loop`.
+
+12. **The user inspects, sets breakpoints, hits Continue.** `CMD_CONTINUE` resumes as it does from a
+    breakpoint today, **plus one thing that is new**: §4.4 puts installing the Copper list on the
+    resume path, so it goes back in here — having come out at step 9b.
+
+### What `cmd_pause` has to become
+
+Today `cmd_pause` (`src/commands.asm`) answers with the Length=1 response and does nothing else, and
+issue #8 made that deliberate: it is only ever reached from `cmd_loop`, which runs only while the
+debugger is stopped; writing `prgm_state` would clobber `PRGM_LOADING` and break the next
+`cmd_continue`'s "loading finished" branch; and it sends no `NTF_PAUSE`, because that notification
+reports a *transition* and none happens there.
+
+**Asynchronous break overturns none of that, and the reason is worth stating precisely.** The break
+is caused by the **poll**, not by the handler. By the time `cmd_loop` reads command 7 the machine is
+already stopped and the transition has already been reported by whoever caused it — step 10. So
+`cmd_loop` still runs only while stopped, there is still nothing for `cmd_pause` to pause, and both
+of #8's prohibitions hold for exactly the reasons #8 gives them.
+
+**What M2 must change is the handler's own comment, which asserts the opposite in as many words**:
+*"while the debuggee runs nothing polls the link and no command can be received at all"*. That is
+true today and is precisely what M2 makes false. Left standing, it would tell the next reader that
+the command cannot arrive in the state M2 was built to create.
+
+### What it costs in time
+
+**Arithmetic, not a measurement.** The poll fires once a frame, so the wait from byte-in-FIFO to
+break is **up to ~20 ms** — one frame at the 50 Hz this document assumes throughout. On top of that
+sits the WiFi round trip, **measured** at a median of 11.2 ms on a real Next
+([HARDWARE-TESTING.md](HARDWARE-TESTING.md), H4). So a Pause click should stop the machine in a few
+tens of milliseconds. The 11.2 ms is real; the sum is not, and nothing has run.
+
+**The running cost is an estimate nobody has measured**, and §5 says so at length: the plan's
+~100-200 T-states/frame (≈0.3%). Two things make a naive figure misleading — part of the entry runs
+at the **debuggee's** clock before the handler switches to 28 MHz, and that switch happens 50 times
+a second, which is a different kind of perturbation from stolen cycles for anything doing
+contended-memory or beeper timing. **M2 measures it rather than inheriting it.**
+
+### Three ways it stops working, and one has no recovery
+
+**The debuggee can switch the break off silently, and nothing can put it back.** Clearing NR `0x06`
+bit 3 kills every Multiface NMI source. And a write of NR `0x62` that **changes** the mode bits
+restarts our list from index 0 — the guard is `last_state_s /= copper_en_i`, with the pointer reset
+sitting inside a further test for a new mode of `"01"` or `"11"` (`device/copper.vhd:69-78`) — while
+mode `"00"` stops it outright and a write carrying the **same** mode leaves the pointer alone.
+Writing list content through NR `0x60` overwrites ours regardless of the mode. The obvious
+mitigation, re-asserting from the poll, **cannot work**: once the Copper stops, the poll is the
+thing that would have re-asserted it. Recovery is an M1 press — the button the feature exists to
+remove. §3.2.
+
+**A second NMI arriving while the handler runs is dropped, not queued** (`zxnext.vhd:2095-2116`,
+`:2164`). Harmless for a periodic poll, since the next frame's fire serves — but the handler's
+duration directly reduces the poll rate. §5.
+
+**Config mode suppresses the poll entirely while it is active** (`zxnext.vhd:2102-2105`,
+`:2156-2157`), and `.mfinstall` opens that window twice per install. Self-recovering — the Copper
+keeps running and the next frame's fire is accepted — so the cost is a poll or two missed, not a
+dead break. §5.
+
+### The decision that is still open, and it decides two of the steps above
+
+**What counts as "traffic"?** When the FIFO is non-empty the ESP build may spend up to ~100 ms
+synchronising, inside an NMI, with the debuggee stopped. If what arrived was a real command that is
+fine — we are about to break anyway. If it was one of the module's unsolicited lines
+(`<id>,CONNECT`, `<id>,CLOSED`) it is 100 ms stolen from the debuggee for nothing, or, if the
+handler breaks on any traffic rather than parsing, a **spurious break the user did not ask for**.
+
+Break on any byte, or parse first? Both have a visible cost, §4.3 records the decision as unmade,
+and it is what settles step 11's second bullet as well as step 9b's shape.
+
+### Why the design is shaped around a poll rather than a cause
+
+**You cannot tell a Copper-caused NMI from a CPU-caused one — ever.** Both are muxed onto one
+untagged bus before `nmi_gen_nr_mf` computes (`zxnext.vhd:4775-4777`), and the latch it feeds is a
+single bit; nothing anywhere records a source. That was the plan's open question 5b, and the answer
+is that it is unanswerable.
+
+**But a poll-shaped handler does not need to know.** If the contract is *"poll, and break only if
+there is traffic"*, a debuggee's own write to NR `0x02` costs exactly one wasted poll that returns
+immediately. That reframing is what makes the impossibility stop mattering, and it is why every step
+above is built around the poll. §3.3.
+
+---
+
 ## 1. What asynchronous break is for
 
 `dezogif`'s headline limitation is that you cannot pause a running program from the PC — you must

@@ -7,6 +7,15 @@
 # client over the emulated ESP-01 that reads the stub's own screen back with
 # CMD_READ_MEM.
 #
+# THE HEADLINE RESULT IS R5, AND IT IS WHY THE SHIPPED ROM DOES NOT NEGOTIATE.
+# 1000000 — the rate this work was commissioned for — does not survive a
+# CMD_LOOPBACK of 1 KB or more: `cmd_loopback` echoes as fast as it consumes, so
+# it stops reading for a whole AT+CIPSEND handshake every ESP_TX_CHUNK bytes, and
+# above ~460800 the 512-byte Rx FIFO no longer covers that. The limit is the Z80
+# at 28 MHz and not the module, so it is not a thing a longer timeout or a bigger
+# buffer reaches. Measured here: 230400 and 460800 clean, 750000 / 921600 /
+# 1000000 all overflowing. See ESP_BAUD_HIGH in src/constants.asm.
+#
 # WHY THIS BENCH EXISTS
 #
 # Issue #25. The ESP link has run at 115200 since the M0(b) spike, and on real
@@ -17,17 +26,20 @@
 # prescaler to match, and comes back down if the module refuses or the link does
 # not survive.
 #
-#   R1  BAUD_HIGH=1000000    the shipped ROM: AT+UART_CUR goes out, the module
-#                            accepts, THIS SIDE's prescaler really moves, and the
-#                            stub serves DZRP afterwards saying 1000000
+#   R1  BAUD_HIGH=460800     AT+UART_CUR goes out, the module accepts, THIS
+#                            SIDE's prescaler really moves, and the stub serves
+#                            DZRP afterwards saying 460800
 #   R2  BAUD_HIGH=6000000    above what the module will parse, so it answers
 #                            ERROR — and the stub must NOT move its own side,
 #                            must still serve, and must say 115200
-#   R3  BAUD_HIGH=115200     the negotiation assembled OUT: no AT+UART anywhere,
-#                            and the same service. The "before" control
-#   R4  BAUD_HIGH=1000000    a transport fault drives esp_recover, whose tail is
+#   R3  THE SHIPPED ROM      the negotiation assembled OUT, because that is what
+#                            ships: no AT+UART anywhere, and the same service
+#   R4  BAUD_HIGH=460800     a transport fault drives esp_recover, whose tail is
 #       FAULT_LIMIT=1        `jp transport_init` — so the whole chain, negotiation
 #                            included, runs a SECOND time and must still serve
+#   R5  BAUD_HIGH=1000000    THE CEILING, kept as a checked fact: a symmetric
+#                            1 KB loopback overflows the 512-byte Rx FIFO and the
+#                            stub says so. This check PASSES when that happens
 #
 # WHAT MAKES R2 MORE THAN "IT DID NOT CRASH". The discriminating assertion is not
 # that the stub still serves — it would serve just as well having moved its own
@@ -86,10 +98,11 @@
 #   JNEXT         path to the jnext binary
 #   SD_IMAGE      reference SD card image; NEVER written, only copied
 #   OUT           build directory
-#   ROM_HIGH      the shipped WiFi ROM (BAUD_HIGH=1000000)
+#   ROM_HIGH      WiFi ROM, BAUD_HIGH=460800
 #   ROM_REFUSED   WiFi ROM, BAUD_HIGH=6000000
-#   ROM_OFF       WiFi ROM, BAUD_HIGH=115200
-#   ROM_RECOVER   WiFi ROM, BAUD_HIGH=1000000 FAULT_LIMIT=1
+#   ROM_OFF       the shipped WiFi ROM (no negotiation)
+#   ROM_RECOVER   WiFi ROM, BAUD_HIGH=460800 FAULT_LIMIT=1
+#   ROM_CEILING   WiFi ROM, BAUD_HIGH=1000000
 
 set -euo pipefail
 
@@ -108,29 +121,32 @@ fi
 JNEXT=${JNEXT:-$HOME/src/spectrum/jnext/build/gui-release/jnext}
 SD_IMAGE=${SD_IMAGE:-$HOME/.jnext/sdcard/cspect-next-1gb-fixed.img}
 OUT=${OUT:-build}
-ROM_HIGH=${ROM_HIGH:-$OUT/enNextMf-wifi.rom}
+ROM_HIGH=${ROM_HIGH:-$OUT/enNextMf-wifi-baud460800.rom}
 ROM_REFUSED=${ROM_REFUSED:-$OUT/enNextMf-wifi-baud6000000.rom}
-ROM_OFF=${ROM_OFF:-$OUT/enNextMf-wifi-baud115200.rom}
-ROM_RECOVER=${ROM_RECOVER:-$OUT/enNextMf-wifi-fl1-baud1000000.rom}
+ROM_OFF=${ROM_OFF:-$OUT/enNextMf-wifi.rom}
+ROM_RECOVER=${ROM_RECOVER:-$OUT/enNextMf-wifi-fl1-baud460800.rom}
+ROM_CEILING=${ROM_CEILING:-$OUT/enNextMf-wifi-baud1000000.rom}
 
 SCREEN_CLIENT=$(dirname "$0")/dzrp/screen-client.py
 RECOVER_CLIENT=$(dirname "$0")/dzrp/baud-recover-client.py
+CONFORMANCE=$(dirname "$0")/dzrp/conformance.py
 
 PORT=11000
 
 # The three rates, kept here as well as in the Makefile so the log assertions
 # below cannot drift away from the ROMs that were built.
-HIGH_BAUD=1000000
+HIGH_BAUD=460800
 REFUSED_BAUD=6000000
 LOW_BAUD=115200
+CEILING_BAUD=1000000
 
 # The prescaler jnext will log when the guest programs each rate. Fsys is
 # 28000000 at the reference image's video timing 0, and the table rounds:
-#   115200  -> (28000000 + 57600)/115200  = 243
-#   1000000 -> (28000000 + 500000)/1000000 = 28
+#   115200 -> (28000000 + 57600)/115200 = 243
+#   460800 -> (28000000 + 230400)/460800 = 61
 # Written out rather than derived so that a table change has to be noticed here.
 LOW_PRESCALER=243
-HIGH_PRESCALER=28
+HIGH_PRESCALER=61
 
 # AND THE VALUE THE DIVISOR TRANSIENTLY HOLDS WHILE IT IS BEING CHANGED, which
 # this bench asserts rather than tolerates, because it is the hazard the frame
@@ -140,8 +156,8 @@ HIGH_PRESCALER=28
 # there is no double buffering anywhere in serial/uart.vhd — each write lands on
 # the register immediately. So between them the live value is a MIXTURE: the old
 # high half with the new low half. jnext logs after every write, so the mixture
-# appears in its log as an ordinary reading, and 243 -> 1000000 shows as
-# 243, 156, 28.
+# appears in its log as an ordinary reading, and 243 -> 460800 shows as
+# 243, 189, 61.
 #
 # 156 IS NOT A MAGIC NUMBER, it is that mixture computed the way the hardware
 # computes it: the old value's bits 13:7 with the new value's bits 6:0. Deriving
@@ -184,9 +200,10 @@ die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [ -f "$SD_IMAGE" ]        || die "SD card image not found: $SD_IMAGE"
 [ -f "$SCREEN_CLIENT" ]   || die "client not found: $SCREEN_CLIENT"
 [ -f "$RECOVER_CLIENT" ]  || die "client not found: $RECOVER_CLIENT"
+[ -f "$CONFORMANCE" ]     || die "client not found: $CONFORMANCE"
 command -v mcopy >/dev/null || die "mtools (mcopy) is required to install the ROM into the SD image"
 
-for rom in "$ROM_HIGH" "$ROM_REFUSED" "$ROM_OFF" "$ROM_RECOVER"; do
+for rom in "$ROM_HIGH" "$ROM_REFUSED" "$ROM_OFF" "$ROM_RECOVER" "$ROM_CEILING"; do
     [ -f "$rom" ] || die "not built: $rom (run 'make test-baud')"
     # The magic string issue #4 put at a fixed offset, used for what it is for:
     # a UART ROM here would boot, take the NMI, paint its UI and listen on
@@ -346,7 +363,7 @@ reader_ok() {
 #   * the link still carries DZRP, and the screen says which rate it is on.
 #     The screen read is 7680 bytes, so "still carries" is not a token exchange.
 # ===========================================================================
-log "R1: BAUD_HIGH=$HIGH_BAUD — the shipped ROM"
+log "R1: BAUD_HIGH=$HIGH_BAUD — the negotiation, at a rate this stub can sustain"
 run_client "$ROM_HIGH" "$OUT/baud-r1.log" \
     python3 "$SCREEN_CLIENT" --host 127.0.0.1 --port "$PORT" --timeout 20
 
@@ -405,7 +422,7 @@ fi
 # ROM. It is also a ROM a user can actually ship: the escape hatch for a board or
 # a module that will not take the rate.
 # ===========================================================================
-log "R3: BAUD_HIGH=$LOW_BAUD — the negotiation compiled out"
+log "R3: the SHIPPED ROM — the negotiation compiled out"
 run_client "$ROM_OFF" "$OUT/baud-r3.log" \
     python3 "$SCREEN_CLIENT" --host 127.0.0.1 --port "$PORT" --timeout 20
 
@@ -459,12 +476,55 @@ else
     pass "R4 recovery re-ran the chain: $r4_asked negotiations, $r4_high rate moves, served"
 fi
 
+# ===========================================================================
+# R5 — the ceiling, and this check PASSES when the stub FAILS.
+#
+# 1000000 is the rate issue #25 was commissioned for, and it does not work. The
+# subject is CMD_LOOPBACK at 1024 bytes and up: it echoes as fast as it consumes,
+# so `cmd_loopback` stops reading for a whole AT+CIPSEND handshake every
+# ESP_TX_CHUNK bytes, and the UART's 512-byte Rx FIFO has to cover that gap. At
+# 460800 one byte time is 610 T-states at 28 MHz and it does; at 1000000 it is
+# 280 and it does not.
+#
+# THE LIMIT IS THE Z80, NOT THE MODULE, and that is what makes this measurement
+# worth keeping rather than a note about an emulator. The per-byte work does not
+# shrink when the byte time does, jnext counts the same T-states a Next does, and
+# no timeout or buffer size enters into it. On real hardware it can only be
+# WORSE: a real module takes tens of milliseconds over an AT+CIPSEND where jnext
+# takes none, and every one of those milliseconds is more backlog.
+#
+# IT IS KEPT AS A CHECK RATHER THAN A PARAGRAPH so that whoever raises the
+# default has to come here and make it go green — which means having changed the
+# thing this measures, not just the constant. Same shape as W3, whose PASS is
+# also another check going red.
+#
+# TWO ASSERTIONS, because "C5 failed" on its own has other causes: the loopback
+# must fail AND jnext's uart log must show the Rx FIFO dropping bytes. A run
+# where the stub simply died would satisfy the first and not the second.
+# ===========================================================================
+log "R5: BAUD_HIGH=$CEILING_BAUD — the ceiling, where the symmetric case breaks"
+run_client "$ROM_CEILING" "$OUT/baud-r5.log" \
+    python3 "$CONFORMANCE" --remote "tcp:127.0.0.1:$PORT" --only C5
+
+r5_drops=$(grep -c 'RX FIFO overflow' "$OUT/baud-r5.log" || true)
+if [ "$listening" -ne 1 ]; then
+    fail "R5 the stub never listened, so the ceiling was never approached"
+elif ! grep -q "AT+UART baud set to $CEILING_BAUD" "$OUT/baud-r5.log"; then
+    fail "R5 precondition: the module never accepted AT+UART_CUR=$CEILING_BAUD"
+elif [ "$client_rc" -eq 0 ]; then
+    fail "R5 the 1 KB loopback SURVIVED $CEILING_BAUD — the ceiling has moved, re-measure it"
+elif [ "$r5_drops" -eq 0 ]; then
+    fail "R5 the loopback failed but the Rx FIFO never overflowed, so it failed for another reason"
+else
+    pass "R5 at $CEILING_BAUD the 1 KB loopback overflows the Rx FIFO ($r5_drops bytes dropped)"
+fi
+
 # --- verdict ---------------------------------------------------------------
 
 echo
 if [ "$failures" -eq 0 ]; then
-    log "All 4 checks passed."
+    log "All 5 checks passed."
     exit 0
 fi
-log "$failures of 4 checks FAILED."
+log "$failures of 5 checks FAILED."
 exit 1

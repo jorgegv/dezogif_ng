@@ -180,6 +180,12 @@ ESP_BAUDRATE:   equ 115200
 ; #25. It lives beside ESP_BAUDRATE because the screen names whichever of the
 ; two is live, and data_const.asm is assembled before the transport.
 ;
+; WHICH RATE TO ASK FOR IS TWO QUESTIONS, and they do not have the same answer.
+; The first is which targets the hardware can even express, and it is settled
+; below by arithmetic. The second is which of those this stub can keep up with,
+; and it is settled by measurement in the paragraph after that — 1000000 wins
+; the first and loses the second, which is why the default ends up where it does.
+;
 ; ONE MILLION, AND IT IS THE ARITHMETIC THAT PICKS IT RATHER THAN TASTE. The
 ; prescaler is Fsys/baud and Fsys depends on the video timing in NR 0x11, so
 ; the same target lands on eight different divisors — and the divisor is an
@@ -208,22 +214,55 @@ ESP_BAUDRATE:   equ 115200
 ; "mediocre everywhere", which is still 1000000, for a different reason than
 ; the one that was written down.
 ;
+; IT DEFAULTS TO ESP_BAUDRATE, i.e. THE NEGOTIATION IS OFF IN THE SHIPPED ROM,
+; and that is a measurement rather than caution. Two things decided it:
+;
+;   * 1000000 — the rate this was built for — FAILS the conformance suite. A
+;     CMD_LOOPBACK of 1024 bytes or more overflows the UART's 512-byte Rx FIFO
+;     and the stub reports RX Overflow. Measured, bench check R5, three dropped
+;     bytes in jnext's own uart log.
+;
+;     THE MECHANISM IS THE Z80 AND NOT THE MODULE, which is why it is not
+;     something a bigger buffer or a longer timeout fixes. A loopback echoes as
+;     fast as it consumes, so `cmd_loopback` reads a byte, buffers it, and every
+;     ESP_TX_CHUNK bytes stops reading altogether for a whole AT+CIPSEND
+;     handshake. At 28 MHz one byte time is 610 T-states at 460800 and 280 at
+;     1000000, and the per-byte work does not shrink with the byte time. So
+;     there is a rate above which this stub cannot keep up on SYMMETRIC traffic,
+;     and it is between the two:
+;
+;         230400  pass, 0 overflows      750000  FAIL, 2 overflows
+;         460800  pass, 0 overflows      921600  FAIL, 2 overflows
+;                                       1000000  FAIL, 3 overflows
+;
+;     460800 also passes the whole suite, 15 of 15 with W1-W6.
+;
+;   * AND NOTHING HAS RUN ON HARDWARE. The rate a real ESP-01 will take, and
+;     what the module's own AT+CIPSEND latency does to the same backlog — it is
+;     tens of milliseconds on silicon against jnext's zero, so the emulator
+;     UNDERSTATES this — are hardware's alone. Changing the rate the shipped ROM
+;     runs the ESP at, on emulator evidence, is exactly the move that has twice
+;     cost this project a hardware evening.
+;
+; So the machinery ships and the switch does not. `make TRANSPORT=wifi
+; BAUD_HIGH=460800 mf-rom` is the ROM to try on a Next first, and flipping this
+; default is a one-line change once one has.
+;
 ; OVERRIDABLE, and this is the SEVENTH seam of the ESP_IP_MAX / ESP_RX_WAIT /
 ; ESP_TX_PASSES / TRANSPORT_WAIT_RX_SECONDS / ESP_FAULT_LIMIT / ESP_LINK_IDS /
-; ESP_SERVER_TIMEOUT family. Three settings each reach a state no other can:
+; ESP_SERVER_TIMEOUT family. Four settings each reach a state no other can:
 ;
-;   * the shipped 1000000, where the negotiation happens and everything above
-;     the transport has to keep working across it;
-;   * ESP_BAUDRATE ITSELF, which assembles the whole negotiation OUT — the
-;     "before" control, and also the escape hatch for a board or a module that
-;     will not take the rate, reachable by a rebuild rather than a source edit
-;     exactly as ESP_LINK_IDS=0 is;
+;   * the default, ESP_BAUDRATE ITSELF, which assembles the whole negotiation
+;     OUT — what ships, and the "before" control;
+;   * 460800, where the negotiation happens and everything above the transport
+;     has to keep working across it;
 ;   * a rate the module REFUSES, which is the only way to execute the arm that
-;     declines to switch. jnext answers ERROR above 5000000.
+;     declines to switch. jnext answers ERROR above 5000000;
+;   * 1000000, the ceiling above, kept as a checked fact rather than a paragraph.
 ;
 ; See test/run-baud.sh.
  IFNDEF ESP_BAUD_HIGH
-ESP_BAUD_HIGH:  equ 1000000
+ESP_BAUD_HIGH:  equ ESP_BAUDRATE
  ENDIF
 
 ; STRINGIFY renders exactly seven decimal digits' worth (macros.asm), so an

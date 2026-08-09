@@ -260,14 +260,17 @@ endif
 # as shipped (issue #25, src/constants.asm for why that number). Three settings
 # each reach a state no other can:
 #
-#   BAUD_HIGH=1000000   the shipped ROM: the negotiation happens
-#   BAUD_HIGH=115200    it is assembled OUT — the "before" control, and the
-#                       escape hatch for a board or a module that will not take
-#                       the rate, reachable by a rebuild rather than a source
-#                       edit, exactly as LINK_IDS=0 is
+#   (default)           ESP_BAUDRATE, so the negotiation is assembled OUT. THAT
+#                       IS WHAT SHIPS, and src/constants.asm carries the
+#                       measurement that decided it
+#   BAUD_HIGH=460800    the negotiation happens, and the whole conformance suite
+#                       still passes — 15 of 15 with W1-W6
 #   BAUD_HIGH=6000000   above the 5000000 jnext's AT engine will parse, so the
 #                       module answers ERROR and the arm that declines to switch
 #                       is executed rather than reasoned about
+#   BAUD_HIGH=1000000   THE CEILING: the symmetric 1 KB loopback overflows the
+#                       512-byte Rx FIFO, because the Z80 cannot read, buffer and
+#                       re-send a byte in the 280 T-states one lasts at that rate
 #
 # What NO setting of this can reach is the half-switched link itself: jnext
 # paces both directions from the guest's own prescaler and never compares the
@@ -833,17 +836,19 @@ test-cipsto:
 # `make test-hardware` and nothing else. It never reaches the bring-up probe
 # either — jnext's module answers at the first rate asked, every time.
 #
-# Run the baud-negotiation bench (4 jnext runs, 4 checks; not part of `make test`)
+# Run the baud-negotiation bench (5 jnext runs, 5 checks; not part of `make test`)
 test-baud:
 	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi BAUD_HIGH=460800 mf-rom
 	@$(MAKE) --no-print-directory TRANSPORT=wifi BAUD_HIGH=6000000 mf-rom
-	@$(MAKE) --no-print-directory TRANSPORT=wifi BAUD_HIGH=115200 mf-rom
-	@$(MAKE) --no-print-directory TRANSPORT=wifi BAUD_HIGH=1000000 FAULT_LIMIT=1 mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi BAUD_HIGH=1000000 mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi BAUD_HIGH=460800 FAULT_LIMIT=1 mf-rom
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
-	 ROM_HIGH="$(ROM_WIFI)" \
+	 ROM_HIGH="$(OUT)/enNextMf-wifi-baud460800.rom" \
 	 ROM_REFUSED="$(OUT)/enNextMf-wifi-baud6000000.rom" \
-	 ROM_OFF="$(OUT)/enNextMf-wifi-baud115200.rom" \
-	 ROM_RECOVER="$(OUT)/enNextMf-wifi-fl1-baud1000000.rom" $(TEST)/run-baud.sh
+	 ROM_OFF="$(ROM_WIFI)" \
+	 ROM_RECOVER="$(OUT)/enNextMf-wifi-fl1-baud460800.rom" \
+	 ROM_CEILING="$(OUT)/enNextMf-wifi-baud1000000.rom" $(TEST)/run-baud.sh
 
 # ---------------------------------------------------------------------------
 # The DZRP screen reader (test/dzrp/screen.py) and its validation.

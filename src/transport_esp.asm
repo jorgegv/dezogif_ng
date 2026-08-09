@@ -3951,6 +3951,31 @@ esp_uart_set_rate:
 ; a refusal is proof the module is still at ESP_BAUDRATE, and silence is no
 ; evidence at all, so the conservative reading is right for both.
 ;
+; THIS STEP DOES NOT INHERIT esp_command_ok_or_error's CAVEAT, and it is worth
+; saying so explicitly because that routine's header names issue #25 as its
+; second caller. It has none: this is a ONE-pattern wait, and the hole there is
+; a CROSS-pattern one — "ERROR"[3] being "OK"[0].
+;
+; The single pattern is exact against ANY input rather than against a clean
+; window, which is a stronger property than the CIPSTO step has. "OK\r\n" has no
+; proper border: 'K', CR and LF are none of them 'O', so its failure function is
+; all zeros, and naive restart with the mismatching byte re-offered is then
+; exactly correct. The match can be DELAYED by whatever else is on the wire; it
+; cannot be lost.
+;
+; That matters because this window is not always as quiet as the chain suggests.
+; On a first bring-up nothing is listening — AT+CIPSERVER has not been sent — but
+; Symbol Shift + M1 and esp_recover both re-enter transport_init with a listener
+; already up, so `+IPD`, `<id>,CONNECT` and `<id>,CLOSED` can all land here. None
+; of them can strand the matcher, and a `+IPD` is held rather than eaten
+; (esp_scan_hold, point 8).
+;
+; AND EVERY ARM LEAVES THE FIFO EMPTY, so the next step in the chain reads a
+; clean stream: the agreeing arm consumes exactly "OK\r\n"; the refusing and
+; silent arms scan until their budget expires, which drains whatever came,
+; trailing CRLF included; and the fallback arm's esp_uart_init empties both FIFOs
+; on the way past.
+;
 ; NOTE THIS IS THE OPPOSITE CHOICE FROM AT+CIPSTO's, one step down the same
 ; chain, and the reason is that the two commands are answering different
 ; questions. A refused CIPSTO changes nothing about how to talk to the module,

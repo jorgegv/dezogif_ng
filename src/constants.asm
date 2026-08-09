@@ -245,8 +245,56 @@ ESP_BAUDRATE:   equ 115200
 ;     cost this project a hardware evening.
 ;
 ; So the machinery ships and the switch does not. `make TRANSPORT=wifi
-; BAUD_HIGH=460800 mf-rom` is the ROM to try on a Next first, and flipping this
-; default is a one-line change once one has.
+; BAUD_HIGH=460800 mf-rom` is the ROM to try on a Next first.
+;
+;---------------------------------------------------------------------------
+; WHAT WOULD JUSTIFY FLIPPING THIS DEFAULT TO 460800
+;
+; Flipping it is one line. Earning it is six results on a real Next, and they
+; are written out here rather than left as "run the bench and see", because the
+; interesting failure does not look like a bad number — it looks like a working
+; debugger with one extra word on its screen.
+;
+; Install the 460800 ROM above, then:
+;
+; 1. THE SCREEN MUST READ `ESP Baudrate: 460800`. If it reads 115200 the module
+;    refused and there is nothing to measure — the fallback worked, and the
+;    answer for that module is no. `make read-screen NEXT_IP=<ip>` reads it back
+;    over DZRP; row 3.
+;
+; 2. `make test-hardware NEXT_IP=<ip>`, THREE RUNS, H2 = 15 of 15 EVERY TIME.
+;    Three and not one because issue #11's cost measurement needed three before
+;    an outlier could be discounted. **C5 is the check that matters** — the
+;    loopback sweep is what R5 shows going red at 1000000, so it is the ceiling
+;    arriving, not a random failure.
+;
+; 3. H6 CLEAN ON ALL THREE, AND SPECIFICALLY NOT `RX Overflow`. That string is
+;    disqualifying even if every check passed, because it means the Rx FIFO
+;    reached its limit and the margin is gone. It is a DIFFERENT string from
+;    `RX Timeout`, which has other causes and which a disconnect can leave
+;    behind by itself (MEMORY.md 2026-08-08).
+;
+; 4. H5 THROUGHPUT: median of the three at least twice the 115200 baseline,
+;    i.e. >= ~16 KB/s round trip against the 8.3 KB/s recorded on 2026-08-08.
+;    Below that the module's own TCP stack is the limit rather than the wire,
+;    and the rate is not buying what it risks.
+;
+; 5. H4 LATENCY IS NOT THE CRITERION, and reading it as one is the easy mistake.
+;    The median at 115200 is 11.2 ms and is dominated by the WiFi round trip,
+;    not by the wire — a command is tens of bytes — so expect it roughly
+;    UNCHANGED. What would be a red flag is it getting materially WORSE, say a
+;    median past ~20 ms, which suggests retransmission.
+;
+; 6. AND THE ONE NO BENCH ANYWHERE COVERS: press M1, then the stub's own `R`,
+;    then M1 again. The debugger must come back up. That is the bring-up probe,
+;    which is dead code in the emulator because jnext's module answers at the
+;    first rate asked — and it is the ONLY software recovery from a rate that
+;    outlived a reset, since nothing can reset the module. If this fails, do not
+;    flip the default whatever the throughput says.
+;
+; A real DeZog F5 loading a `.nex` is the confirmation worth having on top of
+; all six: CMD_WRITE_BANK is the largest inbound traffic this stub ever sees.
+;---------------------------------------------------------------------------
 ;
 ; OVERRIDABLE, and this is the SEVENTH seam of the ESP_IP_MAX / ESP_RX_WAIT /
 ; ESP_TX_PASSES / TRANSPORT_WAIT_RX_SECONDS / ESP_FAULT_LIMIT / ESP_LINK_IDS /

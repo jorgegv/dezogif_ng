@@ -138,6 +138,23 @@ which moves two 115200 entries: Fsys 29464286 from 255 (+0.301%) to 256
 worked. **No bench here covers either**, because the reference image boots at
 video timing 0 where truncation and rounding agree.
 
+**WHAT WOULD JUSTIFY FLIPPING THE DEFAULT TO 460800 is written out beside the
+constant**, because "run the bench and see" is not an acceptance criterion and
+the interesting failure does not look like a bad number — it looks like a
+working debugger with one extra word on its screen. Six results on a real Next:
+the screen must actually say 460800 (otherwise the module refused and the
+fallback worked, and there is nothing to measure); **H2 = 15 of 15 on three
+runs**, three because issue #11's cost measurement needed three before an
+outlier could be discounted, and **C5 is the check that matters** since it is
+what R5 shows going red; **H6 clean on all three and specifically not `RX
+Overflow`**, which is disqualifying even against passing checks because it is
+the margin gone, and which is a different string from `RX Timeout`; **H5 median
+at least twice the 8.3 KB/s baseline**, below which the module's stack is the
+limit and the rate buys nothing; **H4 latency explicitly NOT the criterion** —
+11.2 ms is WiFi round trip, not wire, so expect it unchanged and treat a
+material worsening as the red flag; and **M1, `R`, M1 again**, which no bench
+anywhere covers and which is the only software recovery there is.
+
 **Rejected.** Defaulting to 1000000 (it fails the gate); defaulting to 460800
 (green here, unmeasured there, and this project's rule is explicit); using
 `AT+UART_DEF=` (it persists into flash, so a rate that turns out not to work
@@ -158,6 +175,18 @@ emulator. **The half-switched link** — structurally unreachable. **The bring-u
 probe's interaction with a module at a rate this ROM was not built for** — the
 probe only tries the two rates it knows. And **the 460800 recommendation rests
 on emulator runs alone**.
+
+**A CAVEAT THIS DOES NOT INHERIT, checked rather than assumed.** Issue #24's
+`esp_command_ok_or_error` header names #25 as its second caller and warns that
+its matcher is naive rather than exact. **This step does not use it**: the
+`AT+UART_CUR=` wait is `esp_command_ok`, one pattern, because the refusal is
+precisely the arm that has to be acted on and the two-pattern routine reports
+which arm it took to nobody. And the hole there is a CROSS-pattern one —
+`ERROR[3]` is `OK[0]`. A single "OK\r\n" has no proper border, so its failure
+function is all zeros and naive restart is exactly correct against ANY input,
+which is stronger than the clean-window argument CIPSTO rests on. That matters
+because this window is not always quiet: a re-init through Symbol Shift + M1 or
+`esp_recover` re-enters with a listener up.
 
 **Cost: +9 bytes in the shipped WiFi ROM** (`main_end` 0xFB40 → 0xFB49, 855 free
 to the identity block), which is the frame-register hold in `esp_uart_set_rate`

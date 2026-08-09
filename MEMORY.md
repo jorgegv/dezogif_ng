@@ -16,20 +16,49 @@ the shipped ROM does not negotiate**, and that default is the decision.
 **ONE MEGABIT DOES NOT WORK, AND THE LIMIT IS OURS RATHER THAN THE MODULE'S.**
 At 1000000 the conformance suite goes red on **C5**, the loopback sweep: a
 `CMD_LOOPBACK` of 1024 bytes or more overflows the UART's 512-byte Rx FIFO.
-`cmd_loopback` echoes as fast as it consumes, so it stops reading for a whole
-`AT+CIPSEND` handshake every `ESP_TX_CHUNK` bytes, and the per-byte work does not
-shrink when the byte time does. At 28 MHz one byte time is 610 T-states at
-460800 and **280** at 1000000. Measured, one build-time constant apart:
+Measured, one build-time constant apart, one byte time being prescaler x 10
+T-states at 28 MHz:
 
-| rate | prescaler | C5 | Rx FIFO overflows |
-|---|---|---|---|
-| 230400 | 122 | pass | 0 |
-| **460800** | **61** | **pass** | **0** |
-| 750000 | 37 | FAIL | 2 |
-| 921600 | 30 | FAIL | 2 |
-| 1000000 | 28 | FAIL | 3 |
+| rate | prescaler | T-states/byte | C5 | Rx FIFO overflows |
+|---|---|---|---|---|
+| 230400 | 122 | 1220 | pass | 0 |
+| **460800** | **61** | **610** | **pass** | **0** |
+| 600000 | 47 | 470 | FAIL | 2 |
+| 750000 | 37 | 370 | FAIL | 2 |
+| 921600 | 30 | 300 | FAIL | 2 |
+| 1000000 | 28 | 280 | FAIL | 3 |
 
 460800 also passes the whole suite, **15 of 15 with W1-W6**.
+
+**THE MECHANISM I FIRST ATTACHED TO THAT RESULT WAS FICTION, AND THE REVIEWER
+CAUGHT IT.** I wrote that `cmd_loopback` interleaves — reads a byte, buffers it,
+and stops reading for a whole `AT+CIPSEND` every `ESP_TX_CHUNK` bytes. **It does
+not interleave at all**: `commands.asm:959-1018`, upstream and unmodified,
+drains the entire payload into the swap bank in `.rcv_loop` before it ever
+reaches `send_length_and_seqno`, and `ESP_TX_CHUNK` is referenced only by the
+transmit path. I described a loop I had not read, in a file I had not changed.
+
+**What the log says**, which is what I should have done first: in
+`build/baud-l5.log` the previous response's `SEND OK` is fully delivered, the
+1030-byte `+IPD` header goes out, and the first dropped byte follows **2 ms
+later with zero guest TX writes and zero `AT+CIPSEND` in the window**. The
+overflow is entirely inside a *receive*.
+
+**So the cost is the per-byte RECEIVE path**: `transport_read_byte` — two border
+writes, `esp_require_payload`'s guard, the 16-bit `esp_rx_remaining` decrement,
+the held-vs-wire source test — plus `esp_try_read_raw` re-arming its retry and
+pass counters on every byte, plus the caller's own store loop. The sweep
+brackets it: **above 470 T-states (600000 fails) and at most 610 (460800
+passes)**.
+
+**AND THAT IS WORSE THAN THE STORY IT REPLACES, which is the reason this
+mattered rather than being a tidy-up.** An echo-specific cost would have been a
+conformance curiosity; a receive-side cost applies to **any large inbound
+payload**, and `CMD_WRITE_BANK` pushes 8-16 KB per bank every time DeZog loads a
+`.nex`. Left in the shipped ROM's comments, the wrong mechanism would have sent
+whoever next tries to raise the ceiling to optimise the **send** path, which is
+not in it. This file names "a plausible mechanism instead of a traced one" as a
+recurring disease; this is that, in a comment that will outlive the branch.
 
 **THE ISSUE'S OWN FEASIBILITY COMMENT SAID THIS COULD NOT BE SEEN HERE, and it
 was wrong in the direction that matters.** It reasoned that jnext paces the
@@ -55,11 +84,38 @@ the ROM to try; flipping the default afterwards is one line.
 everything the machine can do to itself: the UART's prescaler is restored only
 by `i_reset_hard`, which `zxnext.vhd:3361-3367` ties to the constant `'0'`
 (`serial/uart.vhd:313-320` for the gate), so the stub's own `R` key leaves BOTH
-ends up there. **And there is no software reset for the module at all** — NR
-`0x02` bit 7 reaches `bus_rst_n_io`, the expansion bus, and **no board top-level
-file declares an ESP reset pin on any revision**. That last one is a correction:
-the issue listed it as "the highest-value hardware question", and it is not a
-hardware question, it is answered in the VHDL and the answer is no.
+ends up there.
+
+**AND I GOT THE OTHER HALF OF THAT WRONG, IN THE WAY THIS PROJECT'S FIRST HARD
+RULE EXISTS TO PREVENT.** I wrote — in four places, and reported it up as an
+established *correction* closing what issue #25 called its highest-value open
+question — that no software reset for the ESP exists. It does. `nextreg.txt`
+37-49, NR `0x02` **(W)**: *"bit 7 = Assert and hold reset to the expansion bus
+and the esp wifi"*. Corroborated at `zxnext.vhd:60` (`o_RESET_PERIPHERAL ...
+asserted under sw control for esp / exp bus reset`), `:1579`, `:5119`, and by
+**this repository's own `src/mf_rom.asm:72`**, which has said `Preserve
+esp/expbus bit` since the fork — one grep away the whole time.
+
+**How the error was made, because that is the transferable part.** I traced
+`o_RESET_PERIPHERAL` to `bus_rst_n_io` in the three board files, read "bus" in
+the *derived signal's name*, and concluded expansion-bus-only — without reading
+what the **register's own spec** says the bit does. The board line even carries
+the disproof in its trailing comment, *"makes more sense if exp bus reset and
+esp reset are separated"*, which only parses because they are **not**. A
+citation is not a quotation, and a signal name is not a specification: when an
+issue flags something as the thing most worth finding out, the primary reference
+gets quoted rather than paraphrased.
+
+**THE PROBE IS STILL RIGHT, AND NOW FOR REASONS THAT SURVIVE.** Three, none of
+which is "no reset exists": the reset **cannot be aimed at the ESP alone** — one
+line on every board revision, so a pulse resets whatever the user has plugged
+into the expansion bus, which this stub knows nothing about; the module then
+**reboots and must re-associate**, and nothing here has measured how long, during
+which there is no address and so no connect string; and **no bench here can
+execute it**, since jnext models no path from NR `0x02` to its ESP, which would
+make it Z80 nothing could run — the trade issue #19 refused. So a bit-7 pulse is
+a real escape hatch *behind* the probe, wanting its own issue and a jnext model,
+rather than a thing that does not exist.
 
 Without a fix, the M1 press after a reset would have run `esp_uart_init`, dropped
 **our** side to 115200 alone, and painted "ESP-01 setup failed" on a healthy
@@ -83,7 +139,7 @@ new. Bit 7 of `0x163B` holds the transmitter at `S_IDLE` and the receiver at
 (`uart.vhd:385`, `:570`), and **does not touch the prescaler** — `uart_frame_wr`
 appears in neither prescaler process. All three verified.
 
-The mixture is not theoretical: jnext logs after every write, so **R1 asserts the
+The mixture is not theoretical: jnext logs after every write, so **L1 asserts the
 sequence `243 189 61`**, where 189 is the old high half with the new low half.
 The bench computes it the way the hardware does rather than hard-coding it.
 
@@ -95,20 +151,20 @@ half-switched link — the failure this design is shaped around — is structura
 unreachable. So the discriminating assertions are on **jnext's uart log**, which
 records every prescaler the guest programs. Demonstrated: with the refusal guard
 removed, the stub programmed divisor **5** after an `ERROR` and **still served
-DZRP perfectly**, because the emulated module cannot tell. R2 caught it; nothing
+DZRP perfectly**, because the emulated module cannot tell. L2 caught it; nothing
 behavioural could have.
 
 **Five checks, each shown red first**, `make test-baud`:
 
 | | subject | shown red by |
 |---|---|---|
-| R1 | the negotiation happens, both ends | pointing it at the non-negotiating ROM |
-| R2 | a refusal does **not** move our side | a scratch ROM with the guard removed |
-| R3 | the shipped ROM does not negotiate | pointing it at a negotiating ROM |
-| R4 | `esp_recover` re-runs the whole chain | the shipped `FAULT_LIMIT` of 5 |
-| R5 | **the ceiling**, and it PASSES when C5 fails | — |
+| L1 | the negotiation happens, both ends | pointing it at the non-negotiating ROM |
+| L2 | a refusal does **not** move our side | a scratch ROM with the guard removed |
+| L3 | the shipped ROM does not negotiate | pointing it at a negotiating ROM |
+| L4 | `esp_recover` re-runs the whole chain | the shipped `FAULT_LIMIT` of 5 |
+| L5 | **the ceiling**, and it PASSES when C5 fails | — |
 
-**R5 IS A CHECK WHOSE PASS IS A FAILURE**, W3's shape, and it is there so that
+**L5 IS A CHECK WHOSE PASS IS A FAILURE**, W3's shape, and it is there so that
 whoever raises the default has to come and make it go green — which means having
 changed the thing it measures, not the constant. It asserts the Rx FIFO really
 overflowed as well as that the loopback died, because "C5 failed" has other
@@ -146,7 +202,7 @@ the screen must actually say 460800 (otherwise the module refused and the
 fallback worked, and there is nothing to measure); **H2 = 15 of 15 on three
 runs**, three because issue #11's cost measurement needed three before an
 outlier could be discounted, and **C5 is the check that matters** since it is
-what R5 shows going red; **H6 clean on all three and specifically not `RX
+what L5 shows going red; **H6 clean on all three and specifically not `RX
 Overflow`**, which is disqualifying even against passing checks because it is
 the margin gone, and which is a different string from `RX Timeout`; **H5 median
 at least twice the 8.3 KB/s baseline**, below which the module's stack is the
@@ -191,8 +247,21 @@ because this window is not always quiet: a re-init through Symbol Shift + M1 or
 **Cost: +9 bytes in the shipped WiFi ROM** (`main_end` 0xFB40 → 0xFB49, 855 free
 to the identity block), which is the frame-register hold in `esp_uart_set_rate`
 plus the two rounded table entries — proved to be the whole of it by comparing
-symbol tables: **609 symbols, every one either unmoved or +9, none added or
-removed.** At `BAUD_HIGH=460800` it is +145 (0xFBCF, 710 free). **The UART ROM is
+symbol tables: of **922 symbols common to both**, 648 are unmoved and 274 sit at
+exactly +9; **none was removed and exactly two were added**, `ESP_BAUD_HIGH` and
+`esp_uart_set_rate`, which are the constant and the entry point this change
+introduces.
+
+*(The first version of that sentence said "609 symbols ... none added or
+removed", and was wrong twice over: the extraction matched only listing lines of
+the form `0xNNNN␣␣␣name` and so **silently dropped 315 symbols** — every
+`X`-flagged one, every EQU with a five-digit value and every dot-local — and
+"none added" was an artefact of the two new names being among them. The
+reviewer's independent count differs again in the totals (840/603/237) because
+its filter differs again; all three agree on what matters, which is zero removed,
+exactly two added and every survivor at 0 or +9. A count over a hand-written
+pattern is an estimate, and this file already carries that lesson under three
+other names.)* At `BAUD_HIGH=460800` it is +145 (0xFBCF, 710 free). **The UART ROM is
 byte-identical** to the base pinned (`87965fea…`), so nothing leaked across the
 transport boundary. **This changes a ROM, so the merge carries a `make bump`.**
 
@@ -208,7 +277,7 @@ transport boundary. **This changes a ROM, so the merge carries a `make bump`.**
 family, promoting a scratch script that had already produced three hardware
 results nobody but its author could reproduce. It opens one connection, gets a
 `CMD_INIT` answered, **says nothing and never closes it**, and times how long the
-remote leaves it alone. Rows `R0`-`R5`, no PASS, and `make probe-idle-drop`.
+remote leaves it alone. Rows `R0`-`L5`, no PASS, and `make probe-idle-drop`.
 
 **WHY IT EXISTS AT ALL, given that #24 has its own bench.** `make test-cipsto`
 shows the **stub sends** `AT+CIPSTO=1800` and reads the answer, against a jnext
@@ -219,7 +288,7 @@ a current ROM dropping a silent client at ~182 s.
 
 **THE DECISION: `--expect-timeout` HAS NO DEFAULT.** The probe cannot read
 `AT+CIPSTO?` — that needs `.UART` at the machine — so any number baked in would
-be the tool asserting a property of a module it never asked. Given one, `R2`
+be the tool asserting a property of a module it never asked. Given one, `L2`
 says whether the two agree; given none, the number is printed and **nothing is
 attributed to it**. It changes the WORDING of one row and never the exit code:
 there is no verdict here, and a disagreement is a *finding*, not a failure.
@@ -253,7 +322,7 @@ survived review by reading:
    **nominal `--deadline`** as the survival figure rather than the elapsed
    silence measured. A lower bound must be the number actually reached.
 
-**R5 IS AN ADDITION AND IT ANSWERS A COMPLAINT THIS FILE ALREADY CARRIES.** The
+**L5 IS AN ADDITION AND IT ANSWERS A COMPLAINT THIS FILE ALREADY CARRIES.** The
 2026-08-08 entry records "NOT captured: the build number" as a limit of hardware
 testing, because DZRP's `PROGRAM_NAME` reports upstream's `dezogif v2.2.1` for
 every ROM we ship. The stub prints `dezogif_ng <variant> NN.NN` at screen row 0,
@@ -284,7 +353,7 @@ the closing screen read bracket the wait with two working exchanges.
 **A HARNESS FAULT CAUGHT THE TOOL OUT, AND IT IS FILED IN [[ERRORS.md]] RATHER
 THAN HERE.** A stale fake peer with a different delay was still on the port; the
 replacement failed to bind into an unread log; the probe measured the stale one's
-6 s and `R2` reported it as matching an expectation of 12. **A plausible number,
+6 s and `L2` reported it as matching an expectation of 12. **A plausible number,
 blessed.** It is the sharpest available illustration of that row being
 consistency rather than attribution — produced by the tool against itself, on the
 day it was written.

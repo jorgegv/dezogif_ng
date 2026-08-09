@@ -282,13 +282,18 @@
 ;    A rate, once set, survives everything the machine can do to itself: the
 ;    UART's prescaler is restored only by i_reset_hard, which is tied to the
 ;    constant '0' (zxnext.vhd:3361-3367, serial/uart.vhd:313-320), so a Z80 SOFT
-;    RESET — the stub's own `R` key — leaves both ends up there. And there is no
-;    reset line to the module to fall back on: NR 0x02 bit 7 reaches
-;    `bus_rst_n_io`, the expansion bus, and no board top-level file declares an
-;    ESP reset pin at all. So after a reset the next M1 press would have run
-;    esp_uart_init, dropped THIS side to 115200 alone, and reported "ESP-01 setup
-;    failed" on a healthy module — and esp_recover, which ends `jp
-;    transport_init`, would have repeated that for every fault.
+;    RESET — the stub's own `R` key — leaves both ends up there. So after a reset
+;    the next M1 press would have run esp_uart_init, dropped THIS side to 115200
+;    alone, and reported "ESP-01 setup failed" on a healthy module — and
+;    esp_recover, which ends `jp transport_init`, would have repeated that for
+;    every fault.
+;
+;    THE MODULE *CAN* BE RESET IN SOFTWARE, and an earlier version of this said
+;    it could not. NR 0x02 bit 7 asserts reset to the expansion bus AND the ESP
+;    (nextreg.txt:37-49; zxnext.vhd:60, :1579, :5119; and mf_rom.asm:72 has said
+;    so here since the fork). It is not used, because it cannot be aimed at the
+;    ESP alone, because the re-association that follows is unmeasured, and
+;    because no bench here can execute it — see transport_init.
 ;
 ;    THE ANSWER IS A PROBE AT BRING-UP RATHER THAN A GUARD AT THE SWITCH.
 ;    transport_init greets the module at 115200 and, if nothing comes back, at
@@ -3238,10 +3243,30 @@ transport_init:
     ; itself. The UART's prescaler is restored only by i_reset_hard, which
     ; zxnext.vhd:3361-3367 ties to the constant '0' (serial/uart.vhd:313-320 for
     ; the gate), so a Z80 soft reset — the stub's own `R` key, or NextZXOS's —
-    ; leaves BOTH ends up there. And nothing can reset the module instead: NR
-    ; 0x02 bit 7 drives `bus_rst_n_io`, the EXPANSION BUS, and no board top-level
-    ; file declares an ESP reset pin at all, so there is no software path to it
-    ; on any revision.
+    ; leaves BOTH ends up there.
+    ;
+    ; A SOFTWARE RESET OF THE MODULE DOES EXIST, and this comment claimed the
+    ; opposite until it was checked against the primary reference. nextreg.txt
+    ; 37-49 gives NR 0x02 (W) `bit 7 = Assert and hold reset to the expansion bus
+    ; and the esp wifi`, and the core agrees throughout: zxnext.vhd:60 declares
+    ; `o_RESET_PERIPHERAL ... asserted under sw control for esp / exp bus reset`,
+    ; :1579 drives it from :5119's nr_02_bus_reset, and this repository's own
+    ; mf_rom.asm:72 has said `Preserve esp/expbus bit` since the fork.
+    ;
+    ; IT IS NOT USED HERE, FOR THREE REASONS AND NOT FOR THE ONE THIS COMMENT
+    ; USED TO GIVE. It is not separable from the expansion bus — one line,
+    ; `bus_rst_n_io`, on every board revision, whose own comment says it "makes
+    ; more sense if exp bus reset and esp reset are separated", which only parses
+    ; because they are not — so pulsing it resets whatever the user has plugged
+    ; in, which this stub knows nothing about. The module would then reboot and
+    ; have to re-associate, and NOTHING HERE HAS MEASURED how long that takes;
+    ; until it has an address there is no connect string to draw. And no bench
+    ; here can execute it: jnext models no path from NR 0x02 to its ESP, so it
+    ; would be Z80 nothing could run, which is the trade issue #19 refused.
+    ;
+    ; So the probe below is the FIRST move rather than the only one, and a bit-7
+    ; pulse is a real escape hatch behind it if the probe ever proves
+    ; insufficient. Building that wants its own issue and a jnext model.
     ;
     ; Without this, the M1 press after a reset would run esp_uart_init, drop THIS
     ; side to 115200 while the module stayed up, and paint "ESP-01 setup failed"
@@ -3828,15 +3853,13 @@ esp_command_ok_or_error:
 ; out in two 7-bit halves, bit 7 selecting which; the three further MSBs ride
 ; along with the uart selection and are zero for every entry in the tables.
 ;
-; TWO ENTRY POINTS, AND THE SECOND IS NOT A CONVENIENCE — issue #25. Nothing
-; under software control can put the module back to 115200 once it has been
-; asked to move: a Z80 soft reset leaves the peripheral's prescaler exactly
-; where it was (zxnext.vhd:3361-3367 ties the UART's i_reset_hard to the
-; constant '0', and serial/uart.vhd:313-320 gates the prescaler's default on
-; i_reset_hard ALONE), and there is no reset line to the module either — NR
-; 0x02 bit 7 reaches `bus_rst_n_io`, the EXPANSION BUS, and no top-level board
-; file declares an ESP reset pin at all. So the only way back to a module that
-; is somewhere other than where we assume is to go and look; see transport_init.
+; TWO ENTRY POINTS, AND THE SECOND IS NOT A CONVENIENCE — issue #25. A rate
+; survives everything the machine can do to itself: a Z80 soft reset leaves the
+; peripheral's prescaler exactly where it was, because zxnext.vhd:3361-3367 ties
+; the UART's i_reset_hard to the constant '0' and serial/uart.vhd:313-320 gates
+; the prescaler's default on i_reset_hard ALONE. So after a reset both ends are
+; still up there, and the M1 press that follows must not assume otherwise; see
+; transport_init, which greets the module at both rates rather than at one.
 ;
 ; THESE TWO ROUTINES ARE THE ONLY WRITERS OF esp_baud_state, which is what makes
 ; that byte — and so the rate the screen names — true by construction rather

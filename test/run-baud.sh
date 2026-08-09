@@ -2,19 +2,24 @@
 #
 # THE LINK NEGOTIATED UP FROM 115200, AND BROUGHT BACK DOWN WHEN IT CANNOT BE.
 #
-# Invoked by `make test-baud`. Four headless jnext runs, each with a WiFi ROM
+# Invoked by `make test-baud`. Five headless jnext runs, each with a WiFi ROM
 # whose ESP_BAUD_HIGH has been moved, an emulated M1 button press, and a DZRP
 # client over the emulated ESP-01 that reads the stub's own screen back with
 # CMD_READ_MEM.
 #
-# THE HEADLINE RESULT IS R5, AND IT IS WHY THE SHIPPED ROM DOES NOT NEGOTIATE.
+# THE HEADLINE RESULT IS L5, AND IT IS WHY THE SHIPPED ROM DOES NOT NEGOTIATE.
 # 1000000 — the rate this work was commissioned for — does not survive a
-# CMD_LOOPBACK of 1 KB or more: `cmd_loopback` echoes as fast as it consumes, so
-# it stops reading for a whole AT+CIPSEND handshake every ESP_TX_CHUNK bytes, and
-# above ~460800 the 512-byte Rx FIFO no longer covers that. The limit is the Z80
-# at 28 MHz and not the module, so it is not a thing a longer timeout or a bigger
-# buffer reaches. Measured here: 230400 and 460800 clean, 750000 / 921600 /
-# 1000000 all overflowing. See ESP_BAUD_HIGH in src/constants.asm.
+# CMD_LOOPBACK of 1 KB or more, which overflows the UART's 512-byte Rx FIFO. The
+# cost is the PER-BYTE RECEIVE PATH and has nothing to do with sending:
+# `cmd_loopback` drains the whole payload into the swap bank before it sends
+# anything (commands.asm:959-1018), and L5's own log shows the first dropped byte
+# 2 ms after the +IPD header with zero guest TX in the window. The limit is the
+# Z80 at 28 MHz, so no timeout or buffer size reaches it. Measured: clean at
+# 230400 and 460800, overflowing at 600000, 750000, 921600 and 1000000 — i.e. the
+# per-byte cost is above 470 and at most 610 T-states. **It is not an echo
+# problem**: any large inbound payload is affected, and CMD_WRITE_BANK pushes
+# 8-16 KB per bank on every DeZog .nex load. See ESP_BAUD_HIGH in
+# src/constants.asm.
 #
 # WHY THIS BENCH EXISTS
 #
@@ -26,29 +31,29 @@
 # prescaler to match, and comes back down if the module refuses or the link does
 # not survive.
 #
-#   R1  BAUD_HIGH=460800     AT+UART_CUR goes out, the module accepts, THIS
+#   L1  BAUD_HIGH=460800     AT+UART_CUR goes out, the module accepts, THIS
 #                            SIDE's prescaler really moves, and the stub serves
 #                            DZRP afterwards saying 460800
-#   R2  BAUD_HIGH=6000000    above what the module will parse, so it answers
+#   L2  BAUD_HIGH=6000000    above what the module will parse, so it answers
 #                            ERROR — and the stub must NOT move its own side,
 #                            must still serve, and must say 115200
-#   R3  THE SHIPPED ROM      the negotiation assembled OUT, because that is what
+#   L3  THE SHIPPED ROM      the negotiation assembled OUT, because that is what
 #                            ships: no AT+UART anywhere, and the same service
-#   R4  BAUD_HIGH=460800     a transport fault drives esp_recover, whose tail is
+#   L4  BAUD_HIGH=460800     a transport fault drives esp_recover, whose tail is
 #       FAULT_LIMIT=1        `jp transport_init` — so the whole chain, negotiation
 #                            included, runs a SECOND time and must still serve
-#   R5  BAUD_HIGH=1000000    THE CEILING, kept as a checked fact: a symmetric
+#   L5  BAUD_HIGH=1000000    THE CEILING, kept as a checked fact: a symmetric
 #                            1 KB loopback overflows the 512-byte Rx FIFO and the
 #                            stub says so. This check PASSES when that happens
 #
-# WHAT MAKES R2 MORE THAN "IT DID NOT CRASH". The discriminating assertion is not
+# WHAT MAKES L2 MORE THAN "IT DID NOT CRASH". The discriminating assertion is not
 # that the stub still serves — it would serve just as well having moved its own
 # prescaler into a rate the module cannot hear, right up until the first byte —
 # but that jnext's own log shows the guest programming ONE prescaler value all
 # run, the 115200 one. A stub that switched on a refusal would show two.
 #
-# R3 IS NOT PADDING. Without it, R1's AT+UART_CUR line and its prescaler move are
-# not attributable to anything: R3 is the same ROM one constant away, and it shows
+# L3 IS NOT PADDING. Without it, L1's AT+UART_CUR line and its prescaler move are
+# not attributable to anything: L3 is the same ROM one constant away, and it shows
 # both disappear together.
 #
 # THE SCREEN IS THE OUTCOME, AND IT IS READ AS TEXT RATHER THAN PHOTOGRAPHED.
@@ -80,17 +85,19 @@
 #     H5 before and after, several runs.
 #
 #   * IT NEVER EXERCISES THE BRING-UP PROBE. transport_init greets the module at
-#     115200 and, on silence, again at ESP_BAUD_HIGH — which is the only software
-#     recovery there is from a rate that outlived a soft reset, since the UART's
-#     prescaler survives one (zxnext.vhd:3361-3367) and no board file declares an
-#     ESP reset pin at all. jnext's module answers the first greeting every time,
-#     so that branch is DEAD CODE in the emulator. Nothing here has run it.
+#     115200 and, on silence, again at ESP_BAUD_HIGH, because the UART's
+#     prescaler survives a soft reset (zxnext.vhd:3361-3367) and so both ends
+#     stay at the raised rate across one. jnext's module answers the first
+#     greeting every time, so that branch is DEAD CODE in the emulator. Nothing
+#     here has run it. (NR 0x02 bit 7 does reset the module — nextreg.txt:37-49
+#     — but it resets the expansion bus with it and jnext models no path from
+#     that register to its ESP, so it is not used and could not be checked here.)
 #
 #   * IT DOES NOT RUN THE CONFORMANCE SUITE. It does not need to: the shipped ROM
 #     IS the negotiating one, so `make test-dzrp-stub` already speaks all fifteen
 #     checks at the raised rate.
 #
-#   * R4 SHOWS THE CHAIN RE-RUNS, not that a recovery repairs anything. No run
+#   * L4 SHOWS THE CHAIN RE-RUNS, not that a recovery repairs anything. No run
 #     here can make the emulated module unresponsive, so what it re-initialises
 #     is a module that was never broken.
 #
@@ -159,10 +166,10 @@ HIGH_PRESCALER=61
 # appears in its log as an ordinary reading, and 243 -> 460800 shows as
 # 243, 189, 61.
 #
-# 156 IS NOT A MAGIC NUMBER, it is that mixture computed the way the hardware
+# 189 IS NOT A MAGIC NUMBER, it is that mixture computed the way the hardware
 # computes it: the old value's bits 13:7 with the new value's bits 6:0. Deriving
-# it here rather than writing 156 is what makes this an assertion about the
-# mechanism instead of about one arithmetic accident.
+# it here rather than writing the number is what makes this an assertion about
+# the mechanism instead of about one arithmetic accident.
 #
 # Nothing samples the mixture, and that is the point rather than luck: both
 # engines are held at idle across all three writes, so neither can latch it.
@@ -349,7 +356,7 @@ reader_ok() {
 }
 
 # ===========================================================================
-# R1 — the shipped ROM negotiates, and BOTH ends of the switch are witnessed.
+# L1 — the shipped ROM negotiates, and BOTH ends of the switch are witnessed.
 #
 # Three separate things have to hold, and each is checked from a different
 # place, because no one of them is the claim on its own:
@@ -363,29 +370,29 @@ reader_ok() {
 #   * the link still carries DZRP, and the screen says which rate it is on.
 #     The screen read is 7680 bytes, so "still carries" is not a token exchange.
 # ===========================================================================
-log "R1: BAUD_HIGH=$HIGH_BAUD — the negotiation, at a rate this stub can sustain"
-run_client "$ROM_HIGH" "$OUT/baud-r1.log" \
+log "L1: BAUD_HIGH=$HIGH_BAUD — the negotiation, at a rate this stub can sustain"
+run_client "$ROM_HIGH" "$OUT/baud-l1.log" \
     python3 "$SCREEN_CLIENT" --host 127.0.0.1 --port "$PORT" --timeout 20
 
-r1_seen=$(prescalers "$OUT/baud-r1.log")
+l1_seen=$(prescalers "$OUT/baud-l1.log")
 if [ "$listening" -ne 1 ]; then
-    fail "R1 the stub never listened, so nothing here was tested"
-elif ! grep -q "AT+UART baud set to $HIGH_BAUD" "$OUT/baud-r1.log"; then
-    fail "R1 precondition: the module never accepted AT+UART_CUR=$HIGH_BAUD"
+    fail "L1 the stub never listened, so nothing here was tested"
+elif ! grep -q "AT+UART baud set to $HIGH_BAUD" "$OUT/baud-l1.log"; then
+    fail "L1 precondition: the module never accepted AT+UART_CUR=$HIGH_BAUD"
 elif [ "$client_rc" -ne 0 ]; then
-    fail "R1 the stub did not answer over DZRP at the raised rate (rc=$client_rc)"
+    fail "L1 the stub did not answer over DZRP at the raised rate (rc=$client_rc)"
 elif ! reader_ok; then
-    fail "R1 the screen reader failed validation, so no verdict was taken"
-elif [ "$r1_seen" != "$LOW_PRESCALER $MIX_PRESCALER $HIGH_PRESCALER" ]; then
-    fail "R1 the guest's own prescaler went $r1_seen, wanted $LOW_PRESCALER $MIX_PRESCALER $HIGH_PRESCALER"
+    fail "L1 the screen reader failed validation, so no verdict was taken"
+elif [ "$l1_seen" != "$LOW_PRESCALER $MIX_PRESCALER $HIGH_PRESCALER" ]; then
+    fail "L1 the guest's own prescaler went $l1_seen, wanted $LOW_PRESCALER $MIX_PRESCALER $HIGH_PRESCALER"
 elif [ "$(baud_row)" != "$HIGH_BAUD" ]; then
-    fail "R1 the screen says $(baud_row), not $HIGH_BAUD"
+    fail "L1 the screen says $(baud_row), not $HIGH_BAUD"
 else
-    pass "R1 module accepted $HIGH_BAUD, prescaler went $r1_seen, screen agrees, DZRP served"
+    pass "L1 module accepted $HIGH_BAUD, prescaler went $l1_seen, screen agrees, DZRP served"
 fi
 
 # ===========================================================================
-# R2 — a refused rate, and the stub must not move alone.
+# L2 — a refused rate, and the stub must not move alone.
 #
 # 6000000 is above the 5000000 jnext's AT engine will parse, so it answers ERROR.
 # The stub waits for "OK" alone here, deliberately, so a refusal reads as "do not
@@ -393,58 +400,58 @@ fi
 # one: ONE prescaler value all run. A stub that moved on a refusal would still
 # serve this client, right up until the module's first unanswered byte.
 # ===========================================================================
-log "R2: BAUD_HIGH=$REFUSED_BAUD — a rate the module refuses"
-run_client "$ROM_REFUSED" "$OUT/baud-r2.log" \
+log "L2: BAUD_HIGH=$REFUSED_BAUD — a rate the module refuses"
+run_client "$ROM_REFUSED" "$OUT/baud-l2.log" \
     python3 "$SCREEN_CLIENT" --host 127.0.0.1 --port "$PORT" --timeout 20
 
-r2_seen=$(prescalers "$OUT/baud-r2.log")
+l2_seen=$(prescalers "$OUT/baud-l2.log")
 if [ "$listening" -ne 1 ]; then
-    fail "R2 the stub never listened, so the fallback was never reached"
-elif ! grep -q "AT+UART baud .* answering ERROR" "$OUT/baud-r2.log"; then
-    fail "R2 precondition: the module never refused AT+UART_CUR=$REFUSED_BAUD"
+    fail "L2 the stub never listened, so the fallback was never reached"
+elif ! grep -q "AT+UART baud .* answering ERROR" "$OUT/baud-l2.log"; then
+    fail "L2 precondition: the module never refused AT+UART_CUR=$REFUSED_BAUD"
 elif [ "$client_rc" -ne 0 ]; then
-    fail "R2 the stub stopped serving after the refusal (rc=$client_rc)"
+    fail "L2 the stub stopped serving after the refusal (rc=$client_rc)"
 elif ! reader_ok; then
-    fail "R2 the screen reader failed validation, so no verdict was taken"
-elif [ "$r2_seen" != "$LOW_PRESCALER" ]; then
-    fail "R2 the guest moved its own prescaler on a refusal: $r2_seen"
+    fail "L2 the screen reader failed validation, so no verdict was taken"
+elif [ "$l2_seen" != "$LOW_PRESCALER" ]; then
+    fail "L2 the guest moved its own prescaler on a refusal: $l2_seen"
 elif [ "$(baud_row)" != "$LOW_BAUD" ]; then
-    fail "R2 the screen says $(baud_row), not $LOW_BAUD"
+    fail "L2 the screen says $(baud_row), not $LOW_BAUD"
 else
-    pass "R2 refused, stub stayed at $LOW_PRESCALER, screen says $LOW_BAUD, DZRP served"
+    pass "L2 refused, stub stayed at $LOW_PRESCALER, screen says $LOW_BAUD, DZRP served"
 fi
 
 # ===========================================================================
-# R3 — the negotiation assembled out. The "before" control.
+# L3 — the negotiation assembled out. The "before" control.
 #
-# One constant from R1 and R2, and it is what attributes their AT+UART_CUR line
-# and R1's prescaler move to this feature rather than to anything else in the
+# One constant from L1 and L2, and it is what attributes their AT+UART_CUR line
+# and L1's prescaler move to this feature rather than to anything else in the
 # ROM. It is also a ROM a user can actually ship: the escape hatch for a board or
 # a module that will not take the rate.
 # ===========================================================================
-log "R3: the SHIPPED ROM — the negotiation compiled out"
-run_client "$ROM_OFF" "$OUT/baud-r3.log" \
+log "L3: the SHIPPED ROM — the negotiation compiled out"
+run_client "$ROM_OFF" "$OUT/baud-l3.log" \
     python3 "$SCREEN_CLIENT" --host 127.0.0.1 --port "$PORT" --timeout 20
 
-r3_seen=$(prescalers "$OUT/baud-r3.log")
+l3_seen=$(prescalers "$OUT/baud-l3.log")
 if [ "$listening" -ne 1 ]; then
-    fail "R3 the stub never listened, so the control says nothing"
-elif grep -q 'AT+UART' "$OUT/baud-r3.log"; then
-    fail "R3 this build still sent AT+UART, so the seam does not assemble it out"
+    fail "L3 the stub never listened, so the control says nothing"
+elif grep -q 'AT+UART' "$OUT/baud-l3.log"; then
+    fail "L3 this build still sent AT+UART, so the seam does not assemble it out"
 elif [ "$client_rc" -ne 0 ]; then
-    fail "R3 the stub did not answer over DZRP (rc=$client_rc)"
+    fail "L3 the stub did not answer over DZRP (rc=$client_rc)"
 elif ! reader_ok; then
-    fail "R3 the screen reader failed validation, so no verdict was taken"
-elif [ "$r3_seen" != "$LOW_PRESCALER" ]; then
-    fail "R3 the guest's own prescaler went $r3_seen, wanted $LOW_PRESCALER alone"
+    fail "L3 the screen reader failed validation, so no verdict was taken"
+elif [ "$l3_seen" != "$LOW_PRESCALER" ]; then
+    fail "L3 the guest's own prescaler went $l3_seen, wanted $LOW_PRESCALER alone"
 elif [ "$(baud_row)" != "$LOW_BAUD" ]; then
-    fail "R3 the screen says $(baud_row), not $LOW_BAUD"
+    fail "L3 the screen says $(baud_row), not $LOW_BAUD"
 else
-    pass "R3 no AT+UART at all, prescaler stayed $LOW_PRESCALER, screen says $LOW_BAUD"
+    pass "L3 no AT+UART at all, prescaler stayed $LOW_PRESCALER, screen says $LOW_BAUD"
 fi
 
 # ===========================================================================
-# R4 — a recovery re-runs the whole chain, negotiation included.
+# L4 — a recovery re-runs the whole chain, negotiation included.
 #
 # esp_recover ends `jp transport_init`, so every recovery repeats bring-up. At a
 # raised rate that is the one place the sequence runs TWICE in a single power-on,
@@ -455,43 +462,53 @@ fi
 # WHAT IT DOES NOT SHOW: that a recovery repairs anything. Nothing here can make
 # the emulated module unresponsive, so what is re-initialised was never broken.
 # ===========================================================================
-log "R4: BAUD_HIGH=$HIGH_BAUD FAULT_LIMIT=1 — the chain re-runs after a fault"
-run_client "$ROM_RECOVER" "$OUT/baud-r4.log" \
+log "L4: BAUD_HIGH=$HIGH_BAUD FAULT_LIMIT=1 — the chain re-runs after a fault"
+run_client "$ROM_RECOVER" "$OUT/baud-l4.log" \
     python3 "$RECOVER_CLIENT" --host 127.0.0.1 --port "$PORT"
 
-r4_asked=$(grep -c "AT+UART baud set to $HIGH_BAUD" "$OUT/baud-r4.log" || true)
-r4_high=$(grep -oE 'full LSB = [0-9]+' "$OUT/baud-r4.log" | awk '{print $4}' \
+l4_asked=$(grep -c "AT+UART baud set to $HIGH_BAUD" "$OUT/baud-l4.log" || true)
+l4_high=$(grep -oE 'full LSB = [0-9]+' "$OUT/baud-l4.log" | awk '{print $4}' \
           | grep -c "^$HIGH_PRESCALER$" || true)
 if [ "$listening" -ne 1 ]; then
-    fail "R4 the stub never listened, so no recovery could be provoked"
+    fail "L4 the stub never listened, so no recovery could be provoked"
 elif ! printf '%s\n' "$client_out" | grep -q '^INJECTED'; then
-    fail "R4 precondition: the fault was never injected — the stub was not serving"
-elif [ "$r4_asked" -lt 2 ]; then
-    fail "R4 the recovery did not re-negotiate: $r4_asked AT+UART_CUR, wanted 2"
-elif [ "$r4_high" -lt 2 ]; then
-    fail "R4 the recovery did not re-program the rate: $r4_high moves to $HIGH_PRESCALER"
+    fail "L4 precondition: the fault was never injected — the stub was not serving"
+elif [ "$l4_asked" -lt 2 ]; then
+    fail "L4 the recovery did not re-negotiate: $l4_asked AT+UART_CUR, wanted 2"
+elif [ "$l4_high" -lt 2 ]; then
+    fail "L4 the recovery did not re-program the rate: $l4_high moves to $HIGH_PRESCALER"
 elif ! printf '%s\n' "$client_out" | grep -q '^SERVED'; then
-    fail "R4 no fresh client was served after the recovery"
+    fail "L4 no fresh client was served after the recovery"
 else
-    pass "R4 recovery re-ran the chain: $r4_asked negotiations, $r4_high rate moves, served"
+    pass "L4 recovery re-ran the chain: $l4_asked negotiations, $l4_high rate moves, served"
 fi
 
 # ===========================================================================
-# R5 — the ceiling, and this check PASSES when the stub FAILS.
+# L5 — the ceiling, and this check PASSES when the stub FAILS.
 #
 # 1000000 is the rate issue #25 was commissioned for, and it does not work. The
-# subject is CMD_LOOPBACK at 1024 bytes and up: it echoes as fast as it consumes,
-# so `cmd_loopback` stops reading for a whole AT+CIPSEND handshake every
-# ESP_TX_CHUNK bytes, and the UART's 512-byte Rx FIFO has to cover that gap. At
-# 460800 one byte time is 610 T-states at 28 MHz and it does; at 1000000 it is
-# 280 and it does not.
+# subject is CMD_LOOPBACK at 1024 bytes and up, whose 1030-byte +IPD frame
+# arrives faster than the receive path can drain it and overflows the UART's
+# 512-byte Rx FIFO.
 #
-# THE LIMIT IS THE Z80, NOT THE MODULE, and that is what makes this measurement
-# worth keeping rather than a note about an emulator. The per-byte work does not
-# shrink when the byte time does, jnext counts the same T-states a Next does, and
-# no timeout or buffer size enters into it. On real hardware it can only be
-# WORSE: a real module takes tens of milliseconds over an AT+CIPSEND where jnext
-# takes none, and every one of those milliseconds is more backlog.
+# IT IS A RECEIVE COST, NOT AN ECHO ONE, and this comment said otherwise until it
+# was traced. `cmd_loopback` does NOT interleave: commands.asm:959-1018 drains
+# the whole payload into the swap bank before it reaches send_length_and_seqno,
+# and ESP_TX_CHUNK is on the transmit path alone. This check's own log settles
+# it — the previous SEND OK is fully delivered, the +IPD header goes out, and the
+# first dropped byte follows 2 ms later with ZERO guest TX writes and zero
+# AT+CIPSEND in between.
+#
+# THE LIMIT IS THE Z80, NOT THE MODULE, which is what makes this measurement
+# worth keeping rather than a note about an emulator: the per-byte work does not
+# shrink when the byte time does, and jnext counts the same T-states a Next does.
+# One byte time is prescaler x 10 T-states at 28 MHz, and the sweep brackets the
+# cost above 470 (600000 fails) and at or below 610 (460800 passes). On real
+# hardware it can only be worse.
+#
+# WHICH MAKES IT WIDER THAN THIS ONE CHECK: any large INBOUND payload is
+# affected, and CMD_WRITE_BANK pushes 8-16 KB per bank every time DeZog loads a
+# .nex. Whoever raises this ceiling must optimise the receive path.
 #
 # IT IS KEPT AS A CHECK RATHER THAN A PARAGRAPH so that whoever raises the
 # default has to come here and make it go green — which means having changed the
@@ -502,21 +519,21 @@ fi
 # must fail AND jnext's uart log must show the Rx FIFO dropping bytes. A run
 # where the stub simply died would satisfy the first and not the second.
 # ===========================================================================
-log "R5: BAUD_HIGH=$CEILING_BAUD — the ceiling, where the symmetric case breaks"
-run_client "$ROM_CEILING" "$OUT/baud-r5.log" \
+log "L5: BAUD_HIGH=$CEILING_BAUD — the ceiling, where the symmetric case breaks"
+run_client "$ROM_CEILING" "$OUT/baud-l5.log" \
     python3 "$CONFORMANCE" --remote "tcp:127.0.0.1:$PORT" --only C5
 
-r5_drops=$(grep -c 'RX FIFO overflow' "$OUT/baud-r5.log" || true)
+l5_drops=$(grep -c 'RX FIFO overflow' "$OUT/baud-l5.log" || true)
 if [ "$listening" -ne 1 ]; then
-    fail "R5 the stub never listened, so the ceiling was never approached"
-elif ! grep -q "AT+UART baud set to $CEILING_BAUD" "$OUT/baud-r5.log"; then
-    fail "R5 precondition: the module never accepted AT+UART_CUR=$CEILING_BAUD"
+    fail "L5 the stub never listened, so the ceiling was never approached"
+elif ! grep -q "AT+UART baud set to $CEILING_BAUD" "$OUT/baud-l5.log"; then
+    fail "L5 precondition: the module never accepted AT+UART_CUR=$CEILING_BAUD"
 elif [ "$client_rc" -eq 0 ]; then
-    fail "R5 the 1 KB loopback SURVIVED $CEILING_BAUD — the ceiling has moved, re-measure it"
-elif [ "$r5_drops" -eq 0 ]; then
-    fail "R5 the loopback failed but the Rx FIFO never overflowed, so it failed for another reason"
+    fail "L5 the 1 KB loopback SURVIVED $CEILING_BAUD — the ceiling has moved, re-measure it"
+elif [ "$l5_drops" -eq 0 ]; then
+    fail "L5 the loopback failed but the Rx FIFO never overflowed, so it failed for another reason"
 else
-    pass "R5 at $CEILING_BAUD the 1 KB loopback overflows the Rx FIFO ($r5_drops bytes dropped)"
+    pass "L5 at $CEILING_BAUD the 1 KB loopback overflows the Rx FIFO ($l5_drops bytes dropped)"
 fi
 
 # --- verdict ---------------------------------------------------------------

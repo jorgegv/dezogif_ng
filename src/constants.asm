@@ -219,23 +219,40 @@ ESP_BAUDRATE:   equ 115200
 ;
 ;   * 1000000 — the rate this was built for — FAILS the conformance suite. A
 ;     CMD_LOOPBACK of 1024 bytes or more overflows the UART's 512-byte Rx FIFO
-;     and the stub reports RX Overflow. Measured, bench check R5, three dropped
+;     and the stub reports RX Overflow. Measured, bench check L5, three dropped
 ;     bytes in jnext's own uart log.
 ;
-;     THE MECHANISM IS THE Z80 AND NOT THE MODULE, which is why it is not
-;     something a bigger buffer or a longer timeout fixes. A loopback echoes as
-;     fast as it consumes, so `cmd_loopback` reads a byte, buffers it, and every
-;     ESP_TX_CHUNK bytes stops reading altogether for a whole AT+CIPSEND
-;     handshake. At 28 MHz one byte time is 610 T-states at 460800 and 280 at
-;     1000000, and the per-byte work does not shrink with the byte time. So
-;     there is a rate above which this stub cannot keep up on SYMMETRIC traffic,
-;     and it is between the two:
+;     THE COST IS THE PER-BYTE RECEIVE PATH, AND NOTHING TO DO WITH SENDING.
+;     An earlier version of this comment said `cmd_loopback` interleaves reading
+;     and sending, stopping every ESP_TX_CHUNK bytes for an AT+CIPSEND. It does
+;     not: commands.asm:959-1018, upstream and unmodified, drains the WHOLE
+;     payload into the swap bank before it reaches send_length_and_seqno, and
+;     ESP_TX_CHUNK is referenced only by the transmit path. Read off
+;     build/baud-l5.log instead of reasoned about: the previous response's
+;     SEND OK is fully delivered, the 1030-byte +IPD header goes out, and the
+;     first dropped byte follows 2 ms later with ZERO guest TX writes and zero
+;     AT+CIPSEND in the window. The overflow happens entirely inside a receive.
 ;
-;         230400  pass, 0 overflows      750000  FAIL, 2 overflows
-;         460800  pass, 0 overflows      921600  FAIL, 2 overflows
-;                                       1000000  FAIL, 3 overflows
+;     So what does not fit in a byte time is transport_read_byte and what it
+;     calls — two border writes, esp_require_payload's guard, the 16-bit
+;     esp_rx_remaining decrement, the held-vs-wire source test, and
+;     esp_try_read_raw re-arming its retry and pass counters — plus the caller's
+;     own store loop. At 28 MHz one byte time is prescaler x 10 T-states, and
+;     the sweep brackets the cost between two of them:
 ;
-;     460800 also passes the whole suite, 15 of 15 with W1-W6.
+;         230400 (1220 T)  pass, 0        600000 (470 T)  FAIL, 2
+;         460800  (610 T)  pass, 0        750000 (370 T)  FAIL, 2
+;                                         921600 (300 T)  FAIL, 2
+;                                        1000000 (280 T)  FAIL, 3
+;
+;     i.e. ABOVE 470 AND AT MOST 610 T-states per byte. 460800 also passes the
+;     whole suite, 15 of 15 with W1-W6.
+;
+;     AND IT IS NOT AN ECHO PROBLEM, which is the reason this matters more than
+;     one failing check: a receive-side cost applies to ANY large inbound
+;     payload. CMD_WRITE_BANK pushes 8-16 KB per bank every time DeZog loads a
+;     .nex, and it is affected exactly as the loopback is. Whoever raises this
+;     ceiling must optimise the RECEIVE path; the send path is not in it.
 ;
 ;   * AND NOTHING HAS RUN ON HARDWARE. The rate a real ESP-01 will take, and
 ;     what the module's own AT+CIPSEND latency does to the same backlog — it is
@@ -265,7 +282,7 @@ ESP_BAUDRATE:   equ 115200
 ; 2. `make test-hardware NEXT_IP=<ip>`, THREE RUNS, H2 = 15 of 15 EVERY TIME.
 ;    Three and not one because issue #11's cost measurement needed three before
 ;    an outlier could be discounted. **C5 is the check that matters** — the
-;    loopback sweep is what R5 shows going red at 1000000, so it is the ceiling
+;    loopback sweep is what L5 shows going red at 1000000, so it is the ceiling
 ;    arriving, not a random failure.
 ;
 ; 3. H6 CLEAN ON ALL THREE, AND SPECIFICALLY NOT `RX Overflow`. That string is
@@ -288,9 +305,11 @@ ESP_BAUDRATE:   equ 115200
 ; 6. AND THE ONE NO BENCH ANYWHERE COVERS: press M1, then the stub's own `R`,
 ;    then M1 again. The debugger must come back up. That is the bring-up probe,
 ;    which is dead code in the emulator because jnext's module answers at the
-;    first rate asked — and it is the ONLY software recovery from a rate that
-;    outlived a reset, since nothing can reset the module. If this fails, do not
-;    flip the default whatever the throughput says.
+;    first rate asked. If this fails, do not flip the default whatever the
+;    throughput says — a reset leaves both ends at the raised rate, so this is
+;    the path a user meets first and most often. (A bit-7 pulse of NR 0x02 would
+;    reset the module too — nextreg.txt:37-49 — but it takes the expansion bus
+;    with it and no bench here can run it; see transport_init.)
 ;
 ; A real DeZog F5 loading a `.nex` is the confirmation worth having on top of
 ; all six: CMD_WRITE_BANK is the largest inbound traffic this stub ever sees.

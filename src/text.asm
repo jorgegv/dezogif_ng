@@ -90,7 +90,9 @@ set_font:
 ; OUT:
 ;   -
 ; Changed registers:
-;   AF
+;   AF, BC — BC because read_tbblue_reg uses it (utilities.asm). Harmless at
+;   both call sites today, and stated because M2 is told to hold this window
+;   open from a poll handler, which is a caller that does not exist yet.
 ;===========================================================================
 font_map:
     ld a,REG_ALTROM

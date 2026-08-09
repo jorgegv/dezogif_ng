@@ -141,7 +141,8 @@ falls exactly where this branch's defect lives:
 
 So the routine among the four that is actually exposed to an unbounded declared
 count is protected by the one mechanism the sentence did not name.
-`cmd_exec_asm` already carried its own bound against `PAYLOAD_EXEC_ASM`. What made `cmd_loopback` and
+`cmd_exec_asm` already carried its own bound against `PAYLOAD_EXEC_ASM`. What
+made `cmd_loopback` and
 `cmd_write_bank` the two is that they buffer **straight into `SWAP_ADDR`** with a
 plain `receive_bytes` loop and no address translation at all. So the fix is
 exactly as wide as the defect.

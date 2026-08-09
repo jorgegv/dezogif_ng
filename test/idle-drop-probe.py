@@ -393,7 +393,11 @@ def main():
     ap.add_argument("--poll", type=float, default=5.0,
                     help="seconds per blocking read while waiting. It does not "
                          "delay detection — a close is readable at once — it only "
-                         "bounds how often the loop wakes")
+                         "bounds how often the loop wakes, and so how often the "
+                         "deadline is looked at: a survival can therefore be "
+                         "reported up to one poll PAST --deadline. R1 prints the "
+                         "elapsed silence measured, not the deadline asked for, so "
+                         "the number stays honest either way")
     ap.add_argument("--report-every", type=float, default=30.0,
                     help="seconds between progress lines during the silence")
     ap.add_argument("--timeout", type=float, default=20.0,
@@ -406,6 +410,14 @@ def main():
     if args.expect_timeout is not None and args.expect_timeout < 0:
         print("ERROR: --expect-timeout cannot be negative; 0 means you expect no "
               "reap at all.", file=sys.stderr)
+        return 2
+    # A negative band would put `expected + tolerance` BELOW `expected`, so a
+    # measurement dead on the expectation would be reported as a finding and the
+    # up-front deadline warning would invert with it. 0 is legitimate — it asks
+    # for an exact match, which is a caller's business.
+    if args.tolerance is not None and args.tolerance < 0:
+        print("ERROR: --tolerance cannot be negative; 0 asks for an exact match.",
+              file=sys.stderr)
         return 2
 
     tolerance = args.tolerance

@@ -193,13 +193,13 @@ def main():
     try:
         srv.bind((args.host, args.port))
     except OSError as e:
-        # SAID IN ONE LINE, BECAUSE OF WHAT AN UNREAD TRACEBACK COSTS. This was
-        # written after a run of this file died exactly here, into a log nobody
-        # looked at, while an EARLIER copy with a different --drop-after went on
-        # answering on the port. The probe then measured that copy's delay and
-        # reported it as matching an expectation it had nothing to do with — a
-        # contaminated run that came out looking right, which is the failure this
-        # repository names most often.
+        # SAID IN ONE LINE, BECAUSE OF WHAT AN UNREAD TRACEBACK COSTS. A run of
+        # this file died exactly here, into a log nobody looked at, while an
+        # EARLIER copy with a different --drop-after went on answering — and the
+        # probe measured that copy and reported it as matching. Full write-up in
+        # ERRORS.md, "A stale peer on the port answered, and the instrument
+        # blessed its number"; it is the reason probe C's R2 row says
+        # consistency rather than attribution.
         print("cannot listen on %s:%d — %s.\nSomething else is already there; "
               "check with: ss -ltnp | grep %d"
               % (args.host, args.port, e, args.port), file=sys.stderr)

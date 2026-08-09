@@ -5,6 +5,60 @@ attempting similar logic.
 
 ---
 
+## A stale peer on the port answered, and the instrument blessed its number
+
+**THE TRANSFERABLE PART FIRST, because the mechanism is ordinary and the outcome
+is not.** A probe measured **6 s** against a peer it believed was set to **12**,
+and its comparison row reported *"6.0 s is the 12 s expected, inside the +/- 10 s
+tolerance"* — **a plausible number, blessed**. Nothing failed. Nothing looked
+wrong. The run was green, the figure was in the right order of magnitude, and it
+was a measurement of a process nobody meant to talk to.
+
+**Symptom.** While verifying `test/idle-drop-probe.py` (probe C) against its own
+fake peer, a run configured for a 12-second idle timeout reported 12's tolerance
+band satisfied by 6.0 s. The only reason it was caught is that 6 was **exactly**
+the delay of the *previous* fake peer, from a run four commands earlier.
+
+**Cause, and it is two ordinary things stacked.** The replacement fake peer could
+not `bind()` — the earlier one was still listening, because the `kill` meant to
+stop it had not — so it died with `OSError: [Errno 98] Address already in use`
+**into a log nobody read**, and the earlier peer went on answering. `SO_REUSEADDR`
+does not help: it permits rebinding a socket in `TIME_WAIT`, never one with a live
+listener. From the probe's side everything was perfect: it connected, its
+`CMD_INIT` was answered, it was dropped on a timer, and it read a screen back.
+
+**Fix**, and only the second half is worth copying:
+
+- the fake peer catches `EADDRINUSE` and prints one line naming the port and the
+  `ss -ltnp` command that finds the squatter, instead of a traceback in a log.
+- **the probe cannot be fixed, and must not pretend otherwise.** Nothing on the
+  client side can tell one listener from another. That is exactly why probe C's
+  `R2` row is documented as *consistency, not attribution* — and this incident is
+  the sharpest illustration of that rule anywhere in this tree, because it was
+  produced **by the tool, against itself**, on the day it was written.
+
+**The precedent is already in this file** — *"A correctly-held mutex that does not
+exclude, because the emulator outlived it"* — and it is the same disease: a
+process that outlived the thing that was supposed to have stopped it, still
+holding a port, poisoning the next run's result. There the lesson was that a
+released **resource** must be observed rather than inferred from the code that
+took it having returned. Here it is one step earlier: **a server that failed to
+start is indistinguishable, from the client, from a server that started** — so the
+thing to check is not that your harness process is gone but that **the one
+answering you is the one you started**.
+
+Cheap ways to know, in ascending order of certainty: have the fake peer print its
+configuration on startup and read it; make it fail loudly on `bind`; and best,
+**have it log what it did and compare that against what the probe reported** —
+which is what the two final verification runs of that branch do, and which turns
+"the number looks right" into "both ends agree about the same event".
+
+**And note which check did NOT catch it.** Every branch of the probe's wording was
+correct throughout; the word-count audit was green; the compile was green. A
+harness fault does not show up as a fault, it shows up as a *finding*.
+
+---
+
 ## A running shell script is read by BYTE OFFSET, so editing it mid-run corrupts it
 
 **Symptom.** `test/run-mfinstall.sh: line 329: no: command not found`, from a bench

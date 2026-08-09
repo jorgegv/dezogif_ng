@@ -856,9 +856,10 @@ test-hardware:
 #
 # Probe C is the odd one of the three and is here for the family rather than for
 # #15: its subject is the module's own idle timeout (`AT+CIPSTO`), which BOUNDS
-# #19's slot leak at about three minutes and which issue #24 lengthens on
-# purpose. It is also the only way to show, from the PC, that a build carrying
-# #24 really took.
+# #19's slot leak at about three minutes and which issue #24 lengthened on
+# purpose. It is also the only way to show, from the PC, that the value the
+# SHIPPED ROM sends is the value a real module then obeys — `make test-cipsto`
+# shows the stub sends it, against a jnext modelled on our own measurement.
 #
 # The hypothesis A and B test is that #15 IS #19. #15's `RX Timeout`, frozen border
 # and hung client are explained by the CRLF swallow band fixed in 000E; its
@@ -922,17 +923,19 @@ probe-vanished:
 # failure. It never exits non-zero on the comparison.
 #
 # Minutes, not seconds: at the ESP-AT default of 180 s the whole run is about
-# four. Against a build carrying issue #24 (`AT+CIPSTO=1800`) a run that CONFIRMS
-# the value takes over half an hour, so a shorter --deadline is the ordinary
-# thing to pass — the probe then reports a lower bound and says so.
+# four. Against the shipped ROM, which sets `AT+CIPSTO=1800` since issue #24, a
+# run that CONFIRMS the value takes over half an hour — so a shorter --deadline
+# is the ordinary thing to pass, and the probe then reports a lower bound and
+# says so.
 #
 # Probe C: how long the module leaves an IDLE connection alone (NEXT_IP=<ip>)
 probe-idle-drop:
 	@test -n "$(NEXT_IP)" || { \
 	  echo "usage: make probe-idle-drop NEXT_IP=<ip>   (the Next's address, port 11000)"; \
 	  echo "  Pass what you expect, or nothing is attributed to the number:"; \
-	  echo "    PROBE_ARGS=\"--expect-timeout 180\"    the ESP-AT default"; \
-	  echo "    PROBE_ARGS=\"--expect-timeout 1800 --deadline 400\"   an issue #24 build"; \
+	  echo "    PROBE_ARGS=\"--expect-timeout 1800 --deadline 400\"   a CURRENT ROM"; \
+	  echo "    PROBE_ARGS=\"--expect-timeout 180\"    before issue #24, or if the"; \
+	  echo "                                          module refused AT+CIPSTO"; \
 	  echo "  Read the real value at the machine with .UART:  AT+CIPSTO?"; \
 	  echo "  Minutes per run, and it renders no verdict. Read doc/HARDWARE-TESTING.md."; \
 	  exit 2; }

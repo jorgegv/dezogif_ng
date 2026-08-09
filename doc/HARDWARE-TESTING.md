@@ -302,7 +302,7 @@ So every failure here is now new on this remote, and is the part worth investiga
     make probe-slots      NEXT_IP=192.168.1.42   # probe A
     make probe-vanished   NEXT_IP=192.168.1.42   # probe B — needs sudo
     make probe-idle-drop  NEXT_IP=192.168.1.42 \
-         PROBE_ARGS="--expect-timeout 180"       # probe C
+         PROBE_ARGS="--expect-timeout 1800 --deadline 400"    # probe C
 
 These are **instruments, not gates**. They print numbers and observations and render no verdict,
 they are not part of `make test`, and **none of them can close
@@ -311,8 +311,9 @@ that wedge deliberately; A and B's job is to make a positive reproduction possib
 
 **Probe C is here for the family rather than for #15.** Its subject is the module's own idle
 timeout, which is what *bounds* #19's slot leak at about three minutes and which
-[issue #24](https://github.com/jorgegv/dezogif_ng/issues/24) lengthens deliberately. It is also
-the only way, from the PC, to show that a build carrying #24 really took.
+[issue #24](https://github.com/jorgegv/dezogif_ng/issues/24) lengthened deliberately — it is in the
+shipped ROM as of build 00.14. It is also the only way, from the PC, to show that the value the
+stub sends is the value a real module then obeys.
 
 ### The hypothesis they test
 
@@ -629,7 +630,8 @@ starts:
 * Anything about a **wedged-but-reachable** peer, as against a vanished one. `AT+CIPSTO` is an
   *idle* timeout, so the same reaping is expected, but probe B stages only the vanished case.
 
-**Issue #24 will lengthen this deliberately, and the trade is now measured on both halves.** Setting
+**Issue #24 lengthened this deliberately — it is in the shipped ROM as of build 00.14 — and the
+trade is measured on both halves.** Setting
 `AT+CIPSTO=1800` at bring-up buys an idle debug session that survives **30 minutes** instead of
 dying at 3 — which is the fault a user actually meets, since a debugger stopped at a breakpoint
 while somebody reads code is silent for minutes and perfectly healthy. It costs exactly this
@@ -737,8 +739,10 @@ Opens one connection, gets a `CMD_INIT` answered, then **says nothing and never 
 times how long the remote leaves it alone. It ends by reading the stub's own screen on a second
 connection.
 
-    make probe-idle-drop NEXT_IP=<ip> PROBE_ARGS="--expect-timeout 180"
+    # a current ROM: the stub sets 1800 itself since issue #24
     make probe-idle-drop NEXT_IP=<ip> PROBE_ARGS="--expect-timeout 1800 --deadline 400"
+    # a build before #24, or one whose AT+CIPSTO the module refused
+    make probe-idle-drop NEXT_IP=<ip> PROBE_ARGS="--expect-timeout 180"
 
 **`--expect-timeout` HAS NO DEFAULT, AND THAT IS THE WHOLE DESIGN.** The probe cannot read
 `AT+CIPSTO?` — that needs `.UART` at the machine — so a number baked into it would be the tool
@@ -777,9 +781,15 @@ All on the user's own machine, an Ai-Thinker ESP-01 reporting `AT version:1.2.0.
 
 | date | ROM | expected | outcome | session line afterwards |
 |---|---|---:|---|---|
-| 2026-08-08 | shipped — the stub never sends `AT+CIPSTO`, so the module's own default | 180 s | **dropped after 182.5 s** | `Session opened - CMD_INIT` |
+| 2026-08-08 | then-shipped — the stub sent no `AT+CIPSTO`, so the module's own default governed | 180 s | **dropped after 182.5 s** | `Session opened - CMD_INIT` |
 | 2026-08-08 | the same, second run | 180 s | **dropped after 181.8 s** | `Session opened - CMD_INIT` |
-| 2026-08-09 | `issue-24-cipsto` — the stub sends `AT+CIPSTO=1800` at bring-up | 1800 s | **survived 400 s**, the deadline | **`Session lost - client gone`** |
+| 2026-08-09 | `issue-24-cipsto`, **since merged as build 00.14** — the stub sends `AT+CIPSTO=1800` at bring-up | 1800 s | **survived 400 s**, the deadline | **`Session lost - client gone`** |
+
+**SO THE EXPECTATION TO PASS TODAY IS 1800, NOT 180**, and the first two rows are history rather
+than a description of the current ROM. Since issue #24 merged, a build that drops a silent client
+at ~182 s is **the regression** — `R2` calls it *"EARLIER than the 1800 s expected"* — and that is
+the check `make test-cipsto` cannot make, since jnext models `AT+CIPSTO` from the measurement in
+those first two rows rather than being a module.
 
 **What these establish.** A real ESP-01 enforces `AT+CIPSTO` against a server-accepted inbound
 connection, at its documented default; and it honours a value the **stub** sets, since the same
@@ -791,7 +801,7 @@ second half is issue #24's whole acceptance criterion, and nothing else in this 
 * **The third run did not measure 1800 s** — it measured "longer than 400 s". Confirming 1800 needs
   a deadline past it, which is a half-hour run nobody has made. Consistent with #24; not a
   measurement of it.
-* **Neither says whether the module emits `<id>,CLOSED` when it REAPS.** The 2026-08-09 session line
+* **None of the three says whether the module emits `<id>,CLOSED` when it REAPS.** The 2026-08-09 session line
   is the first hardware sighting of issue #23's observer working — but the close it saw was **our
   own clean FIN**, sent when the probe gave up at its deadline, not a reap. The 2026-08-08 runs
   *were* reaps and their session line did not move, which is equally uninformative: that build

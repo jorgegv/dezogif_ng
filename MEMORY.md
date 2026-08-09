@@ -5,6 +5,111 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-09 — Probe C: the expected value is an ARGUMENT, and a survival is a lower bound
+
+**Built.** `test/idle-drop-probe.py` — a third instrument in the probe A/B
+family, promoting a scratch script that had already produced three hardware
+results nobody but its author could reproduce. It opens one connection, gets a
+`CMD_INIT` answered, **says nothing and never closes it**, and times how long the
+remote leaves it alone. Rows `R0`-`R5`, no PASS, and `make probe-idle-drop`.
+
+**WHY IT EXISTS AT ALL, given that #24 has its own bench.** `make test-cipsto`
+shows the **stub sends** `AT+CIPSTO=1800` and reads the answer, against a jnext
+that models the command **from our own hardware measurement**. Nothing in that
+loop can show a real module OBEYS the value. Probe C is the only thing that can,
+and it is also the only PC-side check that would catch #24 silently regressing —
+a current ROM dropping a silent client at ~182 s.
+
+**THE DECISION: `--expect-timeout` HAS NO DEFAULT.** The probe cannot read
+`AT+CIPSTO?` — that needs `.UART` at the machine — so any number baked in would
+be the tool asserting a property of a module it never asked. Given one, `R2`
+says whether the two agree; given none, the number is printed and **nothing is
+attributed to it**. It changes the WORDING of one row and never the exit code:
+there is no verdict here, and a disagreement is a *finding*, not a failure.
+
+**AND A SURVIVAL IS WORDED AS A LOWER BOUND, EVERY TIME.** A connection still
+open at the deadline says the timeout is *longer than the deadline*; it never
+says there is none, and no finite wait can. The three survival branches
+distinguish "past the expectation — the expectation is NOT met" from "inside the
+tolerance band — inconclusive" from "well short of it — consistent, confirms
+nothing", and a deadline too short for a survival to mean anything is said **up
+front** rather than learned four minutes later.
+
+**FIVE DEFECTS IN THE DRAFT, and the first three are one disease.** It
+
+1. printed `module reports +CIPSTO:180` **unconditionally**, as though read from
+   the module;
+2. concluded from it — against a stub that had raised the value it announced
+   that **no timeout existed**, a conclusion printed without consulting what
+   happened, which is the defect `--no-lift` had been rejected for days earlier;
+3. hardcoded its match window to `150.0 <= x <= 220.0`, so any other configured
+   value would have been mislabelled.
+
+The two found while rewriting are of a different kind and both would have
+survived review by reading:
+
+4. it put **`/home/jorgegv/src/spectrum/dezogif_ng/test/dzrp` on `sys.path`** — a
+   committed tool importing the MAIN checkout's modules from any worktree, which
+   is [[ERRORS.md]]'s cross-worktree hazard in a new organ;
+5. it reached **behind the transport** into `.sock.recv()`, re-implementing the
+   EOF/timeout distinction `TcpTransport.read` already makes, and reported the
+   **nominal `--deadline`** as the survival figure rather than the elapsed
+   silence measured. A lower bound must be the number actually reached.
+
+**R5 IS AN ADDITION AND IT ANSWERS A COMPLAINT THIS FILE ALREADY CARRIES.** The
+2026-08-08 entry records "NOT captured: the build number" as a limit of hardware
+testing, because DZRP's `PROGRAM_NAME` reports upstream's `dezogif v2.2.1` for
+every ROM we ship. The stub prints `dezogif_ng <variant> NN.NN` at screen row 0,
+and the screen reader can see it — so a probe C result names the build that
+produced it.
+
+**Evidence: three hardware runs, recorded in [doc/HARDWARE-TESTING.md].**
+Dropped at **182.5 s** and **181.8 s** with the module's own default governing;
+**survived 400 s** once the stub set 1800. The third is stated as the lower bound
+it is — it did not measure 1800, it measured "longer than 400" — and **neither
+says whether the module announces a reap**: the 2026-08-09 close was our own
+clean FIN, and the 2026-08-08 reaps were against a build that predates #23's
+observer.
+
+**The wordings are checked rather than asserted**, which for a tool whose whole
+subject is wording is the only evidence that counts. `test/idle-drop-fake-peer.py`
+has one property — an **idle** timer, settable or off — so all twelve branches run
+in seconds instead of the minutes hardware costs. It is **not** a stub and proves
+nothing about one.
+
+**THERE IS NO `probe-jnext` VALIDATION FOR C, AND THAT IS SAID RATHER THAN
+PATCHED OVER.** A and B are pointed first at a ceiling jnext is known to have.
+Whether jnext models `AT+CIPSTO` at all is unknown, so there is no known answer
+for C to be checked against — and a probe pointed at a module with no timeout
+reports the same survival as a broken probe. What stands in is in-band: `R0` and
+the closing screen read bracket the wait with two working exchanges.
+
+**A HARNESS FAULT CAUGHT THE TOOL OUT, AND IT IS FILED IN [[ERRORS.md]] RATHER
+THAN HERE.** A stale fake peer with a different delay was still on the port; the
+replacement failed to bind into an unread log; the probe measured the stale one's
+6 s and `R2` reported it as matching an expectation of 12. **A plausible number,
+blessed.** It is the sharpest available illustration of that row being
+consistency rather than attribution — produced by the tool against itself, on the
+day it was written.
+
+**Rejected.** A default `--expect-timeout` of 180 (it was the defect); making a
+mismatch exit non-zero (that is a gate, and this is an instrument); reusing check
+ids `C*` (the conformance suite's) or `K*` (issue #24's, added the same day) —
+`R` for *reap* was free in both directions; sending `CMD_CLOSE` at teardown as
+probes A and B do (`cmd_close` repaints through `jp main`, and the **session
+line is part of this probe's subject** — `screen-client.py`'s reasoning); and a
+second screen read to get the canonical `observe()` wording, since one read keeps
+all three rows of the same moment.
+
+**Cost: no `src/` change.** Both ROMs byte-identical to `main`'s with
+`BUILD_TIME` pinned and `build/*.bin` deleted first — the certain answer rather
+than the conservative one — so **no `make bump`**, even though the mechanical
+check lists `Makefile`.
+
+[doc/HARDWARE-TESTING.md]: doc/HARDWARE-TESTING.md
+
+---
+
 ## 2026-08-09 — The module was hanging up on idle debug sessions, and we had never told it not to
 
 **Built, issue #24.** `transport_init` sends **`AT+CIPSTO=1800`** between

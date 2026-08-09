@@ -1678,13 +1678,32 @@ tx_timeout: ; The transmit timeout handler
 ; outbound slot 0, esp_at.h; a real ESP-01 measured at 5, 2026-08-06) and drops
 ; or strands any connection past them. Until this loop existed, nothing in this
 ; program ever freed one: a peer that wedged rather than closing kept its slot
-; for the rest of the power-on session, and recovery after recovery could not
+; until the MODULE reclaimed it, and recovery after recovery could not
 ; reclaim it. Four or five such peers and the module refuses every new client
 ; while this routine goes on reporting success — a hang with issue #15's exact
 ; outward signature, and five is all it takes, measured on a real Next
 ; (doc/HARDWARE-TESTING.md, probe B). How a peer comes to vanish in the field is
 ; NOT claimed here: nothing has measured that, and an earlier version of this
 ; comment asserted a user's retry loop as though it had.
+;
+; "UNTIL THE MODULE RECLAIMED IT" USED TO READ "for the rest of the power-on
+; session", AND THAT WAS FALSE — issue #29. The module reclaims a vanished
+; peer's slot itself, on its own AT+CIPSTO idle timeout, with no involvement
+; from this program at all. Measured on a real Next 2026-08-08, with the
+; firewall blackhole held UP for the whole wait so that nothing of ours ever
+; told the module anything: a fresh client was SERVED in 56 ms after 210 s of
+; peer silence, and REFUSED at 100 s — one argument apart, bracketing the
+; +CIPSTO:180 the module reports. `make probe-vanished
+; PROBE_ARGS="--no-lift --recover 210"`.
+;
+; SO THE LEAK IS BOUNDED, not permanent, and the bound moved twice: ~180 s on
+; the firmware default, and ~1800 s since issue #24 has the stub set
+; AT+CIPSTO=1800 at bring-up. What is NOT changed by any of that is this
+; routine's reason to exist — nothing on the Z80's side of the UART frees a
+; slot, and a stub that wants one back inside those minutes has to ask. The
+; sibling claim in KNOWN-ISSUES.md #19 was corrected on its own branch, which
+; deliberately kept an empty src/ diff and so could not reach this comment;
+; that is why this one outlived it by a day.
 ;
 ; ISSUE #16 CLAIMED PART C "SUBSUMES THE STALE LINK SLOTS PROBLEM". IT DID NOT,
 ; and the gap is what this loop closes. It could not be written when #16 landed:

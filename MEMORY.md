@@ -5,6 +5,174 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-09 — The baud negotiation is built and is switched OFF, because 1 Mbps is past what the Z80 can carry
+
+**Built, issue #25 — and the headline is a measurement that contradicts the
+thing the work was commissioned for.** The stub can now ask the module to move
+up from 115200 with `AT+UART_CUR=`, move its own prescaler in step, verify, and
+come back down. `ESP_BAUD_HIGH` is the seam. **It defaults to `ESP_BAUDRATE`, so
+the shipped ROM does not negotiate**, and that default is the decision.
+
+**ONE MEGABIT DOES NOT WORK, AND THE LIMIT IS OURS RATHER THAN THE MODULE'S.**
+At 1000000 the conformance suite goes red on **C5**, the loopback sweep: a
+`CMD_LOOPBACK` of 1024 bytes or more overflows the UART's 512-byte Rx FIFO.
+`cmd_loopback` echoes as fast as it consumes, so it stops reading for a whole
+`AT+CIPSEND` handshake every `ESP_TX_CHUNK` bytes, and the per-byte work does not
+shrink when the byte time does. At 28 MHz one byte time is 610 T-states at
+460800 and **280** at 1000000. Measured, one build-time constant apart:
+
+| rate | prescaler | C5 | Rx FIFO overflows |
+|---|---|---|---|
+| 230400 | 122 | pass | 0 |
+| **460800** | **61** | **pass** | **0** |
+| 750000 | 37 | FAIL | 2 |
+| 921600 | 30 | FAIL | 2 |
+| 1000000 | 28 | FAIL | 3 |
+
+460800 also passes the whole suite, **15 of 15 with W1-W6**.
+
+**THE ISSUE'S OWN FEASIBILITY COMMENT SAID THIS COULD NOT BE SEEN HERE, and it
+was wrong in the direction that matters.** It reasoned that jnext paces the
+module from the guest's own prescaler and "can never outrun it", so no emulator
+run would surface an Rx overflow. It does outrun it, because the thing that
+fails to keep up is the **Z80**, not the wire — and jnext counts the same
+T-states a Next does. So this is one of the few hardware claims in this project
+that the emulator is entitled to make. What it still **understates** is the
+size: a real module takes tens of milliseconds over an `AT+CIPSEND` where jnext
+takes none, and every one of those is more backlog. Hardware can only be worse.
+
+**SO THE DEFAULT IS OFF, AND THAT IS NOT CAUTION FOR ITS OWN SAKE.** 1000000
+cannot ship: it fails the strongest gate here, and weakening a check to make it
+pass is the one thing this project's testing culture refuses. 460800 is green
+everywhere and would be a real fourfold gain — **but no Next has run any of
+this**, and "anything touching the ESP needs hardware" is a hard rule that has
+already been paid for twice (a connection id of 0, a 15-character address).
+Changing the rate the shipped ROM runs the peripheral at, on emulator evidence
+alone, is exactly that move. `make TRANSPORT=wifi BAUD_HIGH=460800 mf-rom` is
+the ROM to try; flipping the default afterwards is one line.
+
+**THE HARD PART WAS NEVER THE SWITCH, IT WAS COMING BACK.** A rate survives
+everything the machine can do to itself: the UART's prescaler is restored only
+by `i_reset_hard`, which `zxnext.vhd:3361-3367` ties to the constant `'0'`
+(`serial/uart.vhd:313-320` for the gate), so the stub's own `R` key leaves BOTH
+ends up there. **And there is no software reset for the module at all** — NR
+`0x02` bit 7 reaches `bus_rst_n_io`, the expansion bus, and **no board top-level
+file declares an ESP reset pin on any revision**. That last one is a correction:
+the issue listed it as "the highest-value hardware question", and it is not a
+hardware question, it is answered in the VHDL and the answer is no.
+
+Without a fix, the M1 press after a reset would have run `esp_uart_init`, dropped
+**our** side to 115200 alone, and painted "ESP-01 setup failed" on a healthy
+module — power cycle only — and `esp_recover`, which ends `jp transport_init`,
+would have repeated it for every fault. **The answer is a probe at bring-up
+rather than a guard at the switch**: greet the module at 115200 and, on silence,
+at `ESP_BAUD_HIGH` before giving up. That converts every way this goes wrong from
+"power-cycle the Next" into "press M1 again", and it is the only software
+recovery there is.
+
+**AND IT IS DEAD CODE IN THE EMULATOR, WHICH IS SAID OUT LOUD RATHER THAN
+FILED UNDER "COVERED".** jnext's module answers the first greeting every time, so
+nothing here has ever executed the probe.
+
+**THE SWITCH IS MADE ATOMIC WITH THE FRAME REGISTER, and the bench watched the
+hazard it closes.** There is no double buffering anywhere in `serial/uart.vhd`:
+the divisor's two 7-bit halves go through separate writes to `0x143B` and each
+lands immediately, so between them the live value is a **mixture** of old and
+new. Bit 7 of `0x163B` holds the transmitter at `S_IDLE` and the receiver at
+`S_PAUSE` (`uart_tx.vhd:166-172`, `uart_rx.vhd:216-224`), empties **both** FIFOs
+(`uart.vhd:385`, `:570`), and **does not touch the prescaler** — `uart_frame_wr`
+appears in neither prescaler process. All three verified.
+
+The mixture is not theoretical: jnext logs after every write, so **R1 asserts the
+sequence `243 189 61`**, where 189 is the old high half with the new low half.
+The bench computes it the way the hardware does rather than hard-coding it.
+
+**WHAT THE BENCH CAN AND CANNOT SEE, and the split is the whole design of it.**
+jnext's AT engine stores the baud it was asked for and **never reads it again**,
+so a stub that told the module and forgot its own side is byte-for-byte
+indistinguishable from a correct switch by any behavioural check. The
+half-switched link — the failure this design is shaped around — is structurally
+unreachable. So the discriminating assertions are on **jnext's uart log**, which
+records every prescaler the guest programs. Demonstrated: with the refusal guard
+removed, the stub programmed divisor **5** after an `ERROR` and **still served
+DZRP perfectly**, because the emulated module cannot tell. R2 caught it; nothing
+behavioural could have.
+
+**Five checks, each shown red first**, `make test-baud`:
+
+| | subject | shown red by |
+|---|---|---|
+| R1 | the negotiation happens, both ends | pointing it at the non-negotiating ROM |
+| R2 | a refusal does **not** move our side | a scratch ROM with the guard removed |
+| R3 | the shipped ROM does not negotiate | pointing it at a negotiating ROM |
+| R4 | `esp_recover` re-runs the whole chain | the shipped `FAULT_LIMIT` of 5 |
+| R5 | **the ceiling**, and it PASSES when C5 fails | — |
+
+**R5 IS A CHECK WHOSE PASS IS A FAILURE**, W3's shape, and it is there so that
+whoever raises the default has to come and make it go green — which means having
+changed the thing it measures, not the constant. It asserts the Rx FIFO really
+overflowed as well as that the loopback died, because "C5 failed" has other
+causes.
+
+**The screen had to change, and not for decoration.** Row 3's `ESP Baudrate:`
+was a constant assembled from `ESP_BAUDRATE`. A ROM that negotiated up would
+have gone on stating the rate its own peripheral was **not** running at — the
+exact defect MEMORY.md 2026-08-05 records this line being fixed for, one issue
+later. It is now drawn from `esp_baud_state`, which `esp_uart_init` and
+`esp_uart_init_high` write and **nothing else does** — they are also the only
+writers of the prescaler, so the byte cannot disagree with the hardware without
+somebody adding a third writer of one and not the other. It is also the only
+thing on the machine that says whether the negotiation took, because behaviour
+cannot: a stub that fell back serves exactly as well as one that did not.
+
+**A correction to the issue's arithmetic, checked rather than repeated.** Its
+comment says 921600 is "worse than 1,000,000 at every single timing". It is not:
+1000000 is exact at six of eight where 921600 is exact at none, but at Fsys
+28571429 and 29464286 — NR `0x11` states 1 and 2 — 921600 lands on +0.006% and
+-0.091% against 1000000's -1.48% and +1.60%. The conclusion survives, the reason
+does not.
+
+**The tables round now** — `(Fsys + baud/2)/baud`, free assembler arithmetic —
+which moves two 115200 entries: Fsys 29464286 from 255 (+0.301%) to 256
+(-0.091%), and 32000000 from 277 (+0.281%) to 278 (-0.080%). Both old values
+worked. **No bench here covers either**, because the reference image boots at
+video timing 0 where truncation and rounding agree.
+
+**Rejected.** Defaulting to 1000000 (it fails the gate); defaulting to 460800
+(green here, unmeasured there, and this project's rule is explicit); using
+`AT+UART_DEF=` (it persists into flash, so a rate that turns out not to work
+hands the user a module the stub can no longer greet — "press M1 again" against
+"take the card to a PC"); `esp_command_ok_or_error` for the `AT+UART_CUR` step
+(it reports which arm it took to nobody, and the refusal is precisely the arm
+this has to act on); a near-copy of it that does report (the coordinator's call,
+and unnecessary — `esp_command_ok` conflates refusal with silence, and the
+conservative reading is right for both); a verifying `AT` on the fallback path
+(the four chain steps after it are the verification, which is also why the
+negotiation sits before `AT+CIPMUX` rather than at the end); switching after the
+listener is open (the switch empties both FIFOs, which with a client attached
+would silently destroy a command — issue #11's family).
+
+**NOT COVERED, and none of it is hidden.** **The rate itself** — no run here says
+anything about what a real ESP-01 will take. **The probe** — dead code in the
+emulator. **The half-switched link** — structurally unreachable. **The bring-up
+probe's interaction with a module at a rate this ROM was not built for** — the
+probe only tries the two rates it knows. And **the 460800 recommendation rests
+on emulator runs alone**.
+
+**Cost: +9 bytes in the shipped WiFi ROM** (`main_end` 0xFB40 → 0xFB49, 855 free
+to the identity block), which is the frame-register hold in `esp_uart_set_rate`
+plus the two rounded table entries — proved to be the whole of it by comparing
+symbol tables: **609 symbols, every one either unmoved or +9, none added or
+removed.** At `BAUD_HIGH=460800` it is +145 (0xFBCF, 710 free). **The UART ROM is
+byte-identical** to the base pinned (`87965fea…`), so nothing leaked across the
+transport boundary. **This changes a ROM, so the merge carries a `make bump`.**
+
+**Regression: `make test` 7/7, `test-dzrp-stub` 15/15 with W1-W6, `test-cipsto`
+4/4, `test-client-status` 6/6, `test-baud` 5/5, both variants
+`check-reproducible`.**
+
+---
+
 ## 2026-08-09 — Probe C: the expected value is an ARGUMENT, and a survival is a lower bound
 
 **Built.** `test/idle-drop-probe.py` — a third instrument in the probe A/B
@@ -107,7 +275,6 @@ than the conservative one — so **no `make bump`**, even though the mechanical
 check lists `Makefile`.
 
 [doc/HARDWARE-TESTING.md]: doc/HARDWARE-TESTING.md
-
 ---
 
 ## 2026-08-09 — The module was hanging up on idle debug sessions, and we had never told it not to

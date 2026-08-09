@@ -661,6 +661,31 @@ strongest:
    a module obeys. **That half HAS been run** — the ROM held a silent client for **400 s** on the
    user's own Next against the shipped ROM's ~182 s, `reported on hardware`. Binds a host TCP port,
    so not part of `make test`.
+4m. **`make test-baud`** — the link negotiated up from 115200 (issue #25), 5 headless jnext runs,
+   5 checks, and the **seventh** bench to move a build-time constant to reach its subject. The stub
+   asks the module to move with `AT+UART_CUR=`, moves its own prescaler in step, verifies, and comes
+   back down if the module refuses or the link does not survive. **`ESP_BAUD_HIGH` DEFAULTS TO
+   `ESP_BAUDRATE`, SO THE SHIPPED ROM DOES NOT NEGOTIATE**, and that default is the bench's own
+   finding rather than caution: **1000000 fails the conformance suite**. A `CMD_LOOPBACK` of 1 KB or
+   more overflows the UART's 512-byte Rx FIFO, because `cmd_loopback` echoes as fast as it consumes
+   and so stops reading for a whole `AT+CIPSEND` handshake every `ESP_TX_CHUNK` bytes. **The limit
+   is the Z80 and not the module** — one byte time at 28 MHz is 610 T-states at 460800 and 280 at
+   1000000, and the per-byte work does not shrink with it — which is why jnext, counting the same
+   T-states a Next does, is entitled to this one. Measured: 230400 and 460800 clean, 750000 / 921600
+   / 1000000 overflowing; 460800 also passes 15 of 15 with W1-W6. **R1** the negotiation at 460800,
+   **R2** a refused rate where the stub must NOT move alone, **R3** the shipped ROM sending no
+   `AT+UART` at all, **R4** `esp_recover`'s `jp transport_init` re-running the whole chain, and
+   **R5 the ceiling — a check that PASSES when C5 fails**, W3's shape, kept so that whoever raises
+   the default has to make it go green by changing the thing it measures.
+   **THE DISCRIMINATING ASSERTIONS ARE ON jnext's UART LOG, NOT ON BEHAVIOUR**, and that is forced:
+   jnext's AT engine stores the baud it is asked for and never reads it again, so a stub that told
+   the module and forgot its own side is byte-for-byte indistinguishable from a correct switch. The
+   log records every prescaler the guest programs — including the transient **mixture** the two
+   7-bit half-writes pass through, which R1 asserts. Shown: with the refusal guard removed the stub
+   programmed divisor 5 after an `ERROR` and **still served DZRP perfectly**. **What no run here
+   reaches**: the rate itself, the half-switched link (structurally unreachable), and the bring-up
+   probe — jnext's module answers the first greeting every time, so that branch is dead code here.
+   Binds a host TCP port, so not part of `make test`. **It says nothing about a real ESP-01.**
 5. **`build/ut.nex`** — the same tests, **DeZog-driven** (`"unitTests": true` + zsim + the
    `customCode` plugin) in VS Code. Still a manual layer, and still the only way to exercise the
    36 that 4d must skip. `make unit-tests` assembles it; nothing here runs it.
@@ -678,7 +703,8 @@ read once; a document can be revised, cited and diffed.
 Two things the shortening may **never** touch, because they are interface rather than prose:
 
 - **The check id.** `T1`-`T7`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W6`, `C1`-`C15`, `B1`-`B2`,
-  `P1`-`P3`, `N1`-`N6`, `G1`-`G2`, `I1`-`I9`, `S1`-`S3`, `K1`-`K4`, `H1`-`H5` are cited by every document and
+  `P1`-`P3`, `N1`-`N6`, `G1`-`G2`, `I1`-`I9`, `S1`-`S3`, `K1`-`K4`, `R1`-`R5`, `H1`-`H5` are cited by every
+  document and
   issue, and two things match on
   them: `run-dzrp-stub.sh`'s W3 greps `^FAIL  C10 `, and `test/hardware-check.py` takes the code
   from field 2 of every `FAIL` line. Shorten the prose after the id; never the id, and never

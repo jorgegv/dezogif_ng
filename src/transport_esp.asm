@@ -641,20 +641,59 @@ ESP_CLIENT_ROW:         equ 8
 ; Const data
 ;===========================================================================
 
-; Fsys/ESP_BAUDRATE for each of the eight video timings in NR 0x11 bits 2:0.
-; The Fsys column is upstream's (transport_uart.asm's baudrate_table); the
-; entries are 14 bits wide here rather than 8 because 115200 is not
-; representable in upstream's table — 33000000/115200 is 286, and upstream's
-; own comment says it needs 230400 or more.
+; Fsys/baud for each of the eight video timings in NR 0x11 bits 2:0. The Fsys
+; column is upstream's (transport_uart.asm's baudrate_table); the entries are
+; 14 bits wide here rather than 8 because 115200 is not representable in
+; upstream's table — 33000000/115200 is 286, and upstream's own comment says it
+; needs 230400 or more.
+;
+; THEY ROUND RATHER THAN TRUNCATE, and at 115200 that is a nicety while at the
+; negotiated rate it is not. sjasmplus divides integers by truncating, which at
+; 115200 happens to be within 0.31% everywhere and so never mattered; above it
+; the divisors are small enough that one count is percent-scale. Adding
+; baud/2 before the divide costs no bytes at all — it is assembler arithmetic —
+; and moves two of the 115200 entries: Fsys 29464286 from 255 (+0.301%) to 256
+; (-0.091%), and 32000000 from 277 (+0.281%) to 278 (-0.080%). Both old values
+; worked and both new ones are closer; NO BENCH HERE COVERS EITHER, because
+; jnext's reference image boots at video timing 0, where truncation and
+; rounding agree. See ESP_BAUD_HIGH in constants.asm for what it buys upstairs.
+    MACRO PRESCALERS baud?
+    defw (28000000 + baud?/2)/baud?
+    defw (28571429 + baud?/2)/baud?
+    defw (29464286 + baud?/2)/baud?
+    defw (30000000 + baud?/2)/baud?
+    defw (31000000 + baud?/2)/baud?
+    defw (32000000 + baud?/2)/baud?
+    defw (33000000 + baud?/2)/baud?
+    defw (27000000 + baud?/2)/baud?
+    ENDM
+
 esp_prescaler_table:
-    defw 28000000/ESP_BAUDRATE
-    defw 28571429/ESP_BAUDRATE
-    defw 29464286/ESP_BAUDRATE
-    defw 30000000/ESP_BAUDRATE
-    defw 31000000/ESP_BAUDRATE
-    defw 32000000/ESP_BAUDRATE
-    defw 33000000/ESP_BAUDRATE
-    defw 27000000/ESP_BAUDRATE
+    PRESCALERS ESP_BAUDRATE
+
+ IF ESP_BAUD_HIGH != ESP_BAUDRATE
+; The same eight, for the rate esp_negotiate_baud asks the module to move to.
+; A second table rather than arithmetic at run time: the divide is the one
+; thing the assembler can do for free and the Z80 cannot.
+esp_prescaler_table_high:
+    PRESCALERS ESP_BAUD_HIGH
+ ENDIF
+
+; The two bounds every entry in both tables has to respect, and the reason this
+; is an ASSERT and not a comment is that ESP_BAUD_HIGH is a build seam somebody
+; will move. Checked at the extremes of the Fsys column, which is monotonic in
+; the divisor: the largest Fsys gives the largest prescaler and the smallest the
+; smallest.
+;
+; 1. 14 BITS. esp_uart_set_rate writes bits 2:0 of the select — the prescaler's
+;    three most significant bits — as ZERO and sends only two 7-bit halves, so
+;    an entry of 16384 or more would be sent as that value modulo 16384 and the
+;    link would come up at a rate nobody chose.
+    ASSERT (33000000 + ESP_BAUD_HIGH/2)/ESP_BAUD_HIGH < 16384
+; 2. AT LEAST TWO. The receiver halves the divisor to find the middle of a bit
+;    (uart_rx.vhd; jnext models it as `rx_timer_ = rx_prescaler_snap_ >> 1`), so
+;    a divisor of 1 would sample at the edge it just detected.
+    ASSERT (27000000 + ESP_BAUD_HIGH/2)/ESP_BAUD_HIGH >= 2
 
 esp_cmd_ate0:       defb "ATE0",13,10,0
 esp_cmd_at:         defb "AT",13,10,0
@@ -3571,23 +3610,79 @@ esp_command_ok_or_error:
 
 
 ;===========================================================================
-; UART bring-up: 8N1, the ESP uart selected, prescaler for ESP_BAUDRATE.
+; UART bring-up: 8N1, the ESP uart selected, and one of the two rates this
+; build knows about programmed into the prescaler.
 ;
 ; The prescaler is Fsys/baud (ports.txt, 0x143B) and Fsys depends on the video
 ; timing in NR 0x11, so the divisor is looked up rather than assumed. It goes
 ; out in two 7-bit halves, bit 7 selecting which; the three further MSBs ride
-; along with the uart selection and are zero for every entry in the table.
+; along with the uart selection and are zero for every entry in the tables.
+;
+; TWO ENTRY POINTS, AND THE SECOND IS NOT A CONVENIENCE — issue #25. Nothing
+; under software control can put the module back to 115200 once it has been
+; asked to move: a Z80 soft reset leaves the peripheral's prescaler exactly
+; where it was (zxnext.vhd:3361-3367 ties the UART's i_reset_hard to the
+; constant '0', and serial/uart.vhd:313-320 gates the prescaler's default on
+; i_reset_hard ALONE), and there is no reset line to the module either — NR
+; 0x02 bit 7 reaches `bus_rst_n_io`, the EXPANSION BUS, and no top-level board
+; file declares an ESP reset pin at all. So the only way back to a module that
+; is somewhere other than where we assume is to go and look; see transport_init.
+;
+; THESE TWO ROUTINES ARE THE ONLY WRITERS OF esp_baud_state, which is what makes
+; that byte — and so the rate the screen names — true by construction rather
+; than by a promise somebody has to keep.
 ; Changes:
 ;  A, BC, DE, HL
 ;===========================================================================
 esp_uart_init:
-    ; 8 bits, one stop bit, no parity, no flow control
+    ld hl,esp_prescaler_table
+ IF ESP_BAUD_HIGH != ESP_BAUDRATE
+    xor a
+    ld (esp_baud_state),a
+    jr esp_uart_set_rate
+
+esp_uart_init_high:
+    ld hl,esp_prescaler_table_high
+    ld a,ESP_BAUD_IS_HIGH
+    ld (esp_baud_state),a
+ ENDIF
+
+;---------------------------------------------------------------------------
+; HL = the prescaler table to use.
+;---------------------------------------------------------------------------
+esp_uart_set_rate:
+    ; BOTH ENGINES ARE HELD ACROSS THE THREE WRITES BELOW, and that is the
+    ; whole of what makes a rate change atomic on this side.
+    ;
+    ; There is no double buffering and no commit strobe anywhere in
+    ; serial/uart.vhd: uart_select_wr, uart_rx_wr and uart_frame_wr each drive
+    ; an independent directly-clocked register, so between the select and the
+    ; two halves of the divisor the live value (:404, :464) is a MIXTURE of old
+    ; and new bits. A receiver that saw a start bit in that window would latch
+    ; the mixture and frame garbage out of a good byte.
+    ;
+    ; Bit 7 of the frame register closes the window, and it does exactly three
+    ; things, all of them wanted: it holds the transmitter at S_IDLE and the
+    ; receiver at S_PAUSE (uart_tx.vhd:166-172, uart_rx.vhd:216-224); it empties
+    ; BOTH FIFOs (uart.vhd:385, :570 -> :424, :491), which discards whatever the
+    ; old rate left half-read; and it does NOT touch the prescaler, because
+    ; uart_frame_wr appears in neither prescaler process. The last of those is
+    ; the one this depends on and it is structural, not incidental.
+    ;
+    ; Bytes already in flight are safe without any of this — each engine copies
+    ; the divisor only while it is idle and freezes it for the frame — so what
+    ; is being closed is the window between frames, not a mid-byte one.
+    push hl
     ld bc,UART_FRAME
-    ld a,00011000b
+    ld a,10011000b
     out (c),a
 
-    ; bit 6 = 0: the ESP uart. bit 4 = 1: bits 2:0 are being written, and they
-    ; are 0 — every prescaler in the table fits in 14 bits.
+    ; bit 6 = 0: the ESP uart, and it is bit 6 of THIS write that names which
+    ; uart's MSBs bit 4 writes (uart.vhd:279-287). bit 4 = 1: bits 2:0 are the
+    ; prescaler's three most significant bits, and they are 0 — the ASSERTs
+    ; beside the tables are what keep every entry inside the 14 bits that
+    ; leaves. The select is a latched register and stays put afterwards, so it
+    ; must be the most recent one before the two 0x143B writes below.
     ld bc,UART_SELECT
     ld a,00010000b
     out (c),a
@@ -3599,9 +3694,9 @@ esp_uart_init:
 
     ; two bytes per entry
     add a,a
-    ld hl,esp_prescaler_table
     ld d,0
     ld e,a
+    pop hl
     add hl,de
     ld e,(hl)
     inc hl
@@ -3619,6 +3714,15 @@ esp_uart_init:
     ld a,h
     and 0x7F
     or 0x80
+    out (c),a
+
+    ; Release both engines: 8 bits, one stop bit, no parity, no flow control.
+    ; This write is load-bearing rather than a restoration of a default — the
+    ; framing register resets to 0x18 on i_reset_hard only (uart.vhd:294-308),
+    ; the same input that is tied to '0' here, so nothing at run time ever puts
+    ; it back by itself.
+    ld bc,UART_FRAME
+    ld a,00011000b
     out (c),a
     ret
 

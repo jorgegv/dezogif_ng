@@ -169,9 +169,68 @@ BAUDRATE:   equ 921600
 
 ; The ESP-01's power-on baud rate. The module answers at this until told
 ; otherwise (doc/WIFI-SETUP.md) — inferred from the ESP-AT documentation, not
-; measured on hardware. Raising it is M3's baud negotiation and has to start
-; here.
+; measured on hardware. EVERY bring-up starts here, whatever ESP_BAUD_HIGH
+; below says, because the stub has to be able to talk to a module it has just
+; met.
 ESP_BAUDRATE:   equ 115200
+
+
+;===========================================================================
+; The rate the link is negotiated UP to once the module has answered — issue
+; #25. It lives beside ESP_BAUDRATE because the screen names whichever of the
+; two is live, and data_const.asm is assembled before the transport.
+;
+; ONE MILLION, AND IT IS THE ARITHMETIC THAT PICKS IT RATHER THAN TASTE. The
+; prescaler is Fsys/baud and Fsys depends on the video timing in NR 0x11, so
+; the same target lands on eight different divisors — and the divisor is an
+; integer, so most targets are wrong at most timings. Computed over the whole
+; Fsys table in transport_esp.asm, with the rounding that table now does:
+;
+;    target     exact at   worst error
+;    460800     0 of 8      -0.69%
+;    921600     0 of 8      -1.36%
+;   1000000     6 of 8      +1.60%
+;   1152000     0 of 8      +1.90%
+;   2000000     3 of 8      -3.57%
+;
+; The budget those are spent against: the receiver samples mid-bit, so by the
+; last of ten bit times the two ends' errors together must stay under
+; 0.5/9.5 = 5.3%. Everything above is OURS alone, before the module's own
+; crystal is counted, which is why 2000000's -3.57% is refused — it leaves
+; under two points for the other end — while 1000000's +1.60% leaves three
+; and a half, and is paid at only two of the eight timings.
+;
+; 921600 IS NOT UNIFORMLY WORSE, and issue #25's own feasibility comment says
+; it is. Checked: 1000000 is EXACT at six timings where 921600 is exact at
+; none, but at Fsys 28571429 and 29464286 — NR 0x11 states 1 and 2 — 921600
+; lands on +0.006% and -0.091% against 1000000's -1.48% and +1.60%. So the
+; choice is "exact almost everywhere, with two mediocre timings" against
+; "mediocre everywhere", which is still 1000000, for a different reason than
+; the one that was written down.
+;
+; OVERRIDABLE, and this is the SEVENTH seam of the ESP_IP_MAX / ESP_RX_WAIT /
+; ESP_TX_PASSES / TRANSPORT_WAIT_RX_SECONDS / ESP_FAULT_LIMIT / ESP_LINK_IDS /
+; ESP_SERVER_TIMEOUT family. Three settings each reach a state no other can:
+;
+;   * the shipped 1000000, where the negotiation happens and everything above
+;     the transport has to keep working across it;
+;   * ESP_BAUDRATE ITSELF, which assembles the whole negotiation OUT — the
+;     "before" control, and also the escape hatch for a board or a module that
+;     will not take the rate, reachable by a rebuild rather than a source edit
+;     exactly as ESP_LINK_IDS=0 is;
+;   * a rate the module REFUSES, which is the only way to execute the arm that
+;     declines to switch. jnext answers ERROR above 5000000.
+;
+; See test/run-baud.sh.
+ IFNDEF ESP_BAUD_HIGH
+ESP_BAUD_HIGH:  equ 1000000
+ ENDIF
+
+; STRINGIFY renders exactly seven decimal digits' worth (macros.asm), so an
+; eight-digit rate would emit ':' where its leading digit belongs and the
+; module would be sent a command nobody could read. Nothing else bounds it.
+    ASSERT ESP_BAUD_HIGH < 10000000
+    ASSERT ESP_BAUD_HIGH >= ESP_BAUDRATE
 
 ; The TCP port WiFi mode listens on. DeZog's `cspect` remote defaults to this,
 ; so a launch.json that omits `port` still works. MEMORY.md 2026-08-04 pins it;

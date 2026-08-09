@@ -154,6 +154,130 @@ spellings are jnext's.
 
 ---
 
+## 2026-08-08 — The module gives a vanished peer's slot back by itself, in ~3 minutes
+
+**Measured, not decided** (user's own Next), and it **overturns a belief three
+other entries in this file assert**: that nothing but a power cycle ever
+reclaims an inbound slot from a peer that vanished. The module reclaims it
+itself, on `AT+CIPSTO`, and `KNOWN-ISSUES.md` #2 told users to power-cycle for
+two days on the strength of a probe that had never asked the question.
+
+**Those three are annotated in place and NOT rewritten** — 2026-08-06's
+`esp_recover` sweep entry ("nothing ever frees a slot"), its hardware run ("one
+slot consumed permanently per peer") and the #15 probes entry ("a power cycle is
+the only thing that does"). Each keeps its original wording and carries a
+`CORRECTED 2026-08-08` parenthetical pointing here, because this file records
+what was measured *then* and editing evidence to match a later reading is the
+thing this project refuses. **This mattered more than housekeeping: `MEMORY.md`
+is the file every session is told to read first, so leaving those three would
+have handed the next session precisely the belief this work removed everywhere
+else.**
+
+**THE MEASUREMENT.** Two `--no-lift` runs of probe B, identical but for one
+argument, with the firewall blackhole left **up** across the wait — so no FIN,
+no RST and no retransmission of ours ever reached the module about those peers:
+
+| `--recover` | phase 1 | walk | B3 |
+|---:|---|---:|---|
+| **210 s** | 4 vanished, the 5th refused | 13 s | **SERVED in 56 ms** |
+| **100 s** | 4 vanished, the 5th refused | 13 s | **REFUSED, timed out** |
+
+And the module names the mechanism when asked. Read off the machine with
+`.UART`, on an Ai-Thinker ESP-01 at `AT version:1.2.0.0`:
+
+    AT+CIPSTO?
+    +CIPSTO:180
+
+**`AT+CIPSTO` is the server's idle timeout, it defaults to 180 s, and this
+module ENFORCES it** — which had been taken for a setting nothing acted on.
+Cross-checked from the other direction: a DZRP client that connected, sent
+`CMD_INIT` and then went quiet was dropped after **182.5 s** and **181.8 s**.
+The reap is **per connection**, so the first slot back is the *oldest* peer's,
+and what B3 really brackets is that peer's age: **(113 s, 223 s]**, the walk
+being 13 s. 180 sits inside.
+
+**It is not `esp_recover`, and that is excluded rather than waved away.** The
+sweep is fault-counted — `ESP_FAULT_LIMIT` consecutive faults through
+`rxtx_error` — with no timer anywhere in it. During phase 2 nothing transmits
+and the blackholed peers are silent, so no fault can be raised. **A
+fault-counted mechanism cannot produce a result that changes with elapsed time
+alone**, and elapsed time was the only variable between the two runs.
+
+**THE METHOD FAILURE IS THE TRANSFERABLE PART, AND IT IS NOT "NOBODY WAITED".**
+Two independent defects in the instrument, and the interesting one is the first:
+
+- **The ordering.** Probe B lifted the blackhole and *then* waited, so from that
+  moment our own kernel was RSTing the module and any recovery was the module
+  being **told**. "Does it give the slot back unprompted" was not answered badly
+  — it was **unaskable**.
+- **The horizon.** `--recover` defaults to 20 s against a 180 s timer.
+
+**Fixing either alone leaves the question unanswered, and the horizon half is
+subtler than it looks**: at the default 20 s the lift-first run came back
+**served, in 71 ms** (2026-08-06). So the old path was never returning `no`; it
+was returning an answer to a *different question*, which is a far better
+disguise. A longer wait alone would have changed nothing.
+
+**And the limitation was documented, correctly, the whole time.** Probe B's own
+text said its recovery meant *"the slot comes back once the module is **told**"*,
+and `doc/HARDWARE-TESTING.md` repeated it. Nobody read that true sentence as
+*"therefore this instrument cannot answer the other question at all"*. **A
+stated limitation is not a noticed one** — a new shade of this file's oldest
+disease, and the mirror of its usual form: not a claim asserted beyond its
+evidence, but a correctly-bounded claim whose bound nobody acted on.
+
+**WONTFIX STANDS, ON FIRMER GROUND THAN WHEN IT WAS TAKEN.** #19 now declines to
+spend Z80 bytes and the transport's multi-client behaviour on a fault that
+clears itself in about three minutes, where before it was declining to fix one
+that needed the power switch. The cost side is unchanged; the benefit side
+shrank by two orders of magnitude. The compounding worry shrinks with it: five
+leaks must now land within roughly **three minutes** of each other rather than
+"between two power-ons", which on a machine left running was a window of days.
+The **rate is still unmeasured** — narrowing the window is not measuring the
+rate.
+
+**AND IT RETIRES A WISH THIS PROJECT HAD WRITTEN DOWN.** `KNOWN-ISSUES.md` #2's
+"why this is not fixed" asked for a module-side liveness mechanism — *"if it
+exists, the module's own stack would decide liveness and the stub would need no
+guesswork at all"* — and said only the real firmware or its documentation could
+settle it, since no bench here could. `AT+CIPSTO` is that mechanism, present all
+along and already doing the job.
+
+**IT ALSO CUTS AGAINST "#15 IS #19", which is the first evidence pointing that
+way.** A #19 exhaustion self-heals in ~3 minutes; #15 was two wedges the user
+power-cycled out of. It **refutes nothing** — nobody recorded how long they
+waited, and three minutes of a dead debugger is longer than most people's
+patience — but the hypothesis now has something to answer.
+
+**Interaction with #24, and both halves are measured rather than argued.**
+Setting `AT+CIPSTO=1800` at bring-up buys an idle debug session that survives 30
+minutes instead of dying at 3 — the fault a user actually meets, since a session
+stopped at a breakpoint while somebody reads code is silent for minutes and
+perfectly healthy. It costs exactly this self-heal, stretched to ~30 minutes.
+Same timer, read from both ends.
+
+**Rejected.** Rewriting the three stale entries below rather than annotating
+them (this file records what was decided and measured *then*; editing evidence
+to match a later rendering is what this project refuses); reopening #19 (the
+fault is unchanged, only its recovery is); a follow-up comment on the closed
+issue (docs are #19's home — one fact, one home); touching
+`src/transport_esp.asm`'s `esp_recover` header, which carries the same stale
+clause and is **issue #29**.
+
+**NOT ESTABLISHED.** Which slot came back — no PC-side check sees connection
+ids, and a 13 s walk cannot separate the candidates. That **180 is the number on
+any other module**: `AT+CIPSTO` is settable 0-7200 and **`0` disables it
+entirely**, on which module the old advice would be correct again. Whether the
+module emits `<id>,CLOSED` when it reaps — nobody looked, and it bears on #23's
+session line. And anything about a **wedged-but-reachable** peer: `AT+CIPSTO` is
+an idle timeout so the same reaping is expected, but probe B stages only the
+vanished case.
+
+**Cost: documentation and one bench comment. No `src/`, no `Makefile`, no
+`make bump`** — checked mechanically.
+
+---
+
 ## 2026-08-08 — H1 closes its connection as a SESSION, not as a socket
 
 **Decided (user) and built.** The hardware bench's first check opened a TCP
@@ -1280,6 +1404,13 @@ elsewhere — `doc/HARDWARE-TESTING.md` twice, `slot-ceiling-probe.py` and
 rather than deleted: **neither probe is retired by this fix**, because both keep
 the stub healthy and so neither ever triggers a recovery.
 
+*(**CORRECTED 2026-08-08**: "nothing ever frees a slot" is false of the module,
+whatever it is of the stub. The ESP reaps an idle inbound connection itself at
+`AT+CIPSTO`, ~180 s, measured enforced on real hardware — see the entry of that
+date at the top of this file. What survives here is the narrower claim these
+sites were really making, and which is still true: **nothing on the Z80's side
+of the UART frees one**, and neither probe triggers a recovery.)*
+
 **Rejected.** Tracking `<id>,CONNECT`/`<id>,CLOSED` so only live ids are closed
 (M3's work, a second pattern in the hot path, and it buys nothing here — an
 `ERROR` costs one line); `AT+CIPCLOSE=5`, which real firmware reads as "close
@@ -1297,6 +1428,14 @@ back, which cross-checks against probe A's hardware ceiling of 5. The terminal
 symptom is a **timeout at 10009 ms**, not a refusal, and the stub's error area
 was **clean throughout**. So the leak this fixes is real on silicon and was an
 inference from jnext's source until now.
+
+*(**CORRECTED 2026-08-08, and "permanently" is the word the whole power-cycle
+conclusion rested on.** The slot is not consumed permanently: the module reaps
+it at `AT+CIPSTO`, ~180 s. This run could not have seen that — its phase 2
+lifted the blackhole before waiting, and waited 20 s — so the ceiling, the
+timeout and the clean error area all stand exactly as measured, and only the
+word "permanently" was never this run's to say. See the 2026-08-08 entry at the
+top of this file.)*
 
 **AND THE SAME RUN SAYS THE FIX CANNOT RESCUE THAT STATE AT ALL — not "is
 unlikely to", CANNOT.** The sweep runs from `esp_recover`, which fires on
@@ -1623,6 +1762,15 @@ degrading 83 ms → 389 ms → timeout**. That degradation is on the *module's* 
 of the UART, where the Z80 cannot reach. #19 says nothing ever frees an inbound
 slot and a power cycle is the only thing that does. Probe A measures the
 ceiling; probe B produces a peer that never gives its slot back.
+
+*(**CORRECTED 2026-08-08, and it weakens the hypothesis this paragraph is
+building.** A power cycle is not the only thing that reclaims a slot — the
+module does it itself at `AT+CIPSTO`, ~180 s, measured on hardware. So a #19
+exhaustion **self-heals in about three minutes**, while #15 was two wedges the
+user power-cycled out of. That is the first evidence pointing away from
+"#15 IS #19"; it refutes nothing, because nobody recorded how long they waited
+before reaching for the switch. The probes and their reasoning are otherwise
+untouched. See the 2026-08-08 entry at the top of this file.)*
 
 **A1 is the line that earns probe A**, and without it the probe would be worth
 little. At the first connection that is not served it asks the **earliest

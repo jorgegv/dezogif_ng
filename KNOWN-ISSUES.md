@@ -168,7 +168,8 @@ what the shipped fix does and does not cover are all in
 ### Why the old advice was wrong, which is worth more than the corrected number
 
 This entry told you to power-cycle, on the strength of a probe that had **never asked the question**.
-Two things were wrong with the instrument, and either alone was enough to get the answer wrong:
+Two things were wrong with the instrument, and either alone was enough to keep the answer out of
+reach — though not in the same way, which is the part worth reading twice:
 
 * **The ordering.** Phase 2 lifted the firewall blackhole *before* it waited, so our own kernel
   began RSTing the module's retransmissions the instant the wait started. That does not measure the
@@ -177,14 +178,16 @@ Two things were wrong with the instrument, and either alone was enough to get th
 * **The horizon.** `--recover` defaults to **20 s**, against a timer of **180**. So even a probe
   that had left the blackhole up would have given up nine times too early.
 
-Fixing either alone still gets you `no`. Both were fixed at once — a `--no-lift` option for the
-ordering, `--recover 210` for the horizon — and the answer inverted on the first run.
+**Fixing either alone leaves the question unanswered**, and the horizon half is the subtler of the
+two: the 2026-08-06 run at the default 20 s **did** come back served, in 71 ms
+(`doc/HARDWARE-TESTING.md`). So a longer wait on the lift-first path does not turn a `no` into a
+`yes` — it was never returning `no` in the first place. What was missing there was not the answer
+but the **interpretation**: with the blackhole down, "served" cannot tell self-heal from told. Both
+had to be fixed together, and were — `--no-lift` for the ordering, `--recover 210` for the horizon.
 
-**That option is not on `main` yet**, so probe B as you will find it today still cannot ask this
-question at any `--recover`: it lifts the blackhole before it waits. It is on branch
-**`probe-vanished-no-lift`**, under review. The numbers above are off real hardware and are quoted
-here because they correct what this entry was telling users to do; the way to re-run them arrives
-with that branch.
+Both are on `main` now, so this is re-runnable:
+
+    sudo test/run-vanished-peer.sh --host <ip> --no-lift --recover 210
 
 **Two lessons, and the second is the one this project keeps paying for.** A negative result from an
 instrument whose horizon is shorter than the effect is not a negative result — it is the
@@ -215,6 +218,12 @@ and is entirely ordinary.
 
 **Wait about three minutes, then reconnect.** That is the whole procedure, and it is also the
 diagnosis: a machine that starts serving again was this, and one that does not is something else.
+
+**Two things can make that wait the wrong length, and both are under "what is not known" below.**
+`AT+CIPSTO` is settable — **`0` disables the timeout entirely**, and on such a module the wait never
+resolves anything and the old power-cycle advice is correct again — and issue **#24** deliberately
+sets it to **1800**, which makes the wait about **thirty** minutes. `AT+CIPSTO?` on the module is
+what settles which you have.
 
 **Do not power-cycle**, which this entry used to tell you to do. It works, but it costs you the
 debuggee, the machine's state and — if you were about to report anything — the only evidence there

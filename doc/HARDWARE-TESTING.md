@@ -541,17 +541,18 @@ turns out not to be on the machine at all. It is **waiting**: see 2026-08-08 bel
 
 #### RUN ON A REAL NEXT, 2026-08-08 — the module gives the slot back by itself, in about 3 minutes
 
-**⚠ THE TOOL THAT PRODUCED THIS IS NOT ON `main` YET.** These runs used a `--no-lift` option on
-`test/run-vanished-peer.sh`, which lives on branch **`probe-vanished-no-lift`** and is under review
-at the time of writing. **A reader who has just checked out `main` cannot reproduce them**: probe B
-as `main` ships it lifts the blackhole before waiting, which is exactly the defect described below,
-so it cannot ask this question at any `--recover`. The numbers are recorded here because they are
-measurements off real hardware and they correct a claim this page was making; the reproduction
-recipe arrives with that branch.
+**Re-runnable, with the `--no-lift` option described above:**
 
-**This reverses the conclusion of the section above, and the mechanism that hid it for two days is
-worth more than the number.** Two runs on the user's own Next, differing in one argument, with the
-firewall blackhole **left up** across the wait:
+    sudo test/run-vanished-peer.sh --host <ip> --no-lift --recover 210    # served
+    sudo test/run-vanished-peer.sh --host <ip> --no-lift --recover 100    # refused
+
+**Without that flag the question cannot be asked at any `--recover`**, because the default path
+lifts the blackhole before it waits — which is the method failure described below, and the reason
+this finding took two days longer than the hardware did.
+
+**This reverses the conclusion of the section above, and the mechanism that hid it is worth more
+than the number.** Two runs on the user's own Next, differing in one argument, with the firewall
+blackhole **left up** across the wait:
 
 | `--recover` | phase 1 | walk length (oldest peer's age at its end) | **B3** |
 |---:|---|---:|---|

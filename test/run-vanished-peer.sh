@@ -106,17 +106,21 @@
 #
 # So it answers: is an abandoned slot EVER reclaimed without a power cycle?
 #
-# ANSWERED, 2026-08-08, AND THE ANSWER IS YES — BUT NOT BY THIS SCRIPT AS IT
-# STANDS. The module gives the slot back by itself in (100 s, 210 s] on a real
-# Next, and its own AT+CIPSTO reads 180: a server idle timeout, on by default
-# and enforced. It is not esp_recover, which is fault-counted and has no timer.
+# ANSWERED, 2026-08-08, AND THE ANSWER IS YES — BUT ONLY WITH --no-lift. The
+# module gives the slot back by itself in (100 s, 210 s] on a real Next, and its
+# own AT+CIPSTO reads 180: a server idle timeout, on by default and enforced. It
+# is not esp_recover, which is fault-counted and has no timer.
 #
-# THIS SCRIPT CANNOT SHOW THAT, at any --recover, and the reason is two lines
-# below in phase 2: it LIFTS the blackhole before it waits, so from that moment
-# our own kernel is RSTing the module and any recovery is the module being TOLD.
-# The question needs the rules left UP across the wait, which is a --no-lift
-# option on branch probe-vanished-no-lift (under review, not merged here). The
-# horizon was wrong too: --recover defaults to 20 s, one ninth of the timer.
+# THE DEFAULT PATH CANNOT SHOW THAT AT ANY --recover, and the reason is in
+# phase 2: it LIFTS the blackhole before it waits, so from that moment our own
+# kernel is RSTing the module and any recovery is the module being TOLD. Note
+# this is NOT a case of waiting too briefly — at the default 20 s the lift-first
+# run comes back SERVED. It answers a different question, not the same question
+# badly. The horizon was wrong too (20 s against a 180 s timer), but only
+# --no-lift makes the horizon matter.
+#
+#     sudo test/run-vanished-peer.sh --host <ip> --no-lift --recover 210
+#
 # See doc/HARDWARE-TESTING.md and KNOWN-ISSUES.md #2 for the runs and the
 # method failure, which is the part worth keeping.
 #

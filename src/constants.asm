@@ -24,6 +24,11 @@ MAIN_ADDR:      EQU MAIN_SLOT*0x2000
 
 ; The address that correspondends to the swap slot bank.
 SWAP_ADDR:      EQU SWAP_SLOT*0x2000
+; How much fits in that window, which is what bounds every command that buffers
+; a client-declared payload there. One byte past it is the next slot, and for
+; SWAP_SLOT that neighbour is MAIN_SLOT — the debugger itself. See
+; error_payload_too_big.
+SWAP_SIZE:      EQU 0x2000
 
 ; Use the build time
 BUILD_TIME16: equ BUILD_TIME & 0xFFFF

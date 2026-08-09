@@ -20,10 +20,17 @@ ERROR_WRITE_MAIN_BANK:	    equ 5
 ERROR_CORE_VERSION_NOT_SUPPORTED:  equ 6
 ERROR_CMD_NOT_SUPPORTED:    equ 7
 
+; A frame declared more payload than the 8 KB swap window can hold, so honouring
+; it would have written over whatever sits above that window — for SWAP_SLOT,
+; the bank the debugger is running from. Raised by cmd_loopback and
+; cmd_write_bank; see error_payload_too_big in commands.asm for why the client
+; gets no answer at all.
+ERROR_PAYLOAD_TOO_BIG:      equ 8
+
  IF ROM_VARIANT == ROM_VARIANT_WIFI
 ; WiFi mode only: the module answered, the listener is up, and it has no
 ; address to hand out. Raised by transport_init; see transport_esp.asm.
-ERROR_NO_WIFI_ADDRESS:      equ 8
+ERROR_NO_WIFI_ADDRESS:      equ 9
 
 ; WiFi mode only, and NOT a fault of its own: the stub met ESP_FAULT_LIMIT
 ; transport faults in a row and ran the AT chain again by itself (issue #16,
@@ -31,7 +38,7 @@ ERROR_NO_WIFI_ADDRESS:      equ 8
 ; re-established the module, and any connection you had is gone" is the thing a
 ; user needs to know — the fifth timeout is a symptom of it. A recovery that
 ; then failed reports ITS failure instead, through transport_activate.
-ERROR_ESP_REINIT:           equ 9
+ERROR_ESP_REINIT:           equ 10
  ENDIF
 
 

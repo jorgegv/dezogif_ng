@@ -397,6 +397,27 @@ cmd_write_bank:
 
 
 .inner:
+    ; THE DECLARED LENGTH IS CHECKED BEFORE ANYTHING IS READ, and until this
+    ; guard existed there was nothing at all bounding the write below. The bank
+    ; is paged into SWAP_SLOT, an 8 KB window at SWAP_ADDR, and receive_bytes
+    ; walks upward from there for as many bytes as the FRAME SAYS — a number the
+    ; client chooses. One byte past the window is 0xE000, which is MAIN_SLOT:
+    ; the bank the debugger is executing out of. So a length above 8193 handed
+    ; the client the running debugger to overwrite with its own payload.
+    ;
+    ; Not reachable from DeZog, which sends exactly 8193 — one bank byte and
+    ; 8192 of bank — and not reachable from anything that means well. It is a
+    ; guard against a malformed frame and a mis-sized client, and it is upstream
+    ; code that has been unbounded since the fork; see cmd_loopback, which had
+    ; the identical hole into the identical window.
+    ; One bank byte, then the bank itself, so the first length that does not fit
+    ; is SWAP_SIZE + 2.
+    ld hl,(receive_buffer.length)
+    ld de,SWAP_SIZE+2
+    or a
+    sbc hl,de
+    jr nc,error_payload_too_big
+
     ; Read bank number of message
     call transport_read_byte
 
@@ -420,6 +441,28 @@ cmd_write_bank:
 
     ; Restore slot/bank (D)
     jp restore_swap_slot
+
+;===========================================================================
+; A frame declared more payload than the 8 KB swap window can hold.
+;
+; IT REPORTS AND DOES NOT ANSWER, which is deliberate and is the lesser of two
+; bad options rather than a good one. DZRP has no error response for either of
+; the two commands that come here — CMD_LOOPBACK's reply IS the data and
+; CMD_WRITE_BANK's error field cannot say "your frame was malformed" without
+; the payload having been consumed first — and a reply of the wrong length
+; desynchronises the stream for every command after it. So this takes
+; error_write_main_bank's established route: put the reason on the Next's own
+; screen and go to drain_main, which empties the link and leaves the debugger
+; idle and healthy. The client waits and times out.
+;
+; That is the SAME silence issues #8 and #9 called a defect, and the difference
+; is what produced it. There the stub refused a command a real client legitimately
+; sends; here the frame cannot be honoured by any means, and the alternative on
+; offer is not a better answer but a corrupted debugger.
+;===========================================================================
+error_payload_too_big:
+    ld a,ERROR_PAYLOAD_TOO_BIG
+    jp drain_main
 
 error_write_main_bank:
     ld a,ERROR_WRITE_MAIN_BANK
@@ -958,6 +1001,23 @@ cmd_restore_mem:
 ;===========================================================================
 cmd_loopback:
     ; LOGPOINT [CMD] cmd_loopback
+    ; THE SAME UNBOUNDED WRITE cmd_write_bank had, into the same 8 KB window and
+    ; for the same reason: the loop below walks upward from SWAP_ADDR for as
+    ; many bytes as the FRAME declared, and 8193 of them reach 0xE000 — the bank
+    ; the debugger is executing out of. The whole payload is buffered before any
+    ; of it is sent (see below), so the window is the ceiling and nothing else
+    ; was enforcing it.
+    ;
+    ; Nothing legitimate approaches it — DeZog's loopback is a handful of bytes
+    ; and the conformance sweep stops at 4096 — which is exactly why it survived
+    ; from the fork: the one thing that would have found it is a suite pushing
+    ; 8 KB, and adding one is what did.
+    ld hl,(receive_buffer.length)
+    ld de,SWAP_SIZE+1
+    or a
+    sbc hl,de
+    jp nc,error_payload_too_big
+
     ; Save swap slot
     call save_swap_slot
 

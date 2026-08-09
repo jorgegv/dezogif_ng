@@ -397,6 +397,24 @@ strongest:
    and came back as it left them. **Still not covered**: the stackless-NMI *return address*
    (C10 sets `PC` itself, so `save_nmi_return_address` is never involved) and the M1 button
    breaking a *running* debuggee — both need a second NMI timed against live traffic.
+   **C16-C18 ARE THE SIZES A REAL SESSION MOVES, AND UNTIL THEY EXISTED THE SUITE STOPPED AT 4096
+   WHILE THE PRODUCT'S LARGEST INBOUND FRAME WAS FOUR TIMES THAT** — DeZog pushes 8 KB per
+   `CMD_WRITE_BANK` on every F5, and nothing had ever sent one. **C16** is a full 8192-byte bank in
+   and read back; **C17** is **16 KB in one `CMD_WRITE_MEM`**, the largest single inbound payload
+   reachable at all, and the only check that writes across a slot boundary in one command. They are
+   deliberately not an extension of C5's loopback sweep: a loopback exercises receive **and** send,
+   where these are receive-only — and the receive path alone is what brackets the UART ceiling
+   (MEMORY.md, issue #25). **C5 does now end at 8192**, which is the largest legal loopback there
+   is, because `cmd_loopback` buffers the whole payload into one 8 KB bank before replying.
+   **C18 IS THE OTHER SIDE OF THAT BOUNDARY AND IT GUARDS A CLIENT-CONTROLLED WRITE OVER THE
+   RUNNING DEBUGGER.** `cmd_loopback` and `cmd_write_bank` both walked upward from `SWAP_ADDR` for
+   as many bytes as the **frame declared** — a number the client chooses — and one slot further on
+   is `MAIN_SLOT`. Unbounded since the fork, in upstream code, in both ROMs. It survived five years
+   because nothing ever sent a big enough frame, and **writing C16/C17 is what found it**. Both
+   handlers now refuse before reading and report `Payload too big for swap bank`; C18 asserts only
+   that the remote **survives and serves on**, because DZRP has no error response for either command
+   and a reply of the wrong length would desynchronise everything after it. A remote that answers
+   instead passes too — what C18 refuses is one that stops serving.
    **C15 is the only check that sends `CMD_CLOSE`** — every other one takes a fresh connection and
    simply drops it, which is a TCP event and not a DZRP one. It asserts the Length=1 response
    **and** that a `CMD_INIT` after it is answered, because `cmd_close` answers first and only then
@@ -421,6 +439,9 @@ strongest:
    The **id** is interface, not prose: `run-dzrp-stub.sh`'s
    W3 greps `^FAIL  C10 ` and `hardware-check.py` takes the code from field 2 of every `FAIL` line.
    **Result 2026-08-05: W1-W5 pass, 15 passed / 0 failed of 15 — the target exits 0.**
+   **The suite is 18 since C16-C18 landed**; the 2026-08-05 figure is left as the measurement it was
+   rather than restated, and the hardware run of 2026-08-08 that reports 15 of 15 was also taken at
+   the suite's size then. **C16-C18 have not run on hardware.**
    **C12 was the last red and issue #8 closed it**: `CMD_PAUSE` was mapped to `cmd_not_supported`,
    which stores an error and jumps to `drain_main`, so the stub sent **no response at all** where
    the spec requires a Length=1 one and a client waited forever. Same shape as C2 — common code
@@ -756,7 +777,7 @@ read once; a document can be revised, cited and diffed.
 
 Two things the shortening may **never** touch, because they are interface rather than prose:
 
-- **The check id.** `T1`-`T7`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W6`, `C1`-`C15`, `B1`-`B2`,
+- **The check id.** `T1`-`T7`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W6`, `C1`-`C18`, `B1`-`B2`,
   `P1`-`P3`, `N1`-`N6`, `G1`-`G2`, `I1`-`I9`, `S1`-`S3`, `K1`-`K4`, `R0`-`R5`, `L1`-`L5`, `H1`-`H5` are cited
   by every
   document and

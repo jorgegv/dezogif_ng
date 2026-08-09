@@ -189,6 +189,11 @@ TEXT_ERROR_CORE_VERSION_NOT_SUPPORTED: ; Core not supported
     defb "Core Version not supported,     should be >= 03.01.10", 0
 TEXT_CMD_NOT_SUPPORTED: ; Core not supported
     defb "Command not supported", 0
+; It names the WINDOW rather than the command, because both commands that can
+; raise it fail on the same 8 KB bound and knowing which one asked does not
+; change what to do about it. 29 of the 32 columns.
+TEXT_ERROR_PAYLOAD_TOO_BIG:
+    defb "Payload too big for swap bank", 0
 
  IF ROM_VARIANT == ROM_VARIANT_WIFI
 ; Short on purpose. The status block above already says what to do about it in
@@ -212,6 +217,7 @@ ERROR_TEXT_TABLE:
     defw TEXT_ERROR_WRITE_MAIN_BANK
     defw TEXT_ERROR_CORE_VERSION_NOT_SUPPORTED
     defw TEXT_CMD_NOT_SUPPORTED
+    defw TEXT_ERROR_PAYLOAD_TOO_BIG
  IF ROM_VARIANT == ROM_VARIANT_WIFI
     defw TEXT_ERROR_NO_WIFI_ADDRESS
     defw TEXT_ERROR_ESP_REINIT

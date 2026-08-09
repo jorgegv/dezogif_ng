@@ -5,6 +5,117 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-09 — A client could hand itself the running debugger to overwrite, and adding a big-transfer check is what found it
+
+**Built.** `cmd_loopback` and `cmd_write_bank` refuse a declared length that
+would run past the 8 KB swap window; the conformance suite gains **C16**, **C17**
+and **C18**, and C5's sweep now ends at **8192**.
+
+**THE DEFECT IS AN UNBOUNDED, CLIENT-CONTROLLED WRITE OVER THE DEBUGGER'S OWN
+BANK, AND IT IS UPSTREAM'S, IN BOTH ROMS, SINCE THE FORK.** Both handlers buffer
+into a bank paged at `SWAP_ADDR` — `SWAP_SLOT*0x2000` = **`0xC000`**, an **8 KB**
+window — and walk upward for as many bytes as the FRAME DECLARED. `cmd_loopback`
+counts `receive_buffer.length` down with `ldi (hl),a` counting up; `cmd_write_bank`
+hands the same number to `receive_bytes`. Neither bounded it. One byte past the
+window is `0xE000`, which is `MAIN_SLOT`: `MAIN_BANK`, the bank the debugger is
+**executing out of**. So a `CMD_LOOPBACK` of 8193 or more overwrites the running
+debugger with the client's own payload.
+
+**MEASURED, NOT REASONED — and the control is the whole of the evidence.** The
+same 18 checks against `main`'s WiFi ROM:
+
+| | main's ROM | as built |
+|---|---|---|
+| C5 at **8192** | pass | pass |
+| C16, C17 | pass | pass |
+| **C18** at **12288** | **FAIL — "left the remote not serving"** | pass |
+| C15 behind it | **FAIL — timed out after 0 of 1 bytes** | pass |
+
+C15's red is a **consequence and not a second finding**: the stub is dead by
+then. And C16/C17 passing on both sides is what says C18's red is the guard
+rather than the new checks — one variable.
+
+**IT SURVIVED FIVE YEARS BECAUSE NOTHING EVER SENT A BIG ENOUGH FRAME, AND THAT
+IS THE PART WORTH KEEPING.** DeZog's loopback is a handful of bytes and this
+suite stopped at **4096**, so every payload in every green run had been
+comfortably inside the window. The one thing that would have found it is a suite
+pushing 8 KB — which is exactly what C16 and C17 were added for, and they found
+it on their first run. **The check was not written to look for this**; the bound
+became reachable and the bug fell out. That is the same shape as
+[[ERRORS.md]]'s "a bound the emulator can never reach is a bound with no test",
+one layer up: a bound no *test data* can reach is equally untested, and the fix
+is the same — make the input reach it.
+
+**C16 AND C17 ARE NOT AN EXTENSION OF THE LOOPBACK SWEEP, DELIBERATELY.** A
+`CMD_LOOPBACK` exercises receive **and** send; **C16** (a full 8192-byte
+`CMD_WRITE_BANK`, which is what DeZog sends on every F5) and **C17** (16384
+bytes in one `CMD_WRITE_MEM`) are **receive-only**, which is the path that
+brackets the UART ceiling at 470-610 T-states per byte and the reason the
+2026-08-09 baud entry says whoever raises that ceiling must optimise it. C17 is
+also the only check that writes **across a slot boundary** in one command, which
+is `memory_loop`'s banking.
+
+**WHY THE STUB ANSWERS NOTHING RATHER THAN AN ERROR, which is the one decision
+here that is a judgement rather than a fact.** DZRP has no error response for
+either command — `CMD_LOOPBACK`'s reply IS the data, and `CMD_WRITE_BANK`'s error
+field cannot be reached without consuming a payload we have just refused to
+read — and a reply of the wrong length **desynchronises the stream for every
+command after it**. So `error_payload_too_big` takes `error_write_main_bank`'s
+established route: report on the Next's own screen, `jp drain_main`, let the
+client time out. **That is the same silence issues #8 and #9 called a defect**,
+and the difference is stated in the source: there the stub refused a command a
+real client legitimately sends, here the frame cannot be honoured by any means
+and the alternative on offer is not a better answer but a corrupted debugger.
+C18 accordingly asserts **survival, not an answer** — a remote that replies
+passes too; what it refuses is one that stops serving.
+
+**A SECOND DEFECT FELL OUT, IN THE TEST CLIENT, AND IT IS THE SAME DISEASE ONE
+LAYER OUT.** `dzrp.py`'s `MAX_FRAME = 9000` refused C17's own correct 16385-byte
+response as a desync. Its comment justified the number from **`CMD_LOOPBACK`'s**
+8192 cap — reasoning that never covered `CMD_READ_MEM`, which is bounded by its
+own 16-bit size field. One number was doing **two jobs**: a *discriminator*
+deciding whether a leading `0xA5` was a preamble or a length's low byte, where
+smaller is sharper; and a *sanity bound* on a length whose framing is already
+settled, which must admit the largest legal frame. Split into `MAX_PROBE_FRAME`
+(9000, unchanged) and `MAX_FRAME` (70000, above the largest useful
+`CMD_READ_MEM`).
+
+**Rejected.** Reading C17 back in 8 KB chunks to dodge that bound (it would have
+hidden a client defect that will bite the next person to read a large region);
+raising `MAX_FRAME` globally (it blunts the start-byte discriminator, which is
+the one place a small bound is load-bearing); making `cmd_loopback` **stream**
+rather than buffer, which removes the bound entirely (it would make it a fourth
+member of issue #13's interleaving family, where a response flushing mid-message
+while its own payload is still owed is the one window in which payload reaches
+`esp_watch_line`); a short reply for the refused case (desync); reusing
+`ERROR_RX_OVERFLOW` to save the string bytes (it means a UART FIFO overflow, and
+conflating two faults in the one place a user looks is what the error area is
+for); and filing the bound as its own issue while landing only the checks —
+offered, and the user's call was to fix it here.
+
+**Cost: +60 bytes in BOTH ROMs, which is correct for common code.** `main_end`
+UART 0xF21F → **0xF25B**, WiFi 0xFBF4 → **0xFC30**. Pinned: UART
+`e2818821…` → `e9f0a0d3…`, WiFi `9c4abc1d…` → `661094ed…`. **The UART
+byte-identity gate is EXPECTED to break here** — `commands.asm`, `constants.asm`,
+`data_const.asm` and `ui.asm` are all common code — as it did for issues #7, #8,
+#9, #12, #20 and #31. **This changes a ROM, so the merge carries a `make bump`.**
+
+**Regression: `make test-dzrp-stub` 18/18 with W1-W6, exit 0.**
+
+**NOT COVERED, and none of it is hidden.** **Hardware** — C16, C17 and C18 have
+never run on a Next, and C17's 16 KB is the largest inbound payload this project
+has ever sent anywhere. **The other users of the swap window**:
+`cmd_restore_mem` and `cmd_exec_asm` also take client-declared lengths, and
+whether either can reach past a window was **not audited here** — this change is
+scoped to the two handlers that buffer into `SWAP_ADDR` outright. **The error
+text itself** is drawn by no check; nothing reads row 15 back for this code, and
+the 32-column fit is by inspection. And **what a real client does with the
+silence**: DeZog has never sent an oversize frame and there is no reason it
+would, so the refusal path's user-facing behaviour is unexercised by anything
+but C18.
+
+---
+
 ## 2026-08-09 — The slot sweep gets a trigger a quiet stub can reach, and it is NOT the one the issue asked for
 
 **Built, issue #24's second half.** `esp_idle_tick` runs once per turn of

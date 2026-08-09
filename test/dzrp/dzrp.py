@@ -86,10 +86,31 @@ NTF_PAUSE = 1
 
 START_BYTE = 0xA5
 
-# Generous: the spec caps CMD_LOOPBACK data at 8192 bytes, and a frame carries
-# a little overhead on top. Anything beyond this is treated as a desync rather
-# than honoured, so a garbage length cannot make us block forever on a read.
-MAX_FRAME = 9000
+# TWO DIFFERENT JOBS WORE ONE NUMBER, AND ONE OF THEM WAS WRONG.
+#
+# The number they shared was 9000, justified as "the spec caps CMD_LOOPBACK data
+# at 8192 bytes, and a frame carries a little overhead on top". That reasoning
+# was about LOOPBACK alone and never covered CMD_READ_MEM, which is bounded by
+# its own 16-bit size field and not by the loopback cap.
+#
+# MAX_PROBE_FRAME is a DISCRIMINATOR. It is used only while the start byte is
+# being auto-detected, to decide whether a leading 0xA5 was a preamble or the
+# low byte of a length — and the SMALLER it is, the sharper that distinction.
+# Detection happens on the first frame of a session, which is always a CMD_INIT
+# reply, so it never has to admit anything large.
+MAX_PROBE_FRAME = 9000
+
+# MAX_FRAME is a SANITY BOUND on a length whose framing is already settled, and
+# its only job is to reject a desynchronised stream rather than read gigabytes
+# of it. It must therefore admit the largest frame a remote legitimately sends.
+#
+# IT DID NOT, AND THE SUITE'S OWN CHECK IS WHAT FOUND IT: C17 reads 16 KB back
+# with CMD_READ_MEM, whose response length counts from the sequence byte and is
+# so 16385 — and at 9000 this client refused its own remote's correct answer and
+# called it a desync. Nothing before C17 had ever asked for more than 4096. The
+# protocol's length field is 32 bits, so a bound above the largest useful
+# CMD_READ_MEM (65535 + 1) still rejects essentially all garbage.
+MAX_FRAME = 70000
 
 
 class DzrpError(Exception):
@@ -262,7 +283,7 @@ class Dzrp:
                 # 165 bytes long.
                 probe = self.t.read(4)
                 length = struct.unpack("<I", probe)[0]
-                if 1 <= length <= MAX_FRAME:
+                if 1 <= length <= MAX_PROBE_FRAME:
                     self.start_byte = START_BYTE
                     self.observed_start_byte = START_BYTE
                     return self._finish_frame(length)

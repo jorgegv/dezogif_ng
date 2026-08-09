@@ -105,6 +105,7 @@ NAMES = {
     "SET_REGISTER": dzrp.CMD_SET_REGISTER,
     "READ_MEM": dzrp.CMD_READ_MEM,
     "WRITE_MEM": dzrp.CMD_WRITE_MEM,
+    "WRITE_BANK": dzrp.CMD_WRITE_BANK,
     "CONTINUE": dzrp.CMD_CONTINUE,
     "PAUSE": dzrp.CMD_PAUSE,
     "GET_SPRITES": dzrp.CMD_GET_SPRITES,
@@ -315,7 +316,15 @@ def chk_loopback(d):
 #               reassembly path was untested.
 #   4096        more than two frames, so a remote that handles exactly one split
 #               is not mistaken for one that handles any number.
-LOOPBACK_SIZES = (0, 1, 255, 256, 1024, 2047, 2048, 2049, 4096)
+#   8192        THE CEILING, and the largest legal CMD_LOOPBACK there is. Our
+#               stub buffers the whole payload into an 8 KB bank paged at
+#               SWAP_ADDR before it sends any of it, so this is the last size
+#               that fits and one more would land in the next slot — which is
+#               where the debugger itself is. C18 is the other side of that
+#               boundary. Nothing in the protocol says 8192; it is a property
+#               of this remote, and a remote that streams instead of buffering
+#               would simply pass both.
+LOOPBACK_SIZES = (0, 1, 255, 256, 1024, 2047, 2048, 2049, 4096, 8192)
 
 
 def chk_loopback_sizes(d):
@@ -767,6 +776,168 @@ def chk_get_sprite_patterns(d):
                               "sprite patterns")
 
 
+# ==========================================================================
+# Large inbound transfers — the payload sizes a real DeZog session moves.
+#
+# EVERY CHECK ABOVE STOPS AT 4096, AND THE PRODUCT'S LARGEST INBOUND PAYLOAD IS
+# FOUR TIMES THAT. DeZog pushes a bank at a time when it loads a .nex, which is
+# 8 KB per CMD_WRITE_BANK, and nothing here had ever sent one — so the biggest
+# frame the stub meets in ordinary use was the one frame no check exercised.
+#
+# WHY NOT SIMPLY EXTEND THE LOOPBACK SWEEP, which was the obvious move. Two
+# reasons, and the second is a property of this remote rather than of DZRP:
+#
+#   * a CMD_LOOPBACK exercises RECEIVE AND SEND TOGETHER, and it is the receive
+#     path alone that governs how fast this link can go — the per-byte receive
+#     cost is what brackets the UART ceiling between 470 and 610 T-states
+#     (MEMORY.md, issue #25). A check that moves 16 KB inward and reads it back
+#     in separate commands measures the interesting half on its own.
+#   * 8192 IS THE CEILING FOR LOOPBACK on this stub, because it buffers the
+#     whole payload into one 8 KB bank before replying. C5 now ends exactly
+#     there and C18 is the other side of it.
+#
+# WHAT THEY ARE NOT. Not timing measurements — nothing here is a benchmark, and
+# the emulator is not where throughput is established (H5 on hardware is). They
+# assert that the bytes arrive intact at sizes nothing else reaches.
+# ==========================================================================
+
+# CMD_INIT maps bank 4 at slot 4 and bank 5 at slot 5 — 0x8000-0xBFFF — which is
+# clear of the ROM at 0x0000, of the display file at 0x4000, and of the
+# debugger's own slots 6 and 7. So a bank written here can be read straight back
+# through an address, with no CMD_SET_SLOT in the middle to go wrong.
+BANK_AT_8000 = 4
+BANK_SIZE = 8192
+BIG_MEM_ADDR = 0x8000
+BIG_MEM_LEN = 16384             # slots 4 and 5 together
+
+
+def _pattern(n, seed):
+    """A payload with no run of repeats, so a short write cannot look complete.
+
+    A block of one value would let a remote that dropped the tail pass on
+    whatever the bank already held; this makes every offset distinguishable.
+    """
+    return bytes(((i * 31 + seed) ^ (i >> 8)) & 0xFF for i in range(n))
+
+
+def chk_write_bank_full(d):
+    """A full 8 KB bank in, and read back — the frame DeZog sends on every F5."""
+    talk(d, dzrp.CMD_INIT, dzrp.init_payload())
+    data = _pattern(BANK_SIZE, 0x5A)
+    body = talk(d, dzrp.CMD_WRITE_BANK, bytes([BANK_AT_8000]) + data)
+    # The response is an error byte and a NUL-terminated string; a non-zero code
+    # is the remote refusing, which is a different finding from wrong bytes.
+    if not body or body[0] != 0:
+        return FAIL, "CMD_WRITE_BANK refused a legal 8192-byte bank, error %d" % (
+            body[0] if body else -1)
+    got = talk(d, dzrp.CMD_READ_MEM,
+               b"\x00" + _w(BIG_MEM_ADDR) + _w(BANK_SIZE))
+    if got != data:
+        return FAIL, "%d bytes written, %d read back and they differ at %s" % (
+            BANK_SIZE, len(got), _first_diff(data, got))
+    return PASS, "a full %d-byte bank went in and came back byte-identical" % BANK_SIZE
+
+
+def chk_write_mem_large(d):
+    """16 KB in one CMD_WRITE_MEM — the largest single inbound payload there is.
+
+    Larger than any CMD_WRITE_BANK, and unlike CMD_LOOPBACK it is received and
+    nothing is sent back in the same command, so what it exercises is the
+    receive path on its own. It spans TWO slots, which is the other reason it is
+    worth having: memory_loop's banking is what carries it across 0xA000, and no
+    other check writes across a slot boundary in one command.
+    """
+    talk(d, dzrp.CMD_INIT, dzrp.init_payload())
+    data = _pattern(BIG_MEM_LEN, 0xA5)
+    talk(d, dzrp.CMD_WRITE_MEM, b"\x00" + _w(BIG_MEM_ADDR) + data)
+    got = talk(d, dzrp.CMD_READ_MEM,
+               b"\x00" + _w(BIG_MEM_ADDR) + _w(BIG_MEM_LEN))
+    if got != data:
+        return FAIL, "%d bytes written, %d read back and they differ at %s" % (
+            BIG_MEM_LEN, len(got), _first_diff(data, got))
+    return PASS, "%d bytes crossed a slot boundary in one command, intact" % BIG_MEM_LEN
+
+
+def _first_diff(a, b):
+    """Where two byte strings first differ, as a short string for a verdict."""
+    if len(a) != len(b):
+        return "length %d vs %d" % (len(a), len(b))
+    for i, (x, y) in enumerate(zip(a, b)):
+        if x != y:
+            return "0x%04X" % i
+    return "nowhere"
+
+
+# One byte over would be the boundary and is not what this asks. C5's 8192 holds
+# the boundary; this asks whether a frame that is decisively too big is SURVIVED,
+# and a size well past the window is what makes the unfixed failure unambiguous
+# rather than a single byte landing on the debugger's first instruction.
+OVERSIZE_LOOPBACK = 12288
+
+
+def chk_oversize_payload(d):
+    """A payload too big for the remote's buffer must not take the remote with it.
+
+    THE DEFECT THIS GUARDS IS A CLIENT-CONTROLLED WRITE OVER THE RUNNING
+    DEBUGGER. Our stub buffers a CMD_LOOPBACK into a bank paged at SWAP_ADDR,
+    an 8 KB window, and walked upward from there for as many bytes as the FRAME
+    DECLARED — a number the client chooses. One slot further on is MAIN_SLOT,
+    where the debugger is executing. Nothing bounded it, from the fork until the
+    check below existed; CMD_WRITE_BANK had the identical hole into the identical
+    window.
+
+    IT SURVIVED FIVE YEARS BECAUSE NOTHING EVER SENT ONE. DeZog's loopback is a
+    handful of bytes and this sweep stopped at 4096, so the one thing that would
+    have found it is a suite pushing 8 KB — and adding C16 and C17 is what did.
+
+    WHAT IS ASSERTED IS SURVIVAL, NOT AN ANSWER, and that is the honest reading
+    of what a remote can do here. DZRP has no error response for CMD_LOOPBACK —
+    the reply IS the data — so a remote that cannot honour the frame has nothing
+    correct to say, and a reply of the wrong length would desynchronise the
+    stream for every command after it. Our stub reports on its own screen and
+    goes quiet. A DIFFERENT REMOTE MAY LEGITIMATELY ANSWER, and this check
+    accepts that too: what it refuses is a remote that stops serving.
+
+    So the verdict is taken on a FRESH CONNECTION afterwards. A remote that
+    overwrote its own code would fail that, and one that merely declined to
+    answer passes — which is the distinction that matters and the only one
+    observable from here.
+    """
+    talk(d, dzrp.CMD_INIT, dzrp.init_payload())
+    payload = _pattern(OVERSIZE_LOOPBACK, 0x3C)
+    answered = False
+    try:
+        d.command(dzrp.CMD_LOOPBACK, payload)
+        answered = True
+    except dzrp.Timeout:
+        pass
+    except dzrp.DzrpError:
+        # A refusal expressed by hanging up is also not a crash.
+        pass
+
+    # The verdict is taken on a NEW connection, because the one above may
+    # legitimately have been dropped, and with CMD_INIT because no remote may
+    # refuse it. Same route as _remote_still_answers, so a run without --remote
+    # says so rather than inventing a verdict.
+    if REMOTE_SPEC is None:
+        return FAIL, "not judged: --remote was not set, so nothing could re-connect"
+    try:
+        t = dzrp.open_remote(REMOTE_SPEC, timeout=d.base_timeout)
+    except (OSError, dzrp.DzrpError):
+        return FAIL, "%d-byte payload left the remote unreachable" % OVERSIZE_LOOPBACK
+    fresh = dzrp.Dzrp(t, start_byte=d.start_byte, base_timeout=d.base_timeout)
+    try:
+        body = fresh.command(dzrp.CMD_INIT, dzrp.init_payload())
+    except (OSError, dzrp.DzrpError):
+        return FAIL, "%d-byte payload left the remote not serving" % OVERSIZE_LOOPBACK
+    finally:
+        fresh.close()
+    if len(body) < 6 or body[0] != 0:
+        return FAIL, "after the oversize payload CMD_INIT came back %d bytes" % len(body)
+    return PASS, "a %d-byte payload was %s and the remote served on" % (
+        OVERSIZE_LOOPBACK, "answered" if answered else "declined")
+
+
 def chk_close(d):
     """CMD_CLOSE is answered, and the remote goes on serving afterwards.
 
@@ -901,6 +1072,16 @@ CHECKS = [
      chk_get_sprites, "GET_SPRITES"),
     ("C14 CMD_GET_SPRITE_PATTERNS is answered at the asserted length",
      chk_get_sprite_patterns, "GET_SPRITE_PATTERNS"),
+    ("C16 a full 8 KB bank round-trips", chk_write_bank_full, "WRITE_BANK"),
+    ("C17 16 KB in one CMD_WRITE_MEM round-trips", chk_write_mem_large,
+     "WRITE_MEM"),
+    # C18 IS SECOND-TO-LAST, and for a weaker version of C15's reason. Our stub
+    # answers an oversize frame by reporting on its own screen and going to
+    # drain_main, which re-initialises the debugger — so anything below it would
+    # be talking to a reset stub. It cannot go BELOW C15, which resets it too
+    # and must stay last.
+    ("C18 an oversize payload does not take the remote with it",
+     chk_oversize_payload, "LOOPBACK"),
     # C15 IS LAST, AND MUST STAY LAST. It is the only check that deliberately
     # resets the remote: CMD_CLOSE leaves our stub through `jp main`, which
     # re-initialises prgm_state and the debuggee's saved state. Anything below it

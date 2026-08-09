@@ -909,10 +909,22 @@ def chk_oversize_payload(d):
     try:
         d.command(dzrp.CMD_LOOPBACK, payload)
         answered = True
-    except dzrp.Timeout:
-        pass
-    except dzrp.DzrpError:
-        # A refusal expressed by hanging up is also not a crash.
+    except (OSError, dzrp.DzrpError):
+        # EVERY WAY THIS CAN FAIL IS AN EXPECTED OUTCOME HERE, INCLUDING THE
+        # ONES THAT ARE NOT DzrpError. A refusal expressed by hanging up, a
+        # timeout, and a send that dies part-way through are all "the remote did
+        # not honour an oversize frame", which is what this check provokes on
+        # purpose — the verdict is taken on a fresh connection below.
+        #
+        # OSError has to be in that list and was missing. TcpTransport.write is
+        # a bare sock.sendall (dzrp.py), so a peer that resets or closes mid-send
+        # raises BrokenPipeError or ConnectionResetError, neither of which is a
+        # DzrpError — and main()'s per-check loop does not catch OSError either,
+        # so it would have escaped as a traceback and taken every check BELOW
+        # this one with it. That includes C15, which this suite requires to run
+        # and to run last. jnext drains the payload fast enough that it has never
+        # happened here; a real ESP-01's backpressure is not the same thing, and
+        # C16-C18 have never run on hardware.
         pass
 
     # The verdict is taken on a NEW connection, because the one above may

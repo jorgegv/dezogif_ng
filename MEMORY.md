@@ -104,10 +104,18 @@ byte-identity gate is EXPECTED to break here** — `commands.asm`, `constants.as
 
 **NOT COVERED, and none of it is hidden.** **Hardware** — C16, C17 and C18 have
 never run on a Next, and C17's 16 KB is the largest inbound payload this project
-has ever sent anywhere. **The other users of the swap window**:
-`cmd_restore_mem` and `cmd_exec_asm` also take client-declared lengths, and
-whether either can reach past a window was **not audited here** — this change is
-scoped to the two handlers that buffer into `SWAP_ADDR` outright. **The error
+has ever sent anywhere. **The other users of a client-declared
+length WERE audited, and the scoping is narrower than it needed to be.** Every
+consumer of `receive_buffer.length` in `commands.asm` was enumerated
+mechanically, and the rest are immune for a structural reason rather than by
+luck: `cmd_write_mem`, `cmd_read_mem`, `cmd_restore_mem` and
+`cmd_set_breakpoints` all go through **`memory_loop`**, which is phase-aware and
+redirects any target in `0xE000-0xFFFF` through `SWAP_SLOT` instead
+(`backup.asm:311-338`), and `cmd_exec_asm` already carried its own bound against
+`PAYLOAD_EXEC_ASM`. What made `cmd_loopback` and `cmd_write_bank` the two is
+that they buffer **straight into `SWAP_ADDR`** with a plain `ldi (hl),a` /
+`receive_bytes` loop and no phase logic at all. So the fix is exactly as wide as
+the defect. **The error
 text itself** is drawn by no check; nothing reads row 15 back for this code, and
 the 32-column fit is by inspection. And **what a real client does with the
 silence**: DeZog has never sent an oversize frame and there is no reason it

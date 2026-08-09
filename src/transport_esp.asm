@@ -678,12 +678,13 @@ ESP_CIPSTO_STRICT:  equ 0
 ;
 ; IT IS DELIBERATELY NOT A CONNECT-TIME TRIGGER, which is what issue #24
 ; proposed and which cannot be built. Two reasons and either is sufficient. It
-; would close the OTHER ids when a client arrives, and test/dzrp/queued-commands.py
-; and split-command.py each open THREE simultaneous connections and INIT every
-; one, so bench checks W4 and W5 — and hardware H3 — would go red for a change
-; that broke nothing they were written to measure. And it cannot reach the state
-; above anyway: by then no client can connect, so nothing would trigger it.
-; KNOWN-ISSUES.md #19 says the second half in as many words.
+; would close the OTHER ids when a client arrives, and this suite deliberately
+; holds several at once: test/dzrp/queued-commands.py opens THREE and INITs every
+; one, split-command.py holds TWO across its exchange, and hardware H3 two. So
+; bench checks W4 and W5 — and H3 — would go red for a change that broke nothing
+; they were written to measure. And it cannot reach the state above anyway: by
+; then no client can connect, so nothing would trigger it. KNOWN-ISSUES.md #19
+; says the second half in as many words.
 ;
 ; WHAT MAKES A TIMER SAFE where "close on suspicion" is forbidden (issue #24's
 ; own What NOT to do, and KNOWN-ISSUES.md #19's reasoning) is that it does not
@@ -691,6 +692,17 @@ ESP_CIPSTO_STRICT:  equ 0
 ; for minutes and perfectly healthy, and esp_idle_tick returns without counting
 ; for as long as esp_session_valid is set. So the sweep can only happen with no
 ; DZRP session to lose.
+;
+; WHAT THAT LEAVES UNPROTECTED IS A SOCKET WITH NO SESSION ON IT, and it is
+; deliberate rather than overlooked. esp_session_valid is set by CMD_INIT, so a
+; peer that connected and never introduced itself — or one that has been silent
+; since CMD_CLOSE — is closed by a sweep, once nothing at all has arrived for
+; the whole period. That is this transport's standing position and not a new
+; one: "a socket is not a session" is what bench check N1 asserts and what issue
+; #23's esp_line_event is written around. Note also that ANY inbound frame
+; restarts the timer, from any connection and whether or not it opened a
+; session, so what is at risk is only a connection that is silent for five
+; minutes while every other peer is silent too.
 ;
 ; 300 SECONDS, and the number is bounded from both sides rather than picked. It
 ; must be well under the module's own AT+CIPSTO reap — 1800 since this same
@@ -709,18 +721,36 @@ ESP_CIPSTO_STRICT:  equ 0
 ESP_IDLE_SWEEP_SECS:    equ 300
  ENDIF
 
-; The same thing in ticks, which is what esp_idle_tick counts. ONE TICK IS 256
-; LINES of the active video line counter, because that is what a wrap of the low
-; byte of NR 0x1F means, and reading one byte is what avoids the tearing a
-; two-byte read of NR 0x1E/0x1F has at its 255->256 rollover.
+; The same thing in ticks, which is what esp_idle_tick counts. ONE TICK IS ONE
+; FRAME — the video line counter passing its maximum and starting again.
 ;
-; A line is c_max_hc + 1 cycles of i_CLK_7 — 448 in most timing modes and 456 in
-; two of them (video/zxula_timing.vhd:160,196,230,262,290) — so a line is 64.0 to
-; 65.1 us at a nominal 7 MHz, and Fsys itself moves a couple of percent across
-; the video timings. A tick is therefore 16.4 ms and 61 of them are a second,
-; both to within about 3%. That is a housekeeping timer, not a clock: 300
-; seconds means 300 seconds give or take ten, and nothing here cares.
-ESP_IDLE_SWEEP_TICKS:   equ ESP_IDLE_SWEEP_SECS * 61
+; 50 A SECOND, because that is the frame rate of every 50 Hz timing mode; the
+; 60 Hz ones give 60, so a period built from this arrives at five sixths of its
+; nominal length there. For a housekeeping timer whose only hard requirement is
+; to be well under the module's own 1800-second reap, a sixth either way is
+; nothing — but it is a real spread and not the "about 3%" an earlier version of
+; this comment claimed.
+;
+; THAT EARLIER VERSION WAS WRONG BY A FACTOR OF NEARLY TWO, AND THE MISTAKE IS
+; WORTH LEAVING WRITTEN DOWN because it was made with a VHDL citation attached.
+; It counted a tick as 256 lines — a wrap of the LOW BYTE of NR 0x1F — and
+; derived 61 a second from the length of a line. But the counter behind NR
+; 0x1E/0x1F is `cvc`, which does not run to 511 and wrap: it resets when it
+; reaches c_max_vc (video/zxula_timing.vhd:457-470), and c_max_vc is 319, 311,
+; 310 or 263 (:168,204,238,270,298) — never a multiple of 256. So the low byte
+; decreases TWICE per frame, once at line 256 and once at the reset, and a
+; detector that counts every decrease was counting about 100 a second while the
+; constant was built for 61. The shipped 300 seconds would have been ~180.
+;
+; SO THE TICK IS BIT 8 INSTEAD, read from NR 0x1E, and it is exactly one per
+; frame BY CONSTRUCTION rather than by arithmetic: both values the counter can
+; be reset to are below 256 — 0 at c_max_vc, and NR 0x64's offset at the vactive
+; anchor, which is 8 bits and so at most 255 — while c_max_vc is at least 263.
+; The counter therefore climbs through 256 exactly once per frame and is put
+; back below it exactly once, whatever the timing mode and whatever NR 0x64
+; holds. Reading the one byte also avoids the tearing a two-byte read of NR
+; 0x1E/0x1F has at that same rollover.
+ESP_IDLE_SWEEP_TICKS:   equ ESP_IDLE_SWEEP_SECS * 50
     ASSERT ESP_IDLE_SWEEP_TICKS < 65536      ; the counter is 16 bits
 
  IF ESP_BAUD_HIGH != ESP_BAUDRATE
@@ -1160,10 +1190,10 @@ esp_recovering:     defb 0
 ; is a timer rather than a connect-time trigger, and esp_idle_tick for how the
 ; three bytes are used.
 ;
-; The low byte of the active video line counter as it was last seen, so that a
-; wrap can be recognised. Its initial value is a don't-care: whatever the line
-; happens to be on the first tick either looks like a wrap, costing one spurious
-; tick out of ESP_IDLE_SWEEP_TICKS, or does not.
+; Bit 8 of the active video line counter as it was last seen, so that its 1->0
+; edge can be recognised. Its initial value is a don't-care: 0 is what the first
+; sample will most often read anyway, and the worst a wrong guess can cost is
+; one missed tick out of ESP_IDLE_SWEEP_TICKS.
 esp_idle_line:      defb 0
 
 ; Ticks of 256 lines since the last inbound frame. Reset by esp_sync_ipd, so
@@ -1748,27 +1778,27 @@ esp_close_all_links:
 ; timer is allowed to close connections at all where "close on suspicion" is
 ; forbidden; this is only how the counting works.
 ;
-; THE CLOCK IS NR 0x1F, the low byte of the active video line counter, and one
-; tick is one wrap of it. That register is free-running and ungated — nothing in
-; the VHDL enables it, and in particular no IFF1/IFF2, no DI and no NMI, which
-; is what makes it the only usable clock in a debugger that runs with interrupts
-; off and the ROM's FRAMES sysvar dead. Reading the LOW BYTE ALONE is what
-; avoids the tearing a two-byte read of NR 0x1E/0x1F has at its 255->256
-; rollover, where MSB-then-LSB can return 0 for 255.
+; THE CLOCK IS NR 0x1E BIT 0 — bit 8 of the active video line counter — and one
+; tick is one frame, taken on its 1->0 edge. That register is free-running and
+; ungated: nothing in the VHDL enables it, and in particular no IFF1/IFF2, no DI
+; and no NMI, which is what makes it the only usable clock in a debugger that
+; runs with interrupts off and the ROM's FRAMES sysvar dead.
 ;
-; A WRAP IS "THE VALUE WENT DOWN", and that is safe rather than merely usual.
-; The counter's only writer is the video timing, and NR 0x64's per-frame reload
-; is provably a no-op for a steady offset — the counter and the line counter
-; wrap on the same modulus, so the reload reproduces exactly the value an
-; ordinary increment would have produced. A live write to NR 0x64 costs exactly
-; one anomalous transition, i.e. at most one spurious tick out of
-; ESP_IDLE_SWEEP_TICKS, which for a five-minute housekeeping timer is nothing.
+; ONE EDGE PER FRAME IS BY CONSTRUCTION, not by arithmetic, and the argument is
+; in ESP_IDLE_SWEEP_TICKS along with the factor-of-two error it replaces: every
+; value the counter can be reset to is below 256 and its maximum is at least
+; 263, so bit 8 goes up once a frame and comes back down once a frame in every
+; timing mode and for every value of NR 0x64.
+;
+; Reading ONE byte also avoids the tearing a two-byte read of NR 0x1E/0x1F has
+; at that same rollover, where MSB-then-LSB can return 0 for 255.
 ;
 ; THE COUNT RUNS SLOW UNDER LOAD AND NEVER FAST, which is the right direction.
-; A turn of main_loop is a few hundred T-states, far inside one tick — but
+; A turn of main_loop is a few hundred T-states, so bit 8's high window — 7
+; lines at its shortest, ~450 us — is sampled thousands of times. But
 ; transport_byte_available can spend up to ~100 ms synchronising when the module
-; puts an unsolicited line on the wire, and wraps that pass inside that are not
-; seen. A missed wrap lengthens the timer; nothing here can shorten it.
+; puts an unsolicited line on the wire, and every frame boundary inside that is
+; unseen. A missed frame lengthens the timer; nothing here can shorten it.
 ;
 ; THE CLOCK STOPS WHILE A SESSION IS OPEN rather than being reset, so it is not
 ; restarted by the session ending — which means a client that vanishes without
@@ -1799,10 +1829,11 @@ esp_idle_tick:
     or a
     ret nz
 
-    ld a,REG_ACTIVE_VIDEO_LINE_L
+    ld a,REG_ACTIVE_VIDEO_LINE_H
     call read_tbblue_reg
+    and 1                       ; bit 8 of the line counter, and nothing else
     ld hl,esp_idle_line
-    cp (hl)                     ; CY when the counter is below where it was
+    cp (hl)                     ; CY only on 1 -> 0, which is one frame
     ld (hl),a
     ret nc
 

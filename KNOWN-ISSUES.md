@@ -216,14 +216,22 @@ and is entirely ordinary.
 
 ### What to do
 
-**Wait about three minutes, then reconnect.** That is the whole procedure, and it is also the
+**Wait about five minutes, then reconnect.** That is the whole procedure, and it is also the
 diagnosis: a machine that starts serving again was this, and one that does not is something else.
 
-**Two things can make that wait the wrong length, and both are under "what is not known" below.**
-`AT+CIPSTO` is settable — **`0` disables the timeout entirely**, and on such a module the wait never
-resolves anything and the old power-cycle advice is correct again — and issue **#24** deliberately
-sets it to **1800**, which makes the wait about **thirty** minutes. `AT+CIPSTO?` on the module is
-what settles which you have.
+**Five, and it is the stub's own doing on any build from `00.18`.** Two separate things clear this
+and the shorter one governs:
+
+| what | after | since |
+|---|---|---|
+| **the stub** sweeps every link id with `AT+CIPCLOSE` when it has been idle with no DZRP session | **~5 min** | build `00.18`, issue #24 |
+| **the module** reaps each idle inbound connection itself, on `AT+CIPSTO` | **~30 min** | the value the stub sets at bring-up, issue #24 |
+
+**On an older build there is no stub-side sweep and the wait is the module's alone**, which is
+~3 minutes before `AT+CIPSTO=1800` shipped and ~30 after it. And `AT+CIPSTO` is settable: **`0`
+disables the module's half entirely**, on which module only the stub's five minutes remain — and
+before `00.18`, nothing at all did, which is when the old power-cycle advice was right.
+`AT+CIPSTO?` at the machine is what settles which you have.
 
 **Do not power-cycle**, which this entry used to tell you to do. It works, but it costs you the
 debuggee, the machine's state and — if you were about to report anything — the only evidence there
@@ -260,11 +268,15 @@ would also be affected. Unmeasured, and stated here so it is not assumed either 
 
 ### What would reopen it
 
-Connections refused, screen clean, **still refused well after BOTH timers have had time to run** —
-and since build `00.18` there are two, so the wait to judge against is the shorter one. The stub
-sweeps after **five minutes** of idling (issue #24, `ESP_IDLE_SWEEP_SECS`), and the module reaps on
-its own `AT+CIPSTO` after **thirty**. So: refused ten minutes after the last traffic, with no power
-cycle since boot.
+Connections refused, screen clean, and **still refused ten minutes after the last traffic**, with no
+power cycle since boot.
+
+**Ten, because since build `00.18` two separate things clear this and the shorter one governs.** The
+stub sweeps the module's link ids itself after **five minutes** of idling (issue #24,
+`ESP_IDLE_SWEEP_SECS`); the module reaps on its own `AT+CIPSTO` after **thirty**. Whichever gets
+there first ends the fault, so the criterion is built on the stub's five minutes with a doubling for
+margin — the timer is counted in video frames, so a machine on 60 Hz timing runs it slightly fast
+and a busy one slightly slow, and neither moves it near ten.
 
 **The "still refused" clause is the load-bearing one.** A Next that refuses everybody and then
 recovers is #19 doing exactly what it is now measured to do, and is not worth reopening anything
@@ -329,9 +341,10 @@ shrank by two orders of magnitude.
 
 **ONE OF THEM WAS SCOPED AFTER ALL, AND IT IS NEITHER OF THOSE TWO — issue #24, build `00.18`.**
 The first bullet was examined and **cannot be built as written**: `test/dzrp/queued-commands.py`
-and `split-command.py` each open **three** simultaneous connections and INIT every one, so a sweep
-fired by any `<id>,CONNECT` closes the earlier ones and bench checks W4, W5 and hardware H3 all go
-red — and it still could not reach the terminal state, exactly as the bullet says. A **periodic**
+opens **three** simultaneous connections and INITs every one, `split-command.py` holds **two** across
+its exchange and hardware H3 two — so a sweep fired by any `<id>,CONNECT` closes the earlier ones and
+bench checks W4, W5 and H3 all go red, and it still could not reach the terminal state, exactly as
+the bullet says. A **periodic**
 trigger can: the terminal state leaves the stub sitting in `main_loop` with nothing able to reach
 it, which is the one place a timer still runs.
 

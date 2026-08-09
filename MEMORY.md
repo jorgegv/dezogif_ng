@@ -24,10 +24,11 @@ unlikely, and #19 shipped a sweep nothing could call.
 **THE ISSUE ASKED FOR A CONNECT-TIME TRIGGER AND IT CANNOT BE BUILT.** #24 and
 `KNOWN-ISSUES.md` #19 both name it as the cheaper option. Two reasons, either
 sufficient. It closes the OTHER link ids when a client arrives, and
-`test/dzrp/queued-commands.py` and `split-command.py` each open **three**
-simultaneous connections and INIT every one — so bench checks W4 and W5, and
-hardware H3, would go red for a change that broke nothing they were written to
-measure, retiring the multi-client coverage issues #11 and #13 exist for. And
+this suite deliberately holds several at once — `test/dzrp/queued-commands.py`
+opens **three** and INITs every one, `split-command.py` holds **two** across its
+exchange, and hardware H3 two — so bench checks W4 and W5, and H3, would go red
+for a change that broke nothing they were written to measure, retiring the
+multi-client coverage issues #11 and #13 exist for. And
 it **cannot reach the terminal state anyway**: by then no client can connect,
 so nothing triggers it. `KNOWN-ISSUES.md` says that second half in as many
 words and nobody had joined it to the first.
@@ -43,13 +44,41 @@ is open. `esp_idle_tick` returns before counting for as long as
 for minutes and perfectly healthy — can never add up to a sweep. With no
 session there is nothing to close on suspicion *of*.
 
-**THE CLOCK IS NR `0x1F`**, the low byte of the active video line counter, one
-tick per wrap. Free-running and ungated — no IFF1/IFF2, no DI, no NMI — which
-is what makes it the only usable clock in a debugger that runs with interrupts
-off and the ROM's `FRAMES` sysvar dead. **The low byte alone**, deliberately:
-a two-byte read of NR `0x1E`/`0x1F` tears at its 255→256 rollover and can
-return 0 for 255. **The border-colour countdown is NOT reused** — it counts
+**THE CLOCK IS NR `0x1E` BIT 0** — bit 8 of the active video line counter — and
+one tick is one frame, taken on its 1→0 edge. Free-running and ungated: no
+IFF1/IFF2, no DI, no NMI, which is what makes it the only usable clock in a
+debugger that runs with interrupts off and the ROM's `FRAMES` sysvar dead. One
+byte, which also avoids the tearing a two-byte read of NR `0x1E`/`0x1F` has at
+that rollover. **The border-colour countdown is NOT reused** — it counts
 *iterations*, and `transport_byte_available` can spend ~100 ms inside one.
+
+**IT WAS NR `0x1F`'s LOW BYTE AND THE CALIBRATION WAS WRONG BY NEARLY A FACTOR
+OF TWO — caught by the independent reviewer, with a VHDL citation already
+attached to the wrong answer.** I counted a tick as 256 lines, on the reading
+that the low byte wraps only on an 8-bit overflow, and derived 61 a second from
+the length of a line. But `cvc` does not run to 511: it **resets at `c_max_vc`**
+(`video/zxula_timing.vhd:457-470`), which is 319, 311, 310 or 263
+(`:168,204,238,270,298`) — **never a multiple of 256** — so the low byte
+decreases **twice** per frame, once at line 256 and once at the reset. The real
+rate was ~100 a second against a constant built for 61, and the shipped 300
+seconds would have fired at about **180**.
+
+**The fix is a better tick rather than a corrected multiplier**: bit 8 gives
+exactly one edge per frame **by construction**, because every value the counter
+can be reset to is below 256 (0 at the maximum, and NR `0x64`'s 8-bit offset at
+the vactive anchor) while `c_max_vc` is at least 263. So it holds for every
+timing mode and every value of NR `0x64`, with no arithmetic to get wrong.
+50 a second at 50 Hz and 60 at 60, i.e. a period five sixths of nominal on 60 Hz
+timing — **a real spread, said out loud**, where the old comment claimed 3%.
+
+**THE BENCH CANNOT CATCH THIS AND THAT IS THE LESSON**, which the reviewer
+pointed out and is worth more than the arithmetic: S4-S7 assert that a sweep
+*happens* within a generous wall-clock window, so they pass whether the constant
+is right or wrong. A calibration is not behaviour, and nothing here observes it.
+The only check on it is the derivation, which is exactly why it had to be
+correct and was not. **A citation next to a number is not a check of the
+number** — [[ERRORS.md]] carries "a citation is not a quotation"; this is its
+arithmetic cousin.
 
 **300 seconds, bounded from both sides rather than picked.** It must be well
 under the module's own `AT+CIPSTO` reap — 1800 since this same issue's first
@@ -122,14 +151,22 @@ that vanishes is swept for that much *sooner*, which is the case this exists
 for); and a repeating sweep (a refusal window every five minutes for as long as
 the machine is switched on).
 
-**Cost: WiFi +64 bytes** (`main_end` 0xFBF4 → 0xFC34, **620** free to the
+**Cost: WiFi +66 bytes** (`main_end` 0xFBF4 → 0xFC36, **618** free to the
 identity block). **The UART ROM is byte-identical** to `main`'s pinned
 (`e2818821…` both sides, `build/*.bin` deleted first), which is what says
 nothing leaked across the transport boundary: `esp_idle_tick` is in the WiFi
 build only and the macro expands to nothing in the other. **This changes a ROM,
 so the merge carries a `make bump`.**
 
-**NOT COVERED, and none of it is hidden.** **That the sweep REPAIRS anything** —
+**NOT COVERED, and none of it is hidden.** **The tick rate itself** — no run
+anywhere measures it, and S4-S7 would pass against any calibration, so the 50
+a second rests on the VHDL argument above and nothing else. **A connection with
+no session on it**: `esp_session_valid` is set by `CMD_INIT`, so a peer that
+connected and never introduced itself is swept once nothing at all has arrived
+for the whole period. Deliberate — "a socket is not a session" is bench check
+N1's position and issue #23's — and narrower than it sounds, since **any**
+inbound frame from **any** connection restarts the timer. **That the sweep
+REPAIRS anything** —
 no emulator run can leak a slot to a peer that vanished or make the module
 unresponsive, so every green check here shows the *mechanism fires* and never
 that it recovered a module in trouble, which is the wording #24's acceptance

@@ -346,7 +346,7 @@ probes' subject is that residue, and it is exactly the case probe B stages.
 **AND THE "ONLY THING" CLAUSE ABOVE IS FALSE, MEASURED 2026-08-08 — WHICH CUTS AGAINST THIS
 HYPOTHESIS RATHER THAN FOR IT.** The module reclaims an idle inbound slot by itself at `AT+CIPSTO`,
 default **180 s**, enforced (see the 2026-08-08 run below). So a #19 exhaustion is **self-healing** — in
-about three minutes then, and about thirty on any build from `00.16`, which sets the timer itself —
+about three minutes then, and about thirty on any build from `00.14`, which sets the timer itself —
 and #15 was two wedges that were not — the user power-cycled both times. That
 does not refute "#15 IS #19", because nobody recorded how long they waited before reaching for the
 switch, and three minutes of a dead debugger is longer than most people's patience. But it is the
@@ -510,7 +510,7 @@ giving one back. `AT+CIPSERVER=0` does not, and before issue #19 nothing in the 
 reclaims it on its own idle timer, in about three minutes **at the firmware default that governed
 when this was measured**, which is nine times longer than anything here waited. Corrected in place
 rather than left standing, because "permanently" is the word the whole power-cycle conclusion was
-built on. The timer is ~1800 s on any build from `00.16`, which sets it — so a reader reproducing
+built on. The timer is ~1800 s on any build from `00.14`, which sets it — so a reader reproducing
 this today waits ten times longer.)*
 
 **The terminal symptom is a TIMEOUT, not a refusal** — 10009 ms. Probe A read the same signature at

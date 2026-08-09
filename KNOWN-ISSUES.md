@@ -113,13 +113,13 @@ answering anybody. WAIT — it clears itself. Do not power-cycle.** The stub is 
 peer vanishes, so it cannot *detect* this; the module underneath it reaps the dead connections on
 its own idle timer, which is what ends the fault.
 
-**HOW LONG YOU WAIT DEPENDS ON THE BUILD, and on any build from `00.16` it is THIRTY minutes rather
+**HOW LONG YOU WAIT DEPENDS ON THE BUILD, and on any build from `00.14` it is THIRTY minutes rather
 than three.** The timer is the module's `AT+CIPSTO`, and since issue #24 the stub *sets* it:
 
 | build | the stub sends | you wait |
 |---|---|---|
-| before `00.16` | nothing — the firmware default governs | **~3 min** |
-| **`00.16` and later** | **`AT+CIPSTO=1800`** at bring-up | **~30 min** |
+| before `00.14` | nothing — the firmware default governs | **~3 min** |
+| **`00.14` and later** | **`AT+CIPSTO=1800`** at bring-up | **~30 min** |
 
 **That is a deliberate trade, not a regression.** The firmware's 180 s was hanging up on **idle
 debug sessions** — a DeZog session parked at a breakpoint while somebody reads code is silent for
@@ -138,7 +138,7 @@ advice was wrong" below — the mechanism of the error is more useful than the c
 
 TCP connections to the Next stop completing — they time out rather than being refused — while the
 stub's own screen stays **clean**: no error text, `Core:` line intact. **It ends by itself** — after
-about **thirty minutes** on a current build, three on one older than `00.16` — and the machine
+about **thirty minutes** on a current build, three on one older than `00.14` — and the machine
 serves normally again with nothing done to it.
 
 **THE KEYBOARD IS WHAT TELLS THIS APART FROM #18**, and from the outside they otherwise look almost
@@ -148,7 +148,7 @@ nothing. Try the keys before concluding anything.
 
 **The clock is a second discriminator, and a coarse one is enough**: #18 clears within about **3
 seconds** of the offending client going away, this within about **1800** on a current build (180 on
-one older than `00.16`). Two or three orders of magnitude apart is not a distinction anybody has to
+one older than `00.14`). Two or three orders of magnitude apart is not a distinction anybody has to
 measure carefully — and the gap got *wider* with #24, not narrower, so this discriminator is safer
 than it was.
 
@@ -177,7 +177,7 @@ at a time, oldest first, and one is all it takes to start serving again.
 **`<time>` IS NOT A CONSTANT, and this is the paragraph the rest of the entry's numbers come from.**
 The firmware default is **180 s**, which is what the module reports and what was measured. **Since
 issue #24 the stub sets it to 1800 at every bring-up** (the value does not persist to flash, so it
-is re-sent each time), and from build `00.16` that is what governs. `AT+CIPSTO?` at the machine,
+is re-sent each time), and from build `00.14` that is what governs. `AT+CIPSTO?` at the machine,
 with `.UART`, is what settles which you have.
 
 **So the clock starts at the OLDEST vanished peer, not the newest**, and one full timeout after the
@@ -299,7 +299,7 @@ habitually suspended laptop, can strand several.
 
 **But the window they must fall into is now known, and it is small.** Five leaks have to land within
 one timeout of each other, because the oldest is reaped while the later ones are still
-arriving. **That window is ~3 minutes before `00.16` and ~30 after it, so #24 made this
+arriving. **That window is ~3 minutes before `00.14` and ~30 after it, so #24 made this
 coincidence roughly TEN TIMES easier to hit** — the honest direction, and the opposite of what the
 rest of this paragraph's reassurance would suggest if the number were left at three. This entry used to say they accumulate "between two power-ons" — a window of days on a
 machine left running, which was the whole force of the worry. Narrowing the window is not measuring
@@ -472,7 +472,7 @@ state is unmeasured, and the wait remains the advice above.
 ### The one thing that made this worse, deliberately — and it has SHIPPED
 
 **Issue [#24](https://github.com/jorgegv/dezogif_ng/issues/24) sets `AT+CIPSTO=1800` at bring-up,
-and has done since build `00.16`** — this section described it in the future tense for two builds
+and has done since build `00.14`** — this section described it in the future tense for two builds
 after it landed, which is what issue #34 was filed to fix. It stretches the self-heal above from
 about **3 minutes to about 30**, so every figure in this entry is the second column below unless you
 are on an older ROM. It is the same timer read from both ends, and the trade is measured on both

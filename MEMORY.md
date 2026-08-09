@@ -162,16 +162,37 @@ reclaims an inbound slot from a peer that vanished. The module reclaims it
 itself, on `AT+CIPSTO`, and `KNOWN-ISSUES.md` #2 told users to power-cycle for
 two days on the strength of a probe that had never asked the question.
 
-**Those three are annotated in place and NOT rewritten** — 2026-08-06's
-`esp_recover` sweep entry ("nothing ever frees a slot"), its hardware run ("one
-slot consumed permanently per peer") and the #15 probes entry ("a power cycle is
-the only thing that does"). Each keeps its original wording and carries a
-`CORRECTED 2026-08-08` parenthetical pointing here, because this file records
-what was measured *then* and editing evidence to match a later reading is the
-thing this project refuses. **This mattered more than housekeeping: `MEMORY.md`
-is the file every session is told to read first, so leaving those three would
-have handed the next session precisely the belief this work removed everywhere
-else.**
+**Five sites are annotated in place and NOT rewritten**: 2026-08-06's
+`esp_recover` sweep entry, twice — its opening paragraph ("kept its inbound slot
+for the rest of the power-on session") and its hardware run ("consumed
+permanently per peer", "nothing giving one back"); the #15 probes entry ("a power
+cycle is the only thing that does", and separately its jnext expectation "keeps
+its slot for ever"); and **2026-08-05's issue #16 entry**, a different entry
+again ("keeps its slot for the rest of the power-on session"). Each keeps its
+original wording and carries a `CORRECTED 2026-08-08` parenthetical pointing
+here, because this file records what was measured *then* and editing evidence to
+match a later reading is the thing this project refuses. **This mattered more
+than housekeeping: `MEMORY.md` is the file every session is told to read first,
+so leaving them would have handed the next session precisely the belief this
+work removed everywhere else.**
+
+**IT TOOK THREE SWEEPS TO FIND FIVE SITES, AND THE REASON IS A NEW VARIANT OF
+THIS FILE'S OLDEST DISEASE.** The first sweep was repo-wide and correct — it
+found every site in `CLAUDE.md`, `doc/` and `test/` — but against `MEMORY.md` I
+searched *around the three sites already known* instead of across the whole file,
+so a fourth entry nobody had named survived. The second missed a site **in the
+very entry it was annotating**, because the phrase *"kept its inbound slot for
+the rest of the / power-on session"* **wraps across a line break**, and a
+line-oriented `grep` cannot match a phrase that spans two lines.
+
+So the rule this file already states needs one more clause. It said: the grep
+must be for the thing being corrected, not for the words you think you wrote —
+after markdown emphasis (`**any**` vs `*any*`) defeated a pattern in the M2
+entry. Now: **and prose is line-wrapped, so the grep must be
+whitespace-insensitive too.** What worked was normalising the file's whitespace
+and searching the flattened text; it found all five in one pass, plus four
+lookalikes about waits and budgets that correctly stay. A one-line `grep` over
+wrapped prose is a sweep that silently under-reports.
 
 **THE MEASUREMENT.** Two `--no-lift` runs of probe B, identical but for one
 argument, with the firewall blackhole left **up** across the wait — so no FIN,
@@ -1316,6 +1337,15 @@ report).
 that wedged rather than closing kept its inbound slot for the rest of the
 power-on session.
 
+*(**CORRECTED 2026-08-08, at the top of this entry because it is the first thing
+a reader meets.** "For the rest of the power-on session" is false: the module
+reaps an idle inbound connection itself at `AT+CIPSTO`, ~180 s, measured enforced
+on real hardware — see the 2026-08-08 entry at the top of this file. The clause
+that survives is the one this paragraph is really about, and it is unaffected:
+**nothing in this program** frees one. The entry's own later paragraph carries
+the same correction; it is repeated here because 90 lines is too far to expect a
+reader to carry a doubt.)*
+
 **THE FAILURE IT REMOVES WEARS ISSUE #15'S FACE, WHICH IS WHY IT IS NOT
 HOUSEKEEPING.** Four or five such peers and the module refuses every new client
 while `esp_recover` goes on reporting success — **five, measured on a real
@@ -1430,12 +1460,14 @@ was **clean throughout**. So the leak this fixes is real on silicon and was an
 inference from jnext's source until now.
 
 *(**CORRECTED 2026-08-08, and "permanently" is the word the whole power-cycle
-conclusion rested on.** The slot is not consumed permanently: the module reaps
-it at `AT+CIPSTO`, ~180 s. This run could not have seen that — its phase 2
-lifted the blackhole before waiting, and waited 20 s — so the ceiling, the
-timeout and the clean error area all stand exactly as measured, and only the
-word "permanently" was never this run's to say. See the 2026-08-08 entry at the
-top of this file.)*
+conclusion rested on.** **Two** clauses of that sentence go, not one: the slot is
+not consumed *"permanently"*, and it is not true that there was *"nothing giving
+one back"* — the module reaps it itself at `AT+CIPSTO`, ~180 s. This run could
+not have seen either: its phase 2 lifted the blackhole before waiting, and
+waited 20 s. So the ceiling of 5, the 10009 ms timeout and the clean error area
+all stand exactly as measured — they do not depend on the recovery mechanism —
+and it is only the sentence's two claims about *permanence* that were never this
+run's to make. See the 2026-08-08 entry at the top of this file.)*
 
 **AND THE SAME RUN SAYS THE FIX CANNOT RESCUE THAT STATE AT ALL — not "is
 unlikely to", CANNOT.** The sweep runs from `esp_recover`, which fires on
@@ -1784,7 +1816,22 @@ is full (stub healthy) or the stub is wedged — and that is exactly the positio
 `FIRST_INBOUND_CID` 1 is **4** inbound slots (`esp_at.h:437`/`:452`,
 `esp_at.cpp:894-902`); probe A must find 4, and probe B must see fresh clients
 survive **3** — a vanished peer keeps its slot for ever and the client after it
-needs one of its own. **Real firmware should be 5**, by jnext's own comment
+needs one of its own.
+
+*(**ANNOTATED 2026-08-08 for consistency rather than because the expectation
+moved.** "For ever" is false of a real module — `AT+CIPSTO` reaps an idle
+inbound connection at ~180 s — and the identical sentence in
+`doc/HARDWARE-TESTING.md`'s expectation table was softened to "for the length of
+the walk" on the same day. **Two renderings of one fact must not disagree**,
+which is why this is written down rather than left as a silent decision. The
+number is unaffected either way: the walk is seconds long, far inside any such
+timer, so 3 survivals stands. What it now depends on is the walk staying short —
+and that dependency was invisible while "for ever" was believed. jnext is
+reported to have gained `AT+CIPSTO` itself on 2026-08-08; nothing here has
+checked that, and if true it makes the walk-length caveat live rather than
+theoretical.)*
+
+**Real firmware should be 5**, by jnext's own comment
 ("ours is one lower because slot 0 is reserved"), and *that difference is itself
 a check*: a probe reporting 4 at a Next would be reproducing an emulator
 artefact. `--expect-ceiling` is passed by the emulator harness and **never** at
@@ -2519,6 +2566,16 @@ produces — and the module refuses every new client while `esp_recover` goes on
 reporting success. **Issue #16's claim that part C "subsumes the stale link
 slots problem" is FALSE and is contradicted here rather than left to be
 discovered.**
+
+*(**CORRECTED 2026-08-08**: "keeps its slot for the rest of the power-on
+session" is false. The module reaps it itself at `AT+CIPSTO`, ~180 s, measured
+enforced on real hardware — see the 2026-08-08 entry at the top of this file. So
+the residual is **bounded**, not permanent, and the four peers have to overlap
+within roughly three minutes rather than merely accumulating. What is untouched
+is this paragraph's actual point: **nothing in this program frees one**, and
+#16's part C does not subsume #19. The "user retrying a hang" clause is a
+separate matter and was independently withdrawn by the 2026-08-06 entry above as
+an unverified claim about user behaviour.)*
 
 **Deliberately NOT fixed on this branch.** Freeing a multiplexed connection
 needs `AT+CIPCLOSE=<id>`, and jnext's `AT+CIPCLOSE` takes no argument and acts

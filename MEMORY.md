@@ -100,7 +100,35 @@ byte-identity gate is EXPECTED to break here** — `commands.asm`, `constants.as
 `data_const.asm` and `ui.asm` are all common code — as it did for issues #7, #8,
 #9, #12, #20 and #31. **This changes a ROM, so the merge carries a `make bump`.**
 
-**Regression: `make test-dzrp-stub` 18/18 with W1-W6, exit 0.**
+*(**CORRECTION, and it is about this branch's own record rather than its code.**
+The bump commit for it — `00.19` — says "issue #33-class". **THERE IS NO ISSUE
+#33.** The highest number in the repository is #32, and this work never had an
+issue at all: it was found by adding C16/C17, not by anyone filing it. I invented
+the reference while writing the commit message and, the house rule being no
+`--amend`, it cannot be taken back — so it is corrected here, in the file
+CLAUDE.md designates read-first. A future reader grepping for #33 should stop.
+The lesson is one this file already carries under other names and which I had
+just spent two review rounds applying to somebody else's prose: **a specific
+reference is a claim, and inventing one is cheapest to do in the place nobody
+reviews — a commit message.**)*
+
+**Regression: `make test-dzrp-stub` 18/18 with W1-W6, exit 0**, re-run **on the
+rebased tree**, which is not the same thing as the pre-rebase green: branch A's
+idle tick sits underneath this branch now, so the earlier runs described a tree
+that no longer existed. Measured after the rebase: **18/18 with W1-W6 twice**,
+`test-slot-recovery` **7/7** — the first run anywhere of #24's sweep and this
+bound in one ROM — and `make test` **7/7**.
+
+**W5 FAILED ITS PRECONDITION TWICE ON THIS TREE BEFORE PASSING TWICE**, and that
+is recorded rather than smoothed over. The `+IPD` collision it races for did not
+arise in runs 1 and 3; it did in 4 and 5, and `main` passed it in between. So the
+2026-08-07 note that W5 is flaky stands, now at 2 of 4 rather than 1 of 3 — but
+note the flake was **not** dismissed on that precedent: the tally was gathered
+first, because branch A's idle tick had just been added to `main_loop`, which is
+exactly where the stub sits between the fixture's 8 ms-spaced writes, and a
+plausible mechanism for a real regression existed. `DZRP_SPLIT_GAP` would have
+made it pass on demand and was deliberately not used — tuning a race until it is
+green is weakening a check to make it pass.
 
 **NOT COVERED, and none of it is hidden.** **Hardware** — C16, C17 and C18 have
 never run on a Next, and C17's 16 KB is the largest inbound payload this project

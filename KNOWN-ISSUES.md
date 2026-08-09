@@ -300,8 +300,13 @@ habitually suspended laptop, can strand several.
 **But the window they must fall into is now known, and it is small.** Five leaks have to land within
 one timeout of each other, because the oldest is reaped while the later ones are still
 arriving. **That window is ~3 minutes before `00.14` and ~30 after it, so #24 made this
-coincidence roughly TEN TIMES easier to hit** — the honest direction, and the opposite of what the
-rest of this paragraph's reassurance would suggest if the number were left at three. This entry used to say they accumulate "between two power-ons" — a window of days on a
+coincidence EASIER to hit, not harder** — the honest direction, and the opposite of what the
+rest of this paragraph's reassurance would suggest if the number were left at three.
+
+**By how much is deliberately not quantified.** The window is ten times wider; the *coincidence* is
+five independent rare events landing inside it, which does not scale linearly with its width, and
+the underlying rate has never been measured. "Ten times easier" was in an earlier draft of this
+sentence and is arithmetic dressed as a finding — the direction is what is established. This entry used to say they accumulate "between two power-ons" — a window of days on a
 machine left running, which was the whole force of the worry. Narrowing the window is not measuring
 the rate, and the rate is still unmeasured; it does move the required coincidence a long way.
 

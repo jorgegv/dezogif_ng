@@ -689,11 +689,14 @@ change to this argument since it was written. This paragraph used to say the lea
 "between two power-ons", and reinforced it: *"the Next is not necessarily power-cycled often —
 Appendix B.2 of the plan describes a machine left running with the listener alive across normal
 use."* That was the whole force of the compounding worry, and `AT+CIPSTO` removes it. The oldest
-leak is reaped ~180 s after it goes quiet, so five must land within roughly three minutes of each
-other; a machine left running for a fortnight accumulates nothing. The rate is still unmeasured —
+leak is reaped one `AT+CIPSTO` timeout after it goes quiet, so five must land within roughly one
+such window of each other; a machine left running for a fortnight accumulates nothing. **That window
+is ~3 minutes on the firmware default and ~30 since build `00.14` sets `AT+CIPSTO=1800`**, so #24
+widened it tenfold — the honest direction, and the opposite of what this paragraph implied while it
+said three. The rate is still unmeasured —
 this narrows the window the rate has to fill, it does not measure the rate — but it moves the
-required coincidence from "five times before you next switch off" to "five times in three minutes",
-and those are not the same bet.
+required coincidence from "five times before you next switch off" to "five times inside one
+timeout", and those are not the same bet.
 
 **What the shipped fix covers.** `esp_recover`'s sweep reclaims slots when a recovery runs, and a
 recovery needs `ESP_FAULT_LIMIT` consecutive faults. A vanished peer **generates no faults itself**
@@ -708,16 +711,21 @@ Stated so a future session neither re-litigates this from a hunch nor dismisses 
 by pointing at this section:
 
 * a Next **refusing every new connection**, with its screen **clean** — no error area, `Core:` line
-  intact — **that is still refusing five minutes later**, and **no power cycle since boot**.
+  intact — **that is still refusing an hour later**, and **no power cycle since boot**.
 
-**The five minutes is now the load-bearing half of that criterion, and it used not to be there.**
-The module reaps an idle inbound connection at `AT+CIPSTO`, 180 s by default, so a Next that refuses
+**The wait is the load-bearing half of that criterion, and it used not to be there.**
+The module reaps an idle inbound connection at `AT+CIPSTO`, so a Next that refuses
 everybody and then starts serving again is #19 behaving exactly as measured — not a recurrence, and
 not worth reopening anything. What *would* be new is a refusal that **outlasts the timer**: either
-five peers went quiet inside one three-minute window, or something is holding slots that idling does
+five peers went quiet inside one such window, or something is holding slots that idling does
 not free, and the second of those is a different fault wearing this one's face. Say which you saw.
-If the machine has had `AT+CIPSTO` changed — issue #24 sets it to 1800 — scale the wait to match,
-because the criterion is "longer than the timeout", not "five minutes".
+
+**AN HOUR, BECAUSE THE TIMER IS ~1800 s AND NOT 180.** This criterion said *five minutes* until
+issue #34, on the firmware default — and since build `00.14` the stub sets `AT+CIPSTO=1800` itself,
+so five minutes is a sixth of the governing timeout and **a reader who waited it would have reopened
+this issue on ordinary, correct behaviour**. The rule is "comfortably longer than the timeout"; an
+hour is that, doubled for margin, and it matches `KNOWN-ISSUES.md` #19's own criterion rather than
+restating a second number that can drift away from it.
 
 **`make probe-slots` is NOT a discriminator in that state, and the first version of this section
 wrongly said it was.** Its A1 check asks whether an *earlier* connection still answers, and

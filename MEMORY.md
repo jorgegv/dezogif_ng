@@ -101,16 +101,26 @@ byte-identity gate is EXPECTED to break here** — `commands.asm`, `constants.as
 #9, #12, #20 and #31. **This changes a ROM, so the merge carries a `make bump`.**
 
 *(**CORRECTION, and it is about this branch's own record rather than its code.**
-The bump commit for it — `00.19` — says "issue #33-class". **THERE IS NO ISSUE
-#33.** The highest number in the repository is #32, and this work never had an
-issue at all: it was found by adding C16/C17, not by anyone filing it. I invented
-the reference while writing the commit message and, the house rule being no
-`--amend`, it cannot be taken back — so it is corrected here, in the file
-CLAUDE.md designates read-first. A future reader grepping for #33 should stop.
-The lesson is one this file already carries under other names and which I had
-just spent two review rounds applying to somebody else's prose: **a specific
-reference is a claim, and inventing one is cheapest to do in the place nobody
-reviews — a commit message.**)*
+The bump commit for it — `00.19` — says "issue #33-class". **THAT REFERENCE IS
+INVENTED.** This work never had an issue at all: it was found by adding C16/C17,
+not by anyone filing it, and the repository stopped at #32 when the message was
+written. The house rule being no `--amend`, it cannot be taken back, so it is
+retracted here, in the file CLAUDE.md designates read-first.*
+
+*(**AND THE RETRACTION WENT STALE WITHIN THE HOUR, WHICH IS THE PART WORTH
+KEEPING.** Its first version said "there is no issue #33" and told a reader to
+stop. **There is now**: filing this session's two review follow-ups minted
+[#33](https://github.com/jorgegv/dezogif_ng/issues/33) — `conformance.py`'s
+`main()` not catching bare `OSError` — and #34. So the dangling reference became
+a **resolving** one that points at something else entirely, which is strictly
+worse than a dead link: a reader who follows it finds a real, plausible issue and
+has no reason to doubt it. **The invented number was falsified by my own next
+action**, an hour later, in a correction whose whole subject was inventing
+references. Two lessons, and the second is the one that generalises: a specific
+reference is a claim, and inventing one is cheapest in the place nobody reviews —
+a commit message; and **a correction that asserts a fact about the world can go
+stale exactly like the claim it corrects**, so retract by saying what was written
+and why it was wrong, not by asserting what a reader will find.)*
 
 **Regression: `make test-dzrp-stub` 18/18 with W1-W6, exit 0**, re-run **on the
 rebased tree**, which is not the same thing as the pre-rebase green: branch A's

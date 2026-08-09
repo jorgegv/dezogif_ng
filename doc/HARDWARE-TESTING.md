@@ -315,7 +315,7 @@ they are not part of `make test`, and **none of them can close
 that wedge deliberately; A and B's job is to make a positive reproduction possible.
 
 **Probe C is here for the family rather than for #15.** Its subject is the module's own idle
-timeout, which is what *bounds* #19's slot leak at about three minutes and which
+timeout, which is what *bounds* #19's slot leak — at about three minutes on the firmware default, and at about **thirty** since
 [issue #24](https://github.com/jorgegv/dezogif_ng/issues/24) lengthened deliberately — it is in the
 shipped ROM as of build 00.14. It is also the only way, from the PC, to show that the value the
 stub sends is the value a real module then obeys.
@@ -345,8 +345,9 @@ probes' subject is that residue, and it is exactly the case probe B stages.
 
 **AND THE "ONLY THING" CLAUSE ABOVE IS FALSE, MEASURED 2026-08-08 — WHICH CUTS AGAINST THIS
 HYPOTHESIS RATHER THAN FOR IT.** The module reclaims an idle inbound slot by itself at `AT+CIPSTO`,
-default **180 s**, enforced (see the 2026-08-08 run below). So a #19 exhaustion is **self-healing in
-about three minutes**, and #15 was two wedges that were not — the user power-cycled both times. That
+default **180 s**, enforced (see the 2026-08-08 run below). So a #19 exhaustion is **self-healing** — in
+about three minutes then, and about thirty on any build from `00.16`, which sets the timer itself —
+and #15 was two wedges that were not — the user power-cycled both times. That
 does not refute "#15 IS #19", because nobody recorded how long they waited before reaching for the
 switch, and three minutes of a dead debugger is longer than most people's patience. But it is the
 first evidence that points *away*, and it gives the hypothesis something new to answer: a #19
@@ -506,9 +507,11 @@ survivable and the fifth is not — one slot consumed per peer, with nothing *th
 giving one back. `AT+CIPSERVER=0` does not, and before issue #19 nothing in the stub did.
 
 *(That sentence said "consumed **permanently**" until 2026-08-08. It is not permanent: the module
-reclaims it on its own idle timer, in about three minutes, which is nine times longer than anything
-here waited. Corrected in place rather than left standing, because "permanently" is the word the
-whole power-cycle conclusion was built on.)*
+reclaims it on its own idle timer, in about three minutes **at the firmware default that governed
+when this was measured**, which is nine times longer than anything here waited. Corrected in place
+rather than left standing, because "permanently" is the word the whole power-cycle conclusion was
+built on. The timer is ~1800 s on any build from `00.16`, which sets it — so a reader reproducing
+this today waits ten times longer.)*
 
 **The terminal symptom is a TIMEOUT, not a refusal** — 10009 ms. Probe A read the same signature at
 the ceiling on the same machine earlier the same day (**10002 ms**, 2026-08-06; that run was
@@ -540,7 +543,8 @@ connect-time sweep — which is not issue #19.
 **What has changed since is the CONSEQUENCE of that limit, not the limit.** This paragraph used to
 end "and a power cycle remains the answer to the terminal state". The stub still cannot rescue it —
 everything above is unaltered — but **the module rescues itself**, on its own idle timer, within
-about three minutes (2026-08-08, below). So the sweep this section is apologising for is answering a
+about three minutes as measured (2026-08-08, below) and about thirty on a current ROM, which sets
+`AT+CIPSTO=1800` at bring-up. So the sweep this section is apologising for is answering a
 question that mostly answers itself, which is a smaller gap than it looked.
 
 **AND A SYMBOL SHIFT + NMI RE-INIT IS NOT A WAY OUT EITHER**, which is worth knowing because it is
@@ -734,8 +738,9 @@ starts serving again is #19; one that does not is something else, and you still 
 
 **The decision to leave this unfixed is a cost judgement against an unmeasured rate**, not a
 finding that it will not happen — and it stands on firmer ground since 2026-08-08 than when it was
-made, because the fault it declines to fix clears itself in about three minutes rather than needing
-the power switch. Closing the criterion properly still needs a sweep reachable from a quiet stub —
+made, because the fault it declines to fix clears itself unaided rather than needing
+the power switch — in about three minutes as measured, and about thirty since issue #24 lengthened
+the timer, which is less comfortable than it was but still not the power switch. Closing the criterion properly still needs a sweep reachable from a quiet stub —
 periodic, or at connect time — which is a separate change, and one with distinctly less to buy now.
 
 ### Probe C — the idle-drop probe (`make probe-idle-drop`, no root)

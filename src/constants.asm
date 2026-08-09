@@ -261,18 +261,48 @@ ESP_BAUDRATE:   equ 115200
 ;     runs the ESP at, on emulator evidence, is exactly the move that has twice
 ;     cost this project a hardware evening.
 ;
-; So the machinery ships and the switch does not. `make TRANSPORT=wifi
-; BAUD_HIGH=460800 mf-rom` is the ROM to try on a Next first.
+; ALL OF THAT IS THE HISTORY OF THIS CONSTANT AND IS KEPT DELIBERATELY. It is
+; why the default was ESP_BAUDRATE — the negotiation assembled OUT — from the day
+; the machinery landed until 2026-08-09.
 ;
 ;---------------------------------------------------------------------------
-; WHAT WOULD JUSTIFY FLIPPING THIS DEFAULT TO 460800
+; THE DEFAULT IS NOW 460800, EARNED ON 2026-08-09 (user, on their own Next)
 ;
-; Flipping it is one line. Earning it is six results on a real Next, and they
-; are written out here rather than left as "run the bench and see", because the
-; interesting failure does not look like a bad number — it looks like a working
-; debugger with one extra word on its screen.
+; Every one of the six results below was produced at build 00.16, and the build
+; matters: at 460800 an earlier ROM draws its own screen WRONG (issue #31, a
+; 768-byte font buffer the assembler could not see), so criterion 1 could not
+; have been read honestly off it. Measured:
 ;
-; Install the 460800 ROM above, then:
+;   1. the screen reads 460800, and is clean;
+;   2. `make test-hardware` FIVE runs of five, H2 = 15 of 15 every time;
+;   3. H6 clean every run, 0 bright-red pixels, no `RX Overflow`;
+;   4. H5 median 20.3 KB/s against the 8.3 baseline — 2.45x, criterion was 2x;
+;   5. H4 median 6.6 ms against 11.2, i.e. 41% BETTER. Note this DISPROVES the
+;      prediction in criterion 5 below, which expected it unchanged;
+;   6. M1, `R`, M1 — and the probe was shown to have fired, not assumed: with
+;      the machine sitting after the reset `.UART` got no answer at 115200,
+;      where after a power cycle it gets `OK`. See doc/HARDWARE-TESTING.md.
+;
+; Plus the confirmation asked for below: a real DeZog F5 loaded a `.nex` over
+; the raised link and was faster.
+;
+; WHAT IS STILL NOT MEASURED, because a met criterion list is not a proof:
+; a SECOND machine or module — every figure here is one Next, one ESP-01, one
+; reporter — and the probe against a module at a rate this ROM was not built
+; for, which nothing stages.
+;
+; THE FALLBACK IS WHAT MAKES THIS SAFE TO DEFAULT. A module that refuses
+; AT+UART_CUR leaves the stub at 115200 and serving (bench L2), and a module
+; found at the raised rate after a reset is recovered by the bring-up probe
+; (criterion 6). Neither needs a power cycle. `BAUD_HIGH=115200` assembles the
+; negotiation back out if a machine ever needs it.
+;
+;---------------------------------------------------------------------------
+; THE SIX CRITERIA, KEPT AS WRITTEN, because they are what any FUTURE rate has
+; to meet — 921600 included, which needs the per-byte RECEIVE cost brought below
+; 300 T-states from a figure bracketed only as 470 < C <= 610.
+;
+; Install a ROM at the candidate rate, then:
 ;
 ; 1. THE SCREEN MUST READ `ESP Baudrate: 460800`. If it reads 115200 the module
 ;    refused and there is nothing to measure — the fallback worked, and the
@@ -319,17 +349,18 @@ ESP_BAUDRATE:   equ 115200
 ; ESP_TX_PASSES / TRANSPORT_WAIT_RX_SECONDS / ESP_FAULT_LIMIT / ESP_LINK_IDS /
 ; ESP_SERVER_TIMEOUT family. Four settings each reach a state no other can:
 ;
-;   * the default, ESP_BAUDRATE ITSELF, which assembles the whole negotiation
-;     OUT — what ships, and the "before" control;
-;   * 460800, where the negotiation happens and everything above the transport
-;     has to keep working across it;
+;   * ESP_BAUDRATE ITSELF, which assembles the whole negotiation OUT. That is
+;     no longer the default, but it is still the "before" control L3 needs, and
+;     it is the setting to reach for if a machine ever cannot sustain the rate;
+;   * 460800, WHAT NOW SHIPS: the negotiation happens and everything above the
+;     transport has to keep working across it;
 ;   * a rate the module REFUSES, which is the only way to execute the arm that
 ;     declines to switch. jnext answers ERROR above 5000000;
 ;   * 1000000, the ceiling above, kept as a checked fact rather than a paragraph.
 ;
 ; See test/run-baud.sh.
  IFNDEF ESP_BAUD_HIGH
-ESP_BAUD_HIGH:  equ ESP_BAUDRATE
+ESP_BAUD_HIGH:  equ 460800
  ENDIF
 
 ; STRINGIFY renders exactly seven decimal digits' worth (macros.asm), so an

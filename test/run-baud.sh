@@ -7,7 +7,9 @@
 # client over the emulated ESP-01 that reads the stub's own screen back with
 # CMD_READ_MEM.
 #
-# THE HEADLINE RESULT IS L5, AND IT IS WHY THE SHIPPED ROM DOES NOT NEGOTIATE.
+# THE HEADLINE RESULT IS L5, AND IT IS WHY THE SHIPPED ROM NEGOTIATES TO 460800
+# AND NOT FURTHER. (Until 2026-08-09 it did not negotiate at all; the default was
+# earned on hardware — see ESP_BAUD_HIGH in src/constants.asm.)
 # 1000000 — the rate this work was commissioned for — does not survive a
 # CMD_LOOPBACK of 1 KB or more, which overflows the UART's 512-byte Rx FIFO. The
 # cost is the PER-BYTE RECEIVE PATH and has nothing to do with sending:
@@ -37,7 +39,7 @@
 #   L2  BAUD_HIGH=6000000    above what the module will parse, so it answers
 #                            ERROR — and the stub must NOT move its own side,
 #                            must still serve, and must say 115200
-#   L3  THE SHIPPED ROM      the negotiation assembled OUT, because that is what
+#   L3  BAUD_HIGH=115200    the negotiation assembled OUT, because that is what
 #                            ships: no AT+UART anywhere, and the same service
 #   L4  BAUD_HIGH=460800     a transport fault drives esp_recover, whose tail is
 #       FAULT_LIMIT=1        `jp transport_init` — so the whole chain, negotiation
@@ -107,7 +109,7 @@
 #   OUT           build directory
 #   ROM_HIGH      WiFi ROM, BAUD_HIGH=460800
 #   ROM_REFUSED   WiFi ROM, BAUD_HIGH=6000000
-#   ROM_OFF       the shipped WiFi ROM (no negotiation)
+#   ROM_OFF       WiFi ROM, BAUD_HIGH=115200 (negotiation assembled out)
 #   ROM_RECOVER   WiFi ROM, BAUD_HIGH=460800 FAULT_LIMIT=1
 #   ROM_CEILING   WiFi ROM, BAUD_HIGH=1000000
 
@@ -130,7 +132,7 @@ SD_IMAGE=${SD_IMAGE:-$HOME/.jnext/sdcard/cspect-next-1gb-fixed.img}
 OUT=${OUT:-build}
 ROM_HIGH=${ROM_HIGH:-$OUT/enNextMf-wifi-baud460800.rom}
 ROM_REFUSED=${ROM_REFUSED:-$OUT/enNextMf-wifi-baud6000000.rom}
-ROM_OFF=${ROM_OFF:-$OUT/enNextMf-wifi.rom}
+ROM_OFF=${ROM_OFF:-$OUT/enNextMf-wifi-baud115200.rom}
 ROM_RECOVER=${ROM_RECOVER:-$OUT/enNextMf-wifi-fl1-baud460800.rom}
 ROM_CEILING=${ROM_CEILING:-$OUT/enNextMf-wifi-baud1000000.rom}
 
@@ -429,7 +431,7 @@ fi
 # ROM. It is also a ROM a user can actually ship: the escape hatch for a board or
 # a module that will not take the rate.
 # ===========================================================================
-log "L3: the SHIPPED ROM — the negotiation compiled out"
+log "L3: BAUD_HIGH=115200 — the negotiation compiled out"
 run_client "$ROM_OFF" "$OUT/baud-l3.log" \
     python3 "$SCREEN_CLIENT" --host 127.0.0.1 --port "$PORT" --timeout 20
 

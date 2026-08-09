@@ -840,13 +840,14 @@ test-cipsto:
 test-baud:
 	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
 	@$(MAKE) --no-print-directory TRANSPORT=wifi BAUD_HIGH=460800 mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi BAUD_HIGH=115200 mf-rom
 	@$(MAKE) --no-print-directory TRANSPORT=wifi BAUD_HIGH=6000000 mf-rom
 	@$(MAKE) --no-print-directory TRANSPORT=wifi BAUD_HIGH=1000000 mf-rom
 	@$(MAKE) --no-print-directory TRANSPORT=wifi BAUD_HIGH=460800 FAULT_LIMIT=1 mf-rom
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
 	 ROM_HIGH="$(OUT)/enNextMf-wifi-baud460800.rom" \
 	 ROM_REFUSED="$(OUT)/enNextMf-wifi-baud6000000.rom" \
-	 ROM_OFF="$(ROM_WIFI)" \
+	 ROM_OFF="$(OUT)/enNextMf-wifi-baud115200.rom" \
 	 ROM_RECOVER="$(OUT)/enNextMf-wifi-fl1-baud460800.rom" \
 	 ROM_CEILING="$(OUT)/enNextMf-wifi-baud1000000.rom" $(TEST)/run-baud.sh
 

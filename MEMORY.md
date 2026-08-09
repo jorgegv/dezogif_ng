@@ -119,10 +119,29 @@ paragraph named only the first and attached it to all four handlers.**
   same decision per address — `cp HIGH MAIN_ADDR`, then `slot_backup.slot7` into
   `SWAP_SLOT`.
 
-What makes all four safe is the same pair of instructions, present in both
-copies: `and 0x1F` / `add HIGH SWAP_ADDR` **masks every address into the 8 KB
-window**, so no client-declared count can walk out of it. `cmd_exec_asm` already
-carried its own bound against `PAYLOAD_EXEC_ASM`. What made `cmd_loopback` and
+**AND IT TAKES TWO DIFFERENT THINGS TO MAKE THEM SAFE, WHICH THE FIRST VERSION
+OF THIS CORRECTION ALSO GOT WRONG** — by naming `and 0x1F` / `add HIGH
+SWAP_ADDR` as load-bearing in both copies. That pair establishes a correct
+**starting address**; it is not what bounds a **count**, and the distinction
+falls exactly where this branch's defect lives:
+
+* In `cmd_set_breakpoints` and `cmd_restore_mem` the pair really is the whole of
+  it, because each entry is a fixed-size record carrying its **own** fresh
+  16-bit address, re-masked every entry (`commands.asm:886-887`, `:966-967`).
+  No growing entry count can escape the window.
+* In `memory_loop` the pair runs **once**, on first entry to phase 1
+  (`backup.asm:331-332`). Every later phase-1 re-entry sets `ld hl,SWAP_ADDR`
+  outright (`:356-357`) and never re-masks. What stops an unbounded client
+  `DE` from walking HL out of the window is a **separate** check the citation
+  above does not reach: `.inner_loop`'s own `cp 0x20*(SWAP_SLOT+1)`
+  (`backup.asm:377-380`). And `DE` genuinely is unbounded on the way in —
+  `payload_read_mem.mem_size` (`commands.asm:581`, `:591`) and
+  `cmd_write_mem`'s computed length (`:619-624`) both come straight off the
+  wire with no cap.
+
+So the routine among the four that is actually exposed to an unbounded declared
+count is protected by the one mechanism the sentence did not name.
+`cmd_exec_asm` already carried its own bound against `PAYLOAD_EXEC_ASM`. What made `cmd_loopback` and
 `cmd_write_bank` the two is that they buffer **straight into `SWAP_ADDR`** with a
 plain `receive_bytes` loop and no address translation at all. So the fix is
 exactly as wide as the defect.
@@ -137,7 +156,17 @@ stated instead of a traced one, with a specific but inapplicable line citation,
 in the one file every session is told to read first and treat as ground truth.
 [[ERRORS.md]] names the disease; this is the instance. **The safety conclusion is
 unchanged** — both handlers really are immune — which is exactly what makes this
-kind of error survive. **The error
+kind of error survive.
+
+**AND THE FIRST ATTEMPT TO CORRECT IT REPEATED THE DISEASE ONE LAYER DOWN**,
+which is the part most worth keeping. Having been caught naming the wrong
+*function*, I named the wrong *instructions* — a masking pair that is genuinely
+load-bearing in two of the three copies and merely sets a starting address in the
+third, the third being the only one exposed to the unbounded count this whole
+branch is about. Both errors were found the same way, by a reviewer tracing the
+control flow instead of reading the claim; and both were plausible precisely
+because the conclusion they supported was true. **A correction is not exempt from
+the standard it is correcting.** **The error
 text itself** is drawn by no check; nothing reads row 15 back for this code, and
 the 32-column fit is by inspection. And **what a real client does with the
 silence**: DeZog has never sent an oversize frame and there is no reason it

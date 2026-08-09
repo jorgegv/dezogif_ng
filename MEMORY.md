@@ -1275,10 +1275,12 @@ The WiFi build has over a kilobyte of headroom, i.e. many such steps. "No longer
 why it is annotated here rather than quietly fixed.** "Over a kilobyte of headroom, i.e. many such
 steps" is wrong twice. The ceiling is not the identity block at `0xFEA0` but the **RAM font buffer at
 `0xFBC0`**, 736 bytes lower, which `main_bank_entry` fills and which nothing in the source emits a
-byte into — so the WiFi build's real headroom is **119 bytes**. And the buffer's address is derived
-from `MF.main_prg_copy`, so **every 16-byte step spends 16 of those 119**: probed, one step put it at
-`0xFBB0` with `main_end` unmoved. At most seven steps, and only if the debugger half grows by
-nothing. Issue #31 is what this cost, and `main.asm` now `ASSERT`s the real bound.)*
+byte into — so the WiFi build's real headroom was **119 bytes**. **Issue #31 then removed that
+buffer**, reading the glyphs from the ROM instead, which puts the ceiling back at the identity block
+and the WiFi figure at **818**. What survives is the other half of the error: a 16-byte step still
+spends 16 bytes of the debugger half, because the image ends at `0xE000 + 0x2000 - MF.main_prg_copy`
+and `ROM_MAGIC_ADDR` moves down with it — probed, one step put the old buffer at `0xFBB0` with
+`main_end` unmoved. So "many such steps" was wrong either way.)*
 
 [doc/ASYNCHRONOUS-BREAK-DESIGN.md]: doc/ASYNCHRONOUS-BREAK-DESIGN.md
 

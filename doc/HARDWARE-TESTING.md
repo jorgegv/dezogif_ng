@@ -1073,6 +1073,28 @@ An earlier draft of this section reported that as "about a third of the estimate
 one-way payload figure against a line rate. It is recorded here because the arithmetic error
 pointed at the wrong optimisation.
 
+## The suite at its full size — measured 2026-08-08 12:37, on a real Next
+
+The run above was 12 checks because that is the size the suite was that day. C13/C14 (issue #9) and
+C15 (`CMD_CLOSE`) were added afterwards, and this is the first recorded run carrying all of them.
+**`192.168.100.136`, 3 passed / 0 failed / 3 measured / 0 skipped of 6.**
+
+| check | result |
+|---|---|
+| **H1** | PASS — connected in **242 ms** |
+| **H2** | PASS — **15 of 15** conformance, 0 failed, 0 unsupported. C13, C14 and C15 included, so every check in the suite has now run on silicon |
+| **H3** | PASS — two simultaneous connections each got their own payload back |
+| **H4** | 20 samples: min **10.8**, median **11.2**, max **13.4 ms** |
+| **H5** | 4096 bytes in **0.97 s** — 8.3 KB/s round trip, 4.1 KB/s one way |
+| **H6** | the error area is **CLEAN**, 0 bright-red pixels on the stub's own screen |
+
+**The latency and throughput agree with the post-issue-#11 measurements** (11.3-11.5 ms median,
+up to 8.3 KB/s) rather than with the 13.0 ms of 2026-08-05, so the `+IPD` capture fix continues to
+cost nothing measurable. **The build number was not captured** — the DZRP `PROGRAM_NAME` reports
+upstream's `dezogif v2.2.1`, not our identity block, which is read off the stub's screen. So this
+row cannot be tied to a specific build the way the 000A run can.
+
+
 ## At 460800 baud — measured 2026-08-09, on a real Next, build `00.16`
 
 **The first runs above 115200, and the first time the bring-up probe has executed anywhere.** The
@@ -1093,14 +1115,17 @@ the "the screen must say 460800" criterion cannot be read honestly off a screen 
 | **H6** | the error area is **CLEAN** every run, 0 bright-red pixels, and no `RX Overflow` |
 
 **Against the 115200 baseline: latency 11.2 → 6.6 ms median, throughput 8.3 → 20.3 KB/s, i.e.
-2.45x.** That baseline is the 2026-08-08 run above, so this is a **cross-session** comparison and
+2.45x.** That baseline is the *suite at its full size* run of **2026-08-08 12:37** — named rather than
+pointed at, because "above"/"below" goes stale the next time a dated section is added, which is
+exactly what happened while this section was being written. So this is a **cross-session**
+comparison and
 not a same-session A/B with only the rate varied — said out loud because WiFi round trip is not a
 controlled quantity. The effect is far larger than the jitter within either set (every one of the
 five runs lands between 19.8 and 20.4 KB/s, against 8.3), which is why it is quoted at all. The latency result **contradicts the prediction recorded with the negotiation**, which said
 to expect it unchanged because 11.2 ms is WiFi round trip rather than wire time. It nearly halved,
 so a material part of that figure was the wire after all.
 
-### The bring-up probe fired, and the precondition was OBSERVED rather than inferred
+### The bring-up probe fired — and the conclusion rests on one cited premise
 
 `transport_init` greets the module at 115200 and, on silence, at `ESP_BAUD_HIGH`. That second
 greeting is **structurally unreachable in jnext**, whose module answers the first one every time, so
@@ -1137,25 +1162,3 @@ which is this document's standing rule about negative results from uncontrolled 
 8-16 KB per bank, far more than C5's largest 4096 bytes, on the very receive path whose per-byte cost
 is what stops 600000 working. A **second machine or module**. And the probe **against a module at a
 rate this ROM was not built for**, which nothing stages: it only ever tries the two rates it knows.
-
-
-## The suite at its full size — measured 2026-08-08 12:37, on a real Next
-
-The run above was 12 checks because that is the size the suite was that day. C13/C14 (issue #9) and
-C15 (`CMD_CLOSE`) were added afterwards, and this is the first recorded run carrying all of them.
-**`192.168.100.136`, 3 passed / 0 failed / 3 measured / 0 skipped of 6.**
-
-| check | result |
-|---|---|
-| **H1** | PASS — connected in **242 ms** |
-| **H2** | PASS — **15 of 15** conformance, 0 failed, 0 unsupported. C13, C14 and C15 included, so every check in the suite has now run on silicon |
-| **H3** | PASS — two simultaneous connections each got their own payload back |
-| **H4** | 20 samples: min **10.8**, median **11.2**, max **13.4 ms** |
-| **H5** | 4096 bytes in **0.97 s** — 8.3 KB/s round trip, 4.1 KB/s one way |
-| **H6** | the error area is **CLEAN**, 0 bright-red pixels on the stub's own screen |
-
-**The latency and throughput agree with the post-issue-#11 measurements** (11.3-11.5 ms median,
-up to 8.3 KB/s) rather than with the 13.0 ms of 2026-08-05, so the `+IPD` capture fix continues to
-cost nothing measurable. **The build number was not captured** — the DZRP `PROGRAM_NAME` reports
-upstream's `dezogif v2.2.1`, not our identity block, which is read off the stub's screen. So this
-row cannot be tied to a specific build the way the 000A run can.

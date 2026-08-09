@@ -267,7 +267,7 @@
 ;
 ; 12. THE LINK IS NEGOTIATED UP, AND THE HARD PART IS COMING BACK DOWN. Issue
 ;    #25. After the module has answered at 115200 the stub asks it to move to
-;    ESP_BAUD_HIGH (constants.asm, 1000000 as shipped) with `AT+UART_CUR=`, moves
+;    ESP_BAUD_HIGH (constants.asm, 460800 as shipped) with `AT+UART_CUR=`, moves
 ;    its own prescaler to match, and says `AT` up there to see whether anything
 ;    survived. See esp_negotiate_baud and esp_uart_set_rate.
 ;

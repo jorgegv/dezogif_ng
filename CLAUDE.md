@@ -680,9 +680,11 @@ strongest:
 4m. **`make test-baud`** — the link negotiated up from 115200 (issue #25), 5 headless jnext runs,
    5 checks, and the **seventh** bench to move a build-time constant to reach its subject. The stub
    asks the module to move with `AT+UART_CUR=`, moves its own prescaler in step, verifies, and comes
-   back down if the module refuses or the link does not survive. **`ESP_BAUD_HIGH` DEFAULTS TO
-   `ESP_BAUDRATE`, SO THE SHIPPED ROM DOES NOT NEGOTIATE**, and that default is the bench's own
-   finding rather than caution: **1000000 fails the conformance suite**. A `CMD_LOOPBACK` of 1 KB or
+   back down if the module refuses or the link does not survive. **SINCE 2026-08-09 `ESP_BAUD_HIGH`
+   DEFAULTS TO 460800, SO THE SHIPPED WiFi ROM NEGOTIATES** — earned on the user's own Next against
+   the six criteria written beside the constant, not on emulator evidence. It defaulted to
+   `ESP_BAUDRATE` before that, and the reason it is 460800 and not higher is still the bench's own
+   finding: **1000000 fails the conformance suite**. A `CMD_LOOPBACK` of 1 KB or
    more overflows the UART's 512-byte Rx FIFO. **The cost is the PER-BYTE RECEIVE PATH, not the
    send path** — `cmd_loopback` drains the whole payload into the swap bank before it sends anything
    (`commands.asm:959-1018`), and L5's own log shows the first dropped byte 2 ms after the `+IPD`
@@ -693,8 +695,9 @@ strongest:
    460800 also passes 15 of 15 with W1-W6. **It is not an echo problem**: any large *inbound*
    payload is affected, and `CMD_WRITE_BANK` pushes 8-16 KB per bank on every DeZog `.nex` load, so
    whoever raises this ceiling must optimise the receive path. **L1** the negotiation at 460800,
-   **L2** a refused rate where the stub must NOT move alone, **L3** the shipped ROM sending no
-   `AT+UART` at all, **L4** `esp_recover`'s `jp transport_init` re-running the whole chain, and
+   **L2** a refused rate where the stub must NOT move alone, **L3** a `BAUD_HIGH=115200` build
+   sending no `AT+UART` at all — it was the *shipped* ROM until the default moved, and L1's
+   attribution needs that control whichever ROM provides it, **L4** `esp_recover`'s `jp transport_init` re-running the whole chain, and
    **L5 the ceiling — a check that PASSES when C5 fails**, W3's shape, kept so that whoever raises
    the default has to make it go green by changing the thing it measures.
    **THE DISCRIMINATING ASSERTIONS ARE ON jnext's UART LOG, NOT ON BEHAVIOUR**, and that is forced:
@@ -705,7 +708,10 @@ strongest:
    programmed divisor 5 after an `ERROR` and **still served DZRP perfectly**. **What no run here
    reaches**: the rate itself, the half-switched link (structurally unreachable), and the bring-up
    probe — jnext's module answers the first greeting every time, so that branch is dead code here.
-   Binds a host TCP port, so not part of `make test`. **It says nothing about a real ESP-01.**
+   Binds a host TCP port, so not part of `make test`. **This bench says nothing about a real
+   ESP-01** — but the rate it defaults to no longer rests on it: 460800 was measured on hardware
+   (five `make test-hardware` runs at 15/15, and the bring-up probe shown to fire), and the probe
+   this bench calls dead code **has now executed there**. See `doc/HARDWARE-TESTING.md`.
 5. **`build/ut.nex`** — the same tests, **DeZog-driven** (`"unitTests": true` + zsim + the
    `customCode` plugin) in VS Code. Still a manual layer, and still the only way to exercise the
    36 that 4d must skip. `make unit-tests` assembles it; nothing here runs it.

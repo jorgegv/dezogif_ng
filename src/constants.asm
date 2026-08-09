@@ -214,8 +214,10 @@ ESP_BAUDRATE:   equ 115200
 ; "mediocre everywhere", which is still 1000000, for a different reason than
 ; the one that was written down.
 ;
-; IT DEFAULTS TO ESP_BAUDRATE, i.e. THE NEGOTIATION IS OFF IN THE SHIPPED ROM,
-; and that is a measurement rather than caution. Two things decided it:
+; IT DEFAULTED TO ESP_BAUDRATE UNTIL 2026-08-09, i.e. THE NEGOTIATION WAS OFF IN
+; THE SHIPPED ROM — everything from here to the "THE DEFAULT IS NOW 460800" block
+; below is the reasoning for that, kept because it is what any future rate has to
+; argue against. It was a measurement rather than caution. Two things decided it:
 ;
 ;   * 1000000 — the rate this was built for — FAILS the conformance suite. A
 ;     CMD_LOOPBACK of 1024 bytes or more overflows the UART's 512-byte Rx FIFO
@@ -283,13 +285,23 @@ ESP_BAUDRATE:   equ 115200
 ;      the machine sitting after the reset `.UART` got no answer at 115200,
 ;      where after a power cycle it gets `OK`. See doc/HARDWARE-TESTING.md.
 ;
-; Plus the confirmation asked for below: a real DeZog F5 loaded a `.nex` over
-; the raised link and was faster.
+; The confirmation asked for below — a real DeZog F5 loading a `.nex` — was also
+; done, and is the WEAKEST item here: the user reports it worked and felt faster,
+; with no timing captured and no artefact. Recorded at that strength in
+; doc/HARDWARE-TESTING.md and worth nothing more than that.
 ;
 ; WHAT IS STILL NOT MEASURED, because a met criterion list is not a proof:
 ; a SECOND machine or module — every figure here is one Next, one ESP-01, one
 ; reporter — and the probe against a module at a rate this ROM was not built
 ; for, which nothing stages.
+;
+; AND ONE RESIDUAL THAT NONE OF THE SIX CRITERIA REACHES, named because "a second
+; module" does not convey it: every failure they cover is a CLEAN one — the module
+; refuses, or goes silent, and the fallback catches it. A different unit with a
+; worse crystal, more RF noise or a longer bus path could ACCEPT
+; AT+UART_CUR=460800 and then corrupt bits on the wire, which is a different
+; shape and which nothing here would catch as a refusal. DZRP's own framing would
+; surface it as desynchronisation rather than as a rate fault.
 ;
 ; THE FALLBACK IS WHAT MAKES THIS SAFE TO DEFAULT. A module that refuses
 ; AT+UART_CUR leaves the stub at 115200 and serving (bench L2), and a module

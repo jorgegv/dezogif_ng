@@ -1159,7 +1159,17 @@ and `ESP_BAUD_HIGH` is the only other rate it tries.
 earlier silence was the rate. Without that second step the evidence would have been worth nothing,
 which is this document's standing rule about negative results from uncontrolled instruments.
 
-**NOT established by these runs.** A **DeZog `.nex` load** at this rate — `CMD_WRITE_BANK` pushes
-8-16 KB per bank, far more than C5's largest 4096 bytes, on the very receive path whose per-byte cost
-is what stops 600000 working. A **second machine or module**. And the probe **against a module at a
+**A DeZog `.nex` load at this rate WAS then done, and it is the weakest item on this page.** The
+user ran a real F5 over the raised link and reports it worked and felt faster. **No timing was
+captured and there is no artefact**, so it is worth exactly that: it says the largest inbound traffic
+the stub ever sees — `CMD_WRITE_BANK`, 8-16 KB per bank, far more than C5's largest 4096 bytes, on
+the very receive path whose per-byte cost is what stops 600000 working — did not visibly fall over.
+It is not a measurement and nothing should be built on it.
+
+**NOT established by these runs.** A **second machine or module**. And, named separately because
+"a second module" does not convey it, **a marginal link that ACCEPTS the rate and then corrupts
+bits**: every failure the six criteria cover is a clean one — the module refuses, or goes quiet, and
+the fallback catches it. A unit with a worse crystal, more RF noise or a longer bus path could take
+`AT+UART_CUR=460800` and misbehave on the wire, which would surface as DZRP desynchronisation rather
+than as a rate fault, and nothing here would catch it as a refusal. And the probe **against a module at a
 rate this ROM was not built for**, which nothing stages: it only ever tries the two rates it knows.

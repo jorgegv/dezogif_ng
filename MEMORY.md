@@ -5,6 +5,99 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-09 — The shipped link is 460800 now, and the criteria were met rather than waived
+
+**Decided (user) and built.** `ESP_BAUD_HIGH` defaults to **460800** instead of
+`ESP_BAUDRATE`, so the shipped WiFi ROM greets the module at 115200 and then
+negotiates the link up. The entry below this one decided the opposite on
+2026-08-09 and is annotated rather than rewritten: **what changed is the
+evidence, not the reasoning** — its case for *why not higher* is untouched and is
+why this is 460800 and not the 1000000 the work was commissioned for.
+
+**THE SIX CRITERIA WERE WRITTEN BEFORE THE MEASUREMENT AND WERE MET, WHICH IS THE
+ONLY REASON THIS IS A DECISION AND NOT A PREFERENCE.** All on the user's own Next
+at build `00.16`, and **the build is load-bearing**: at 460800 an earlier ROM
+draws its own screen wrong (issue #31, the undeclared font buffer), so criterion
+1 — "the screen must read 460800" — could not have been read honestly off it.
+
+| | criterion | result |
+|---|---|---|
+| 1 | screen reads 460800 | yes, and **clean** |
+| 2 | H2 = 15/15 on **three** runs | **five** runs, 15/15 every time |
+| 3 | H6 clean, not `RX Overflow` | 0 bright-red pixels, all five |
+| 4 | H5 median >= 2x the 8.3 KB/s baseline | **20.3 KB/s = 2.45x** |
+| 5 | H4 not materially **worse** | **6.6 ms against 11.2 — 41% better** |
+| 6 | M1, `R`, M1 | came back up, **and the probe was shown to fire** |
+
+**CRITERION 5 CARRIED A PREDICTION AND THE PREDICTION WAS WRONG**, which is worth
+more than the criterion passing: it said to expect latency *unchanged* because
+11.2 ms is WiFi round trip rather than wire time. It nearly halved. A material
+part of that figure was the wire after all, and the same mistake — reasoning
+about where a cost lives instead of measuring it — is what this file records
+against the 1 Mbps ceiling one entry down.
+
+**CRITERION 6 IS THE ONE THAT COULD NOT HAVE BEEN FAKED, and it is the first time
+that code has run anywhere.** The bring-up probe is structurally dead in jnext,
+whose module answers the first greeting every time. It matters because a soft
+reset leaves **both ends** at the raised rate — the prescaler survives
+(`zxnext.vhd:3361-3367`) and the `R` key's `nextreg REG_RESET,01b`
+(`src/ui.asm:52`) has bit 7 clear, so the ESP is not reset either — while a fresh
+`esp_uart_init` assumes 115200. Without the probe that press paints "ESP-01 setup
+failed" on a healthy module, power-cycle only.
+
+**And it was shown to have FIRED rather than assumed, which behaviour alone
+cannot do**: a module still at 460800 reaches the screen's "460800" through the
+probe, and a module back at 115200 reaches the identical screen by ordinary
+greeting plus negotiation. The discriminator was `.UART` getting **no answer** at
+115200 between the reset and the second press, against `OK` after a power cycle.
+**That rests on one cited premise** — that `.UART` sets the link to 115200 itself
+rather than inheriting the prescaler (`doc/WIFI-SETUP.md:148`) — and is labelled
+as a premise rather than smuggled in as an observation, which took two review
+rounds to get right.
+
+**THE BENCH HAD TO MOVE WITH THE DEFAULT, AND THAT IS THE PART THAT IS NOT ONE
+LINE.** `test-baud`'s **L3** asserts "the negotiation assembled OUT" and was
+pointed at the *shipped* ROM. Flipping the default makes the shipped ROM
+negotiate, so **L3 would have gone red against its own subject** — a check whose
+meaning changed silently under it. It now builds and uses an explicit
+`BAUD_HIGH=115200` ROM, which is also the escape hatch to ship a machine that
+cannot sustain the rate. Everything else that uses the shipped WiFi ROM now runs
+at 460800 and was re-run for that reason, not as a formality.
+
+**Rejected.** Leaving it off with 460800 as a documented opt-in (the criteria
+were written precisely so that meeting them would settle this, and waiving them
+after they were met would make the list decoration); flipping to 921600 as well
+(it needs the per-byte **receive** cost below 300 T-states from a figure
+bracketed only as 470 < C <= 610 — an optimisation, not a constant); pointing L3
+at the shipped ROM and weakening its assertion (that is weakening a check to make
+it pass); and `AT+UART_DEF=`, still, for the reason one entry down — it persists
+into flash, so a rate that turns out not to work hands the user a module the stub
+can no longer greet.
+
+**Cost: the UART ROM is byte-identical to `main`'s pinned** (`f6158368…`), which
+is what says nothing leaked — `ESP_BAUD_HIGH` reaches the WiFi build only. WiFi
+moves, **so the merge carries a `make bump`**.
+
+**Regression: `test-baud` 5/5, `test-dzrp-stub` 15/15 with W1-W6,
+`test-client-status` 7/7, `test-no-hang` 4/4, `test-tx-patience` 3/3,
+`test-screen-agreement` all green, `test-cipsto` 4/4, `make test` 7/7,
+`test-unit` 5/5, both variants `check-reproducible`** — plus `test-ip-boundary`
+2/2 and `test-slot-recovery` 3/3 re-run by the reviewer.
+
+**NOT COVERED, and it is thinner than the green suggests.** **One machine, one
+ESP-01, one reporter** — there is no second Next anywhere in this evidence. **A
+marginal link that ACCEPTS the rate and then corrupts bits**, which is named
+separately because "a second module" does not convey it: every failure the six
+criteria cover is a *clean* one, where the module refuses or goes quiet and the
+fallback catches it; a unit with a worse crystal or more RF noise could take the
+command and misbehave on the wire, surfacing as DZRP desynchronisation rather
+than as a rate fault. **The DeZog `.nex` load**, which was done and is the
+weakest item on the page: it worked and felt faster, with no timing captured and
+no artefact. And **`test-esp`, `test-mfselect` and `test-mfinstall` were not
+re-run** — judged unaffected, not shown to be.
+
+---
+
 ## 2026-08-09 — The bank had a 768-byte buffer nothing declared, and the assembler could not see it
 
 **Built, issue #31 — and the headline is that the baud rate had nothing to do
@@ -137,6 +230,12 @@ thing the work was commissioned for.** The stub can now ask the module to move
 up from 115200 with `AT+UART_CUR=`, move its own prescaler in step, verify, and
 come back down. `ESP_BAUD_HIGH` is the seam. **It defaults to `ESP_BAUDRATE`, so
 the shipped ROM does not negotiate**, and that default is the decision.
+
+*(**SUPERSEDED 2026-08-09: the default is now 460800** — see the entry at the top
+of this file. The six criteria this entry writes out were met on the user's own
+Next, so what changed is the evidence and not the reasoning. Everything below
+about **why not higher** stands unaltered, and is why the new default is 460800
+rather than the 1000000 this work was commissioned for.)*
 
 **ONE MEGABIT DOES NOT WORK, AND THE LIMIT IS OURS RATHER THAN THE MODULE'S.**
 At 1000000 the conformance suite goes red on **C5**, the loopback sweep: a

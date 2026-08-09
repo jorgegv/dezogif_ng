@@ -819,7 +819,7 @@ test-cipsto:
 # The link negotiated up from 115200 — issue #25.
 #
 # The stub greets the module at 115200, asks it to move to ESP_BAUD_HIGH
-# (1000000 as shipped), moves its own prescaler to match, and comes back down if
+# (460800 as shipped since 2026-08-09), moves its own prescaler to match, and comes back down if
 # the module refuses or the link does not survive. BAUD_HIGH is the seam: the
 # shipped rate, a rate the module refuses, and the rate that assembles the whole
 # negotiation out.

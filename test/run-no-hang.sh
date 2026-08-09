@@ -85,9 +85,12 @@
 #
 # THE PROMPT ARM IS REACHED HERE BY MOVING A BUDGET, not by faking a module.
 # RX_WAIT=400 makes one pass ~0.97 ms at 28 MHz, and TX_PASSES=1 gives the
-# prompt exactly one pass; the command line itself is 17 characters, which is
-# ~1.5 ms of transmission at 115200 before jnext can even see its terminator.
-# So the budget is short of the wire, deterministically. Bring-up survives it:
+# prompt exactly one pass; the command line itself is 17 characters. At 115200
+# that is ~1.5 ms of transmission before jnext can even see its terminator — and
+# SINCE THE DEFAULT BECAME 460800 these ROMs negotiate up during bring-up, so the
+# figure is ~0.37 ms by the time the arm is reached. The budget is still short of
+# the wire, deterministically, but by a quarter of the margin the number above
+# implies; the check was re-run at the new default and still reproduces its fault. Bring-up survives it:
 # ESP_INIT_PASSES is 20 of those passes, and the tx-patience table already
 # records this combination coming up and serving.
 #

@@ -29,7 +29,8 @@
 # hardware that is already 71% of what the wire can carry — 8192 bytes in 1.01 s,
 # measured 2026-08-05 — so the wire is the ceiling. DeZog pushes 8-16 KB per bank
 # through CMD_WRITE_BANK on every F5. The stub now asks the module to move to
-# ESP_BAUD_HIGH (1000000 as shipped) once it has answered at 115200, moves its own
+# ESP_BAUD_HIGH (460800 as shipped since 2026-08-09) once it has answered at 115200,
+# moves its own
 # prescaler to match, and comes back down if the module refuses or the link does
 # not survive.
 #

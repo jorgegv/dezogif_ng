@@ -46,8 +46,8 @@ a Copper-using program can carry these two instructions in **its own** list inst
 2. **It crosses the WiFi link to the ESP-01**, which emits `+IPD,<id>,<len>:` and the frame on its
    UART TX line.
 
-3. **The bytes land in UART0's Rx FIFO**, which is 512 entries deep (`serial/uart.vhd:24`, and the
-   9-bit FIFO addresses at `:148-149`). **Nothing is reading them.** The debuggee owns the CPU and
+3. **The bytes land in UART0's Rx FIFO** — *"Both uarts have a 512 byte Rx buffer and a 64 byte Tx
+   buffer"* (`serial/uart.vhd:24`). **Nothing is reading them.** The debuggee owns the CPU and
    the debugger is not executing between polls, which is exactly why a byte cannot wake anything by
    itself — §1.
 
@@ -169,11 +169,11 @@ remove. §3.2.
 duration directly reduces the poll rate. §5.
 
 **Config mode suppresses the poll entirely while it is active** (`zxnext.vhd:2102-2105`,
-`:2156-2157`), and `.mfinstall` opens that window twice per install. Self-recovering — the Copper
+`:2156-2157`), and `.mfinstall` opens that window three times per install. Self-recovering — the Copper
 keeps running and the next frame's fire is accepted — so the cost is a poll or two missed, not a
 dead break. §5.
 
-### The decision that is still open, and it decides two of the steps above
+### Two decisions still open, and the first of them decides steps above
 
 **What counts as "traffic"?** When the FIFO is non-empty the ESP build may spend up to ~100 ms
 synchronising, inside an NMI, with the debuggee stopped. If what arrived was a real command that is
@@ -183,6 +183,11 @@ handler breaks on any traffic rather than parsing, a **spurious break the user d
 
 Break on any byte, or parse first? Both have a visible cost, §4.3 records the decision as unmade,
 and it is what settles step 11's second bullet as well as step 9b's shape.
+
+**And nothing has chosen the break reason step 10 reports.** `BREAK_REASON` holds only `NO_REASON`,
+`MANUAL_BREAK` and `BREAKPOINT_HIT` (`src/breakpoints.asm:18-20`), so a poll-triggered break would
+report `MANUAL_BREAK` and be **indistinguishable from an M1 press to the client** — DZRP offers no
+third reason. Whether that is acceptable, or wants one, is unmade.
 
 ### Why the design is shaped around a poll rather than a cause
 
@@ -221,7 +226,7 @@ interrupt mode**. The handler polls the RX FIFO and returns immediately if there
 
 | candidate | where it ends up | usable as a periodic poll? |
 |---|---|---|
-| Copper `MOVE` to NR `0x02` bit 3 | `nmi_gen_nr_mf` → `nmi_sw_gen_mf` → `nmi_assert_mf` (`zxnext.vhd:3832`, `:3838`, `:2090`) | **yes** |
+| Copper `MOVE` to NR `0x02` bit 3 | `nmi_gen_nr_mf` → `nmi_sw_gen_mf` → `nmi_assert_mf` (`zxnext.vhd:3832`, `:3837`, `:2090`) | **yes** |
 | M1 button | `hotkey_m1`, from top-level pin `i_SPKEY_FUNCTION(9)` (`zxnext.vhd:6348`, `:69`) | no — manual |
 | I/O trap on `0x2FFD`/`0x3FFD` | gated on an actual `iord`/`iowr` cycle (`zxnext.vhd:2723-2725`) | no — fires on a debuggee *access*, not on time |
 | UART RX interrupt | `im2_int_req` (`zxnext.vhd:1941-1944`) — the **maskable** INT bus | no — needs the debuggee's IM2 setup |
@@ -445,9 +450,11 @@ uses config mode.** `zxnext.vhd:2102-2105` clears `nmi_mf`/`nmi_divmmc`/`nmi_exp
 as long as `nr_03_config_mode = '1'`, and `:2156-2157` forces `nmi_state` back to `S_NMI_IDLE` — this
 was established for the *button* case in
 [CONFIG-MODE-ROM-REPLACEMENT.md](CONFIG-MODE-ROM-REPLACEMENT.md) §1.5 and applies identically to a
-Copper-sourced pulse, which nothing had connected until now. `.mfinstall` opens that window twice per
-install, and NextZXOS's own boot ROM load uses it too, so a `MOVE $02,$08` landing inside one is
-silently lost with no makeup event.
+Copper-sourced pulse, which nothing had connected until now. `.mfinstall` opens that window **three
+times** per install — two 4 KB passes (`tools/mfinstall/mfinstall.c:558`) plus the identity read that
+makes the "Live ROM:" line accurate (`:880`), as MEMORY.md's 2026-08-06 entry records — and
+NextZXOS's own boot ROM load uses it too, so a `MOVE $02,$08` landing inside one is silently lost
+with no makeup event.
 
 It is **self-recovering** — the Copper keeps running, `.mfinstall` never touches NR `0x60`-`0x64`, and
 the next frame's fire is accepted — so the consequence is a poll or two missed, not a dead break. It

@@ -1256,6 +1256,26 @@ def main():
             detail = "PRECONDITION: %s" % e
         except dzrp.DzrpError as e:
             status, detail = FAIL, str(e)
+        except OSError as e:
+            # THE CONNECTION WENT AWAY MID-CHECK — the peer reset it, closed it,
+            # or a send died part-way. `TcpTransport.write` is a bare
+            # `sock.sendall` (dzrp.py), so that surfaces as BrokenPipeError or
+            # ConnectionResetError, and NEITHER is a DzrpError.
+            #
+            # Without this clause such a check does not fail — it escapes main()
+            # as a traceback and takes EVERY CHECK BELOW IT with it, including
+            # C15, which this suite requires to run and to run last. So the
+            # failure mode was "the suite silently stops covering CMD_CLOSE",
+            # which is worse than any single red. Issue #33.
+            #
+            # Kept separate from DzrpError rather than folded into it, because
+            # the two say different things and the detail should too: DzrpError
+            # is the remote answering wrongly; this is the remote not being
+            # there. A check that provokes a disconnect ON PURPOSE catches it
+            # locally and never arrives here — chk_oversize_payload does — so
+            # anything reaching this clause did not expect it, and FAIL is the
+            # right verdict rather than UNSUP.
+            status, detail = FAIL, "the connection failed mid-check: %s" % e
         finally:
             d.close()
 

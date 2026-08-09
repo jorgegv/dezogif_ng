@@ -187,7 +187,16 @@ class SerialTransport:
         self.port.flush()
 
     def close(self):
-        self.port.close()
+        # Guarded exactly as TcpTransport.close is, and for a reason that is
+        # structural rather than tidy: conformance.py closes through this from a
+        # `finally:`, so a close that RAISES escapes the per-check handler that
+        # has just caught the real fault — and takes the rest of the suite with
+        # it. The asymmetry between the two transports was an oversight, not a
+        # design; the serial one simply had no consumer that noticed. Issue #33.
+        try:
+            self.port.close()
+        except OSError:
+            pass
 
 
 def open_remote(spec, timeout=5.0):

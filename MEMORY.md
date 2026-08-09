@@ -123,8 +123,8 @@ module — power cycle only — and `esp_recover`, which ends `jp transport_init
 would have repeated it for every fault. **The answer is a probe at bring-up
 rather than a guard at the switch**: greet the module at 115200 and, on silence,
 at `ESP_BAUD_HIGH` before giving up. That converts every way this goes wrong from
-"power-cycle the Next" into "press M1 again", and it is the only software
-recovery there is.
+"power-cycle the Next" into "press M1 again", and it is the only recovery this
+stub **ships**.
 
 **AND IT IS DEAD CODE IN THE EMULATOR, WHICH IS SAID OUT LOUD RATHER THAN
 FILED UNDER "COVERED".** jnext's module answers the first greeting every time, so
@@ -209,7 +209,7 @@ at least twice the 8.3 KB/s baseline**, below which the module's stack is the
 limit and the rate buys nothing; **H4 latency explicitly NOT the criterion** —
 11.2 ms is WiFi round trip, not wire, so expect it unchanged and treat a
 material worsening as the red flag; and **M1, `R`, M1 again**, which no bench
-anywhere covers and which is the only software recovery there is.
+anywhere covers and which is the only recovery this stub ships.
 
 **Rejected.** Defaulting to 1000000 (it fails the gate); defaulting to 460800
 (green here, unmeasured there, and this project's rule is explicit); using

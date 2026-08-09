@@ -298,8 +298,9 @@
 ;    THE ANSWER IS A PROBE AT BRING-UP RATHER THAN A GUARD AT THE SWITCH.
 ;    transport_init greets the module at 115200 and, if nothing comes back, at
 ;    ESP_BAUD_HIGH before giving up. That is what converts every way this can go
-;    wrong from "power-cycle the Next" into "press M1 again", and it is the ONLY
-;    software recovery there is, for the reason above.
+;    wrong from "power-cycle the Next" into "press M1 again", and it is the only
+;    recovery this stub SHIPS — the paragraph above is why the other one is not
+;    used rather than why it does not exist.
 ;
 ;    WHAT NO RUN HERE CAN SHOW. jnext paces both directions from the GUEST's own
 ;    prescaler (uart.cpp:83-87), and its module never compares the rate it was

@@ -813,6 +813,39 @@ test-cipsto:
 	 ROM_STRICT="$(OUT)/enNextMf-wifi-sto7201-stostrict1.rom" $(TEST)/run-cipsto.sh
 
 # ---------------------------------------------------------------------------
+# The link negotiated up from 115200 — issue #25.
+#
+# The stub greets the module at 115200, asks it to move to ESP_BAUD_HIGH
+# (1000000 as shipped), moves its own prescaler to match, and comes back down if
+# the module refuses or the link does not survive. BAUD_HIGH is the seam: the
+# shipped rate, a rate the module refuses, and the rate that assembles the whole
+# negotiation out.
+#
+# THE DISCRIMINATING ASSERTION IS jnext's UART LOG, not behaviour. The emulated
+# module never compares the rate it was asked for against the rate it is spoken
+# to, so a stub that told the module and forgot its own side serves exactly as
+# well here as one that did it properly. jnext logs every prescaler the guest
+# programs, which is a direct reading of the half that would otherwise be
+# invisible.
+#
+# It binds a host TCP port, so it is not part of `make test`. IT SAYS NOTHING
+# ABOUT THE RATE: whether a real ESP-01 takes 1000000, and at what error, is
+# `make test-hardware` and nothing else. It never reaches the bring-up probe
+# either — jnext's module answers at the first rate asked, every time.
+#
+# Run the baud-negotiation bench (4 jnext runs, 4 checks; not part of `make test`)
+test-baud:
+	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi BAUD_HIGH=6000000 mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi BAUD_HIGH=115200 mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi BAUD_HIGH=1000000 FAULT_LIMIT=1 mf-rom
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
+	 ROM_HIGH="$(ROM_WIFI)" \
+	 ROM_REFUSED="$(OUT)/enNextMf-wifi-baud6000000.rom" \
+	 ROM_OFF="$(OUT)/enNextMf-wifi-baud115200.rom" \
+	 ROM_RECOVER="$(OUT)/enNextMf-wifi-fl1-baud1000000.rom" $(TEST)/run-baud.sh
+
+# ---------------------------------------------------------------------------
 # The DZRP screen reader (test/dzrp/screen.py) and its validation.
 #
 # The reader turns doc/HARDWARE-TESTING.md's S1-S4 — observations that needed a

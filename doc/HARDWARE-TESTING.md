@@ -1201,13 +1201,22 @@ summary line at all, because it stopped after H4:
 
     H1   PASS  connected to 192.168.100.136:11000 in 1037 ms, session opened and closed cleanly
     H2   FAIL  C18, C15 failed; C18, C15 not known-red, so new on this remote
-    H3   FAIL  could not open two simultaneous connections: gave up after 2 attempts
-    H4   SKIP  could not connect: gave up after 2 attempts
+    H3   FAIL  could not open two simultaneous connections: gave up on 192.168.100.136:11000 after 2 attempts — timed out after 0 of 1 bytes
+    H4   SKIP  could not connect: gave up on 192.168.100.136:11000 after 2 attempts — timed out after 0 of 1 bytes
 
 **The asymmetry that produced the error is worth more than the error.** The green run was
 transcribed line by line from the terminal; the red one was compressed into a summary from memory —
 in a section whose own argument is that **the red is worth more than the green**. If a run is worth
 citing as evidence, paste it.
+
+**AND THE FIRST ATTEMPT TO PASTE IT TRUNCATED TWO OF THE FOUR LINES, UNDER THIS HEADING.** H3's and
+H4's details were shortened to *"gave up after 2 attempts"*, dropping the address and the underlying
+cause that `connect()` always embeds (`hardware-check.py:260-264`). The reviewer caught it **without
+the original paste**, purely from the tool's format strings — and noticed the tell: the two lines
+that match exactly are the ones with no variable boilerplate, and the two that were shortened are
+the ones carrying host, port and cause. **That is what reconstruction from memory looks like**, and
+a "VERBATIM" heading over it makes it worse rather than better. If you find yourself tidying a
+quoted line, it is not a quote.
 
 **What the red was.** `cmd_loopback` buffers into a bank paged at `SWAP_ADDR`, an **8 KB** window,
 and — before `00.19` — walked upward for as many bytes as the frame **declared**. One slot on is
@@ -1262,8 +1271,15 @@ wrong tree, and was then not applied here.
 
     3 passed, 0 failed, 3 measured, 0 skipped of 6
 
-(H2's own line carries no count; the **18 of 18** comes from the conformance block it delegates to,
-which is quoted in full at the top of this section.)
+**H2's own line carries no count**, so the `18 of 18` comes from the `conformance.py` block the
+bench prints above it, whose summary line was:
+
+    DZRP conformance: 18 passed, 0 failed, 0 unsupported, of 18 checks
+
+**The per-check block itself is NOT reproduced here** — only that summary line and the six bench
+lines above were captured. (An earlier version of this parenthetical said the block was "quoted in
+full at the top of this section". It is not, anywhere in this file; that was a citation to evidence
+that does not exist, caught by `grep` in review.)
 
 **C16 and C17 are the scheduled question, and they pass.** C17 pushes **16384 bytes** in one
 `CMD_WRITE_MEM` — **four times** the largest payload that established the 460800 ceiling, on the

@@ -76,9 +76,10 @@
 ;    TRANSPORT_DEACTIVATE expands to nothing, because there is nothing to hand
 ;    back.
 ;
-; 5. 115200 BAUD, not upstream's 921600. The ESP answers at its power-on rate
-;    until told otherwise (doc/WIFI-SETUP.md; inferred, not measured on
-;    hardware). Raising it is M3's baud negotiation and has to start here.
+; 5. 115200 BAUD, not upstream's 921600, and EVERY BRING-UP STILL STARTS THERE
+;    even though point 12 raises it afterwards. The ESP answers at its power-on
+;    rate until told otherwise (doc/WIFI-SETUP.md; inferred, not measured on
+;    hardware), and the stub has to be able to greet a module it has just met.
 ;
 ; 6. IT DRAWS ITS OWN SCREEN. show_ui is the third thing the assembly-time
 ;    switch selects, after the byte stream and the lifecycle, and the reason is
@@ -263,6 +264,48 @@
 ;    measured rather than assumed: the bench passes 4 of 4 against a build that
 ;    sends the command and never waits. Closing it means putting a refusal on
 ;    the screen, and that is its own issue.
+;
+; 12. THE LINK IS NEGOTIATED UP, AND THE HARD PART IS COMING BACK DOWN. Issue
+;    #25. After the module has answered at 115200 the stub asks it to move to
+;    ESP_BAUD_HIGH (constants.asm, 1000000 as shipped) with `AT+UART_CUR=`, moves
+;    its own prescaler to match, and says `AT` up there to see whether anything
+;    survived. See esp_negotiate_baud and esp_uart_set_rate.
+;
+;    WHY IT IS WORTH DOING: at 115200 the link is already at 71% of the line
+;    rate on real hardware — 8192 bytes in 1.01 s, measured 2026-08-05 — so the
+;    WIRE is the ceiling, not the module and not this code. DeZog pushes 8-16 KB
+;    per bank through CMD_WRITE_BANK every time it loads a .nex, and that is felt
+;    on every F5.
+;
+;    THE FAILURE THIS MUST NOT PRODUCE IS A HALF-SWITCHED LINK, and it is
+;    reachable by two paths that have nothing to do with a failed negotiation.
+;    A rate, once set, survives everything the machine can do to itself: the
+;    UART's prescaler is restored only by i_reset_hard, which is tied to the
+;    constant '0' (zxnext.vhd:3361-3367, serial/uart.vhd:313-320), so a Z80 SOFT
+;    RESET — the stub's own `R` key — leaves both ends up there. And there is no
+;    reset line to the module to fall back on: NR 0x02 bit 7 reaches
+;    `bus_rst_n_io`, the expansion bus, and no board top-level file declares an
+;    ESP reset pin at all. So after a reset the next M1 press would have run
+;    esp_uart_init, dropped THIS side to 115200 alone, and reported "ESP-01 setup
+;    failed" on a healthy module — and esp_recover, which ends `jp
+;    transport_init`, would have repeated that for every fault.
+;
+;    THE ANSWER IS A PROBE AT BRING-UP RATHER THAN A GUARD AT THE SWITCH.
+;    transport_init greets the module at 115200 and, if nothing comes back, at
+;    ESP_BAUD_HIGH before giving up. That is what converts every way this can go
+;    wrong from "power-cycle the Next" into "press M1 again", and it is the ONLY
+;    software recovery there is, for the reason above.
+;
+;    WHAT NO RUN HERE CAN SHOW. jnext paces both directions from the GUEST's own
+;    prescaler (uart.cpp:83-87), and its module never compares the rate it was
+;    asked for against the rate it is spoken to — `requested_baud_` is stored and
+;    never read. So a stub that told the module and forgot to move its own side,
+;    or moved its own and never told the module, is byte-for-byte
+;    indistinguishable there from a correct switch. The half-switched link is
+;    structurally unreachable in the emulator, and no seam on OUR side can reach
+;    it, because the missing behaviour is the emulator's. Hardware is the only
+;    judge of the rate; see test/run-baud.sh, which is careful to claim only the
+;    sequence.
 ;
 ;---------------------------------------------------------------------------
 ; What this file does NOT do, deliberately
@@ -590,6 +633,31 @@ ESP_SERVER_TIMEOUT: equ 1800
 ESP_CIPSTO_STRICT:  equ 0
  ENDIF
 
+ IF ESP_BAUD_HIGH != ESP_BAUDRATE
+; How many times esp_negotiate_baud says `AT` at the new rate before deciding
+; the rate does not work. Two, and the second one is what the constant is for:
+; see the routine, where the module may still be reconfiguring its own UART when
+; the first goes out. It is not a bench seam and nothing overrides it — one and
+; two are not two interesting states, they are a coin toss about somebody else's
+; firmware timing, and the cost of the extra attempt is paid only on the arm that
+; is about to fail anyway.
+ESP_BAUD_TRIES:     equ 2
+
+; Which of the two rates the prescaler is currently programmed to, and so which
+; one the screen names. Written by esp_uart_init and esp_uart_init_high and by
+; NOTHING ELSE — those two routines are the only writers of the prescaler as
+; well, so this byte cannot disagree with the hardware without somebody adding a
+; third writer of one and not the other.
+;
+; THAT INVARIANT IS THE POINT OF THE BYTE. The line it drives used to be a
+; constant assembled from ESP_BAUDRATE, and a ROM that negotiated up would then
+; have gone on stating the rate its own peripheral was NOT running at — which is
+; the exact defect MEMORY.md 2026-08-05 records this line being fixed for, in
+; this same row, in the first place anyone looks when the ESP misbehaves.
+ESP_BAUD_IS_LOW:    equ 0
+ESP_BAUD_IS_HIGH:   equ 1
+ ENDIF
+
 ; What the UI has to say about the link. Decided once, during bring-up, because
 ; show_ui is re-entered on every redraw and an AT round trip per redraw would
 ; buy nothing — the address cannot change while we hold the module.
@@ -685,6 +753,16 @@ esp_prescaler_table_high:
 ; the divisor: the largest Fsys gives the largest prescaler and the smallest the
 ; smallest.
 ;
+; BOTH ARE BACKSTOPS RATHER THAN LIVE BOUNDS TODAY, and saying so is the
+; difference between an assertion and a comment with a keyword in front of it.
+; constants.asm's own pair — ESP_BAUD_HIGH under 10000000 and at or above
+; ESP_BAUDRATE — is strictly tighter than either of these, so with those in
+; place no setting can reach here: the 14-bit one needs a rate below ~2014 baud
+; and the floor one a rate above ~13.5 MHz. The first was nevertheless WATCHED
+; TO FIRE, by taking constants.asm's floor out and building at 2000 baud; the
+; second cannot be reached at all without removing both guards, and is kept for
+; the day somebody raises STRINGIFY's seven-digit ceiling.
+;
 ; 1. 14 BITS. esp_uart_set_rate writes bits 2:0 of the select — the prescaler's
 ;    three most significant bits — as ZERO and sends only two 7-bit halves, so
 ;    an entry of 16384 or more would be sent as that value modulo 16384 and the
@@ -708,6 +786,24 @@ esp_cmd_cipserver:  defb "AT+CIPSERVER=1,"
 esp_cmd_cipsto:     defb "AT+CIPSTO="
     STRINGIFY ESP_SERVER_TIMEOUT
     defb 13,10,0
+ IF ESP_BAUD_HIGH != ESP_BAUDRATE
+; Issue #25, and point 12 in the header. `_CUR` and NOT `_DEF`: the CUR form
+; leaves the module's flash alone, so a rate this board turns out not to like
+; is forgotten the moment the module loses power, where _DEF would persist it
+; and hand the user a module the stub could no longer greet. That is the
+; difference between "press M1 again" and "take the SD card to a PC and hope".
+;
+; ,8,1,0,0 = 8 data bits, 1 stop bit, no parity, no flow control — the same
+; frame esp_uart_set_rate writes into 0x163B as 00011000b, and they have to
+; agree. Flow control stays OFF at both ends deliberately: it is wired to real
+; pins only on issue 4 and issue 5 boards (zxnext_top_issue4.vhd:2277-2278,
+; issue5:2461-2462) and is dead in the design on an issue 2
+; (zxnext_top_issue2.vhd:2387-2388, `i_UART0_CTS_n => '0'`), so a build that
+; leaned on it would work on some machines and not others.
+esp_cmd_uart_high:  defb "AT+UART_CUR="
+    STRINGIFY ESP_BAUD_HIGH
+    defb ",8,1,0,0",13,10,0
+ ENDIF
 esp_cmd_cifsr:      defb "AT+CIFSR",13,10,0
 ; Only esp_recover sends this. AT+CIPSERVER=1 is refused while a server is
 ; already up (jnext esp_at.cpp:648, and real ESP-AT does the same), so a
@@ -969,6 +1065,13 @@ esp_fault_count:    defb 0
 ; first of a new run, which is exactly what re-triggers a limit of one.
 esp_recovering:     defb 0
 
+ IF ESP_BAUD_HIGH != ESP_BAUDRATE
+; Issue #25. See ESP_BAUD_IS_LOW for why this exists and who may write it. It
+; starts LOW because that is where esp_uart_init leaves the peripheral, and a UI
+; drawn before any bring-up must not claim a rate nobody negotiated.
+esp_baud_state:     defb ESP_BAUD_IS_LOW
+ ENDIF
+
 ; Which of the three status blocks below show_ui draws. NO_MODULE is the state
 ; before transport_init has run, so a UI drawn without a bring-up says "the
 ; module did not answer" rather than claiming an address it never asked for.
@@ -1021,6 +1124,51 @@ esp_connect_address_end:
 ;    -1; nothing follows it on that row, so print_string returns at the NUL and
 ;    the 32-column case never takes the wrap at all.
     ASSERT (esp_connect_address - esp_connect_prefix) + ESP_IP_MAX + ESP_PORT_LEN - 1 <= 32
+
+ IF ESP_BAUD_HIGH != ESP_BAUDRATE
+;---------------------------------------------------------------------------
+; The rate, at row 3, column 14 — where "ESP Baudrate: " ends. Issue #25.
+;
+; Two strings and no renderer: both rates are known at assembly time, so the
+; alternative would be a decimal conversion routine on the Z80 to print one of
+; two numbers the assembler can already spell. The AT is in pixels (text.asm),
+; hence 14*8.
+;
+; THE LABELS AROUND THE DIGITS ARE FULL NAMES AND NOT `.text` / `.end`, which
+; every other bounded string in this file uses. STRINGIFY assigns to plain
+; symbols of its own (macros.asm), so the assembler attaches a dot-local written
+; after it to the LAST of those instead of to the string — `Duplicate label:
+; divisor.end`, which is a confusing way to be told that.
+;---------------------------------------------------------------------------
+esp_text_baud_low:
+    defb AT, 14*8, 3*8
+esp_text_baud_low_digits:
+    STRINGIFY ESP_BAUDRATE
+esp_text_baud_low_end:
+    defb 0
+
+esp_text_baud_high:
+    defb AT, 14*8, 3*8
+esp_text_baud_high_digits:
+    STRINGIFY ESP_BAUD_HIGH
+esp_text_baud_high_end:
+    defb 0
+
+; 14 columns of label plus the number, on a 32-column screen. An ASSERT and not
+; arithmetic in a comment, because ESP_BAUD_HIGH is a build seam somebody will
+; move and print_char would silently clip the overflow at column 32.
+    ASSERT 14 + (esp_text_baud_low_end - esp_text_baud_low_digits) <= 32
+    ASSERT 14 + (esp_text_baud_high_end - esp_text_baud_high_digits) <= 32
+
+; Indexed by esp_baud_state, which esp_show_status does not range-check — the
+; same rule as the two tables below, and the assembler counts rather than a
+; reader.
+esp_baud_text_table:
+    defw esp_text_baud_low
+    defw esp_text_baud_high
+esp_baud_text_table_end:
+    ASSERT (esp_baud_text_table_end - esp_baud_text_table) / 2 == ESP_BAUD_IS_HIGH + 1
+ ENDIF
 
 esp_text_no_address:
     defb AT, 0, 6*8
@@ -3080,10 +3228,59 @@ transport_init:
 
     ld hl,esp_cmd_ate0
     call esp_command_ok
+ IF ESP_BAUD_HIGH != ESP_BAUDRATE
+    jr nc,.awake
+
+    ; NOTHING AT 115200. THE MODULE MAY BE WHERE WE LEFT IT — issue #25, and
+    ; this is the step that keeps a raised rate from ever needing a power cycle.
+    ;
+    ; A rate this stub negotiated survives everything the machine can do to
+    ; itself. The UART's prescaler is restored only by i_reset_hard, which
+    ; zxnext.vhd:3361-3367 ties to the constant '0' (serial/uart.vhd:313-320 for
+    ; the gate), so a Z80 soft reset — the stub's own `R` key, or NextZXOS's —
+    ; leaves BOTH ends up there. And nothing can reset the module instead: NR
+    ; 0x02 bit 7 drives `bus_rst_n_io`, the EXPANSION BUS, and no board top-level
+    ; file declares an ESP reset pin at all, so there is no software path to it
+    ; on any revision.
+    ;
+    ; Without this, the M1 press after a reset would run esp_uart_init, drop THIS
+    ; side to 115200 while the module stayed up, and paint "ESP-01 setup failed"
+    ; on a module that was working perfectly — recoverable only by power-cycling
+    ; the machine. esp_recover would make it worse rather than better, since it
+    ; ends `jp transport_init` and would re-run the same wrong assumption for
+    ; every fault.
+    ;
+    ; So the assumption is replaced by a LOOK: greet the module again at the only
+    ; other rate this ROM knows about. It costs one ESP_INIT_PASSES budget, and
+    ; only on a bring-up that was already failing.
+    call esp_uart_init_high
+    ld hl,esp_cmd_ate0
+    call esp_command_ok
+.awake:
+ ENDIF
     jr c,.no_bringup
     ld hl,esp_cmd_at
     call esp_command_ok
     jr c,.no_bringup
+
+ IF ESP_BAUD_HIGH != ESP_BAUDRATE
+    ; UP, IF THE MODULE WILL — issue #25. See esp_negotiate_baud.
+    ;
+    ; HERE, AND NOT AT THE END OF THE CHAIN, for two reasons that point the same
+    ; way. The switch empties both UART FIFOs, which is what makes it atomic —
+    ; and with a listener already open that would silently destroy a command a
+    ; client had just sent, which is issue #11's whole family of defect. Nothing
+    ; can be listening this early. And putting it first means the four commands
+    ; after it are all spoken at the new rate, so a rate that is marginal rather
+    ; than dead is caught by the chain rather than by a client later; that is
+    ; also why esp_negotiate_baud's own fallback needs no verification of its
+    ; own.
+    ;
+    ; It is idempotent, which is what lets the probe above leave the module up
+    ; here without a special case: asking a module already at ESP_BAUD_HIGH to
+    ; move to ESP_BAUD_HIGH is answered OK and changes nothing.
+    call esp_negotiate_baud
+ ENDIF
 
     ; Multiplexed mode. REQUIRED BEFORE CIPSERVER — AT+CIPSERVER=1 answers
     ; ERROR without it, and AT+CIPMUX=1 in turn forbids AT+CIPMODE=1, which is
@@ -3258,6 +3455,19 @@ esp_query_address:
 ;  AF, BC, DE, HL
 ;===========================================================================
 esp_show_status:
+ IF ESP_BAUD_HIGH != ESP_BAUDRATE
+    ; The rate, at row 3 where data_const.asm's "ESP Baudrate: " label stopped.
+    ; Drawn rather than assembled because this build has two rates it can be at;
+    ; see ESP_BAUD_IS_LOW. Safe to draw with no erase because show_ui has just
+    ; MEMCLEARed the screen — this is show_ui's only caller — and the shorter of
+    ; the two numbers can therefore never leave a digit of the longer behind.
+    ld hl,esp_baud_text_table
+    ld a,(esp_baud_state)
+    add a                       ; *2
+    add hl,a
+    ld de,(hl)
+    call text.ula.print_string
+ ENDIF
     ld hl,esp_status_text_table
     ld a,(esp_link_state)
     add a                       ; *2
@@ -3725,6 +3935,78 @@ esp_uart_set_rate:
     ld a,00011000b
     out (c),a
     ret
+
+
+ IF ESP_BAUD_HIGH != ESP_BAUDRATE
+;===========================================================================
+; Asks the module to move up to ESP_BAUD_HIGH, and comes back down if it will
+; not or if the link does not survive the move. Issue #25, point 12 in the
+; header.
+;
+; THE MODULE HAS TO AGREE IN SO MANY WORDS BEFORE THIS SIDE MOVES, and that is
+; the whole of the safety argument. esp_command_ok is what says so: it waits for
+; "OK\r\n" ALONE, so a refusal — an older firmware without AT+UART_CUR, or one
+; that dislikes the rate — comes back as carry, exactly as silence does. Both
+; mean DO NOT MOVE, and conflating them is deliberate rather than a shortcut:
+; a refusal is proof the module is still at ESP_BAUDRATE, and silence is no
+; evidence at all, so the conservative reading is right for both.
+;
+; NOTE THIS IS THE OPPOSITE CHOICE FROM AT+CIPSTO's, one step down the same
+; chain, and the reason is that the two commands are answering different
+; questions. A refused CIPSTO changes nothing about how to talk to the module,
+; so paying the whole read budget to learn about it would be waste, and
+; esp_command_ok_or_error exists to avoid that. A refused UART_CUR decides
+; whether this side is about to reprogram its own prescaler, so the budget buys
+; the decision. (esp_command_ok_or_error could not be used here even if the cost
+; were acceptable: it reports which arm was taken to nobody.)
+;
+; AND IT LEAVES THE STREAM SYNCHRONOUS ON EVERY ARM, which matters more here
+; than anywhere else in this chain because the arms straddle a rate change and
+; a leftover byte would have been TRANSMITTED at one rate and READ at another.
+; On the agreeing arm it consumes "OK\r\n" and no more. On the refusing and the
+; silent arms it scans until its budget runs out, which drains whatever came,
+; and this side never moves — so AT+CIPMUX after it reads a clean FIFO at the
+; rate its answer was sent at. On the fallback arm the two spent verifications
+; have drained theirs, and esp_uart_init empties both FIFOs on the way past
+; anyway.
+;
+; WHAT HAPPENS IF THE MODULE MOVED AND ITS `OK` WAS LOST: this side stays down
+; here, AT+CIPMUX gets no answer, and bring-up fails visibly with "ESP-01 setup
+; failed". It is NOT a wedge — the next M1 press probes both rates and finds it
+; (transport_init) — but it does cost that press, and it is the one case where
+; reading the refusal apart from the silence would have saved a bring-up.
+; Changes:
+;  AF, BC, DE, HL
+;===========================================================================
+esp_negotiate_baud:
+    ld hl,esp_cmd_uart_high
+    call esp_command_ok
+    ret c                       ; refused, or nothing came back: stay put
+
+    call esp_uart_init_high
+
+    ; TWICE, BECAUSE THE FIRST ONE CAN BE SPOKEN INTO A DEAF MODULE. ESP-AT
+    ; answers OK and only then reconfigures its own UART, and nothing we trust
+    ; documents how long that takes — so an `AT` sent immediately afterwards may
+    ; simply not be heard, and a single attempt would read that as "the rate does
+    ; not work" and give up on one that does. The second attempt is sent a whole
+    ; read budget later, by which time a module that was ever going to be ready
+    ; is. Nothing here can measure the real figure; jnext's module has no
+    ; reconfiguration to do at all.
+    ld b,ESP_BAUD_TRIES
+.verify:
+    push bc
+    ld hl,esp_cmd_at
+    call esp_command_ok
+    pop bc
+    ret nc                      ; it answered up here: the link is the new rate
+    djnz .verify
+
+    ; It did not. Go back to where a module that never heard us still is, and
+    ; where one that DID hear us is not — the rest of the chain is what notices
+    ; the difference, and it does not need a probe of its own to do it.
+    jp esp_uart_init
+ ENDIF
 
 
 ;===========================================================================

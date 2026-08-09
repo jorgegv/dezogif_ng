@@ -253,6 +253,36 @@ ifneq ($(CIPSTO_STRICT),)
   VARIANT_FLAGS  += -DESP_CIPSTO_STRICT=$(CIPSTO_STRICT)
 endif
 
+# BAUD_HIGH — the seventh bench seam, and the only one of the family whose
+# "off" setting is also a SHIPPABLE ROM rather than only a control.
+#
+# The link comes up at 115200 and is then negotiated to ESP_BAUD_HIGH, 1000000
+# as shipped (issue #25, src/constants.asm for why that number). Three settings
+# each reach a state no other can:
+#
+#   BAUD_HIGH=1000000   the shipped ROM: the negotiation happens
+#   BAUD_HIGH=115200    it is assembled OUT — the "before" control, and the
+#                       escape hatch for a board or a module that will not take
+#                       the rate, reachable by a rebuild rather than a source
+#                       edit, exactly as LINK_IDS=0 is
+#   BAUD_HIGH=6000000   above the 5000000 jnext's AT engine will parse, so the
+#                       module answers ERROR and the arm that declines to switch
+#                       is executed rather than reasoned about
+#
+# What NO setting of this can reach is the half-switched link itself: jnext
+# paces both directions from the guest's own prescaler and never compares the
+# rate it was asked for against the rate it is spoken to, so a stub that moved
+# one side and not the other is indistinguishable there from a correct switch.
+# That one is hardware's alone. See test/run-baud.sh.
+#
+# Same naming rule as the others: each probe ROM gets its own output name.
+BAUD_HIGH ?=
+
+ifneq ($(BAUD_HIGH),)
+  VARIANT_SUFFIX := $(VARIANT_SUFFIX)-baud$(BAUD_HIGH)
+  VARIANT_FLAGS  += -DESP_BAUD_HIGH=$(BAUD_HIGH)
+endif
+
 # ---------------------------------------------------------------------------
 # Layout
 # ---------------------------------------------------------------------------

@@ -89,7 +89,19 @@ INTRO_TEXT:
     ; ESP_BAUDRATE, so it stated a rate the hardware was not using, in the
     ; first place anyone looks when the ESP misbehaves.
     defb "ESP Baudrate: "
+ IF ESP_BAUD_HIGH == ESP_BAUDRATE
+    ; One rate this build can ever be at, so it is a constant, exactly as it has
+    ; always been.
     STRINGIFY ESP_BAUDRATE
+ ELSE
+    ; TWO rates it can be at, so the NUMBER IS NOT A CONSTANT ANY MORE — issue
+    ; #25. esp_show_status draws it from esp_baud_state, which only the two
+    ; routines that program the prescaler ever write. Leaving it assembled here
+    ; would have re-created, one issue later, the very defect the paragraph above
+    ; records this line being fixed for: a screen stating a rate the hardware is
+    ; not using. It is also the only thing on the machine that says whether the
+    ; negotiation took — the link works either way, so behaviour cannot.
+ ENDIF
     defb AT, 0, 4*8
     defb "Video timing:"
 

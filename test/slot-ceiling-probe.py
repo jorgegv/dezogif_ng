@@ -22,9 +22,17 @@ of the UART: the Z80 does not accept TCP connections and cannot make one slow.
 Issue #19 says the module holds a small number of inbound connections, drops
 anything past them, and that **nothing in the stub ever freed one** — the fix is
 `AT+CIPCLOSE=<id>`, which was unwritten while jnext could not model it. A power
-cycle was the only thing in the system that reclaimed a slot. That fits the
-unexplained half exactly: stub healthy, screen intact, TCP degrading and then
-refusing, recoverable only by pulling the plug.
+cycle was believed to be the only thing in the system that reclaimed a slot.
+That fits the unexplained half exactly: stub healthy, screen intact, TCP
+degrading and then refusing, recoverable only by pulling the plug.
+
+THAT LAST CLAUSE IS FALSE, measured 2026-08-08, and it cuts AGAINST the
+hypothesis rather than for it. The module reclaims an idle inbound slot by
+itself at `AT+CIPSTO` — default 180 s, enforced on a real ESP-01 — so a #19
+exhaustion is self-healing in about three minutes, while #15 was two wedges the
+user power-cycled out of. Nobody recorded how long they waited first, so this
+refutes nothing; it is simply the first evidence pointing the other way, and the
+hypothesis now has it to answer. See doc/HARDWARE-TESTING.md, probe B.
 
 #19 IS NOW FIXED and this probe is unaffected, which is worth stating rather
 than leaving as a surprise. `esp_recover` sweeps every link id, so a slot IS

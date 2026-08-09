@@ -319,19 +319,29 @@ cannot make one slow.
 [Issue #19](https://github.com/jorgegv/dezogif_ng/issues/19) says the module holds a small number of
 inbound connections, drops anything past them, and that **nothing in the stub ever freed one** —
 `AT+CIPCLOSE=<id>` is the fix, and it was unwritten because jnext could not model it (jnext#211).
-A power cycle was the only thing in the system that reclaimed a slot. That fits the unexplained
-half exactly: stub healthy, screen intact, TCP degrading then refusing, recoverable only by pulling
-the plug.
+A power cycle was believed to be the only thing in the system that reclaimed a slot. That fits the
+unexplained half exactly: stub healthy, screen intact, TCP degrading then refusing, recoverable only
+by pulling the plug.
 
 **#19 IS PARTLY FIXED AND CLOSED AS WONTFIX, AND IT DOES NOT RETIRE THESE PROBES.**
 jnext#211 shipped `AT+CIPCLOSE=<id>`, and `esp_recover` sweeps every link id with it
 (`make test-slot-recovery`, 3 checks, green in the emulator). What that reclaims a slot on is a
 **recovery**, which needs `ESP_FAULT_LIMIT` **consecutive faults** — so a peer that goes away
-without ever making the stub fail a read still holds its slot indefinitely, and the module still
-has no other way to give one back. The probes' subject is that residue, and it is exactly the case
-probe B stages. Read the paragraph above as the state a Next built before that fix is in.
+without ever making the stub fail a read still holds its slot for as long as the module lets it. The
+probes' subject is that residue, and it is exactly the case probe B stages.
 
-**So the hypothesis is that #15 IS #19**, and these probes measure what it rests on.
+**AND THE "ONLY THING" CLAUSE ABOVE IS FALSE, MEASURED 2026-08-08 — WHICH CUTS AGAINST THIS
+HYPOTHESIS RATHER THAN FOR IT.** The module reclaims an idle inbound slot by itself at `AT+CIPSTO`,
+default **180 s**, enforced (see the 2026-08-08 run below). So a #19 exhaustion is **self-healing in
+about three minutes**, and #15 was two wedges that were not — the user power-cycled both times. That
+does not refute "#15 IS #19", because nobody recorded how long they waited before reaching for the
+switch, and three minutes of a dead debugger is longer than most people's patience. But it is the
+first evidence that points *away*, and it gives the hypothesis something new to answer: a #19
+exhaustion should have cleared on its own, and #15 is on the record as not having.
+
+**So the hypothesis is that #15 IS #19**, and these probes measure what it rests on. Read the
+paragraph two above as the state a Next built before #19's fix is in, and the "only thing" clause as
+what this page believed until 2026-08-08.
 
 **#15 WAS CLOSED WITHOUT DEMONSTRATING THAT LINK** — by the user on 2026-08-06, before probe B had
 ever run. The probes and their readings stay because the hypothesis was never refuted either, and
@@ -424,6 +434,12 @@ machine keeps working.
 module: that is news arriving from outside. A fresh client being served afterwards says the slot
 comes back once the module is **told**, never that the module heals on its own.
 
+**That sentence is correct and was read too weakly for two days, which is the opposite of the usual
+failure here.** It bounds what *this* phase shows; it is not a finding that the module does **not**
+heal on its own, and the module in fact does — at `AT+CIPSTO`, measured 2026-08-08 below. Reading a
+correctly-stated limitation as an answer is how a probe that **cannot** ask a question comes to look
+like one that asked and got `no`. That is why `--no-lift` below exists.
+
 **`--no-lift` asks the other question, and it is the module's own timer.** With that flag phase 2
 does **not** take the blackhole down: the DROP rules stay up across the wait, so no FIN, no RST and
 no retransmission of ours ever reaches the module about those peers, and a fresh client served
@@ -450,10 +466,18 @@ on news it has just been given. **B5** reports the oldest and newest peer's age 
 walk on **both** paths — a walk that outlasted the module's idle timeout could free a slot *during*
 phase 1, and B1 would then report a ceiling nobody observed.
 
-#### RUN ON A REAL NEXT, 2026-08-06 — a vanished peer's slot is never given back
+#### RUN ON A REAL NEXT, 2026-08-06 — five vanished peers exhaust the module
 
 The measurement this probe was written for, on the user's Next at build `00.0F`. Until this it was
 an inference from jnext's source; it is now a reading from silicon.
+
+**THIS HEADING USED TO READ "a vanished peer's slot is never given back", AND THAT WAS NEVER THIS
+RUN'S TO CONCLUDE.** The table below is unedited and every figure in it still stands; what was wrong
+was the conclusion. This run **never asked** whether the module gives a slot back on its own —
+phase 2 lifted the blackhole *before* waiting, so from that moment our own kernel was RSTing the
+module's retransmissions, and B3's 71 ms is the module acting on news it had just been handed. The
+question was then structurally unaskable here, and the 20 s wait would have been nine times too
+short to answer it anyway. The 2026-08-08 section below asks it properly, and gets `yes`.
 
 | | |
 |---|---|
@@ -465,8 +489,13 @@ an inference from jnext's source; it is now a reading from silicon.
 
 **Five vanished peers exhaust the module exactly, and that cross-checks.** Probe A measured the
 inbound ceiling on the same machine at **5** (against jnext's 4). Here, four vanished peers are
-survivable and the fifth is not — one slot consumed **permanently** per peer, with nothing giving
-one back. `AT+CIPSERVER=0` does not, and before issue #19 nothing in the stub did.
+survivable and the fifth is not — one slot consumed per peer, with nothing *this run could see*
+giving one back. `AT+CIPSERVER=0` does not, and before issue #19 nothing in the stub did.
+
+*(That sentence said "consumed **permanently**" until 2026-08-08. It is not permanent: the module
+reclaims it on its own idle timer, in about three minutes, which is nine times longer than anything
+here waited. Corrected in place rather than left standing, because "permanently" is the word the
+whole power-cycle conclusion was built on.)*
 
 **The terminal symptom is a TIMEOUT, not a refusal** — 10009 ms. Probe A read the same signature at
 the ceiling on the same machine earlier the same day (**10002 ms**, 2026-08-06; that run was
@@ -490,18 +519,110 @@ no fault. B4's clean error area is the observable half of that.
 
 **So the fix CANNOT rescue this state — not "would probably not", cannot.** The trigger is
 structurally unreachable once the module is full of vanished peers. What #19 buys is a reclaim on
-the way INTO trouble, while the transport is still failing loudly; it is not a general reclaim, and
-a power cycle remains the answer to the terminal state. That is a real limit, it was traced rather
-than assumed, and it is written here rather than left for somebody to discover. Closing it needs a
-trigger reachable from a quiet stub — a periodic or connect-time sweep — which is not issue #19.
+the way INTO trouble, while the transport is still failing loudly; it is not a general reclaim. That
+is a real limit, it was traced rather than assumed, and it is written here rather than left for
+somebody to discover. Closing it needs a trigger reachable from a quiet stub — a periodic or
+connect-time sweep — which is not issue #19.
+
+**What has changed since is the CONSEQUENCE of that limit, not the limit.** This paragraph used to
+end "and a power cycle remains the answer to the terminal state". The stub still cannot rescue it —
+everything above is unaltered — but **the module rescues itself**, on its own idle timer, within
+about three minutes (2026-08-08, below). So the sweep this section is apologising for is answering a
+question that mostly answers itself, which is a smaller gap than it looked.
 
 **AND A SYMBOL SHIFT + NMI RE-INIT IS NOT A WAY OUT EITHER**, which is worth knowing because it is
 the thing a user would reach for before the power switch. It does not run the sweep at all:
 `main_bank_entry` calls `transport_init` directly (`src/main.asm`), never `esp_recover`, so no
 `AT+CIPSERVER=0` is sent — and jnext refuses `AT+CIPSERVER=1` outright while a listener is already
 running, which it still would be. So the re-init fails at its own AT chain and paints
-"ESP-01 setup failed". A power cycle is therefore not merely the simplest answer to the terminal
-state, it is the only one the machine currently offers.
+"ESP-01 setup failed". Nothing the *machine* offers gets you out of the terminal state, which is why
+this used to end "a power cycle is the only one the machine currently offers" — and the way out
+turns out not to be on the machine at all. It is **waiting**: see 2026-08-08 below.
+
+#### RUN ON A REAL NEXT, 2026-08-08 — the module gives the slot back by itself, in about 3 minutes
+
+**⚠ THE TOOL THAT PRODUCED THIS IS NOT ON `main` YET.** These runs used a `--no-lift` option on
+`test/run-vanished-peer.sh`, which lives on branch **`probe-vanished-no-lift`** and is under review
+at the time of writing. **A reader who has just checked out `main` cannot reproduce them**: probe B
+as `main` ships it lifts the blackhole before waiting, which is exactly the defect described below,
+so it cannot ask this question at any `--recover`. The numbers are recorded here because they are
+measurements off real hardware and they correct a claim this page was making; the reproduction
+recipe arrives with that branch.
+
+**This reverses the conclusion of the section above, and the mechanism that hid it for two days is
+worth more than the number.** Two runs on the user's own Next, differing in one argument, with the
+firewall blackhole **left up** across the wait:
+
+| `--recover` | phase 1 | walk length (oldest peer's age at its end) | **B3** |
+|---:|---|---:|---|
+| **210 s** | 4 vanished, the 5th refused | 13 s | **SERVED in 56 ms** |
+| **100 s** | 4 vanished, the 5th refused | 13 s | **REFUSED, timed out** |
+
+Because the rules stayed up, no FIN, no RST and no retransmission of ours reached the module about
+those peers. Something on the module's own side let one go, and it did so somewhere in
+**(100 s, 210 s]** — measured, as that option measures, from the **last** peer going silent.
+
+**The slot that frees first is the OLDEST peer's, so the reap is bracketed 13 s wider than that.**
+`AT+CIPSTO` times each connection separately, and one free slot is all a fresh client needs, so what
+B3 actually brackets is the age of the oldest vanished peer at the moment it was served: **(113 s,
+223 s]**, the walk having taken 13 s. **180 sits inside that**, which is the cross-check that
+matters. The 13 s spread is also why nothing here can say *which* peer's slot came back, only that
+the earliest eligible one is the natural candidate.
+
+**And the module says what that something is.** Read off the machine with `.UART`, on an Ai-Thinker
+ESP-01 reporting `AT version:1.2.0.0` / `SDK version:1.5.4.1`:
+
+    AT+CIPSTO?
+    +CIPSTO:180
+
+**`AT+CIPSTO` is the server's idle timeout, it defaults to 180 s, and this module ENFORCES it** —
+which had been assumed to be a setting nothing acted on. Measured directly as well as through the
+probe: a DZRP client that connected, sent `CMD_INIT` and then said nothing was dropped by the module
+after **182.5 s** and **181.8 s** in two runs. That figure sits inside the bracket the probe gives,
+from the opposite direction.
+
+**It is not `esp_recover`, and that is ruled out rather than assumed away.** The sweep is
+**fault-counted** — `ESP_FAULT_LIMIT` consecutive faults through `rxtx_error` — and has no timer in
+it at all. During phase 2 nothing transmits and the blackholed peers are silent, so no fault can be
+raised (traced in full in the section above, and B4's clean error area is its observable half). A
+fault-counted mechanism cannot produce a result that **changes with elapsed time alone**, and
+elapsed time was the only variable between the two runs.
+
+**THE METHOD FAILURE IS THE TRANSFERABLE PART, and it is not that nobody waited.** Probe B as it
+stands on `main` **lifts the blackhole first and then waits** — so its wait was never a test of the
+module's patience, it was a test of how fast the module acts on news it had just been handed. Two
+independent things had to change to see past that: the ordering, and the horizon. `--recover`
+defaults to **20 s**, which is one ninth of the timer being probed, so even a probe that had left
+the rules up would have reported `no`. **A negative result from an instrument whose horizon is
+shorter than the effect is not a negative result** — it is the instrument's own scale, read back as
+a finding. `ERRORS.md` carries the same disease under three other names.
+
+**And the ordering was documented honestly the whole time**, which is what makes this worth writing
+down rather than filing as carelessness: probe B's own text says its recovery means *"the slot comes
+back once the module is **told**"*, and the section above this one repeats it. Nobody read that
+correct sentence as *"therefore this instrument cannot answer the other question at all"*. **A
+stated limitation is not the same as a noticed one.**
+
+**What this still does not establish**, since a reversed conclusion is exactly where over-reading
+starts:
+
+* **Which** slot came back. No PC-side check sees connection ids, here as everywhere — so "the
+  oldest peer's, at its own 180 s" is the natural reading of a per-connection timer and not an
+  observation. A walk longer than a few seconds would separate the candidates; this one was 13 s.
+* That **180 s is the number on any other module**. `AT+CIPSTO` is settable, its range is 0-7200,
+  and `0` disables the timeout entirely — a module someone had set to `0` would behave exactly as
+  this document described until 2026-08-08.
+* Whether the module emits an `<id>,CLOSED` when it reaps a connection this way. Nobody looked, and
+  it matters to issue #23's session line as well as here.
+* Anything about a **wedged-but-reachable** peer, as against a vanished one. `AT+CIPSTO` is an
+  *idle* timeout, so the same reaping is expected, but probe B stages only the vanished case.
+
+**Issue #24 will lengthen this deliberately, and the trade is now measured on both halves.** Setting
+`AT+CIPSTO=1800` at bring-up buys an idle debug session that survives **30 minutes** instead of
+dying at 3 — which is the fault a user actually meets, since a debugger stopped at a breakpoint
+while somebody reads code is silent for minutes and perfectly healthy. It costs exactly this
+self-heal, stretched from about 3 minutes to about 30. Both halves are the same timer, and #19's
+entry in `KNOWN-ISSUES.md` says so where a reader will meet it.
 
 #### Issue #19's residual: what it takes to leak a slot, and what is NOT known
 
@@ -533,13 +654,23 @@ and the first version of this section ran them together:
   earlier version of this section claimed suspend "does not qualify". That was asserted without
   measurement and contradicted the line above; it is withdrawn.
 
-**The five-times compounding is real but the events are NOT independent.** A power cycle clears
-every slot and the ceiling is 5 (measured), so five leaks must accumulate between two power-ons.
-But one persistent cause — a flaky link, a router that reboots nightly, a laptop routinely
-suspended mid-session — can strand several without being five separate rare events. And the Next is
-not necessarily power-cycled often: Appendix B.2 of the plan describes a machine left running with
-the listener alive across normal use. **The real-world rate is unknown.** Nothing here measures it,
-and "deep in the tail" — which the first version of this section said — is not supported.
+**The five-times compounding is real but the events are NOT independent.** The ceiling is 5
+(measured), so five leaks must accumulate **inside one window** for the module to run out. One
+persistent cause — a flaky link, a router that reboots nightly, a laptop routinely suspended
+mid-session — can strand several without being five separate rare events. **The real-world rate is
+unknown.** Nothing here measures it, and "deep in the tail" — which the first version of this
+section said — is not supported.
+
+**BUT THE WINDOW IS ABOUT THREE MINUTES, NOT A POWER-ON SESSION**, which is the single largest
+change to this argument since it was written. This paragraph used to say the leaks accumulate
+"between two power-ons", and reinforced it: *"the Next is not necessarily power-cycled often —
+Appendix B.2 of the plan describes a machine left running with the listener alive across normal
+use."* That was the whole force of the compounding worry, and `AT+CIPSTO` removes it. The oldest
+leak is reaped ~180 s after it goes quiet, so five must land within roughly three minutes of each
+other; a machine left running for a fortnight accumulates nothing. The rate is still unmeasured —
+this narrows the window the rate has to fill, it does not measure the rate — but it moves the
+required coincidence from "five times before you next switch off" to "five times in three minutes",
+and those are not the same bet.
 
 **What the shipped fix covers.** `esp_recover`'s sweep reclaims slots when a recovery runs, and a
 recovery needs `ESP_FAULT_LIMIT` consecutive faults. A vanished peer **generates no faults itself**
@@ -554,7 +685,16 @@ Stated so a future session neither re-litigates this from a hunch nor dismisses 
 by pointing at this section:
 
 * a Next **refusing every new connection**, with its screen **clean** — no error area, `Core:` line
-  intact — and **no power cycle since boot**.
+  intact — **that is still refusing five minutes later**, and **no power cycle since boot**.
+
+**The five minutes is now the load-bearing half of that criterion, and it used not to be there.**
+The module reaps an idle inbound connection at `AT+CIPSTO`, 180 s by default, so a Next that refuses
+everybody and then starts serving again is #19 behaving exactly as measured — not a recurrence, and
+not worth reopening anything. What *would* be new is a refusal that **outlasts the timer**: either
+five peers went quiet inside one three-minute window, or something is holding slots that idling does
+not free, and the second of those is a different fault wearing this one's face. Say which you saw.
+If the machine has had `AT+CIPSTO` changed — issue #24 sets it to 1800 — scale the wait to match,
+because the criterion is "longer than the timeout", not "five minutes".
 
 **`make probe-slots` is NOT a discriminator in that state, and the first version of this section
 wrongly said it was.** Its A1 check asks whether an *earlier* connection still answers, and
@@ -569,11 +709,15 @@ screen, answers its own keyboard (`B` toggles the border, `R` resets) and shows 
 wedged one does not. That is the "AT THE MACHINE" protocol this page already carries, and in this
 one state it is the only reading available — every PC-side instrument needs a connection, which is
 the thing that cannot be had. Photograph the screen and try the keys **before** power-cycling,
-because the power cycle destroys the evidence.
+because the power cycle destroys the evidence — and now there is a second reason to keep your hand
+off the switch, since **waiting five minutes is both the fix and the discriminator**. A machine that
+starts serving again is #19; one that does not is something else, and you still have it to look at.
 
 **The decision to leave this unfixed is a cost judgement against an unmeasured rate**, not a
-finding that it will not happen. Closing the criterion properly needs a sweep reachable from a
-quiet stub — periodic, or at connect time — which is a separate change.
+finding that it will not happen — and it stands on firmer ground since 2026-08-08 than when it was
+made, because the fault it declines to fix clears itself in about three minutes rather than needing
+the power switch. Closing the criterion properly still needs a sweep reachable from a quiet stub —
+periodic, or at connect time — which is a separate change, and one with distinctly less to buy now.
 
 ### `make probe-jnext` FIRST, always
 
@@ -592,7 +736,14 @@ The numbers are derived from jnext's own source, not chosen:
 | `FIRST_INBOUND_CID` | 1 | `esp_at.h:452` — slot 0 holds the **borrowed outbound** transport (simplification 8a) |
 | **inbound slots** | **4** | the difference. `esp_at.cpp:894-902` closes anything past it: *"Real firmware refuses past its own ceiling too; ours is one lower because slot 0 is reserved"* |
 | probe A expects | ceiling **4** | four held open, the fifth `DROPPED` |
-| probe B expects | **3** survivals | a vanished peer keeps its slot for ever and the fresh client after it needs one of its own, so 4 − 1 |
+| probe B expects | **3** survivals | a vanished peer keeps its slot **for the length of the walk** and the fresh client after it needs one of its own, so 4 − 1 |
+
+*(That row said "for ever" until 2026-08-08. A real module reclaims an idle inbound slot at
+`AT+CIPSTO`, ~180 s — but the walk is seconds long, far inside any such timer, so the arithmetic is
+unchanged and the expectation still holds on both. **Whether jnext models `AT+CIPSTO` at all has not
+been checked**, and this row deliberately no longer depends on the answer. What it does now depend
+on is the walk staying short, which nothing on `main` reports; if a walk ever grows to minutes, this
+expectation is the thing that quietly stops meaning what it says.)*
 
 **Real firmware should be one higher — a ceiling of 5** — by that same comment: nothing on a real
 module reserves a slot for outbound when the guest never sends `AT+CIPSTART`, so ids 0..4 are all

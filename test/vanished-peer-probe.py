@@ -575,8 +575,13 @@ def main():
             "with the blackhole down and %.0f s elapsed, a fresh client still got %s"
             % (args.recover, rstate))
         detail(rwhy or "no detail")
-        detail("Nothing the PC can do reaches it. That is issue #15's row 6, and a "
-               "power cycle is the next thing to try — record whether it fixes it.")
+        # NOT "power cycle next", which is what this said until 2026-08-08. The
+        # module reclaims an idle inbound slot at AT+CIPSTO (default 180 s,
+        # measured enforced), and --recover defaults to 20 — so the overwhelmingly
+        # likely reading of a refusal HERE is that the timer has not run yet, and
+        # a power cycle would destroy the state before it did.
+        detail("Most likely the module's idle timer (AT+CIPSTO, default 180 s) has "
+               "not run yet — wait it out before power-cycling.")
 
     # Leave the Next's screen saying the session is closed (issue #14), the
     # same courtesy hardware-check.py pays. THE CMD_CLOSE is not a check and

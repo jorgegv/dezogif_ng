@@ -580,10 +580,15 @@ strongest:
    (issue #19), 2 headless jnext runs, 3 checks, and the **fifth** bench to move a build-time
    constant to reach its subject. Nothing in the stub had ever closed an established connection:
    `AT+CIPSERVER=0` retires the *listener* and leaves live connections alone, so a peer that wedged
-   rather than closing kept its slot for the rest of the power-on session, and enough of them left
+   rather than closing kept its slot until the **module** reaped it, and enough of them left
    the module refusing every new client while `esp_recover` went on reporting success — **issue
    #15's outward signature reached by a mechanism that is entirely ours**. `esp_recover` now sweeps
-   every link id with `AT+CIPCLOSE=<id>`.
+   every link id with `AT+CIPCLOSE=<id>`. (That read "for the rest of the power-on session" until
+   2026-08-08, when the module's `AT+CIPSTO` idle timeout was measured **enforced** on a real Next
+   at its 180 s default — so the leak is bounded at about three minutes, not at the power switch.
+   `KNOWN-ISSUES.md` #2 and `doc/HARDWARE-TESTING.md` carry the runs. The same clause survives in
+   `src/transport_esp.asm`'s `esp_recover` header and is a **known stale comment**, left because
+   this change deliberately touches no `src/` file.)
    **S1** fills every inbound slot with connections that were *answered* and are then held —
    answered, because a refusal at the ceiling otherwise has two indistinguishable causes, "the
    module is full" and "the stub is wedged", which is the position #15 was reported from — confirms

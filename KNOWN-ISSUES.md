@@ -12,7 +12,7 @@ anything read off a real Next, `MEMORY.md` for why a decision went the way it di
 points at them instead of restating them. Two renderings of one fact drifting apart is a failure
 this project has paid for repeatedly; see `ERRORS.md`.
 
-**#19's home is `doc/HARDWARE-TESTING.md`, beside the probe run that measured it. #18 has no such
+**#19's home is `doc/HARDWARE-TESTING.md`, beside the probe runs that measured it. #18 has no such
 home, so this file IS its home** — its figures were measured on hardware on 2026-08-05 and until
 now lived only in the GitHub issue, which is not diffable and not readable offline.
 
@@ -101,28 +101,35 @@ hot path is untouched), close the connection when the bound is hit, and keep all
 
 ---
 
-## 2. The Next refuses every connection until it is power-cycled
+## 2. The Next refuses every connection, and starts working again about three minutes later
 
 **Issue [#19](https://github.com/jorgegv/dezogif_ng/issues/19) · WONTFIX · WiFi build only**
 
 ### In one line
 
 **Don't let a machine with an open debug session vanish off the network — crash it, cut its power,
-or suspend it and reopen it somewhere else. If you do it five times without power-cycling the Next,
-power-cycle the Next.** The stub is told nothing when a peer vanishes, so it cannot *detect* this;
-what it could do instead is described under "why this is not fixed", and like #18 that is a cost
-judgement rather than an impossibility.
+or suspend it and reopen it somewhere else. If you do it five times inside three minutes, the Next
+stops answering anybody. WAIT — it clears itself in about three minutes. Do not power-cycle.** The
+stub is told nothing when a peer vanishes, so it cannot *detect* this; the module underneath it
+reaps the dead connections on its own idle timer, which is what ends the fault.
+
+**This entry said "power-cycle the Next" until 2026-08-08, and that was wrong.** See "why the old
+advice was wrong" below — the mechanism of the error is more useful than the corrected number.
 
 ### Symptom
 
 TCP connections to the Next stop completing — they time out rather than being refused — while the
-stub's own screen stays **clean**: no error text, `Core:` line intact. A power cycle fixes it.
-Nothing else does.
+stub's own screen stays **clean**: no error text, `Core:` line intact. **It ends by itself within
+roughly three minutes**, and the machine serves normally again with nothing done to it.
 
 **THE KEYBOARD IS WHAT TELLS THIS APART FROM #18**, and from the outside they otherwise look almost
 identical — connections not completing, screen clean. Here the stub is idle, so **`B` should still
 toggle the border and `R` should still reset**. In #18 it is stuck inside a flush and the keys do
-nothing. Try the keys before concluding anything, and before power-cycling.
+nothing. Try the keys before concluding anything.
+
+**The clock is a second discriminator, and a coarse one is enough**: #18 clears within about **3
+seconds** of the offending client going away, this within about **180**. Sixty times apart is not a
+distinction anybody has to measure carefully.
 
 **TRACED, NOT MEASURED — the same hedge #18's half of this carries, and it matters more here.**
 Nobody has pressed a key during a live five-slot exhaustion on hardware: `test/vanished-peer-probe.py`
@@ -130,18 +137,62 @@ neither presses one nor reads the border. The trace is that nothing in the termi
 the Z80 — a new client never completes its handshake, so no `+IPD` ever arrives (probe B's V5,
 10009 ms), and the leaked peers carry no traffic in either direction, so `main_loop` reaches
 `.no_uart_byte`'s key poll every iteration exactly as it does when idle. That is a solid trace and it
-is still not a measurement, which is worth knowing **because this is the discriminator you follow
-before power-cycling**, and the power cycle destroys the evidence either way.
+is still not a measurement, which is worth knowing **because this is the discriminator you reach for
+first**. It is also easier to collect than it was: the fault now lasts about three minutes rather
+than until the power switch, so there is time to try the keys, and nothing you do destroys the
+evidence the way a power cycle did.
 
 ### What causes it
 
 The ESP module holds a small number of inbound connections (**5**, measured on a real Next) and
-nothing frees a slot belonging to a peer that went away **without sending a FIN or an RST**. Five
-such peers and the module has nothing left to give anyone.
+**nothing on the Z80's side of the UART** frees a slot belonging to a peer that went away *without
+sending a FIN or an RST* — not the stub, and not anything a user can type at the machine. Five such
+peers and the module has nothing left to give anyone.
+
+What ends it is the module's own **`AT+CIPSTO` idle timeout**, which defaults to **180 s** and is
+enforced. It reaps **each connection separately**, ~180 s after *that* peer last spoke — so the
+slots come back one at a time, oldest first, and one is all it takes to start serving again.
+
+**So the clock starts at the OLDEST vanished peer, not the newest**, and three minutes after the
+*last* one is therefore a safe over-estimate rather than the figure. Nothing here can separate the
+two: the probe's peers all vanished inside a 13 s walk, which is well under the resolution needed.
+Quoted the conservative way round on purpose, since the cost of waiting slightly too long is
+nothing and the cost of concluding "it should have recovered by now" is a power cycle.
 
 Measured on a real Next, build `00.0F`, 2026-08-06 — four vanished peers are survivable, the fifth
-is not. The full run, the cross-check against the module's ceiling, and what the shipped fix does
-and does not cover are in **[doc/HARDWARE-TESTING.md](doc/HARDWARE-TESTING.md)**, under probe B.
+is not — and the self-heal measured on 2026-08-08, two runs bracketing the timer from either side.
+The full runs, the `AT+CIPSTO?` reading off the module, why it cannot be the stub's own sweep, and
+what the shipped fix does and does not cover are all in
+**[doc/HARDWARE-TESTING.md](doc/HARDWARE-TESTING.md)**, under probe B.
+
+### Why the old advice was wrong, which is worth more than the corrected number
+
+This entry told you to power-cycle, on the strength of a probe that had **never asked the question**.
+Two things were wrong with the instrument, and either alone was enough to get the answer wrong:
+
+* **The ordering.** Phase 2 lifted the firewall blackhole *before* it waited, so our own kernel
+  began RSTing the module's retransmissions the instant the wait started. That does not measure the
+  module's patience at all — it measures how fast the module acts on news it has just been handed.
+  "Does it give the slot back **unprompted**" was not answered badly here; it was **unaskable**.
+* **The horizon.** `--recover` defaults to **20 s**, against a timer of **180**. So even a probe
+  that had left the blackhole up would have given up nine times too early.
+
+Fixing either alone still gets you `no`. Both were fixed at once — a `--no-lift` option for the
+ordering, `--recover 210` for the horizon — and the answer inverted on the first run.
+
+**That option is not on `main` yet**, so probe B as you will find it today still cannot ask this
+question at any `--recover`: it lifts the blackhole before it waits. It is on branch
+**`probe-vanished-no-lift`**, under review. The numbers above are off real hardware and are quoted
+here because they correct what this entry was telling users to do; the way to re-run them arrives
+with that branch.
+
+**Two lessons, and the second is the one this project keeps paying for.** A negative result from an
+instrument whose horizon is shorter than the effect is not a negative result — it is the
+instrument's own scale, read back as a finding about the world. And an instrument that **cannot
+reach** the state it is pointed at reports a confident `no` that looks exactly like a measurement:
+the lift-first ordering was documented, honestly, in the probe's own text the whole time — it said
+its recovery meant "the module was **told**" — and nobody noticed that this made the interesting
+question unanswerable rather than answered. `ERRORS.md` carries both under other names.
 
 ### What does NOT cause it
 
@@ -162,35 +213,77 @@ and is entirely ordinary.
 
 ### What to do
 
-**Power-cycle the Next.** A Symbol Shift + NMI re-init does not help — it calls `transport_init`
-directly and never runs the sweep, and `AT+CIPSERVER=1` is refused while a listener is already up,
-so the re-init fails at its own AT chain.
+**Wait about three minutes, then reconnect.** That is the whole procedure, and it is also the
+diagnosis: a machine that starts serving again was this, and one that does not is something else.
 
-**Before you power-cycle, photograph the screen and try the `B` key.** That is the only way to tell
-this from a wedged stub, and the power cycle destroys the evidence — see below.
+**Do not power-cycle**, which this entry used to tell you to do. It works, but it costs you the
+debuggee, the machine's state and — if you were about to report anything — the only evidence there
+was.
+
+**While you are waiting, photograph the screen and try the `B` key.** Waiting tells you the same
+thing eventually, but the keys tell you *now* and give you something to put in a report — and unlike
+the old advice this evidence now costs nothing to collect, because you are standing there anyway.
+
+A Symbol Shift + NMI re-init does **not** shorten it — it calls `transport_init` directly and never
+runs the sweep, and `AT+CIPSERVER=1` is refused while a listener is already up, so the re-init fails
+at its own AT chain and paints "ESP-01 setup failed" over a module that was going to recover anyway.
 
 ### What is not known
 
-**The rate.** Nothing measures how often a peer vanishes this way in the field. The five leaks must
-accumulate between two power-ons, but they are **not independent events**: one persistent cause — a
-flaky link, a router that reboots nightly, a habitually suspended laptop — can strand several.
+**The rate.** Nothing measures how often a peer vanishes this way in the field. The five leaks are
+**not independent events** — one persistent cause, a flaky link, a router that reboots nightly, a
+habitually suspended laptop, can strand several.
+
+**But the window they must fall into is now known, and it is small.** Five leaks have to land within
+roughly three minutes of each other, because the oldest is reaped while the later ones are still
+arriving. This entry used to say they accumulate "between two power-ons" — a window of days on a
+machine left running, which was the whole force of the worry. Narrowing the window is not measuring
+the rate, and the rate is still unmeasured; it does move the required coincidence a long way.
+
+**Whether 180 s is the number on every module.** `AT+CIPSTO` is settable, its range is 0-7200, and
+**`0` disables the timeout altogether** — on a module somebody had set that way, the old advice in
+this entry would be correct again. The reading here is from one Ai-Thinker ESP-01,
+`AT version:1.2.0.0`.
+
+**Whether the module announces the reap.** Nobody has looked for an `<id>,CLOSED` at the moment it
+frees one. If it emits one, the stub could in principle see this happen; issue #23's session line
+would also be affected. Unmeasured, and stated here so it is not assumed either way.
 
 ### What would reopen it
 
-Connections refused, screen clean, and no power cycle since boot. **`make probe-slots` cannot
-settle it in that state** and it is important not to expect it to: its discriminating check asks
-whether an *earlier* connection still answers, and a module with every slot leaked has no earlier
-connection to ask. The tool says so itself. **The discriminator is the machine's own screen** — a
-live stub draws cleanly and answers its keys, a wedged one does not.
+Connections refused, screen clean, **still refused well after the timeout has had time to run** —
+five minutes at the default, longer if `AT+CIPSTO` has been raised — and no power cycle since boot.
+
+**The "still refused" clause is the load-bearing one and it is new.** A Next that refuses everybody
+and then recovers is #19 doing exactly what it is now measured to do, and is not worth reopening
+anything for. A refusal that **outlasts the timer** is the finding: either five peers really went
+quiet inside one window, or something is holding slots that idling does not free — and the second is
+a different fault wearing this one's face.
+
+**`make probe-slots` cannot settle it in that state** and it is important not to expect it to: its
+discriminating check asks whether an *earlier* connection still answers, and a module with every
+slot leaked has no earlier connection to ask. The tool says so itself.
+
+**Two different questions, two different discriminators, and they are not alternatives.** *Is the
+stub alive, or wedged?* — the **machine's own screen**: a live stub draws cleanly and answers its
+keys. *Is this #19, or something new?* — the **clock**: #19 recovers when the timer runs, and
+anything still refusing long afterwards is not #19 however clean the screen looks.
 
 ### Why this is not fixed
 
-**The stub cannot DETECT this, and that part is solid.** A vanished peer sent no FIN and no RST, so
-the module still believes the connection is open and the stub is told nothing at all. Every
-application-layer signal it might lean on is unavailable or wrong: `<id>,CLOSED` never arrives for a
-peer that vanished; DZRP has no keepalive; and **idleness cannot be the trigger**, because a DeZog
-session stopped at a breakpoint while somebody reads code is silent for minutes and perfectly
-healthy — which is exactly why issue #16's idle wait is deliberately not counted as a fault.
+**The stub cannot DETECT this in time to act, and that part is solid.** A vanished peer sent no FIN
+and no RST, so the module still believes the connection is open and the stub is told nothing at all.
+Every application-layer signal it might lean on is unavailable or wrong: no `<id>,CLOSED` arrives
+**at the moment the peer goes**, which is the only moment at which knowing would help; DZRP has no
+keepalive; and **idleness cannot be the trigger**, because a DeZog session stopped at a breakpoint
+while somebody reads code is silent for minutes and perfectly healthy — which is exactly why issue
+#16's idle wait is deliberately not counted as a fault.
+
+*(That said "`<id>,CLOSED` never arrives for a peer that vanished", flatly, which does not survive
+the `AT+CIPSTO` finding: the module may well emit one when it **reaps** the connection three minutes
+later. Nobody has looked — it is in "what is not known" above. Either way the detection argument
+holds, because a signal that arrives at the same time as the cure is not a signal you could have
+acted on.)*
 
 **But "cannot detect" is not "cannot prevent", and an earlier version of this entry said the
 stronger thing.** It was rejected in review for contradicting the sentence three paragraphs below,
@@ -204,13 +297,21 @@ real cost rather than being impossible:
   and #13; bench checks W4 and W5 rely on two clients being served at once).
 * **A TCP-level keepalive on the module.** ESP-AT does carry the concept — `AT+CIPSTART`'s fourth
   TCP argument is a keepalive, which jnext parses and discards — but that is the **outbound** form,
-  and whether a server-accepted inbound link can be given one is **unverified**. jnext does not
-  model it, so no bench here can answer the question; it needs the real firmware's documentation or
-  the module itself. If it exists, the module's own stack would decide liveness and the stub would
-  need no guesswork at all.
+  and whether a server-accepted inbound link can be given one is unverified.
 
-Neither has been scoped, and the decision is to leave both unscoped rather than a finding that
-neither could work.
+**THE SECOND BULLET HAS BEEN OVERTAKEN, AND BY THE THING THAT ENDS THIS FAULT.** It went on to wish
+for a module-side liveness mechanism — *"if it exists, the module's own stack would decide liveness
+and the stub would need no guesswork at all"* — and asked for the real firmware or its documentation
+to settle it, since no bench here could. The module was asked, on 2026-08-08, and the answer is
+**`AT+CIPSTO`**: a server-side idle timeout that applies to exactly these inbound links, on by
+default at 180 s, enforced. That is the mechanism the bullet hoped for, already present and already
+doing the job — which is why this entry now ends in a wait rather than a power cycle.
+
+Neither of the stub-side mechanisms has been scoped, and the decision is to leave both unscoped.
+That decision is on **firmer ground than when it was made**: it declines to spend Z80 bytes and
+multi-client behaviour on a fault that resolves itself in about three minutes, where before it was
+declining to fix one that needed the power switch. The cost side is unchanged and the benefit side
+shrank by two orders of magnitude.
 
 ### What already shipped
 
@@ -227,5 +328,24 @@ and would, ironically, make the shipped sweep more useful than this entry credit
 measured it. The primary leak path does not depend on this leg: a peer that vanishes while nothing
 is being sent to it produces no traffic in either direction.
 
-Closing the gap properly needs a sweep reachable from a **quiet** stub — periodic, or at connect
-time — which is a change nobody has scoped.
+Closing the gap **from the stub's side** would need a sweep reachable from a quiet stub — periodic,
+or at connect time — which is a change nobody has scoped and which now has little left to buy: the
+module closes the same gap on its own timer, without being asked and without costing a byte.
+
+### The one thing that will make this worse, deliberately
+
+**Issue [#24](https://github.com/jorgegv/dezogif_ng/issues/24) sets `AT+CIPSTO=1800` at bring-up**,
+and that stretches the self-heal above from about **3 minutes to about 30**. It is the same timer
+read from both ends, and the trade is now measured on both halves rather than argued:
+
+| | at the default 180 s | at #24's 1800 s |
+|---|---|---|
+| an **idle debug session** — stopped at a breakpoint while somebody reads code | **dropped after 3 minutes**, which is the fault a user actually meets | survives 30 minutes |
+| this entry's **vanished-peer exhaustion** | clears itself in ~3 minutes | clears itself in ~30 minutes |
+
+The first row is why #24 is being built: a debugger that hangs up on you for thinking is a real,
+frequent, unambiguous fault, and #16's idle wait is deliberately not counted as one for exactly that
+reason. The second row is this entry's, and it is the price. Both are rare-versus-common in the same
+direction, which is what makes the trade an easy one — but it does mean **the "wait three minutes"
+advice above becomes "wait thirty" on a build carrying #24**, and the reopen criterion scales with
+it. Check what the module is actually set to before concluding anything from a long refusal.

@@ -923,8 +923,13 @@ def chk_oversize_payload(d):
         # so it would have escaped as a traceback and taken every check BELOW
         # this one with it. That includes C15, which this suite requires to run
         # and to run last. jnext drains the payload fast enough that it has never
-        # happened here; a real ESP-01's backpressure is not the same thing, and
-        # C16-C18 have never run on hardware.
+        # happened here; a real ESP-01's backpressure is not the same thing.
+        #
+        # C16-C18 HAVE now run on hardware (2026-08-09, build 00.19, 18 of 18),
+        # and this branch was still never taken there: the oversize send
+        # completed and the remote declined it in-band. So the OSError arm
+        # remains unexercised everywhere, which is why it is written to be
+        # correct rather than to be tested.
         pass
 
     # The verdict is taken on a NEW connection, because the one above may

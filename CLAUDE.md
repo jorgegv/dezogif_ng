@@ -441,7 +441,13 @@ strongest:
    **Result 2026-08-05: W1-W5 pass, 15 passed / 0 failed of 15 — the target exits 0.**
    **The suite is 18 since C16-C18 landed**; the 2026-08-05 figure is left as the measurement it was
    rather than restated, and the hardware run of 2026-08-08 that reports 15 of 15 was also taken at
-   the suite's size then. **C16-C18 have not run on hardware.**
+   the suite's size then. **C16-C18 HAVE now run on hardware — 2026-08-09, build `00.19`, 18 of 18
+   with the whole bench at 6 of 6.** And C18 carries the strongest evidence in this project's
+   history for any single fix, because **the red was taken on the same machine an hour earlier**:
+   against build `00.16`, which predates the bound, the same check **destroyed the stub** — border
+   yellow and frozen, `B` and `R` both dead, power cycle required — where `00.19` reports *"a
+   12288-byte payload was declined and the remote served on"*. One build apart, same Next, same
+   client. See `doc/HARDWARE-TESTING.md`.
    **C12 was the last red and issue #8 closed it**: `CMD_PAUSE` was mapped to `cmd_not_supported`,
    which stores an error and jumps to `drain_main`, so the stub sent **no response at all** where
    the spec requires a Length=1 one and a client waited forever. Same shape as C2 — common code

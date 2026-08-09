@@ -5,6 +5,81 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-09 — The swap-window fix has a RED-FIRST PAIR ON SILICON, and the red was a Next we destroyed
+
+**Measured, not decided** (user's own Next, `192.168.100.136`), and it is the
+strongest evidence this project has ever had for a single fix: the same check,
+on the same machine, with the same client, **one build apart**.
+
+| build | C18 — a 12288-byte `CMD_LOOPBACK` | the machine afterwards |
+|---|---|---|
+| **`00.16`**, before the bound | **FAIL** — *left the remote not serving* | **stub destroyed**: border yellow and **not cycling**, `B` and `R` both dead, **power cycle required** |
+| **`00.19`**, as merged | **PASS** — *a 12288-byte payload was declined and the remote served on* | healthy; whole bench **6 of 6**, conformance **18 of 18** |
+
+**THAT RED IS WORTH MORE THAN THE GREEN, because no bench here could ever have
+produced it.** The defect — `cmd_loopback` and `cmd_write_bank` walking out of
+the 8 KB window at `SWAP_ADDR` into `MAIN_SLOT`, the bank the debugger executes
+from — was upstream's since 2020 and had only ever been *measured in jnext*. A
+real Next has now been wedged by it, and recovered by the fix, an hour apart.
+
+**The hung state is diagnostic and was read off the machine rather than
+inferred.** Yellow is the colour `transport_read_byte` leaves while waiting — the
+value bench **N1** asserts (`182,182,0`) — and *not cycling* means `main_loop` was
+never reached, which is why the key poll was dead. **`B` and `R` being dead was
+PREDICTED from the border colour before it was checked**, and held.
+
+**AND THE FIRST DIAGNOSIS OF IT WAS WRONG, FOR THE REASON THIS FILE KEEPS
+RECORDING.** I read the red as *"the bound holds but the stub cannot survive its
+own refusal on hardware"*, wrote a mechanism for it (backpressure, `drain_main`'s
+100 ms not covering ~267 ms of wire time at 460800), and filed it as
+[#35](https://github.com/jorgegv/dezogif_ng/issues/35). **The build under test was
+assumed.** A photograph of the screen then showed `build 00.16` in its first line
+— the pre-fix ROM, which has no bound at all, so the walk was expected and the
+hypothesis was about a code path that build does not contain. #35 carries the
+retraction.
+
+**The lesson is one this project already owns and I had applied twice the same
+evening in a different organ**: ERRORS.md's *prove which file ran*. Hours earlier
+a bench reporting **15 checks instead of 18** had revealed a run executing in the
+wrong worktree, and every bench invocation after it was pinned with `make -C`. The
+identical discipline was then not applied to the hardware — where the build number
+is **the first line of the screen**, free to read. **Ask for the banner before
+interpreting a hardware run.**
+
+**Measurements, and they reproduce the 460800 figures for a fourth time**: H1 in
+**30 ms** (against 242-1037 ms across the evening's runs), H4 median **6.3 ms**,
+H5 **20.0 KB/s** round trip. C16's 8192-byte `CMD_WRITE_BANK` and C17's
+**16384-byte** `CMD_WRITE_MEM` both round-trip intact — and that was the
+scheduled question, because C17 is **four times** the largest payload that
+established the rate ceiling, on the same per-byte receive path whose cost the
+sweep bracketed at 470-610 T-states. **The margin is there.**
+
+**`Error: payload too big for databank` WAS DRAWN ON A REAL NEXT AND READ BY A
+HUMAN** — `ERROR_PAYLOAD_TOO_BIG` (`src/ui.asm:28`, text at
+`src/data_const.asm:195`), the code this branch added, on its first hardware
+outing. **H6 nevertheless reports the error area CLEAN, and that is not a
+contradiction**: `cmd_init` clears `last_error`, and C15's follow-up `CMD_INIT`
+runs before the bench reads the screen. Recorded because a future reader meeting
+`H6 clean` could otherwise conclude no error was ever raised.
+
+**NOT COVERED, and none of it is hidden.** **The `OSError` arm of
+`chk_oversize_payload` was still never taken** — the oversize send completed and
+the remote declined it in-band, so the fix for that (issue #33's sibling) remains
+correct-by-construction rather than exercised anywhere. **The UART build's half**
+of the same common-code path: `commands.asm` is shared, but no hardware run has
+ever driven the serial ROM. **`00.18`'s idle sweep** was in the same ROM and
+nothing here exercises it — its 300 s period has still never been watched
+anywhere, and no bench stages the vanished peer it exists for. **One machine, one
+ESP-01, one reporter**, as ever. And the **two red dots** seen mid-right on the
+destroyed `00.16` screen are **still unexplained**; they did not survive the power
+cycle and H6 read clean afterwards, which is consistent with transient damage from
+the overwrite but does not establish it.
+
+**Cost: documentation only.** No `src/` change, no ROM byte moves, **no `make
+bump`** — checked mechanically.
+
+---
+
 ## 2026-08-09 — A client could hand itself the running debugger to overwrite, and adding a big-transfer check is what found it
 
 **Built.** `cmd_loopback` and `cmd_write_bank` refuse a declared length that
@@ -140,9 +215,13 @@ plausible mechanism for a real regression existed. `DZRP_SPLIT_GAP` would have
 made it pass on demand and was deliberately not used — tuning a race until it is
 green is weakening a check to make it pass.
 
-**NOT COVERED, and none of it is hidden.** **Hardware** — C16, C17 and C18 have
+**NOT COVERED, and none of it is hidden.** ~~**Hardware** — C16, C17 and C18 have
 never run on a Next, and C17's 16 KB is the largest inbound payload this project
-has ever sent anywhere. **The other users of a client-declared
+has ever sent anywhere.~~ **CLOSED THE SAME DAY, AND WITH A RED-FIRST PAIR ON
+SILICON** — see the entry at the top of this file: `00.19` answers all three on a
+real Next, and `00.16` was **destroyed** by C18 on the same machine an hour
+earlier. C17's 16 KB remains the largest inbound payload this project has ever
+sent anywhere, and it now survives at 460800. **The other users of a client-declared
 length WERE audited, and the scoping is narrower than it needed to be.** Every
 consumer of `receive_buffer.length` in `commands.asm` was enumerated
 mechanically, and the rest are immune for a structural reason rather than by

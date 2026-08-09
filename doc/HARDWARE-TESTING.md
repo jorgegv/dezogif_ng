@@ -9,10 +9,14 @@ answering another, which is the one thing it demonstrably could not do this morn
 are at the bottom of this page, with the numbers.
 
 **That "12" is the count the suite had on the day, and it has grown since**: C13/C14 (issue #9) and
-C15 (`CMD_CLOSE`) were added afterwards, so H2 now delegates **15** checks — and **the full 15
-have since passed on a real Next: 15 of 15, 2026-08-08 12:37**, recorded under *"The suite at its
+C15 (`CMD_CLOSE`) were added afterwards, so H2 delegated **15** checks — and **the full 15
+passed on a real Next: 15 of 15, 2026-08-08 12:37**, recorded under *"The suite at its
 full size"* — named rather than counted, because dated sections keep being appended and "the second
-table at the bottom" has already gone stale once. Read every conformance total on this page as a record of the run that produced
+table at the bottom" has already gone stale once.
+
+**IT IS 18 SINCE C16-C18 LANDED, AND ALL 18 HAVE NOW PASSED ON A REAL NEXT — 2026-08-09, build
+`00.19`, the whole bench 6 of 6.** That run also produced this project's **only red-first pair taken
+on silicon**: see *"C18, and the Next we destroyed to earn its green"* below. Read every conformance total on this page as a record of the run that produced
 it, not as the size of the suite today — `python3 test/dzrp/conformance.py --help` lists
 what it actually carries.
 
@@ -1173,3 +1177,94 @@ the fallback catches it. A unit with a worse crystal, more RF noise or a longer 
 `AT+UART_CUR=460800` and misbehave on the wire, which would surface as DZRP desynchronisation rather
 than as a rate fault, and nothing here would catch it as a refusal. And the probe **against a module at a
 rate this ROM was not built for**, which nothing stages: it only ever tries the two rates it knows.
+
+---
+
+## C18, and the Next we destroyed to earn its green — measured 2026-08-09, build `00.16` then `00.19`
+
+**This is the only RED-FIRST PAIR this project has taken on silicon**, and it is the reason the
+swap-window bound is believed rather than merely reviewed. Same machine, same client, same
+`make test-hardware` invocation. One build apart.
+
+| | build `00.16` (no bound) | build `00.19` (as merged) |
+|---|---|---|
+| **C18** — a 12288-byte `CMD_LOOPBACK` | **FAIL** — *left the remote not serving* | **PASS** — *a 12288-byte payload was declined and the remote served on* |
+| C15, H3 | FAIL — cascade from a stub that had stopped serving | PASS |
+| the machine afterwards | **stub destroyed**, power cycle required | healthy |
+| the bench | 1 passed, 3 failed of 6 | **6 of 6**, conformance **18 of 18** |
+
+**What the red was.** `cmd_loopback` buffers into a bank paged at `SWAP_ADDR`, an **8 KB** window,
+and — before `00.19` — walked upward for as many bytes as the frame **declared**. One slot on is
+`MAIN_SLOT`, the bank the debugger is executing from. Upstream's, since 2020, and until this run it
+had only ever been *measured in jnext*.
+
+### Reading the hung machine, which is a procedure worth repeating
+
+Taken off the screen **before** recovering it:
+
+| observation | what it means |
+|---|---|
+| border **yellow**, and **not cycling** | yellow is the colour `transport_read_byte` leaves while waiting — the value bench **N1** asserts (`182,182,0`). Not cycling means `main_loop` was never reached |
+| `B` does nothing | the key poll lives in `main_loop` |
+| `R` does nothing | same |
+| screen text otherwise intact | the UI was painted before the damage |
+| **two small red dots, mid-right** | **unexplained.** Gone after the power cycle, and H6 read clean afterwards — consistent with transient damage, not evidence of it |
+
+**`B` and `R` being dead was predicted from the border colour before it was checked.** That is the
+discriminator to reach for first: it separates a wedged Z80 from a healthy stub whose transport has
+desynchronised, and it costs two keypresses.
+
+### THE MISTAKE THAT NEARLY WENT INTO THE RECORD
+
+The red was first read as *"the bound holds on hardware but the stub cannot survive its own
+refusal"*, complete with a mechanism (backpressure; `drain_main` draining 100 ms against ~267 ms of
+wire time at 460800) and an issue — [#35](https://github.com/jorgegv/dezogif_ng/issues/35). **The
+build under test had been assumed.** A photograph of the screen then showed **`build 00.16`** in its
+first line: the pre-fix ROM, which contains no bound at all, so the walk was expected and the
+hypothesis described a code path that build does not have.
+
+**So: ask for the banner before interpreting a hardware run.** Row 0 carries
+`dezogif_ng <variant> NN.NN` for exactly this reason (issue #12), it is free to read, and it is the
+only thing on the machine that says which ROM is executing — DZRP's `PROGRAM_NAME` reports
+upstream's `dezogif v2.2.1` whatever we ship. The same discipline had been applied twice that
+evening to *bench worktrees*, where a suite reporting 15 checks instead of 18 revealed a run in the
+wrong tree, and was then not applied here.
+
+### The measurements from the green run
+
+    H1   PASS  connected in 30 ms, session opened and closed cleanly
+    H2   PASS  the DZRP conformance suite passed in full          (18 of 18)
+    H3   PASS  two simultaneous connections each got their own payload back
+    H4   MEAS  20 samples: min 5.9, median 6.3, max 13.2 ms
+    H5   MEAS  4096 bytes in 0.40 s — 20.0 KB/s round trip, 10.0 KB/s one way
+    H6   MEAS  the error area is CLEAN — 0 bright-red pixels
+
+**C16 and C17 are the scheduled question, and they pass.** C17 pushes **16384 bytes** in one
+`CMD_WRITE_MEM` — **four times** the largest payload that established the 460800 ceiling, on the
+same per-byte *receive* path whose cost the rate sweep bracketed at 470-610 T-states. The margin is
+there on silicon.
+
+**H4 and H5 reproduce the 460800 figures for a fourth time** (6.3 ms against 6.6, 20.0 KB/s against
+20.3), so the rate is now well characterised on this machine.
+
+### `Error: payload too big for databank` was drawn, and H6 still reads CLEAN
+
+The error text `ERROR_PAYLOAD_TOO_BIG` added by `00.19` (`src/ui.asm:28`, `src/data_const.asm:195`)
+**appeared on the Next and was read by a human** during the green run — its first outing anywhere.
+
+**H6 nevertheless reports 0 bright-red pixels, and that is not a contradiction.** `cmd_init` clears
+`last_error`, and C15's follow-up `CMD_INIT` runs before the bench reads the screen. Written down
+because `H6 CLEAN` would otherwise be read as *no error was ever raised*.
+
+### NOT established by this pair
+
+- **The `OSError` arm of `chk_oversize_payload`.** The oversize send completed and was declined
+  in-band, so that branch was not taken here either — it remains correct-by-construction and
+  unexercised everywhere. See [#33](https://github.com/jorgegv/dezogif_ng/issues/33).
+- **The UART build.** `commands.asm` is common code and both ROMs carry the bound, but no hardware
+  run has ever driven the serial transport.
+- **Build `00.18`'s idle sweep**, which shipped in the same ROM. Nothing here exercises it; its
+  300 s period has never been watched anywhere, and no bench stages the vanished peer it exists for.
+- **The smallest payload that triggers the pre-fix walk** — 8193 against this run's 12288 — and
+  whether the pre-fix hang reproduces at 115200.
+- **One machine, one ESP-01, one reporter.**

@@ -265,6 +265,19 @@ other names.)* At `BAUD_HIGH=460800` it is +145 (0xFBCF, 710 free). **The UART R
 byte-identical** to the base pinned (`87965fea…`), so nothing leaked across the
 transport boundary. **This changes a ROM, so the merge carries a `make bump`.**
 
+*(**CORRECTED 2026-08-09: "free to the identity block" was the wrong ceiling, and
+for the 460800 build the true figure is NEGATIVE.** The usable region ends at the
+RAM font buffer, `0xFBC0`, not at `ROM_MAGIC_ADDR`. So the shipped WiFi ROM's 855
+is really **119**, and `BAUD_HIGH=460800`'s 710 is **−15**: `main_end` 0xFBCF sits
+**inside** the font buffer, aliasing `text_one_char` and `text_core_version` onto
+the space and `!` glyphs. That is issue #31 — the screen artefacts seen on real
+hardware at 460800 — and it means **the 460800 measurements in this entry, and the
+15/15 hardware runs at that rate, were taken against a ROM with a live memory
+overlap**. The rate results (latency, throughput, the C5 ceiling) are unaffected,
+because none of them reads that memory; the *screen* was wrong the whole time.
+Every other "free to the identity block" figure in this file is loose by 736 bytes
+for the same reason and is left as measured.)*
+
 **Regression: `make test` 7/7, `test-dzrp-stub` 15/15 with W1-W6, `test-cipsto`
 4/4, `test-client-status` 6/6, `test-baud` 5/5, both variants
 `check-reproducible`.**
@@ -1257,6 +1270,15 @@ relationship that preserves it. Probed rather than argued: +16 bytes with the
 constant moved builds clean, the ROM stays 8192 and the block still reads.
 The WiFi build has over a kilobyte of headroom, i.e. many such steps. "No longer a free action" stands;
 "cannot" was wrong. See [doc/ASYNCHRONOUS-BREAK-DESIGN.md] §4.5.)*
+
+*(**CORRECTED 2026-08-09, and the corrected sentence is the one above's own correction — which is
+why it is annotated here rather than quietly fixed.** "Over a kilobyte of headroom, i.e. many such
+steps" is wrong twice. The ceiling is not the identity block at `0xFEA0` but the **RAM font buffer at
+`0xFBC0`**, 736 bytes lower, which `main_bank_entry` fills and which nothing in the source emits a
+byte into — so the WiFi build's real headroom is **119 bytes**. And the buffer's address is derived
+from `MF.main_prg_copy`, so **every 16-byte step spends 16 of those 119**: probed, one step put it at
+`0xFBB0` with `main_end` unmoved. At most seven steps, and only if the debugger half grows by
+nothing. Issue #31 is what this cost, and `main.asm` now `ASSERT`s the real bound.)*
 
 [doc/ASYNCHRONOUS-BREAK-DESIGN.md]: doc/ASYNCHRONOUS-BREAK-DESIGN.md
 

@@ -424,9 +424,24 @@ clean, keeps the ROM at 8192 bytes, and leaves the identity block readable at fi
 The permanent contract is the **file offset**, which is what `tools/mfselect/mfselect.c` parses — not
 the address. `main.asm`'s `ASSERT` enforces exactly the relationship that preserves it, so the
 failure mode is a build error rather than a silently misplaced block. The half grows in 16-byte
-quanta at the cost of one constant, and the debugger half has over a kilobyte of headroom in the
-tighter WiFi build — many such steps, deliberately not counted here, since a count is a thing
-somebody then has to maintain (this file's neighbours carry two entries about exactly that).
+quanta at the cost of one constant.
+
+**THE SECOND HALF OF THIS PARAGRAPH WAS WRONG UNTIL 2026-08-09, AND IT WAS WRONG IN THE DIRECTION
+THAT MATTERS TO M2.** It said the debugger half "has over a kilobyte of headroom in the tighter WiFi
+build — many such steps". It has **119 bytes**, and a step costs 16 of them.
+
+`main_bank_entry` copies the 0x300-byte ZX font into the top of the debugger's bank at
+`0xFD00 - MF.main_prg_copy` = **`0xFBC0`**, so the usable region ends 736 bytes below
+`ROM_MAGIC_ADDR` — the identity block is the font buffer's last four glyphs, not the ceiling. And
+because that address is *derived from `MF.main_prg_copy`*, every 16-byte step of the MF ROM half
+moves it **down** by 16: probed 2026-08-09, one step put the buffer at `0xFBB0` with `main_end`
+unmoved. **The two halves therefore share one 119-byte budget**, which is the number M2's §4.1 fast
+path and its slot-7-restoring exit have to fit inside, together, in the WiFi build.
+
+Nothing in the source emits a byte in that region, so the assembler could not see the collision and
+growth past it silently aliased the debugger's variables onto the glyph bitmaps — issue #31, now
+`ASSERT`ed in `main.asm`. **Do not plan M2's byte budget from the old sentence**; §4.5's conclusion
+that the half *can* grow still stands, but "many such steps" does not.
 
 ---
 

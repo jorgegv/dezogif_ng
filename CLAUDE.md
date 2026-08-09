@@ -192,8 +192,24 @@ One byte over the boundary moves `main_prg_copy` to `0x150` — **and moving `RO
 the same 16 keeps the file offset at `0x1FE0`**, which is the thing `tools/mfselect/mfselect.c`
 actually parses. The `ASSERT` in `main.asm` enforces exactly that relationship, so it is a build
 error and never a silently misplaced block. **Probed 2026-08-08**: +16 bytes with the constant moved
-builds clean, the ROM stays 8192 bytes and the block still reads at `0x1FE0`; the WiFi build has
-over a kilobyte of headroom, i.e. many such steps.
+builds clean, the ROM stays 8192 bytes and the block still reads at `0x1FE0`.
+
+**BUT THE HEADROOM IS 119 BYTES, NOT "OVER A KILOBYTE", AND EVERY 16-BYTE STEP SPENDS 16 OF THEM.**
+That sentence stood here until 2026-08-09 and was wrong twice over — read it before planning M2,
+which grows both halves. `main_bank_entry` copies the 0x300-byte ZX font into the **top of the
+debugger's bank**, at `0xFD00 - MF.main_prg_copy` = **`0xFBC0`**, and `font_address` points 0x100
+lower so a character code indexes it directly. So:
+
+- **The real ceiling is `0xFBC0`, not `ROM_MAGIC_ADDR` (`0xFEA0`)** — 736 bytes lower. The identity
+  block is not the top of the usable region; it is the *last four glyphs of the font buffer*.
+  Measured: UART **2496** bytes free, WiFi **119**.
+- **Growing the MF ROM half moves that ceiling DOWN**, because the address is derived from
+  `MF.main_prg_copy`. Probed 2026-08-09: one step took the buffer to `0xFBB0` with `main_end`
+  unmoved. So the two halves share **one** 119-byte budget in the WiFi build — at most seven steps,
+  and only if the debugger half grows by nothing.
+- **Nothing in the source emits a byte in `0xFBC0-0xFEBF`**, so until 2026-08-09 the assembler could
+  not see the collision at all: growing past it silently made the debugger's variables and the glyph
+  bitmaps the same memory. That is issue #31, and `main.asm` now `ASSERT`s the real bound.
 
 *(This paragraph previously said the half "CANNOT GROW" and called the address the contract. That was
 wrong and would have told a future session that M2's entry path is blocked when it is not — see

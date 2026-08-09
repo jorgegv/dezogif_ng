@@ -1093,7 +1093,10 @@ the "the screen must say 460800" criterion cannot be read honestly off a screen 
 | **H6** | the error area is **CLEAN** every run, 0 bright-red pixels, and no `RX Overflow` |
 
 **Against the 115200 baseline: latency 11.2 → 6.6 ms median, throughput 8.3 → 20.3 KB/s, i.e.
-2.45x.** The latency result **contradicts the prediction recorded with the negotiation**, which said
+2.45x.** That baseline is the 2026-08-08 run above, so this is a **cross-session** comparison and
+not a same-session A/B with only the rate varied — said out loud because WiFi round trip is not a
+controlled quantity. The effect is far larger than the jitter within either set (every one of the
+five runs lands between 19.8 and 20.4 KB/s, against 8.3), which is why it is quoted at all. The latency result **contradicts the prediction recorded with the negotiation**, which said
 to expect it unchanged because 11.2 ms is WiFi round trip rather than wire time. It nearly halved,
 so a material part of that figure was the wire after all.
 
@@ -1103,16 +1106,26 @@ so a material part of that figure was the wire after all.
 greeting is **structurally unreachable in jnext**, whose module answers the first one every time, so
 no bench in this repository can execute it. It is also the only recovery the stub ships: a soft reset
 leaves the UART prescaler alone (`i_reset_hard` is tied to `'0'`, `zxnext.vhd:3361-3367`) and does
-not reset the module, so after `R` **both ends are still at 460800** while a fresh `esp_uart_init`
-assumes 115200.
+not reset the module either — the stub's `R` key writes `nextreg REG_RESET, 01b` (`src/ui.asm:52`)
+with **bit 7 clear**, and bit 7 is the one that would pulse reset to the ESP and the expansion bus.
+So after `R` **both ends are still at 460800** while a fresh `esp_uart_init` assumes 115200.
 
 Sequence run at the machine: **M1** (stub up at 460800) → **`R`** → **M1**, and the stub came back
-up with row 3 reading 460800.
+up with row 3 reading 460800. Between the reset and the second press, `.UART` sent `AT` and **got no
+answer**.
 
-**What makes that a measurement rather than a story is the step in between.** With the machine
-sitting after the reset, `.UART` sent `AT` at 115200 and **got no answer** — so the module was not at
-115200, and had held 460800 across the soft reset. The stub's 115200 greeting must therefore have
-failed, and `ESP_BAUD_HIGH` is the only other rate it tries.
+**Behaviour alone could not have told you anything, which is why that step was needed.** A module
+still at 460800 reaches the screen's "460800" *through the probe*; a module back at 115200 reaches
+the identical screen by being greeted normally and then negotiated up. The two are
+indistinguishable from the outside.
+
+**The conclusion rests on one premise, and it is cited rather than assumed**: `.UART` puts the link
+at 115200 **itself**, rather than inheriting whatever prescaler it finds — `doc/WIFI-SETUP.md:148`
+records that it sends `ATE0` and `AT+UART=115200,8,1,0,0` on entry. That premise is load-bearing
+precisely because the prescaler survives a soft reset, so a `.UART` that inherited it would have
+been sitting at 460800 too, and a still-460800 module would then have *answered*. Given the premise,
+the silence says the module was not at 115200 — so the stub's own 115200 greeting must have failed
+and `ESP_BAUD_HIGH` is the only other rate it tries.
 
 **And the instrument was controlled, which is what the "no answer" needed.** Silence has two causes
 — the wrong rate, or a `.UART` that does not work. So: power-cycle, which returns the module to its

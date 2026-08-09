@@ -257,16 +257,28 @@ nothing here has ever executed the probe.
 
 *(**IT HAS NOW, ON A REAL NEXT — 2026-08-09, build `00.16`, and this is the first
 time that code has run anywhere.** Sequence: M1 (stub up, 460800), `R`, M1 — the
-stub came back up with row 3 reading 460800. **The precondition was OBSERVED
-rather than inferred**, which is what makes it a measurement: between the reset
-and the second press, `.UART` sent `AT` at 115200 and **got no answer**, so the
-module was not at 115200 and had held 460800 across the soft reset. The stub's
-own greeting at 115200 must therefore have failed, and the only other rate it
-tries is `ESP_BAUD_HIGH`. **And the instrument was controlled** — power-cycling
-returns the module to its 115200 default, after which `.UART` sent `AT` and got
-`OK`, so the earlier silence was the rate and not a broken tool. Without that
-second step "no answer" had two causes and the evidence was worth nothing.
-Tier: `reported on hardware`.)*
+stub came back up with row 3 reading 460800. Between the reset and the second
+press, `.UART` sent `AT` and **got no answer**; power-cycling then returns the
+module to its 115200 firmware default, and `.UART`'s `AT` there got **`OK`**.
+Tier: `reported on hardware`.
+
+**THE CONCLUSION RESTS ON ONE CITED PREMISE, AND CALLING IT "OBSERVED" WOULD
+OVERSTATE IT** — which is what the independent review of this entry caught. It is
+that **`.UART` puts the link at 115200 itself**, rather than inheriting whatever
+prescaler was there: `doc/WIFI-SETUP.md:148` records that it sends `ATE0` and
+`AT+UART=115200,8,1,0,0` on entry. The premise is load-bearing because the
+prescaler **survives a soft reset** (this entry's own finding), so a `.UART` that
+inherited it would have been at 460800 too — and a still-460800 module would then
+have answered, not gone quiet. Given the premise, the silence says the module was
+**not** at 115200, so the stub's own 115200 greeting must have failed and
+`ESP_BAUD_HIGH` is the only other rate it tries.
+
+**Behaviour alone cannot discriminate, which is why the `.UART` step was needed at
+all**: a module still at 460800 reaches the screen's 460800 through the probe, and
+a module back at 115200 reaches the same screen by being greeted normally and then
+negotiated up. Both end identically. And the power-cycle control is what makes the
+silence mean anything — without it "no answer" had two causes, the rate and a
+broken tool.)*
 
 **THE SWITCH IS MADE ATOMIC WITH THE FRAME REGISTER, and the bench watched the
 hazard it closes.** There is no double buffering anywhere in `serial/uart.vhd`:

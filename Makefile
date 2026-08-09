@@ -764,7 +764,8 @@ test-tx-patience:
 # none can be left where a shipped ROM is read from.
 #
 # Run the hang-safety bench (4 jnext runs; not part of `make test`)
-test-no-hang: $(ROM_WIFI)
+test-no-hang:
+	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
 	@$(MAKE) --no-print-directory TRANSPORT=wifi WAIT_SECS=0 mf-rom
 	@$(MAKE) --no-print-directory TRANSPORT=wifi RX_WAIT=400 TX_PASSES=1 mf-rom
 	@$(MAKE) --no-print-directory TRANSPORT=wifi RX_WAIT=400 TX_PASSES=1 FAULT_LIMIT=1 mf-rom
@@ -907,7 +908,8 @@ test-baud:
 # ---------------------------------------------------------------------------
 
 # Validate the DZRP screen reader against jnext's own picture (2 jnext runs)
-test-screen-agreement: $(ROM_WIFI)
+test-screen-agreement:
+	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
 	 ROM="$(ROM_WIFI)" $(TEST)/run-screen-agreement.sh
 

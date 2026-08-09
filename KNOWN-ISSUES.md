@@ -488,9 +488,10 @@ halves rather than argued:
 | an **idle debug session** — stopped at a breakpoint while somebody reads code | **dropped after 3 minutes**, which is the fault a user actually meets | survives 30 minutes |
 | this entry's **vanished-peer exhaustion** | clears itself in ~3 minutes | clears itself in ~30 minutes |
 
-The first row is why #24 is being built: a debugger that hangs up on you for thinking is a real,
+The first row is why #24 was built: a debugger that hangs up on you for thinking is a real,
 frequent, unambiguous fault, and #16's idle wait is deliberately not counted as one for exactly that
 reason. The second row is this entry's, and it is the price. Both are rare-versus-common in the same
-direction, which is what makes the trade an easy one — but it does mean **the "wait three minutes"
-advice above becomes "wait thirty" on a build carrying #24**, and the reopen criterion scales with
-it. Check what the module is actually set to before concluding anything from a long refusal.
+direction, which is what makes the trade an easy one — but it does mean **the wait is thirty minutes
+rather than three on any build from `00.14`**, which is every current one. The criterion for
+reopening is in "What would reopen it" above and is not restated here. Check what the module is
+actually set to before concluding anything from a long refusal.

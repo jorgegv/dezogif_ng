@@ -5,6 +5,180 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-09 — The module was hanging up on idle debug sessions, and we had never told it not to
+
+**Built, issue #24.** `transport_init` sends **`AT+CIPSTO=1800`** between
+`AT+CIPMUX=1` and `AT+CIPSERVER`, and reads the answer. Twenty bytes of AT
+command and a wait; the whole of the interest is in the value and in the wait.
+
+**THE DEFECT IS THE MODULE'S, AND IT WAS MEASURED BEFORE ANY CODE WAS WRITTEN,
+WHICH IS UNUSUAL HERE AND IS WHY THIS ONE DID NOT COST A HARDWARE EVENING.**
+`AT+CIPSTO` is the ESP's TCP-**server** idle timeout: a client silent for
+`<time>` seconds is hung up on by the module, with no involvement from the guest
+at all. The stub had never sent the command, so the firmware default governed
+us — and on the user's Next (AT 1.2.0.0 / SDK 1.5.4.1) `AT+CIPSTO?` answers
+**`+CIPSTO:180`** and it is **enforced**: a client that connected, sent
+`CMD_INIT` and then said nothing was dropped after **182.5 s** and **181.8 s**
+on two runs.
+
+**That is a DeZog session parked at a breakpoint.** Neither side transmits while
+the user reads code — this stub never speaks unprompted, DeZog sends only when a
+panel asks — and on ESP8266 our **own replies do not re-arm the timer**
+(esp-at v2.2.0.0_esp8266 says so outright; v1.5.4, which matches this firmware,
+is silent, and jnext models the reading the requirement forces). Confirmed with
+the real client at the machine: the registers view, the memory view and the
+debug toolbar all vanished — DeZog had ended the session, and 3.7.4 has no
+reconnect logic of any kind — while the stub was **perfectly healthy**, border
+still cycling. **Nothing on the Next said anything had happened**, and the
+screen still read `Session opened - CMD_INIT`, which is issue #23's subject
+seen in the field.
+
+**WHY 1800 AND NOT 0 OR 7200, WHICH IS THE ONE THING A FUTURE READER WILL
+QUESTION.** All three are legal; the range is 0..7200 inclusive.
+
+| `CIPSTO` | an idle debug session | a vanished peer's inbound slot |
+|---|---|---|
+| **180**, the firmware default | **dropped after 3 min** — the defect | self-heals in ~3 min |
+| **0** | never dropped | **never freed** — permanent, until a power cycle |
+| **7200** | safe for 2 h | **leaks for 2 h** |
+| **1800**, chosen | safe for 30 min | self-heals in ~30 min |
+
+`0` was rejected because it would **deliberately create** the permanent fault
+KNOWN-ISSUES.md #19 describes, and Espressif's own documentation attaches "we
+don't recommend that" to it. **7200 was chosen first and a measurement moved
+it**, which is the part worth keeping: that choice rested on the leak being
+already permanent, so that stretching the timer cost nothing. It is not.
+`make probe-vanished PROBE_ARGS="--no-lift --recover 210"` on the user's Next
+has a fresh client **SERVED** after four vanished peers with the blackhole still
+**up** throughout — nothing of ours told the module its peers had gone — and the
+identical run at `--recover 100` comes back **REFUSED**. One constant apart, so
+the reclaim is a **timer of roughly 180 s**, and not our own `esp_recover`
+sweep, which has no timer and cannot fire on a quiet stub. So 7200 would have
+turned a three-minute fault into a two-hour one. 1800 keeps the whole practical
+benefit — nobody reads code for half an hour without touching the debugger —
+and leaves the leak self-healing on a human timescale.
+
+**IT IS RE-SENT ON EVERY BRING-UP**, because `AT+CIPSTO` is absent from v1.5.4's
+list of commands that write to flash: the module's 180 is a compiled-in default,
+not something a previous session left behind.
+
+**THE WAIT IS THE DESIGN, NOT THE COMMAND.** `esp_command_ok_or_error` accepts
+`OK` **or** `ERROR` and treats neither as a bring-up failure. Three reasons, and
+the third is the one that made it a routine rather than a line:
+
+1. `esp_command_ok` matches `OK` alone, so a refusal is indistinguishable from
+   silence **and costs the full read budget** — the whole of `ESP_INIT_PASSES`,
+   ~2 s — before saying so;
+2. and then says the wrong thing: its `jr c,.no_bringup` abandons a module that
+   answered perfectly clearly. **Measured, as bench check K4**: with that wait,
+   `AT+CIPSERVER` is never sent and **nothing listens at all**. A firmware too
+   old for the command would have turned this fix into "the debugger will not
+   start";
+3. **it is not fire-and-forget**, which this project refuses for its usual
+   reason: a run where the module silently did nothing must not look like one
+   where the timeout really changed. Which arm was taken is recorded in
+   `esp_sto_state`.
+
+**THE MATCHER IS THE NAIVE RESTART SHAPE GENERALISED TO TWO PATTERNS BY
+COMMITTING ON THE FIRST CHARACTER**, and it is exact rather than usually-right
+for a checkable reason: `"OK\r\n"` and `"ERROR"` begin with different letters
+and **neither repeats its own first letter later on**, so a mismatch can restart
+by re-testing the offending byte against both starts. `"ERROK\r\n"` still
+matches OK. A general two-cursor matcher was rejected because `esp_read_scan`
+preserves only HL.
+
+**`esp_sto_state` IS WRITTEN AND NOT YET READ, DELIBERATELY.** Raising it into
+`last_error` was rejected on a byte-identity argument rather than a design one:
+the error table is in `data_const.asm`, which is **common code**, so a new code
+would move the UART ROM for a WiFi-only condition — the same argument that kept
+bring-up failure reporting as `RX Timeout` (MEMORY.md 2026-08-04). Putting a
+refusal on the screen is worth doing and belongs with a change allowed to move
+both ROMs.
+
+**Ordering: BEFORE `AT+CIPSERVER`, and that buys two things.** No client can be
+accepted while the firmware's 180 still governs it; and, since nothing is
+listening yet, no `<id>,CONNECT` can land inside the wait for this command's
+answer.
+
+**A STALE CLAIM THIS FALSIFIES, corrected in place.** The file header's
+"what this does NOT do" list said a re-init while already listening reports a
+spurious error, and that clearing it "needs a wait that accepts OK *or* ERROR,
+**which nothing else here needs**". That wait now exists. Pointing the
+`AT+CIPSERVER` step at it is a one-line change and is **deliberately not made
+here**: it would move the meaning of a failed bring-up, and that wants its own
+issue and its own check.
+
+**Evidence: `make test-cipsto`, 4 runs, 4 checks, and ALL FOUR SHOWN RED FIRST
+AGAINST `main`'s ROM.**
+
+| | ROM | verdict |
+|---|---|---|
+| **K1** | `SERVER_TIMEOUT=10` | the silent client is **dropped at 10.00 s** |
+| **K2** | the **shipped** ROM | the same client **survives 25.03 s**; the log says we sent 1800 |
+| **K3** | `SERVER_TIMEOUT=7201` | **refused** by the module, and the stub listens, serves and reports no fault |
+| **K4** | the same, `CIPSTO_STRICT=1` | waiting for `OK` alone: `AT+CIPSERVER` never sent, **nothing listens** |
+
+`SERVER_TIMEOUT` is the **sixth** seam of the `IP_MAX` / `RX_WAIT` /
+`TX_PASSES` / `WAIT_SECS` / `FAULT_LIMIT` / `LINK_IDS` family and exists for the
+fifth time's reason: the shipped 1800 is **half an hour per run**, so no bench
+anyone will run can watch it work. K1 and K2 differ in that one constant, which
+is what attributes the ten seconds to the value **this ROM sent** rather than to
+clients being dropped for some other reason. `CIPSTO_STRICT` is the seventh, and
+is K3's controlled removal — ERRORS.md's standing complaint is that a fix never
+tested by removing it is a correlation.
+
+**EVERY CHECK ASSERTS ITS PRECONDITION FROM jnext's OWN LOG**, and without that
+three of the four would pass vacuously: a ROM that never sent the command also
+comes up, serves DZRP, reports nothing and keeps a silent client for 25 s.
+Measured against `main`'s ROM — no `AT+CIPSTO` line anywhere, client alive at
+25.03 s, **4 of 4 red**. Two sharper reds were taken as well, each with the
+message it was written for: K3 against the `CIPSTO_STRICT=1` ROM
+(*"nothing listened: the refused AT+CIPSTO stopped bring-up, which is the
+defect"*) and K4 against the lenient one (*"the strict build carried on past the
+refusal"*).
+
+**Rejected.** `AT+CIPSTO=0` and `=7200` (above); `esp_command_ok` (above);
+sending it fire-and-forget (above); a DeZog-side keepalive — it would work,
+since any client→server command re-arms the timer, but it needs every user to
+upgrade DeZog, protects none of this project's own probes or conformance suite,
+and is somebody else's repository; putting the step **after** `AT+CIPSERVER`
+(it leaves a window in which a client is accepted under the firmware default,
+and puts `<id>,CONNECT` inside the wait); a new `ERROR_*` code for the refusal
+(it moves the UART ROM — above); matching `"ERROR\r\n"` with a string of its own
+(eight bytes to consume two, and the next step in the chain is a scan, which
+steps over CR and LF without matching either — the same reason `esp_wait_prompt`
+leaves them).
+
+**Cost: WiFi +80 bytes** (`main_end` 0xFB02 → 0xFB52), **846 bytes still free**
+to the identity block at 0xFEA0. **The UART ROM is byte-identical** pinned
+(`87965fea…` both sides, `build/*.bin` deleted first), which is what says
+nothing shared moved: `transport_esp.asm` is in the WiFi build only and the new
+constants live there rather than in `constants.asm`. WiFi `ffd2878f…` →
+`65662d39…`. **This changes a ROM, so the merge carries a `make bump`.**
+
+**NOT COVERED, and none of it is hidden.**
+
+* **A real ESP-01.** jnext models `AT+CIPSTO` **from** the hardware measurement
+  above (jnext#240, needs ≥ 0.99.141), so a green bench shows the stub sends the
+  command and reads the answer, **not that a module obeys**. The hardware check
+  is the same silent-client probe on a Next, requiring survival past 300 s where
+  it died at ~182 s. Nothing here has been flashed.
+* **The value as a POLICY.** 1800 is a judgement resting on the two hardware
+  measurements above; no emulator run can weigh 30 minutes of session against 30
+  minutes of leaked slot.
+* **The refusal on real firmware.** K3's `ERROR` comes from an out-of-range
+  value, which is not the same event as a firmware with no `AT+CIPSTO` at all.
+  The stub cannot tell them apart and does not try; nothing here has met the
+  second.
+* **`esp_sto_state` reaching a human.** It is written and read by nothing.
+* **KNOWN-ISSUES.md #19's bound.** This change lengthens it from ~3 minutes to
+  ~30, and the entry is **not edited here**: branch `known-issues-19-bounded`
+  owns that correction and already names #24 and the figure. Two branches
+  editing one section is how a correction gets applied twice and reconciled
+  never.
+
+---
+
 ## 2026-08-09 — The screen stops claiming a session that ended; and a redraw learned to ask where it is writing
 
 **Built, issue #23.** `esp_watch_line` watches the module's unsolicited

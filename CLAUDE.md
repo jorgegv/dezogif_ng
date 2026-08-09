@@ -631,6 +631,32 @@ strongest:
    what is benched here has not: `--load`, `--auto` from `AUTOEXEC.BAS` and `--configure` have all
    been exercised there (mfselect has too — MEMORY.md 2026-08-04). What has not is `--unload`, and
    an interrupted config write.
+4l. **`make test-cipsto`** — the module's own idle timeout (issue #24), 4 headless jnext runs,
+   4 checks, and the **sixth** bench to move a build-time constant to reach its subject. `AT+CIPSTO`
+   is the ESP's TCP-server idle timeout: a client silent for `<time>` seconds is hung up on **by the
+   module**, with no involvement from the guest. The stub had never sent the command, so the
+   firmware default governed — and it is **180 seconds**, measured on a real Next at 182.5 s and
+   181.8 s, which is **a DeZog session parked at a breakpoint while its user reads code**. Confirmed
+   with the real client at the machine: the views and the debug toolbar vanished, the stub was
+   perfectly healthy with its border still cycling, and nothing on the Next said anything had
+   happened. The stub now sends `AT+CIPSTO=1800` on every bring-up — the value is re-sent because
+   the command does not persist to flash — and **reads the answer**, because a module too old for it
+   answers `ERROR` and that is not a reason to refuse to debug.
+   **The shipped value cannot be watched to work**: half an hour per run. So `SERVER_TIMEOUT` moves
+   it — **K1** at 10 drops the silent client at 10 s, **K2** is the *shipped* ROM over the same
+   window and does not, and they differ in that one constant, which is what attributes the ten
+   seconds to the value **this ROM sent**. **K3** is the refusal arm, reachable only because a
+   value above 7200 is refused: the stub must still listen, serve DZRP and report no fault.
+   **K4 is K3's controlled removal** and the second seam, `CIPSTO_STRICT=1`, which assembles that
+   step with `esp_command_ok` — waiting for `OK` alone — after which the refusal abandons bring-up
+   and nothing listens at all.
+   **Every check asserts its precondition from jnext's own log**, because a ROM that never sent the
+   command satisfies K2, K3 and K4 by accident — which is exactly what `main`'s ROM does, and all
+   four go red against it. **It says nothing about a real ESP-01**: jnext models this command *from*
+   the hardware measurement above (jnext#240, needs ≥ 0.99.141), so a green run shows the stub sends
+   it and reads the answer, not that a module obeys. The hardware check is the same silent-client
+   probe on a Next, requiring survival past 300 s where it died at ~182 s. Binds a host TCP port, so
+   not part of `make test`.
 5. **`build/ut.nex`** — the same tests, **DeZog-driven** (`"unitTests": true` + zsim + the
    `customCode` plugin) in VS Code. Still a manual layer, and still the only way to exercise the
    36 that 4d must skip. `make unit-tests` assembles it; nothing here runs it.
@@ -648,7 +674,7 @@ read once; a document can be revised, cited and diffed.
 Two things the shortening may **never** touch, because they are interface rather than prose:
 
 - **The check id.** `T1`-`T7`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W6`, `C1`-`C15`, `B1`-`B2`,
-  `P1`-`P3`, `N1`-`N4`, `G1`-`G2`, `I1`-`I9`, `S1`-`S3`, `H1`-`H5` are cited by every document and
+  `P1`-`P3`, `N1`-`N4`, `G1`-`G2`, `I1`-`I9`, `S1`-`S3`, `K1`-`K4`, `H1`-`H5` are cited by every document and
   issue, and two things match on
   them: `run-dzrp-stub.sh`'s W3 greps `^FAIL  C10 `, and `test/hardware-check.py` takes the code
   from field 2 of every `FAIL` line. Shorten the prose after the id; never the id, and never

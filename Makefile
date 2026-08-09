@@ -221,6 +221,36 @@ ifneq ($(LINK_IDS),)
   VARIANT_FLAGS  += -DESP_LINK_IDS=$(LINK_IDS)
 endif
 
+# SERVER_TIMEOUT / CIPSTO_STRICT — the sixth bench seam, and the two things the
+# module's own AT+CIPSTO idle timeout needs before it can be checked at all.
+#
+# The shipped value is 1800 seconds, which is the point of the fix and is also
+# why no ordinary run can watch it work: half an hour per check. SERVER_TIMEOUT
+# brings it down to something a bench can sit out, so that a client dropped at
+# ten seconds shows that the value THIS ROM SENT is the value that governs — the
+# same move IP_MAX and RX_WAIT make, one constant instead of the world.
+# An out-of-range SERVER_TIMEOUT (above 7200) is refused by the module, which is
+# the only way to execute the ERROR arm of esp_command_ok_or_error.
+#
+# CIPSTO_STRICT=1 assembles that step with esp_command_ok instead, so a refusal
+# becomes a bring-up failure — the behaviour the fix exists to avoid, and
+# therefore the thing the refusal check has to be shown red against. Same
+# justification as LINK_IDS=0: a red nobody can re-run is a story about a
+# scratch tree. Nothing ships with it set. See test/run-cipsto.sh.
+#
+# Same naming rule as the others: each probe ROM gets its own output name.
+SERVER_TIMEOUT ?=
+CIPSTO_STRICT  ?=
+
+ifneq ($(SERVER_TIMEOUT),)
+  VARIANT_SUFFIX := $(VARIANT_SUFFIX)-sto$(SERVER_TIMEOUT)
+  VARIANT_FLAGS  += -DESP_SERVER_TIMEOUT=$(SERVER_TIMEOUT)
+endif
+
+ifneq ($(CIPSTO_STRICT),)
+  VARIANT_SUFFIX := $(VARIANT_SUFFIX)-stostrict$(CIPSTO_STRICT)
+  VARIANT_FLAGS  += -DESP_CIPSTO_STRICT=$(CIPSTO_STRICT)
+endif
 
 # ---------------------------------------------------------------------------
 # Layout
@@ -717,6 +747,38 @@ test-slot-recovery:
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
 	 ROM_SWEEP="$(OUT)/enNextMf-wifi-fl1.rom" \
 	 ROM_NOSWEEP="$(OUT)/enNextMf-wifi-fl1-li0.rom" $(TEST)/run-slot-recovery.sh
+
+# ---------------------------------------------------------------------------
+# The module's own idle timeout — issue #24.
+#
+# `AT+CIPSTO` is the ESP's TCP-server idle timeout, and its firmware default of
+# 180 seconds hangs up on a DeZog session while its user reads code: measured on
+# a real Next at 182.5 s and 181.8 s, and confirmed with the real client, which
+# simply ended the session with the stub perfectly healthy. The stub now sets it
+# to 1800 on every bring-up and READS the answer, since a module too old for the
+# command answers ERROR and that is not a reason to refuse to debug.
+#
+# The shipped value cannot be watched to work — half an hour per run — so
+# SERVER_TIMEOUT moves it to something a bench can sit out, and K1/K2 differ in
+# that one constant. An out-of-range value is the only way to execute the ERROR
+# arm, and CIPSTO_STRICT=1 assembles that step with esp_command_ok so the
+# refusal becomes a bring-up failure: the controlled removal K3 needs.
+#
+# It needs jnext >= 0.99.141 (jnext#240's AT+CIPSTO) and binds a host TCP port,
+# so it is not part of `make test`. It says NOTHING about a real ESP-01: jnext
+# models this command FROM the hardware measurement above, so a green run shows
+# the stub sends it and reads the answer, not that a module obeys.
+#
+# Run the AT+CIPSTO idle-timeout bench (4 jnext runs, 4 checks; not part of `make test`)
+test-cipsto: $(ROM_WIFI)
+	@$(MAKE) --no-print-directory TRANSPORT=wifi SERVER_TIMEOUT=10 mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi SERVER_TIMEOUT=7201 mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi SERVER_TIMEOUT=7201 CIPSTO_STRICT=1 mf-rom
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
+	 ROM_SHORT="$(OUT)/enNextMf-wifi-sto10.rom" \
+	 ROM_SHIPPED="$(ROM_WIFI)" \
+	 ROM_REFUSED="$(OUT)/enNextMf-wifi-sto7201.rom" \
+	 ROM_STRICT="$(OUT)/enNextMf-wifi-sto7201-stostrict1.rom" $(TEST)/run-cipsto.sh
 
 # ---------------------------------------------------------------------------
 # The DZRP screen reader (test/dzrp/screen.py) and its validation.

@@ -208,6 +208,58 @@
 ;    new client while the old one holds it, so it is a second, independent
 ;    witness for exactly the case where the CLOSED was eaten.
 ;
+; 11. THE MODULE'S OWN IDLE TIMEOUT IS SET, BECAUSE ITS DEFAULT KILLS SESSIONS.
+;    Issue #24, and it is the first thing in this file measured on a real Next
+;    BEFORE it was written rather than after.
+;
+;    `AT+CIPSTO` is the TCP *server* idle timeout: a client that says nothing
+;    for `<time>` seconds is hung up on by the module, with no involvement from
+;    the guest at all. The user's Next (AT 1.2.0.0 / SDK 1.5.4.1) reports
+;    `+CIPSTO:180` and ENFORCES it — a client that connected, sent CMD_INIT and
+;    then stayed silent was dropped after 182.5 s and 181.8 s on two runs.
+;
+;    THAT IS A DEZOG SESSION PARKED AT A BREAKPOINT. Neither side transmits
+;    while the user reads code: this stub never speaks unprompted, and DeZog
+;    sends only when a panel asks it to. Confirmed with the real client at the
+;    machine — the registers view, the memory view and the debug toolbar all
+;    vanished, i.e. DeZog ended the session, and DeZog 3.7.4 has no reconnect
+;    logic of any kind. The stub was perfectly healthy throughout, its border
+;    still cycling; the module had simply hung up on it and said nothing about
+;    it. There is NO indication on the Next that anything happened.
+;
+;    Worse for this transport specifically: on ESP8266, server-initiated
+;    traffic does NOT restart the timer (esp-at v2.2.0.0_esp8266's own wording;
+;    v1.5.4, which matches this firmware, is silent, and jnext models the
+;    clause the requirement implies). So our own replies do not keep a
+;    connection alive. Only the client's bytes do.
+;
+;    1800, NOT 0 AND NOT 7200, and the middle value is the one a measurement
+;    picked. `AT+CIPSTO=0` means "never time out", which would make a peer that
+;    vanished without TCP cleanup hold its inbound slot until the machine is
+;    power-cycled — deliberately creating the permanent fault KNOWN-ISSUES.md
+;    #19 describes, and Espressif's own documentation attaches "we don't
+;    recommend that" to it. 7200 was chosen first, on the reasoning that the
+;    leak was already permanent so stretching the timer cost nothing. It is
+;    not: `make probe-vanished PROBE_ARGS="--no-lift --recover 210"` on the
+;    user's Next has a fresh client SERVED after four vanished peers, with the
+;    blackhole still up throughout, and the same run at `--recover 100` REFUSED
+;    — one constant apart, so the reclaim is a timer of roughly 180 s and not
+;    our own esp_recover sweep, which has no timer and could not have fired.
+;    So the leak self-heals, and 7200 would have stretched a three-minute fault
+;    into a two-hour one. 1800 keeps the whole practical benefit — nobody reads
+;    code for half an hour without touching the debugger — and leaves the leak
+;    self-healing on a human timescale.
+;
+;    IT IS RE-SENT ON EVERY BRING-UP, because `AT+CIPSTO` is absent from
+;    v1.5.4's list of commands that write to flash: the module's 180 is the
+;    firmware's compiled-in default and not something a previous session left.
+;
+;    AND ITS ANSWER IS READ. See esp_command_ok_or_error: a module too old for
+;    the command answers ERROR, which is not a reason to refuse to debug, so
+;    neither arm fails bring-up — but which arm was taken is recorded in
+;    esp_sto_state rather than thrown away, because a run where the command
+;    silently did nothing must not look like one where it worked.
+;
 ;---------------------------------------------------------------------------
 ; What this file does NOT do, deliberately
 ;---------------------------------------------------------------------------
@@ -218,8 +270,15 @@
 ; * A RE-INIT WHILE ALREADY LISTENING REPORTS AN ERROR. Symbol Shift + NMI runs
 ;   transport_init again, and `AT+CIPSERVER=1,<port>` answers ERROR when a
 ;   server is already up (jnext esp_at.cpp:648). The link keeps working — the
-;   listener is still there — but the screen says "RX Timeout". Clearing that
-;   needs a wait that accepts OK *or* ERROR, which nothing else here needs.
+;   listener is still there — but the screen says "RX Timeout".
+;
+;   THE WAIT THAT WOULD CLEAR THIS NOW EXISTS, and until issue #24 it did not:
+;   this line used to end "which nothing else here needs". esp_command_ok_or_error
+;   accepts OK *or* ERROR and is what the CIPSTO step uses. Pointing the
+;   CIPSERVER step at it as well is a ONE-LINE change and is deliberately not
+;   made here: it would move the meaning of a failed bring-up — today a refused
+;   CIPSERVER is the difference between "the module is listening" and "nobody
+;   told us it isn't" — and that decision wants its own issue and its own check.
 ;===========================================================================
 
 
@@ -493,6 +552,47 @@ ESP_FAULT_LIMIT:    equ 5
 ESP_LINK_IDS:   equ 5
  ENDIF
 
+; The module's own TCP-server idle timeout, in seconds — issue #24, and point 11
+; in the header, which carries the whole argument for the value. In one line:
+; the firmware default of 180 hangs up on a DeZog session while its user reads
+; code, 0 would turn issue #19's self-healing slot leak into a permanent one,
+; and 1800 is the measured middle. The range the firmware documents is 0..7200
+; inclusive.
+;
+; OVERRIDABLE, and this is the SIXTH seam of the ESP_IP_MAX / ESP_RX_WAIT /
+; ESP_TX_PASSES / TRANSPORT_WAIT_RX_SECONDS / ESP_FAULT_LIMIT / ESP_LINK_IDS
+; family. Two settings earn a check and neither is reachable otherwise:
+;
+;   * a SHORT value, because the shipped 1800 cannot be observed to fire inside
+;     any bench anyone will run — half an hour per run — while a client dropped
+;     at ten seconds shows that the value THIS ROM SENT is the value that
+;     governs, which is the whole claim;
+;   * an OUT-OF-RANGE value, which the module refuses, so that the ERROR arm of
+;     esp_command_ok_or_error is executed rather than reasoned about. jnext
+;     answers `ERROR` above 7200 exactly as the firmware documents.
+;
+; See test/run-cipsto.sh.
+ IFNDEF ESP_SERVER_TIMEOUT
+ESP_SERVER_TIMEOUT: equ 1800
+ ENDIF
+
+; The bench seam that assembles the CIPSTO step the WRONG way — waiting for OK
+; alone, so that a refusal is a bring-up failure. Nothing ships with this set;
+; it exists because the behaviour a check must be shown red against has to be
+; reachable by a BUILD, which is the same argument ESP_LINK_IDS=0 carries, and
+; a refusal is otherwise indistinguishable from a stub that simply never sent
+; the command. See test/run-cipsto.sh's K4.
+ IFNDEF ESP_CIPSTO_STRICT
+ESP_CIPSTO_STRICT:  equ 0
+ ENDIF
+
+; Which arm AT+CIPSTO's answer took, recorded so that a run where the command
+; silently did nothing cannot look like one where it worked. Nothing above the
+; transport reads it; see esp_command_ok_or_error for why it is kept anyway.
+ESP_STO_SILENT:     equ 0   ; the module said neither, inside the read budget
+ESP_STO_SET:        equ 1   ; OK — the timeout is ours
+ESP_STO_REFUSED:    equ 2   ; ERROR — too old a firmware, or a value it dislikes
+
 ; What the UI has to say about the link. Decided once, during bring-up, because
 ; show_ui is re-entered on every redraw and an AT round trip per redraw would
 ; buy nothing — the address cannot change while we hold the module.
@@ -564,6 +664,13 @@ esp_cmd_at:         defb "AT",13,10,0
 esp_cmd_cipmux:     defb "AT+CIPMUX=1",13,10,0
 esp_cmd_cipserver:  defb "AT+CIPSERVER=1,"
     STRINGIFY ESP_SERVER_PORT
+    defb 13,10,0
+; Issue #24, and point 11 in the header. Sent BEFORE the listener opens, for two
+; reasons: no client can then be accepted while the module's own 180-second
+; default is still in force, and — since nothing is listening yet — no
+; `<id>,CONNECT` can land inside the wait for this command's answer.
+esp_cmd_cipsto:     defb "AT+CIPSTO="
+    STRINGIFY ESP_SERVER_TIMEOUT
     defb 13,10,0
 esp_cmd_cifsr:      defb "AT+CIFSR",13,10,0
 ; Only esp_recover sends this. AT+CIPSERVER=1 is refused while a server is
@@ -825,6 +932,25 @@ esp_fault_count:    defb 0
 ; zeroing the count is NOT enough on its own: it makes the very next fault the
 ; first of a new run, which is exactly what re-triggers a limit of one.
 esp_recovering:     defb 0
+
+; Which arm AT+CIPSTO's answer took on the last bring-up — issue #24, point 11.
+;
+; IT IS WRITTEN AND NOT YET READ, WHICH IS DELIBERATE AND IS THE POINT OF IT.
+; The alternative was to send the command fire-and-forget, and this project
+; refuses that for one reason: a run where the module silently did nothing would
+; then be indistinguishable from a run where the timeout really changed. Reading
+; the answer is what makes the two different, and the byte is where the answer
+; goes; a REFUSED here says the session will still be dropped at whatever the
+; firmware's own default is, which is a fact about the machine and not a
+; transport fault.
+;
+; It is NOT raised into last_error, and that is a decision rather than an
+; omission: the error table lives in data_const.asm, which is common code, so a
+; new code would move the UART ROM's bytes for a WiFi-only condition — the same
+; argument that kept bring-up failure reporting as RX Timeout (MEMORY.md
+; 2026-08-04). Putting it on the screen is worth doing and belongs with whatever
+; change is allowed to move both ROMs.
+esp_sto_state:      defb ESP_STO_SILENT
 
 ; Which of the three status blocks below show_ui draws. NO_MODULE is the state
 ; before transport_init has run, so a UI drawn without a bring-up says "the
@@ -2949,6 +3075,26 @@ transport_init:
     call esp_command_ok
     jr c,.no_bringup
 
+    ; The module's own idle timeout — issue #24, point 11 in the header, and
+    ; ESP_SERVER_TIMEOUT for the value. BEFORE the listener, so no client can be
+    ; accepted while the firmware's 180-second default still governs it.
+    ;
+    ; NEITHER ANSWER STOPS THE CHAIN. A module too old for the command says
+    ; ERROR, and the only consequence is that an idle session will still be
+    ; dropped at whatever that firmware's default is — a worse debugger, not a
+    ; broken one, and refusing to come up over it would be strictly worse again.
+    ; Which arm it took is in esp_sto_state.
+ IF ESP_CIPSTO_STRICT == 0
+    ld hl,esp_cmd_cipsto
+    call esp_command_ok_or_error
+ ELSE
+    ; The bench seam, never shipped: the refusal treated as a bring-up failure,
+    ; which is what the two-pattern wait exists to avoid. See ESP_CIPSTO_STRICT.
+    ld hl,esp_cmd_cipsto
+    call esp_command_ok
+    jr c,.no_bringup
+ ENDIF
+
     ld hl,esp_cmd_cipserver
     call esp_command_ok
     jr c,.no_bringup
@@ -3318,6 +3464,91 @@ esp_command_ok:
     ret nc
     ld a,ERROR_RX_TIMEOUT
     scf
+    ret
+
+
+;===========================================================================
+; Sends a command and waits for OK or ERROR, treating NEITHER as a failure.
+; Issue #24, and point 11 in the header.
+;
+; WHY NOT esp_command_ok. That waits for "OK" alone, so a refusal is
+; indistinguishable from silence and costs the full read budget — the whole of
+; ESP_INIT_PASSES, ~2 s at bring-up — before saying so, and then says the wrong
+; thing: `jr c,.no_bringup` would abandon a module that had just answered
+; perfectly clearly. AT+CIPSTO's refusal is an ordinary answer from an older
+; firmware, and a debugger that declined to start over it would be worse than
+; one whose sessions time out.
+;
+; THE MATCHER IS THE SAME NAIVE RESTART esp_wait_string USES, generalised to two
+; patterns by committing on the first character. "OK\r\n" and "ERROR" begin with
+; different letters and NEITHER repeats its own first letter later on, which is
+; the property that makes a one-cursor matcher exact here rather than merely
+; usually right: after a mismatch the offending byte is re-tested against BOTH
+; starts, so a stream like "ERROK\r\n" still matches OK. (A general two-pattern
+; matcher would need a second cursor, and esp_read_scan preserves only HL.)
+;
+; It captures, like every other wait here — esp_scan_hold — so an inbound frame
+; met mid-scan is held rather than destroyed (point 8). Nothing can be listening
+; when this runs, since transport_init sends AT+CIPSTO before AT+CIPSERVER; the
+; flag is set anyway, because "nothing can arrive" is a property of the CALLER
+; and this routine should not have to be re-audited if a second one appears.
+;
+; WHAT IS LEFT ON THE WIRE, on the ERROR arm: the two bytes of the trailing CRLF,
+; because esp_str_error carries none — see the note beside it. That is safe here
+; for the same reason it is safe in esp_wait_prompt: the next step in the chain
+; is another scan, and a scan skips what it is not looking for. AT+CIPSERVER's
+; wait for "OK\r\n" steps over CR and LF without matching either.
+;
+; Parameter:
+;  HL = NUL-terminated command, CRLF included.
+; Returns:
+;  esp_sto_state = ESP_STO_SET / ESP_STO_REFUSED / ESP_STO_SILENT.
+;  No carry contract: there is nothing here a caller has to act on.
+; Changes:
+;  AF, BC, DE, HL
+;===========================================================================
+esp_command_ok_or_error:
+    call esp_send_string
+    ld a,1
+    ld (esp_scan_hold),a
+.hunt:
+    call esp_read_scan          ; A = the byte read; HL is preserved
+    jr c,.silent
+.classify:
+    ; Does this byte start either pattern? The state byte is written HERE rather
+    ; than at the match, so that no second variable is needed — and only HL
+    ; survives esp_read_scan, so a second cursor would have had to be one. It is
+    ; sound because the ONLY way to reach the `ret z` below is through the
+    ; classification that chose the pattern which then completed, and a partial
+    ; match that times out instead is overwritten by .silent.
+    ld hl,esp_str_ok+1          ; the 'O' has just been consumed
+    cp 'O'
+    jr z,.chose_ok
+    ld hl,esp_str_error+1       ; likewise the 'E'
+    cp 'E'
+    jr nz,.hunt
+    ld a,ESP_STO_REFUSED
+    jr .chose
+.chose_ok:
+    ld a,ESP_STO_SET
+.chose:
+    ld (esp_sto_state),a
+.body:
+    ld a,(hl)
+    or a
+    ret z                       ; the whole pattern matched; the state says which
+    call esp_read_scan
+    jr c,.silent
+    cp (hl)
+    jr nz,.classify             ; a mismatching byte may start a pattern itself
+    inc hl
+    jr .body
+
+.silent:
+    ; A partial match that then timed out is NOT a refusal, so this overwrites
+    ; whatever .classify guessed.
+    ld a,ESP_STO_SILENT
+    ld (esp_sto_state),a
     ret
 
 

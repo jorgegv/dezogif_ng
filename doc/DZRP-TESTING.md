@@ -355,6 +355,16 @@ Two conventions follow from it and both are load-bearing:
   caller pays for the tail inside its own budget, so a longer phrase spends words in four checks at
   once.
 
+- **`the connection failed mid-check:` means the remote went AWAY, not that it answered wrongly.**
+  It is `main()`'s `except OSError` arm (issue #33), and it is deliberately a separate verdict from a
+  `DzrpError`: that one is the remote answering incorrectly, this one is a peer that reset, closed,
+  or died part-way through a send. **A check that provokes a disconnect on purpose catches it
+  locally and never produces this line** — `chk_oversize_payload` is the one that does — so a line
+  reading this way is always an unexpected disconnect and always a FAIL, never an `UNSUPPORTED`.
+  Before that clause existed such a check did not fail at all: it escaped `main()` as a traceback
+  and **took every check below it with it, C15 included**, so the suite silently stopped covering
+  `CMD_CLOSE`.
+
 - **`PRECONDITION:` is a one-word label with a documented meaning.** It prefixes a C10/C11 failure
   where the *setup* broke — the fixture did not land in memory, the marker area did not clear, the
   register block was too short to index — before the check's own subject was ever reached. **Nothing

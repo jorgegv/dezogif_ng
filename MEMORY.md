@@ -5,6 +5,72 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-09 — One check's dead connection took the whole suite with it, and the loss was SILENT
+
+**Built, issue #33**, filed by the user from a finding the independent reviewer
+of the swap-window branch made while reviewing something else. `main()`'s
+per-check loop in `test/dzrp/conformance.py` caught `Unsupported`, `Precondition`
+and `dzrp.DzrpError` — and **not bare `OSError`**.
+
+`TcpTransport.write` is a plain `sock.sendall`, so a peer that resets or closes
+mid-send raises `BrokenPipeError` or `ConnectionResetError`, **neither of which
+is a `DzrpError`**. The exception escaped `main()` entirely.
+
+**THE FAILURE MODE IS NOT A RED, IT IS SILENCE, and that is the whole of why this
+was worth fixing.** Everything below the raising check never runs, and **C15 is
+last by design** — it is the only check that sends `CMD_CLOSE`. So the suite
+stops covering command 2 and reports nothing at all about having stopped. A run
+that lost its most fragile check would look like a run that was shorter.
+
+**Demonstrated rather than argued**, with a scratch check raising
+`BrokenPipeError` from the position immediately before C15, against two
+otherwise-identical trees:
+
+| tree | what happened |
+|---|---|
+| pre-fix | `Traceback ... BrokenPipeError`, and **C15 absent from the output entirely** |
+| fixed | `FAIL CXX INJECTED oserror control — the connection failed mid-check`, then **`PASS C15`**, totals `18 passed, 1 failed, of 19` |
+
+**It is its own `except` clause rather than folded into `DzrpError`**, because the
+two say different things and the detail line should too: `DzrpError` is the remote
+**answering wrongly**; this is the remote **not being there**. And it is **FAIL
+rather than UNSUP**: a check that provokes a disconnect deliberately catches it
+locally — `chk_oversize_payload` does, which is what `62d4009` fixed one level
+down — so anything reaching this clause did not expect it.
+
+**A SECOND HOLE, ONE LAYER ALONG, FOUND WHILE FIXING THE FIRST.**
+`SerialTransport.close()` did not guard `OSError` where `TcpTransport.close()`
+does, and `conformance.py` closes through it from a **`finally:`** — so a raising
+close escapes the handler that has just caught the real fault and takes the suite
+down anyway. Same defect, reached differently. Fixed here rather than filed,
+because leaving it would have meant shipping a fix whose own escape hatch leaked.
+
+**What the review established that the fix did not.** `hardware-check.py` runs
+`conformance.py` as a **subprocess**, so H2 inherits this automatically and needs
+no parallel change; no exception class here derives from `OSError`, so there is
+no ordering hazard in the `except` chain; and all 18 check bodies do only
+transport I/O, so a bare `except OSError` is not over-broad.
+
+**Rejected.** A blanket `except Exception` (it would swallow assertion errors and
+bugs in the checks themselves, which must fail loudly); catching at the call site
+of each check instead of in the loop (that is the convention that already existed
+and already failed — it is unenforced, and the next check written in that shape
+brings the defect back); and filing the `SerialTransport` half separately.
+
+**Test infrastructure only.** No `src/`, no `Makefile`, no ROM byte moves,
+**no `make bump`** — checked mechanically. Regression: `make test-dzrp-stub`
+**18/18 with W1-W6, exit 0**, on a clean re-run after the injection was removed.
+
+**NOT COVERED.** **The clause has still never fired for a real cause anywhere** —
+jnext drains fast enough that no peer resets mid-send, and C16-C18's hardware run
+declined the oversize frame in-band without a disconnect. It is
+correct-by-construction and exercised only by an injected fault. And `main()`'s
+loop is now robust to `OSError` **specifically**; any future check raising
+something else unexpected still takes the suite down, which is the same class of
+defect waiting for a different exception.
+
+---
+
 ## 2026-08-09 — The swap-window fix has a RED-FIRST PAIR ON SILICON, and the red was a Next we destroyed
 
 **Measured, not decided** (user's own Next, `192.168.100.136`), and it is the

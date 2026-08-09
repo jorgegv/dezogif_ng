@@ -5,6 +5,104 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-10 — The NMI decline arm gets a check, and the obvious version of it passes the bug
+
+**Built, issue #36.** Bench check **T8** in `make test`: the M1 button pressed
+**twice with no reset between**, asserting that the second press does **nothing**
+while proving the machine is still alive. Ten headless runs now, eight checks.
+
+**IT IS T7'S OTHER ARM, AND THAT ARM IS THE ONE M2 EDITS FIRST.** `mf_rom.asm`'s
+dispatch branches on the bank slot 7 held at the press: not `MAIN_BANK` →
+re-initialise, which is T7; `MAIN_BANK` → decline, because the debugger itself
+was executing, which was guarded by one hardware observation (2026-08-07, build
+`00.12`) and nothing else. Teaching `nmi66h` to accept a software cause — M2's
+first act — edits that routine and reuses the same `MF.nmi_slot7` byte.
+
+**Measured rather than argued**: against a scratch ROM whose dispatch sends
+**every** press to `init_main_bank`, **T1-T7 are all green and T8 is the only
+red**. That is issue #36's whole premise, produced rather than reasoned.
+
+**THE DESIGN DECISION IS THE THIRD KEYPRESS, AND THE FIRST VERSION OF THE CHECK
+WOULD HAVE PASSED THE BUG.** The issue specifies two presses plus a liveness key
+— press "B", judge the border, black when `main_loop` was reached. Built exactly
+that way, and then measured against the regression ROM: **it comes out green.** A
+re-initialisation resets `slow_border_change`, the liveness "B" then turns it off
+again, and the screen is **byte-identical** to the one-press reference. So some
+state has to be moved away from its default **before** the second press, or a
+re-init leaves no trace at all; in the UART build the joy-port selector is the
+one a keypress can reach, and `main_bank_entry` sets it back to 2. Three ROMs,
+one choreography:
+
+| ROM | row 6 | border | vs the one-press run |
+|---|---|---|---|
+| shipped | `No joystick port used.` | black | **0.00%**, byte-identical |
+| every press → `init_main_bank` | `Using Joy 2 (right)` | black | 0.33% |
+| the decline arm spins for ever | `No joystick port used.` | **red** | 40.03% |
+
+**The row is READ, not compared** (`test/screen-text.py`), for ERRORS.md's
+reason — "these two differ" is not "this one is right" — and because reading it
+is also what says the "3" press landed at all. Without that assertion the
+discriminator could vanish silently and the re-init would pass.
+
+**AND WITHOUT A KEYPRESS AT ALL THE 0.00% IS LUCK, WHICH IS WORTH RECORDING
+BECAUSE THE REVIEW MEASUREMENT OF 2026-08-07 IS EXACTLY THAT RUN.** Reproduced:
+one press against two presses, no keys, comes out 0.00% — and **both** broken
+ROMs come out **40.00%**, which is the border and *only* the border, the paper
+being byte-identical in all three. The border is cycling, so that discriminator
+is a phase coincidence at one frame. Pressing "B" is what turns it into a
+property: it blacks the border **and** stops `change_border_color` touching it.
+
+**THE ORDER OF THE THREE EVENTS IS ASSERTED, AND THAT GUARD WAS EARNED BY AN
+ACCIDENTAL GREEN.** While checking that the preconditions fire, moving the second
+press to frame 1500 — past the screenshot at 1466 — produced **8/8**, with the
+button pressed after the picture was taken. The NMI-count precondition says both
+presses were *delivered* and nothing about *when*. Same shape as W6's window
+(CLAUDE.md §4c): get an edge wrong and it fails **green**. Two edges have runtime
+preconditions instead — a joy-port key landing before the stub is up is never
+polled, a "B" landing after the picture leaves the border uncycled — so only the
+chain itself needs a static check. Unlike W6 this really is by construction:
+these are emulated frames, not a client's wall clock.
+
+**All three preconditions have a re-runnable red**, the seam being the three
+frame numbers rather than a build constant — `NORESET_JOY_FRAME=850`,
+`NORESET_KEY_FRAME=1500`, `NORESET_NMI_FRAME=1500`, each taking a different guard
+red on the **shipped** ROM. `NORESET_JOY_FRAME=950` does *not*, which is a
+measurement worth keeping: the stub is in `main_loop` and polling within 50
+frames of the press.
+
+**Rejected.** The two-key design the issue specifies (above — it passes the
+regression); pressing "B" *before* the second press instead (it catches the
+re-init and makes a **wedged** stub look alive, which is the other half of the
+same trap); judging the joy-port row by comparing the two runs rather than
+reading it (mfselect's M9, ERRORS.md); a percentage threshold instead of
+byte-identity (the stub owns the screen here, NextZXOS is not idling behind it,
+and the good pair really is byte-identical); factoring `border_rgb` out of
+`run-no-hang.sh` into `bench-jnext.sh` (that file earns its keep by defining
+jnext teardown and nothing else, and sharing ten lines of pixel sampling would
+mean editing a second bench this change has no business touching).
+
+**Cost: test infrastructure only.** `git diff main..HEAD -- src/` is **empty**;
+the `Makefile` appears only for its `# 8 checks` help line, so the **certain**
+answer was taken rather than the conservative one — both ROMs hash identically to
+`main`'s with `BUILD_TIME` pinned and `build/*.bin` deleted first (`1e94d54b…`,
+`20e48a0f…`). **No `make bump`.**
+
+**Regression: `make test` 8/8, twice**, plus a clean-tree run.
+
+**NOT COVERED, and none of it is hidden.** **Hardware** — nothing here has run on
+a Next. Both arms of this discriminator *were* seen on one (build `00.12`,
+`reported on hardware`), and T8 does not upgrade that; it makes the emulator half
+re-runnable so a regression is caught before it reaches silicon. **The
+press-while-stopped case**, which is W6's and is emulator-only by the user's
+decision (2026-08-07). **The NMI-count precondition itself**, which no knob can
+provoke now that the schedule is checked — the same position T7's is in. **A
+stub that wedges only AFTER the liveness key is polled** would pass both halves.
+And **M2's own change**: when `nmi66h` learns to accept a software cause, T4 must
+be inverted deliberately and T8's expectations re-examined in the same change —
+they are about the same routine.
+
+---
+
 ## 2026-08-09 — One check's dead connection took the whole suite with it, and the loss was SILENT
 
 **Built, issue #33**, filed by the user from a finding the independent reviewer

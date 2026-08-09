@@ -626,7 +626,7 @@ mfinstall: $(MFINSTALL_DOT) mfselect
 # src/unit_tests/ are a separate body of code that `make unit-tests` assembles
 # and nothing here executes.
 #
-# Boot a Next in jnext and judge screenshots — 6 checks, no VS Code, no hardware
+# Boot a Next in jnext and judge screenshots — 8 checks, no VS Code, no hardware
 test: $(ROM) $(TRIGGER_BIN) $(COPPER_BIN)
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" ROM="$(ROM)" \
 	 TRIGGER_BIN="$(TRIGGER_BIN)" COPPER_BIN="$(COPPER_BIN)" $(TEST)/run-headless.sh

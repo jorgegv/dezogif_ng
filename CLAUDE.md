@@ -245,7 +245,7 @@ strongest:
 1. **It assembles** — necessary, proves nothing. Enforced by the in-source `ASSERT`s
    (`main_end` within budget) plus the Makefile's 8192-byte ROM size check.
 2. **`make check-reproducible`** — the same source gives the same ROM.
-3. **`make test`** — eight headless jnext runs, judged on screenshots (`test/run-headless.sh`):
+3. **`make test`** — ten headless jnext runs, judged on screenshots (`test/run-headless.sh`):
    - T1 the bench boots a Next at all
    - T2 our `enNextMf.rom` does not perturb the NextZXOS boot
    - T3 **control** — the software-NMI fixture really fires the Multiface NMI, shown against the
@@ -290,26 +290,41 @@ strongest:
      and from the reset run really leaving the stub's screen.
      **T7's subject is one of the few things here CONFIRMED ON A REAL NEXT** (build `00.12`,
      2026-08-07): reset→NMI re-initialises the debugger repeatably, and — the half **no bench here
-     presently covers** — a press with the stub *already up* correctly does **nothing** while `R`
+     covered until T8** — a press with the stub *already up* correctly does **nothing** while `R`
      still works, so both arms of the discriminator were seen on silicon. `reported on hardware`:
      one machine, one reporter, no re-runnable artefact.
-     **T7 TESTS ONE ARM OF THAT GUARD, AND THE OTHER IS THE ONE M2 IS ABOUT TO EDIT.** The
+     **T7 TESTS ONE ARM OF THAT GUARD, AND T8 TESTS THE OTHER — the one M2 edits first.** The
      dispatch branches on the bank slot 7 held: not `MAIN_BANK` → re-initialise, which is T7;
-     `MAIN_BANK` → decline, because the debugger itself was executing. A regression that sent
-     *every* press to `init_main_bank` would destroy live debug sessions and **T7 would still
-     pass** — and teaching `nmi66h` to accept a software cause, M2's first act, edits the same
-     routine and reuses the same `MF.nmi_slot7` this branch turns on. The decline arm is
-     currently guarded by one hardware observation and nothing else.
-     **It is coverable headless and simply is not covered**: measured in review, a second
-     `--delayed-nmi-frames` press with no reset between leaves the screen byte-identical (0.00%).
-     What stops that being a check on its own is that **"nothing changed" is also what a machine
-     that HUNG on the press looks like** — the stub's screen is already painted and a wedged Z80
-     repaints nothing, which is ERRORS.md's "the screen changed is not the stub took over" in its
-     mirror image. It needs a **liveness control**: on hardware `R` supplied that for free, and the
-     headless equivalent is `test-no-hang`'s N1/N2 trick — press a key the stub polls and judge the
-     **border**, which is yellow when `main_loop` was never reached and black when it was.
+     `MAIN_BANK` → decline, which is T8. A regression that sent *every* press to `init_main_bank`
+     would destroy live debug sessions and **T7 would still pass** — measured, not argued: against
+     exactly that ROM, T1-T7 are all green and T8 is the only red.
+   - T8 a second M1 press with **no reset** is **declined**, and the stub is still alive
+     afterwards (issue #36). Two runs differing only in that press, shot at the same frame; the
+     screen must be **byte-identical** and the border **black**. Both halves are required,
+     because **"nothing changed" is also what a machine that HUNG on the press looks like** — the
+     stub's screen is already painted and a wedged Z80 repaints nothing, which is ERRORS.md's "the
+     screen changed is not the stub took over" in its mirror image. Liveness is `test-no-hang`'s
+     N1/N2 trick: press a key the stub polls and judge the border, black when `main_loop` was
+     reached and whatever the cycle last wrote when it was not.
+     **THE THIRD KEY IS NOT DECORATION AND WAS MEASURED RATHER THAN REASONED.** A "3" is pressed
+     *before* the second press, retargeting the joy port — state `main_bank_entry` resets. Without
+     it the check goes **green against the regression it exists to catch**: a re-initialisation
+     followed by the liveness key reproduces the reference screen *exactly*, because the re-init
+     resets `slow_border_change` and "B" then turns it off again. So the joy-port row is **read**
+     with `test/screen-text.py` rather than compared — ERRORS.md's "these two differ is not this
+     one is right" — which is also what says the press landed at all. Measured over three ROMs on
+     one choreography: shipped `No joystick port used.` / black / **0.00%**; every-press-init
+     `Using Joy 2 (right)` / black / **0.33%**; decline-spins `No joystick port used.` / **red** /
+     **40.03%**. **The three event frames are asserted to be in order**, because
+     `NORESET_NMI_FRAME=1500` — past the screenshot — came out **8/8 having pressed the button
+     after the picture was taken**, which is W6's fail-green window in a new organ. Each frame is
+     overridable so all three preconditions have a re-runnable red. **NOT covered**: the
+     press-while-stopped case, which is W6's; and anything on hardware — both arms *were* seen on
+     a real Next at `00.12`, and T8 does not upgrade that, it makes the emulator half re-runnable.
    Screen comparison is a **percentage of differing pixels** (`test/screen-diff.py`), not a byte
    compare: NextZXOS idling changes 0.01% of the screen and that once produced a false PASS.
+   **T8 is the exception and asserts byte-identity**, which it can because the stub owns the
+   screen there and NextZXOS is not idling behind it.
 4. **`make test-mfselect`** — the mfselect bench, 6 headless runs, 10 checks, asserting on files
    pulled back off the SD image rather than on pixels. Deliberately **not** part of `make test`:
    mfselect is separate tooling and is not in `make all` either. Since #5 it covers **both** of our
@@ -786,7 +801,7 @@ read once; a document can be revised, cited and diffed.
 
 Two things the shortening may **never** touch, because they are interface rather than prose:
 
-- **The check id.** `T1`-`T7`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W6`, `C1`-`C18`, `B1`-`B2`,
+- **The check id.** `T1`-`T8`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W6`, `C1`-`C18`, `B1`-`B2`,
   `P1`-`P3`, `N1`-`N6`, `G1`-`G2`, `I1`-`I9`, `S1`-`S3`, `K1`-`K4`, `R0`-`R5`, `L1`-`L5`, `H1`-`H5` are cited
   by every
   document and
@@ -821,7 +836,10 @@ invert deliberately, instead of one that vanished the day the button check arriv
 Copper `MOVE $02,$08`, which sets the same latch through the same signal (`nmi_gen_nr_mf` covers
 CPU and Copper alike, `zxnext.vhd:3832`). It will be filtered by that same check until `nmi66h`
 is taught to accept a software cause — and then T4's assertion must be inverted, deliberately and
-in the same change.
+in the same change. **T8's expectations belong in that same change too**: it asserts that a
+*button* press taken while the debugger executes is declined, which is the branch M2 edits first
+and reuses `MF.nmi_slot7` from, so whatever M2 makes that branch do, T8 is where it is written
+down.
 
 The bench never writes the reference SD image; it reflink-copies it into `build/`.
 

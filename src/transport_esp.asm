@@ -3460,18 +3460,48 @@ esp_command_ok:
 ; one whose sessions time out.
 ;
 ; THE MATCHER IS THE SAME NAIVE RESTART esp_wait_string USES, generalised to two
-; patterns by committing on the first character. "OK\r\n" and "ERROR" begin with
-; different letters and NEITHER repeats its own first letter later on, which is
-; the property that makes a one-cursor matcher exact here rather than merely
-; usually right: after a mismatch the offending byte is re-tested against BOTH
-; starts, so a stream like "ERROK\r\n" still matches OK. (A general two-pattern
-; matcher would need a second cursor, and esp_read_scan preserves only HL.)
+; patterns by committing on the first character: a byte that is not inside a
+; pattern selects one by being 'O' or 'E', and a mismatch inside a pattern
+; re-offers THAT byte to the same choice. One cursor, because esp_read_scan
+; preserves only HL and a second would have had to live in memory.
+;
+; IT IS NAIVE IN THE SAME WAY esp_wait_string IS — USUALLY RIGHT, NOT EXACT —
+; AND AN EARLIER VERSION OF THIS COMMENT CLAIMED A PROOF THAT DOES NOT HOLD.
+; It argued that neither pattern repeats its own first letter, so a restart
+; always recovers, and offered "ERROK\r\n" as an example that still matches OK.
+; It does not: that input returns a TIMEOUT. Traced, and reproduced by an
+; independent simulation of this routine's control flow.
+;
+; The hole is CROSS-pattern, which is exactly what a self-overlap argument
+; cannot see: "ERROR"'s fourth character is 'O', the leading character of
+; "OK\r\n". In "ERROK" the 'O' is consumed as a body match at ERROR[3], so it is
+; never re-offered to the choice above, and the 'K' that follows restarts
+; nothing. ("EOK\r\n" *does* match, because there the mismatch happens at
+; ERROR[1] and the 'O' is re-offered — which is why the wrong claim looked
+; right.) A proper two-pattern matcher would need to back up over bytes already
+; consumed, which this one cannot do.
+;
+; SO WHAT MAKES IT SAFE HERE IS THE WINDOW, NOT THE MATCHER. Between this
+; command and its answer the module sends exactly one clean line — "\r\nOK\r\n"
+; or "\r\nERROR\r\n" — and nothing else is expected, which is what jnext's own
+; esp01 log shows for every run of test/run-cipsto.sh. Neither line contains a
+; sequence that can strand the other.
+;
+; **A CALLER IN A NOISIER WINDOW MUST NOT ASSUME THIS.** The routine is written
+; to be reusable and issue #25 is the second caller; anything that can put
+; module chatter between the command and its answer needs this re-examined, not
+; trusted. That is the whole reason the counter-example above is spelled out
+; rather than summarised.
 ;
 ; It captures, like every other wait here — esp_scan_hold — so an inbound frame
-; met mid-scan is held rather than destroyed (point 8). Nothing can be listening
-; when this runs, since transport_init sends AT+CIPSTO before AT+CIPSERVER; the
-; flag is set anyway, because "nothing can arrive" is a property of the CALLER
-; and this routine should not have to be re-audited if a second one appears.
+; met mid-scan is held rather than destroyed (point 8). The flag is set
+; UNCONDITIONALLY rather than on the caller's assurance that nothing can be
+; listening: transport_init does send AT+CIPSTO before AT+CIPSERVER, but that
+; only holds for a FIRST bring-up. Symbol Shift + M1 reaches init_main_bank from
+; nmi66h's keyboard test (mf_rom.asm:136-139), which runs BEFORE the
+; PRGM_RUNNING test, so the chain can re-run with an earlier listener up and a
+; client still connected. Harmless, and only because the flag does not depend on
+; the claim — which is the property to preserve if a second caller appears.
 ;
 ; WHAT IS LEFT ON THE WIRE, on the ERROR arm: the two bytes of the trailing CRLF,
 ; because esp_str_error carries none — see the note beside it. That is safe here
@@ -3518,9 +3548,10 @@ esp_command_ok_or_error:
     call esp_read_scan          ; A = the byte read; HL is preserved
     ret c                       ; silence: neither answer came, and neither acts
 .classify:
-    ; Does this byte start either pattern? One cursor is enough because only HL
-    ; survives esp_read_scan, and it is EXACT rather than merely usually right
-    ; for the reason in the header: neither pattern repeats its own first letter.
+    ; Does this byte start either pattern? One cursor, because only HL survives
+    ; esp_read_scan. It is NAIVE and not exact — a byte already consumed as a
+    ; body match is never re-offered here, so "ERROK\r\n" strands rather than
+    ; matching OK. Safe because of the window, not the matcher; see the header.
     ld hl,esp_str_ok+1          ; the 'O' has just been consumed
     cp 'O'
     jr z,.body

@@ -81,12 +81,32 @@ the third is the one that made it a routine rather than a line:
    twice.
 
 **THE MATCHER IS THE NAIVE RESTART SHAPE GENERALISED TO TWO PATTERNS BY
-COMMITTING ON THE FIRST CHARACTER**, and it is exact rather than usually-right
-for a checkable reason: `"OK\r\n"` and `"ERROR"` begin with different letters
-and **neither repeats its own first letter later on**, so a mismatch can restart
-by re-testing the offending byte against both starts. `"ERROK\r\n"` still
-matches OK. A general two-cursor matcher was rejected because `esp_read_scan`
-preserves only HL.
+COMMITTING ON THE FIRST CHARACTER.** One cursor, because `esp_read_scan`
+preserves only HL and a second would have had to live in memory.
+
+**I CLAIMED IT WAS EXACT, AND IT IS NOT — THE INDEPENDENT REVIEWER DISPROVED IT
+RATHER THAN DOUBTING IT**, by simulating the routine's control flow in Python.
+My argument was that neither pattern repeats its own first letter, so a restart
+always recovers, and my worked example was `"ERROK\r\n"` still matching OK. That
+input **returns a TIMEOUT**. The hole is **cross**-pattern, which is precisely
+what a self-overlap argument cannot see: `"ERROR"`'s fourth character is `O`,
+the leading character of `"OK\r\n"`, and once it has been consumed as a body
+match at `ERROR[3]` it is never re-offered. (`"EOK\r\n"` *does* match, because
+there the mismatch falls at `ERROR[1]` — which is why the wrong claim looked
+right when I checked it by eye.)
+
+**What makes it safe is the WINDOW, not the matcher**: between this command and
+its answer the module sends exactly one clean line and nothing else, confirmed
+from jnext's own esp01 log. So the comment now says "naive, usually right", in
+the register `esp_wait_string` already uses, and spells the counter-example out
+— because the routine is written to be reusable, **issue #25 is the second
+caller**, and a formal-sounding proof is the worst thing to hand someone who is
+about to use it in a noisier window.
+
+**The lesson is this file's oldest in a new organ.** A property checked by
+constructing one example that confirms it is not checked; I had a *disproof*
+available for the cost of a second example and did not look for one. The
+reviewer wrote a simulator. **Where a claim is mechanical, mechanise the check.**
 
 **A BYTE RECORDING WHICH ARM WAS TAKEN WAS BUILT, AND THEN DROPPED, AND THE
 DELETION IS THE MORE USEFUL HALF OF THIS ENTRY.** `esp_sto_state` held
@@ -173,20 +193,39 @@ and puts `<id>,CONNECT` inside the wait); a new `ERROR_*` code for the refusal
 steps over CR and LF without matching either — the same reason `esp_wait_prompt`
 leaves them).
 
-**Cost: WiFi +80 bytes** (`main_end` 0xFB02 → 0xFB52), **846 bytes still free**
+**Cost: WiFi +62 bytes** (`main_end` 0xFB02 → 0xFB40), **864 bytes still free**
 to the identity block at 0xFEA0. **The UART ROM is byte-identical** pinned
 (`87965fea…` both sides, `build/*.bin` deleted first), which is what says
 nothing shared moved: `transport_esp.asm` is in the WiFi build only and the new
 constants live there rather than in `constants.asm`. WiFi `ffd2878f…` →
-`65662d39…`. **This changes a ROM, so the merge carries a `make bump`.**
+`cfd0fe8a…`. **This changes a ROM, so the merge carries a `make bump`.**
+
+*(Those are the figures for the branch as merged. The first commit was +80 and
+`65662d39…`; dropping `esp_sto_state` in the second gave 18 bytes back. An
+earlier version of this paragraph quoted the first commit's numbers in an entry
+attached to the second — the reviewer caught it, and it is the worse kind of
+stale claim, because this is the file every session is told to read first and
+trust. I had the corrected figures in my own report and did not carry them
+here.)*
+
+**IT HAS SINCE RUN ON THE USER'S REAL NEXT, AND THE VALUE IS OBEYED.** This
+branch's ROM held a silent client for **400 s with no drop**, against the
+**182.5 s** and **181.8 s** the shipped ROM was measured at. So `AT+CIPSTO=1800`
+reaches a real ESP-01 and the module honours it — which is the one thing no
+bench here could establish, since jnext models this command *from* those very
+measurements. **Tier: `reported on hardware`** — one machine, one reporter, no
+re-runnable artefact — against a `verified` baseline of two re-runnable probe
+runs. The NOT COVERED item below is narrowed by it, not removed: what is shown
+is that the module obeys, not that any of the emulator's other modelling does.
 
 **NOT COVERED, and none of it is hidden.**
 
-* **A real ESP-01.** jnext models `AT+CIPSTO` **from** the hardware measurement
-  above (jnext#240, needs ≥ 0.99.141), so a green bench shows the stub sends the
-  command and reads the answer, **not that a module obeys**. The hardware check
-  is the same silent-client probe on a Next, requiring survival past 300 s where
-  it died at ~182 s. Nothing here has been flashed.
+* **A real ESP-01, beyond the single run above.** jnext models `AT+CIPSTO`
+  **from** the hardware measurement this issue rests on (jnext#240, needs
+  ≥ 0.99.141), so a green bench shows the stub sends the command and reads the
+  answer, **not that a module obeys** — that is the hardware run's contribution
+  and nothing here inherits it. The refusal arm in particular has never been
+  seen on silicon.
 * **The value as a POLICY.** 1800 is a judgement resting on the two hardware
   measurements above; no emulator run can weigh 30 minutes of session against 30
   minutes of leaked slot.

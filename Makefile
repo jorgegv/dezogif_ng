@@ -770,7 +770,8 @@ test-slot-recovery:
 # the stub sends it and reads the answer, not that a module obeys.
 #
 # Run the AT+CIPSTO idle-timeout bench (4 jnext runs, 4 checks; not part of `make test`)
-test-cipsto: $(ROM_WIFI)
+test-cipsto:
+	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
 	@$(MAKE) --no-print-directory TRANSPORT=wifi SERVER_TIMEOUT=10 mf-rom
 	@$(MAKE) --no-print-directory TRANSPORT=wifi SERVER_TIMEOUT=7201 mf-rom
 	@$(MAKE) --no-print-directory TRANSPORT=wifi SERVER_TIMEOUT=7201 CIPSTO_STRICT=1 mf-rom

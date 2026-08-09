@@ -652,11 +652,15 @@ strongest:
    and nothing listens at all.
    **Every check asserts its precondition from jnext's own log**, because a ROM that never sent the
    command satisfies K2, K3 and K4 by accident — which is exactly what `main`'s ROM does, and all
-   four go red against it. **It says nothing about a real ESP-01**: jnext models this command *from*
-   the hardware measurement above (jnext#240, needs ≥ 0.99.141), so a green run shows the stub sends
-   it and reads the answer, not that a module obeys. The hardware check is the same silent-client
-   probe on a Next, requiring survival past 300 s where it died at ~182 s. Binds a host TCP port, so
-   not part of `make test`.
+   four go red against it. **What it CANNOT see is whether the stub read the answer at all**:
+   measured, a fire-and-forget build passes 4 of 4, because every check observes the *module*. What
+   reading the answer really buys is that the rest of the chain's scans keep matching their own
+   replies, and no run here can show that.
+   **It says nothing about a real ESP-01**: jnext models this command *from* the hardware
+   measurement above (jnext#240, needs ≥ 0.99.141), so a green run shows the stub sends it, not that
+   a module obeys. **That half HAS been run** — the ROM held a silent client for **400 s** on the
+   user's own Next against the shipped ROM's ~182 s, `reported on hardware`. Binds a host TCP port,
+   so not part of `make test`.
 5. **`build/ut.nex`** — the same tests, **DeZog-driven** (`"unitTests": true` + zsim + the
    `customCode` plugin) in VS Code. Still a manual layer, and still the only way to exercise the
    36 that 4d must skip. `make unit-tests` assembles it; nothing here runs it.

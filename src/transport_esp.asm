@@ -410,6 +410,28 @@
 
 
 ;===========================================================================
+; TRANSPORT_IDLE_TICK — main_loop went round once with nothing to do.
+;
+; Issue #24. It is a macro, and for TRANSPORT_DEACTIVATE's reason rather than
+; TRANSPORT_CLIENT_ATTACHED's: main_loop is in main.asm, which is common code,
+; so the mode-specific part cannot be an `IF ROM_VARIANT` there — and a CALL to
+; an empty subroutine on every turn of the idle loop is a cost the UART build
+; would pay for nothing. It expands to nothing there, and the UART ROM's bytes
+; do not move.
+;
+; WHAT IT MAY TOUCH is fixed by where it is called from: main_loop holds the
+; border-colour timer in BC and DE and has pushed them, so BC and DE are free
+; inside the loop body, and AF and HL are free outright. Nothing else is.
+;
+; A transport with no housekeeping expands it to nothing, which is what UART
+; mode does: there is no module underneath it to have leaked anything.
+;===========================================================================
+    MACRO TRANSPORT_IDLE_TICK
+    call esp_idle_tick
+    ENDM
+
+
+;===========================================================================
 ; Constants
 ;===========================================================================
 
@@ -638,6 +660,68 @@ ESP_SERVER_TIMEOUT: equ 1800
  IFNDEF ESP_CIPSTO_STRICT
 ESP_CIPSTO_STRICT:  equ 0
  ENDIF
+
+; How long the stub sits idle, with no DZRP session and nothing arriving, before
+; it frees the module's inbound slots once — issue #24, in seconds. 0 disables
+; the sweep entirely, which is this seam's control.
+;
+; WHY A TIMER AT ALL, when issue #19 already built the sweep. Because nothing
+; could reach it. esp_recover fires on ESP_FAULT_LIMIT consecutive faults, and
+; the state that strands a user raises none: measured on a real Next
+; (doc/HARDWARE-TESTING.md, probe B), four peers that vanished without FIN or
+; RST are survivable and the fifth stops the module serving anybody — after
+; which a new client never completes the module's handshake, so the stub sees no
+; bytes to time out; the leaked peers are silent by construction; and an
+; unprompted send to a stale id takes esp_wait_prompt's ERROR arm and returns
+; quietly. The trigger was structurally unreachable rather than merely unlikely,
+; and the mechanism sat there unable to run.
+;
+; IT IS DELIBERATELY NOT A CONNECT-TIME TRIGGER, which is what issue #24
+; proposed and which cannot be built. Two reasons and either is sufficient. It
+; would close the OTHER ids when a client arrives, and test/dzrp/queued-commands.py
+; and split-command.py each open THREE simultaneous connections and INIT every
+; one, so bench checks W4 and W5 — and hardware H3 — would go red for a change
+; that broke nothing they were written to measure. And it cannot reach the state
+; above anyway: by then no client can connect, so nothing would trigger it.
+; KNOWN-ISSUES.md #19 says the second half in as many words.
+;
+; WHAT MAKES A TIMER SAFE where "close on suspicion" is forbidden (issue #24's
+; own What NOT to do, and KNOWN-ISSUES.md #19's reasoning) is that it does not
+; run while a session is open: a DeZog session stopped at a breakpoint is silent
+; for minutes and perfectly healthy, and esp_idle_tick returns without counting
+; for as long as esp_session_valid is set. So the sweep can only happen with no
+; DZRP session to lose.
+;
+; 300 SECONDS, and the number is bounded from both sides rather than picked. It
+; must be well under the module's own AT+CIPSTO reap — 1800 since this same
+; issue's first half — or the module gets there first and this buys nothing. And
+; it must be far longer than any gap in a real session, which is what the
+; session guard already covers, so the remaining risk is only the refusal window
+; below. Five minutes sits an order of magnitude inside both.
+;
+; WHAT IT COSTS, once per idle period: five AT+CIPCLOSE lines and their answers.
+; A client that connects during them keeps its slot — the listener is NOT
+; retired, unlike esp_recover's sweep — but it may be closed by a later id in
+; the same pass, and would have to reconnect. That is the whole downside, it is
+; bounded by the length of one sweep, and it is why this fires ONCE per idle
+; period rather than repeating: see esp_idle_armed.
+ IFNDEF ESP_IDLE_SWEEP_SECS
+ESP_IDLE_SWEEP_SECS:    equ 300
+ ENDIF
+
+; The same thing in ticks, which is what esp_idle_tick counts. ONE TICK IS 256
+; LINES of the active video line counter, because that is what a wrap of the low
+; byte of NR 0x1F means, and reading one byte is what avoids the tearing a
+; two-byte read of NR 0x1E/0x1F has at its 255->256 rollover.
+;
+; A line is c_max_hc + 1 cycles of i_CLK_7 — 448 in most timing modes and 456 in
+; two of them (video/zxula_timing.vhd:160,196,230,262,290) — so a line is 64.0 to
+; 65.1 us at a nominal 7 MHz, and Fsys itself moves a couple of percent across
+; the video timings. A tick is therefore 16.4 ms and 61 of them are a second,
+; both to within about 3%. That is a housekeeping timer, not a clock: 300
+; seconds means 300 seconds give or take ten, and nothing here cares.
+ESP_IDLE_SWEEP_TICKS:   equ ESP_IDLE_SWEEP_SECS * 61
+    ASSERT ESP_IDLE_SWEEP_TICKS < 65536      ; the counter is 16 bits
 
  IF ESP_BAUD_HIGH != ESP_BAUDRATE
 ; How many times esp_negotiate_baud says `AT` at the new rate before deciding
@@ -1070,6 +1154,33 @@ esp_fault_count:    defb 0
 ; zeroing the count is NOT enough on its own: it makes the very next fault the
 ; first of a new run, which is exactly what re-triggers a limit of one.
 esp_recovering:     defb 0
+
+ IF ESP_IDLE_SWEEP_TICKS > 0
+; Issue #24's idle sweep — see ESP_IDLE_SWEEP_SECS for why it exists and why it
+; is a timer rather than a connect-time trigger, and esp_idle_tick for how the
+; three bytes are used.
+;
+; The low byte of the active video line counter as it was last seen, so that a
+; wrap can be recognised. Its initial value is a don't-care: whatever the line
+; happens to be on the first tick either looks like a wrap, costing one spurious
+; tick out of ESP_IDLE_SWEEP_TICKS, or does not.
+esp_idle_line:      defb 0
+
+; Ticks of 256 lines since the last inbound frame. Reset by esp_sync_ipd, so
+; ANY traffic restarts the countdown.
+esp_idle_ticks:     defw 0
+
+; Whether a sweep is still owed for this idle period. Cleared when one runs and
+; set again by esp_sync_ipd, which is what makes this fire ONCE per idle period
+; instead of every ESP_IDLE_SWEEP_SECS for as long as the machine is switched
+; on — see ESP_IDLE_SWEEP_SECS on the refusal window a sweep opens.
+;
+; IT STARTS ARMED, not clear, and that is deliberate: the leaked-slot state
+; survives everything except a power cycle of the MODULE, and a Symbol Shift
+; re-init or an esp_recover is exactly a moment when the stub has no idea what
+; the module is still holding.
+esp_idle_armed:     defb 1
+ ENDIF
 
  IF ESP_BAUD_HIGH != ESP_BAUDRATE
 ; Issue #25. See ESP_BAUD_IS_LOW for why this exists and who may write it. It
@@ -1576,12 +1687,39 @@ esp_recover:
     ; sweep's, below, and they are drained there.
     call transport_drain
 
-    ; Free every inbound slot, id by id (issue #19). Blind and numbering-
-    ; agnostic on purpose: see ESP_LINK_IDS.
-    ;
+    ; Free every inbound slot, id by id (issue #19).
+    call esp_close_all_links
+
+    ; esp_recovering is cleared by rxtx_error's .report, NOT here, because that
+    ; is the one place BOTH ways out of this pass through: the ordinary return
+    ; below, and a fault inside this chain that jumps to rxtx_error and never
+    ; comes back. Clearing it here would leave that second way out with the flag
+    ; set for the rest of the power-on session, and no recovery would ever run
+    ; again.
+    jp transport_init
+
+
+;===========================================================================
+; Frees every one of the module's inbound slots — issue #19, and since issue
+; #24 this has two callers rather than one.
+;
+; Blind and numbering-agnostic on purpose: see ESP_LINK_IDS.
+;
+; THE TWO CALLERS ARRIVE IN DIFFERENT STATES AND THAT IS DELIBERATE. esp_recover
+; has already retired the listener, so nothing can take a slot between freeing
+; it and the re-listen. esp_idle_tick has NOT, and must not: the listener is the
+; only thing that can bring a user back after a leak, and in the state this
+; exists for it is still up and simply has no slots to hand out. What that costs
+; is one client's connection if it lands mid-sweep — bounded by one sweep, and
+; the reason the idle trigger fires once per idle period.
+;
+; Changes:
+;  AF, BC, DE, HL
+;===========================================================================
+esp_close_all_links:
     ; The IF is the bench seam and not a runtime choice: ESP_LINK_IDS=0 leaves
-    ; this out altogether, which is the pre-#19 routine. `ld b,0` would run the
-    ; loop 256 times rather than none, so it cannot be left to djnz.
+    ; the loop out altogether, which is the pre-#19 routine. `ld b,0` would run
+    ; it 256 times rather than none, so it cannot be left to djnz.
  IF ESP_LINK_IDS > 0
     ld b,ESP_LINK_IDS
 .close_link:
@@ -1599,13 +1737,93 @@ esp_recover:
     ; what that control run exists to show.
     xor a
     ld (esp_conn_valid),a
-    ; esp_recovering is cleared by rxtx_error's .report, NOT here, because that
-    ; is the one place BOTH ways out of this pass through: the ordinary return
-    ; below, and a fault inside this chain that jumps to rxtx_error and never
-    ; comes back. Clearing it here would leave that second way out with the flag
-    ; set for the rest of the power-on session, and no recovery would ever run
-    ; again.
-    jp transport_init
+    ret
+
+
+;===========================================================================
+; One turn of main_loop with nothing to do — issue #24.
+;
+; It is the trigger issue #19's sweep never had. ESP_IDLE_SWEEP_SECS carries the
+; whole argument for why a timer rather than a connect-time hook, and why a
+; timer is allowed to close connections at all where "close on suspicion" is
+; forbidden; this is only how the counting works.
+;
+; THE CLOCK IS NR 0x1F, the low byte of the active video line counter, and one
+; tick is one wrap of it. That register is free-running and ungated — nothing in
+; the VHDL enables it, and in particular no IFF1/IFF2, no DI and no NMI, which
+; is what makes it the only usable clock in a debugger that runs with interrupts
+; off and the ROM's FRAMES sysvar dead. Reading the LOW BYTE ALONE is what
+; avoids the tearing a two-byte read of NR 0x1E/0x1F has at its 255->256
+; rollover, where MSB-then-LSB can return 0 for 255.
+;
+; A WRAP IS "THE VALUE WENT DOWN", and that is safe rather than merely usual.
+; The counter's only writer is the video timing, and NR 0x64's per-frame reload
+; is provably a no-op for a steady offset — the counter and the line counter
+; wrap on the same modulus, so the reload reproduces exactly the value an
+; ordinary increment would have produced. A live write to NR 0x64 costs exactly
+; one anomalous transition, i.e. at most one spurious tick out of
+; ESP_IDLE_SWEEP_TICKS, which for a five-minute housekeeping timer is nothing.
+;
+; THE COUNT RUNS SLOW UNDER LOAD AND NEVER FAST, which is the right direction.
+; A turn of main_loop is a few hundred T-states, far inside one tick — but
+; transport_byte_available can spend up to ~100 ms synchronising when the module
+; puts an unsolicited line on the wire, and wraps that pass inside that are not
+; seen. A missed wrap lengthens the timer; nothing here can shorten it.
+;
+; THE CLOCK STOPS WHILE A SESSION IS OPEN rather than being reset, so it is not
+; restarted by the session ending — which means a client that vanishes without
+; CMD_CLOSE is swept for that much sooner. That is the case this exists for, so
+; the direction is right; and the counter cannot be stale in the other
+; direction, because esp_sync_ipd resets it on every inbound frame.
+;
+; A FAULT INSIDE THE SWEEP IS NOT SPECIAL-CASED. esp_close_link sends and reads,
+; so a module that has stopped answering can raise faults here exactly as
+; transport_byte_available already can from the same loop, and enough of them
+; reach esp_recover through rxtx_error. That is an escalation from housekeeping
+; to a full re-init on a module that is genuinely broken, which is the right
+; answer and is why nothing here suppresses it.
+;
+; Changes:
+;  AF, BC, DE, HL — see TRANSPORT_IDLE_TICK for why those and no others.
+;===========================================================================
+esp_idle_tick:
+ IF ESP_IDLE_SWEEP_TICKS > 0
+    ; Cheapest question first: this idle period has already had its sweep.
+    ld a,(esp_idle_armed)
+    or a
+    ret z
+
+    ; A DZRP session stops the clock. Not "defers the sweep" — stops it, so that
+    ; no amount of a user reading code at a breakpoint can add up to one.
+    ld a,(esp_session_valid)
+    or a
+    ret nz
+
+    ld a,REG_ACTIVE_VIDEO_LINE_L
+    call read_tbblue_reg
+    ld hl,esp_idle_line
+    cp (hl)                     ; CY when the counter is below where it was
+    ld (hl),a
+    ret nc
+
+    ld hl,(esp_idle_ticks)
+    inc hl
+    ld (esp_idle_ticks),hl
+    ld de,ESP_IDLE_SWEEP_TICKS
+    or a                        ; A is the line byte; this only clears the carry
+    sbc hl,de
+    ret c
+
+    ; Time is up. Disarm FIRST: the sweep can leave through rxtx_error rather
+    ; than returning, and an idle loop that re-entered a half-finished sweep
+    ; every 16 ms would be far worse than one that skipped a sweep.
+    xor a
+    ld (esp_idle_armed),a
+    jp esp_close_all_links
+ ELSE
+    ; The seam at 0 — the control build. Nothing counts and nothing is swept.
+    ret
+ ENDIF
 
 
 ;===========================================================================
@@ -2409,6 +2627,20 @@ esp_sync_ipd:
     ; that path out meant a spent hold stayed selected and the next command was
     ; read out of a buffer that had already been consumed. Measured, not
     ; reasoned: the frame arrived, nothing was sent, and the client timed out.
+    ;
+    ; TRAFFIC ALSO RESTARTS THE IDLE SWEEP'S TIMER AND RE-ARMS IT (issue #24),
+    ; and it belongs here for the same reason: this is the one routine that
+    ; makes a wire chunk current, so it is the one point that sees every inbound
+    ; frame however the caller got here. Re-arming is what makes the sweep fire
+    ; once per idle period rather than once every ESP_IDLE_SWEEP_SECS for as
+    ; long as the machine is switched on.
+ IF ESP_IDLE_SWEEP_TICKS > 0
+    ld hl,0
+    ld (esp_idle_ticks),hl
+    ld a,1
+    ld (esp_idle_armed),a
+ ENDIF
+
     xor a
     ld (esp_rx_from_hold),a
     ret                     ; NC, from the xor

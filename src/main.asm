@@ -217,6 +217,11 @@ main_loop:
     ; by a sequence mismatch.
     TRANSPORT_END_MESSAGE
 
+    ; The debugger is idle. A transport with per-connection resources of its own
+    ; gets a turn here to house-keep them — issue #24, and see transport.asm.
+    ; Expands to nothing in UART mode, so this costs the serial build no bytes.
+    TRANSPORT_IDLE_TICK
+
 .no_uart_byte:
     ; Check keyboard
     call check_key_reset

@@ -253,6 +253,25 @@ ifneq ($(CIPSTO_STRICT),)
   VARIANT_FLAGS  += -DESP_CIPSTO_STRICT=$(CIPSTO_STRICT)
 endif
 
+# IDLE_SWEEP — the eighth bench seam, in seconds, and the same shape as
+# SERVER_TIMEOUT for the same reason: the shipped 300 is five minutes of doing
+# nothing per check, which no bench anybody runs can sit out.
+#
+# It is the trigger issue #24 adds to the slot sweep issue #19 built — the stub
+# has been idle this long with no DZRP session and nothing arriving, so free the
+# module's inbound slots once. A few seconds makes it watchable; IDLE_SWEEP=0
+# leaves the whole thing out, which is the control and is main's behaviour
+# before this. Nothing else in between is interesting: it is a housekeeping
+# period, not a tuning knob.
+#
+# Same naming rule as the others: each probe ROM gets its own output name.
+IDLE_SWEEP ?=
+
+ifneq ($(IDLE_SWEEP),)
+  VARIANT_SUFFIX := $(VARIANT_SUFFIX)-idle$(IDLE_SWEEP)
+  VARIANT_FLAGS  += -DESP_IDLE_SWEEP_SECS=$(IDLE_SWEEP)
+endif
+
 # BAUD_HIGH — the seventh bench seam, and the only one of the family whose
 # "off" setting is also a SHIPPABLE ROM rather than only a control.
 #
@@ -756,31 +775,50 @@ test-no-hang: $(ROM_WIFI)
 	 ROM_RECOVER="$(OUT)/enNextMf-wifi-rxwait400-txp1-fl1.rom" $(TEST)/run-no-hang.sh
 
 # ---------------------------------------------------------------------------
-# Do the module's inbound slots come back? — issue #19.
+# Do the module's inbound slots come back, and does anything ASK? — issues #19
+# and #24.
 #
 # Nothing in the stub had ever closed an established connection, so a peer that
-# wedged rather than closing kept its slot for the rest of the power-on session.
-# esp_recover now sweeps every link id with AT+CIPCLOSE, and this is what shows
-# it: fill the slots, confirm the module stops granting them, inject one fault
-# so the recovery runs, and require a FRESH client to be served afterwards.
+# wedged rather than closing kept its slot until the module's own idle timeout
+# reaped it. esp_recover now sweeps every link id with AT+CIPCLOSE, and S1-S3
+# show it: fill the slots, confirm the module stops granting them, inject one
+# fault so the recovery runs, and require a FRESH client to be served
+# afterwards.
 #
-# Both ROMs are FAULT_LIMIT=1, the seam run-no-hang.sh's N4 already uses, since
-# five consecutive faults cannot be produced against an emulator that answers
-# everything. S3 adds LINK_IDS=0 — esp_recover assembled exactly as it was — so
-# S1 and S3 differ in one constant, which is what attributes S1's green to the
-# sweep rather than to the recovery it rides in.
+# S1-S3's ROMs are FAULT_LIMIT=1, the seam run-no-hang.sh's N4 already uses,
+# since five consecutive faults cannot be produced against an emulator that
+# answers everything. S3 adds LINK_IDS=0 — esp_recover assembled exactly as it
+# was — so S1 and S3 differ in one constant, which is what attributes S1's green
+# to the sweep rather than to the recovery it rides in.
+#
+# S4-S7 are the TRIGGER (issue #24), which is the half #19 never had: the
+# recovery fires on consecutive faults, and the state that strands a user raises
+# none, so the sweep could not be reached from it. esp_idle_tick reaches it from
+# a quiet stub. IDLE_SWEEP moves the five-minute shipped period to something a
+# bench can sit out, and IDLE_SWEEP=0 assembles the trigger out — the control,
+# one constant away, exactly as LINK_IDS=0 is for the sweep itself.
+#
+# THOSE TWO ROMS KEEP THE SHIPPED FAULT LIMIT on purpose. S4's whole attribution
+# is that AT+CIPSERVER=0 is absent from the log, so a build one stray timeout
+# away from a recovery would make that reading worth much less.
 #
 # It needs jnext >= 0.99.127 (jnext#211's AT+CIPCLOSE=<id>) and binds a host TCP
 # port, so it is not part of `make test`. It says NOTHING about a real ESP-01,
-# whose ceiling differs from the emulator's by design; see the script's header.
+# whose ceiling differs from the emulator's by design, and nothing about the
+# sweep having REPAIRED anything — no emulator run can leak a slot; see the
+# script's header.
 #
-# Run the slot-recovery bench (2 jnext runs, 3 checks; not part of `make test`)
+# Run the slot-recovery bench (5 jnext runs, 7 checks; not part of `make test`)
 test-slot-recovery:
 	@$(MAKE) --no-print-directory TRANSPORT=wifi FAULT_LIMIT=1 mf-rom
 	@$(MAKE) --no-print-directory TRANSPORT=wifi FAULT_LIMIT=1 LINK_IDS=0 mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi IDLE_SWEEP=10 mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi IDLE_SWEEP=0 mf-rom
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
 	 ROM_SWEEP="$(OUT)/enNextMf-wifi-fl1.rom" \
-	 ROM_NOSWEEP="$(OUT)/enNextMf-wifi-fl1-li0.rom" $(TEST)/run-slot-recovery.sh
+	 ROM_NOSWEEP="$(OUT)/enNextMf-wifi-fl1-li0.rom" \
+	 ROM_IDLE="$(OUT)/enNextMf-wifi-idle10.rom" \
+	 ROM_NOIDLE="$(OUT)/enNextMf-wifi-idle0.rom" $(TEST)/run-slot-recovery.sh
 
 # ---------------------------------------------------------------------------
 # The module's own idle timeout — issue #24.

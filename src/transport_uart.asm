@@ -96,6 +96,21 @@
 
 
 ;===========================================================================
+; TRANSPORT_IDLE_TICK — main_loop went round once with nothing to do.
+;
+; Nothing to do, and again that is a statement rather than a gap. The ESP
+; transport uses this to reclaim the module's inbound connection slots when the
+; debugger has been idle for a while (issue #24), because a peer that vanishes
+; without closing leaves one held and only a module has such slots to leak.
+; There is no module under a joy-port cable and no per-connection resource of
+; any kind, so there is nothing here to house-keep — and the UART build's bytes
+; do not move.
+;===========================================================================
+    MACRO TRANSPORT_IDLE_TICK
+    ENDM
+
+
+;===========================================================================
 ; Constants
 ;===========================================================================
 

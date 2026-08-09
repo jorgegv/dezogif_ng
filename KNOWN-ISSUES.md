@@ -260,14 +260,19 @@ would also be affected. Unmeasured, and stated here so it is not assumed either 
 
 ### What would reopen it
 
-Connections refused, screen clean, **still refused well after the timeout has had time to run** —
-five minutes at the default, longer if `AT+CIPSTO` has been raised — and no power cycle since boot.
+Connections refused, screen clean, **still refused well after BOTH timers have had time to run** —
+and since build `00.18` there are two, so the wait to judge against is the shorter one. The stub
+sweeps after **five minutes** of idling (issue #24, `ESP_IDLE_SWEEP_SECS`), and the module reaps on
+its own `AT+CIPSTO` after **thirty**. So: refused ten minutes after the last traffic, with no power
+cycle since boot.
 
-**The "still refused" clause is the load-bearing one and it is new.** A Next that refuses everybody
-and then recovers is #19 doing exactly what it is now measured to do, and is not worth reopening
-anything for. A refusal that **outlasts the timer** is the finding: either five peers really went
-quiet inside one window, or something is holding slots that idling does not free — and the second is
-a different fault wearing this one's face.
+**The "still refused" clause is the load-bearing one.** A Next that refuses everybody and then
+recovers is #19 doing exactly what it is now measured to do, and is not worth reopening anything
+for. A refusal that **outlasts both timers** is the finding, and it now says something sharper than
+it used to: the stub's own sweep is a thing that runs on a clock nothing outside the machine
+influences, so a refusal surviving it means either that the sweep did not run — a stub that is
+wedged rather than idle, which the screen and the `B` key will tell you — or that asking the module
+to close those ids did not free them, which is a fault nobody here has ever staged.
 
 **`make probe-slots` cannot settle it in that state** and it is important not to expect it to: its
 discriminating check asks whether an *earlier* connection still answers, and a module with every
@@ -322,6 +327,25 @@ multi-client behaviour on a fault that resolves itself in about three minutes, w
 declining to fix one that needed the power switch. The cost side is unchanged and the benefit side
 shrank by two orders of magnitude.
 
+**ONE OF THEM WAS SCOPED AFTER ALL, AND IT IS NEITHER OF THOSE TWO — issue #24, build `00.18`.**
+The first bullet was examined and **cannot be built as written**: `test/dzrp/queued-commands.py`
+and `split-command.py` each open **three** simultaneous connections and INIT every one, so a sweep
+fired by any `<id>,CONNECT` closes the earlier ones and bench checks W4, W5 and hardware H3 all go
+red — and it still could not reach the terminal state, exactly as the bullet says. A **periodic**
+trigger can: the terminal state leaves the stub sitting in `main_loop` with nothing able to reach
+it, which is the one place a timer still runs.
+
+So `esp_idle_tick` sweeps once when the stub has been idle `ESP_IDLE_SWEEP_SECS` (300) with **no
+DZRP session and nothing arriving**. The session guard is what keeps it clear of the rule three
+paragraphs up — with no session there is nothing to close on suspicion *of* — and "once per idle
+period" is what stops a machine left switched on opening a refusal window every five minutes.
+Bench checks S4-S7 in `make test-slot-recovery`, with `IDLE_SWEEP=0` as the control.
+
+**It does not change what this entry tells a user to do.** The wait is still the answer, because
+the stub's period is five minutes and the module's is thirty: whichever gets there first, waiting
+is what ends it. What it changes is that the stub is now capable of ending it too, and rather
+sooner.
+
 ### What already shipped
 
 Build `00.10` added a sweep: on recovery, the stub closes every link id with `AT+CIPCLOSE=<id>`.
@@ -337,9 +361,17 @@ and would, ironically, make the shipped sweep more useful than this entry credit
 measured it. The primary leak path does not depend on this leg: a peer that vanishes while nothing
 is being sent to it produces no traffic in either direction.
 
-Closing the gap **from the stub's side** would need a sweep reachable from a quiet stub — periodic,
-or at connect time — which is a change nobody has scoped and which now has little left to buy: the
-module closes the same gap on its own timer, without being asked and without costing a byte.
+**Closing the gap from the stub's side needed a sweep reachable from a quiet stub — periodic, or at
+connect time — and build `00.18` shipped the periodic one** (issue #24; connect time was examined
+and cannot be built, see above). `esp_idle_tick` calls the same sweep after five minutes of idling
+with no session, so the stub now reclaims the slots itself rather than waiting on the module's
+thirty-minute timer.
+
+**That does not retire this entry and must not be read as doing so.** What ships is a **trigger**
+for a mechanism whose repair value no run anywhere has demonstrated: no emulator can leak a slot to
+a peer that vanished, so S4-S7 show the sweep fires from a quiet stub and nothing more. Whether a
+real module hands the slots back when asked in this state is unmeasured, and the wait remains the
+advice above.
 
 ### The one thing that will make this worse, deliberately
 

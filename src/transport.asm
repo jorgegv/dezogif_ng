@@ -43,6 +43,10 @@
 ;                                   just opened a session
 ;     TRANSPORT_CLIENT_DETACHED     CMD_CLOSE was received: it closed one
 ;
+;   Housekeeping (a macro, for TRANSPORT_DEACTIVATE's reason)
+;     TRANSPORT_IDLE_TICK           main_loop went round once with nothing to
+;                                   do: the debugger is idle
+;
 ;   These exist so the transport can SAY SO on the Next's own screen, which is
 ;   the one channel the PC side does not have (issue #14). They are macros, and
 ;   the interface's rule about common code is why: cmd_init and cmd_close are in
@@ -69,6 +73,24 @@
 ;
 ;   AF is free at both call sites (commands.asm), so an implementation may use
 ;   it without saving; nothing else is.
+;
+;   TRANSPORT_IDLE_TICK exists because a transport can own resources ON THE
+;   OTHER SIDE OF THE WIRE that common code knows nothing about and that leak
+;   without a peer to free them — the ESP's inbound connection slots, which a
+;   client that vanishes without closing keeps until something asks the module
+;   to let go (issue #24). Nothing above the byte stream can see such a thing,
+;   and nothing below it has a moment at which to act, so the idle loop is where
+;   the transport is handed one. A transport with no such resource expands it to
+;   nothing, which is what UART mode does.
+;
+;   IT IS NOT A CLOCK AND NOTHING MAY ASSUME A RATE. main_loop runs as fast as
+;   it runs, and transport_byte_available can spend ~100 ms inside one turn of
+;   it, so an implementation that needs elapsed time must measure it — see
+;   esp_idle_tick, which reads the free-running video line counter rather than
+;   counting turns.
+;
+;   BC and DE are the border-colour timer and are pushed at the top of the loop,
+;   so an implementation may use them; AF and HL are free outright.
 ;
 ; The lifecycle deactivate is a MACRO, not a subroutine, because the one place
 ; that needs it is already inline in the resume path (`backup.asm`) and a call

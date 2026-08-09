@@ -5,6 +5,148 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-09 — The slot sweep gets a trigger a quiet stub can reach, and it is NOT the one the issue asked for
+
+**Built, issue #24's second half.** `esp_idle_tick` runs once per turn of
+`main_loop` and, after `ESP_IDLE_SWEEP_SECS` of the stub being idle with **no
+DZRP session and nothing arriving**, calls the `AT+CIPCLOSE` sweep issue #19
+built. Once per idle period, not once per period for ever.
+
+**THE MECHANISM ALREADY EXISTED AND COULD NOT BE REACHED, which is the whole
+of what this closes.** `esp_recover` fires on `ESP_FAULT_LIMIT` consecutive
+faults counted in exactly one place, `rxtx_error` — and the state that strands
+a user raises **none**: a new client never completes the module's handshake so
+the stub sees no bytes to time out, the leaked peers are silent by
+construction, and an unprompted send to a stale id takes `esp_wait_prompt`'s
+`ERROR` arm and returns quietly. Structurally unreachable rather than merely
+unlikely, and #19 shipped a sweep nothing could call.
+
+**THE ISSUE ASKED FOR A CONNECT-TIME TRIGGER AND IT CANNOT BE BUILT.** #24 and
+`KNOWN-ISSUES.md` #19 both name it as the cheaper option. Two reasons, either
+sufficient. It closes the OTHER link ids when a client arrives, and
+`test/dzrp/queued-commands.py` and `split-command.py` each open **three**
+simultaneous connections and INIT every one — so bench checks W4 and W5, and
+hardware H3, would go red for a change that broke nothing they were written to
+measure, retiring the multi-client coverage issues #11 and #13 exist for. And
+it **cannot reach the terminal state anyway**: by then no client can connect,
+so nothing triggers it. `KNOWN-ISSUES.md` says that second half in as many
+words and nobody had joined it to the first.
+
+**A PERIODIC TRIGGER CAN REACH IT, and that is the reason to prefer it rather
+than a preference.** The terminal state leaves the stub sitting in `main_loop`
+with nothing able to get to it, which is the one place a timer still runs.
+
+**WHAT MAKES A TIMER LEGAL where "close on suspicion" is forbidden** (#24's own
+*What NOT to do*, and `KNOWN-ISSUES.md` #19): it does not run while a session
+is open. `esp_idle_tick` returns before counting for as long as
+`esp_session_valid` is set, so a DeZog session parked at a breakpoint — silent
+for minutes and perfectly healthy — can never add up to a sweep. With no
+session there is nothing to close on suspicion *of*.
+
+**THE CLOCK IS NR `0x1F`**, the low byte of the active video line counter, one
+tick per wrap. Free-running and ungated — no IFF1/IFF2, no DI, no NMI — which
+is what makes it the only usable clock in a debugger that runs with interrupts
+off and the ROM's `FRAMES` sysvar dead. **The low byte alone**, deliberately:
+a two-byte read of NR `0x1E`/`0x1F` tears at its 255→256 rollover and can
+return 0 for 255. **The border-colour countdown is NOT reused** — it counts
+*iterations*, and `transport_byte_available` can spend ~100 ms inside one.
+
+**300 seconds, bounded from both sides rather than picked.** It must be well
+under the module's own `AT+CIPSTO` reap — 1800 since this same issue's first
+half — or the module gets there first and this buys nothing; and far longer
+than any gap in a live session, which the session guard already covers. Five
+minutes is an order of magnitude inside both.
+
+**THE SWEEP DOES NOT RETIRE THE LISTENER, and that is the one difference from
+`esp_recover`'s.** In the state this exists for the listener is still up and
+simply has no slots to hand out, so taking it down would remove the only thing
+that can bring a user back. It costs one client's connection if it lands
+mid-sweep, bounded by one sweep, which is why the trigger fires once per idle
+period. `esp_close_all_links` is factored out of `esp_recover` so both callers
+run the identical loop — measured: the control build is **+8 bytes**, exactly
+the two calls and two rets, and S1-S3 are unchanged.
+
+**Evidence: `make test-slot-recovery`, now 5 runs and 7 checks, 7/7.**
+
+| | subject | measured |
+|---|---|---|
+| **S4** | fires with no fault anywhere | `closes=5 recoveries=0`, fresh client served |
+| **S5** | fires **once** over many periods | exactly 5, one per link id |
+| **S6** | does **not** fire while a session is open | `during_session=0`, `after_disconnect=1` |
+| **S7** | the control, `IDLE_SWEEP=0` | `closes=0` |
+
+**S4'S ATTRIBUTION IS THE ABSENCE OF `AT+CIPSERVER=0`**, which is what
+separates the idle trigger from a recovery that swept for its own reasons — and
+it is why the two idle ROMs keep the **shipped** fault limit rather than S1's
+`FAULT_LIMIT=1`. S6 carries **its own control in the same run**: the client
+disconnects and a sweep must follow, without which a run that was simply too
+short would pass.
+
+**S6'S FIRST VERSION FAILED A STUB THAT WAS BEHAVING, and it is only in this
+file because it failed in the direction that goes RED.** It counted every
+`AT+CIPCLOSE` in the run and charged them all to the hold — but the stub is
+idle from the moment it comes up and headless jnext runs several emulated
+seconds per wall second, so with a ten-second probe period it had **already
+swept before the client connected**: the sweep at 18:31:38.96 against the
+client's first frame at 18:31:39.54, read out of jnext's own log rather than
+guessed. The baseline is now taken when the session opens, through a sentinel
+the client writes. **The log was consulted before the code was touched**, which
+is what stopped this being "adjust the bench until it is green" — [[ERRORS.md]]
+carries that as its own entry, and the tell is that the failing check was
+*mine* and the ROM was not.
+
+**IDLE_SWEEP is the EIGHTH build seam** of the `ESP_IP_MAX` / `ESP_RX_WAIT` /
+`ESP_TX_PASSES` / `TRANSPORT_WAIT_RX_SECONDS` / `ESP_FAULT_LIMIT` /
+`ESP_LINK_IDS` / `ESP_SERVER_TIMEOUT` / `ESP_CIPSTO_STRICT` family, for the
+same reason every time: five minutes per check is not a bench anyone runs, and
+the behaviour a check must be shown red against has to be reachable by a
+**build**.
+
+**`TRANSPORT_IDLE_TICK` is a new macro on the transport interface**, and a
+macro rather than a call because `main.asm` is common code and the UART build
+must not pay for an empty subroutine on every turn of the idle loop. It joins
+`TRANSPORT_DEACTIVATE` and the framing and session macros. UART mode expands it
+to nothing, deliberately: there is no module under a joy-port cable and no
+per-connection resource to leak.
+
+**Rejected.** The connect-time trigger (above — unbuildable, and it cannot
+reach the terminal state); building nothing at all and closing #24 on the
+`AT+CIPSTO` half (defensible, and it was offered — the module does reap on its
+own — but this same issue's first half stretched that self-heal from ~3 minutes
+to ~30, which is what makes a stub-side trigger worth its bytes again); calling
+`esp_recover` wholesale from the idle path rather than the sweep alone (it
+retires the listener and re-runs the whole AT chain, so a periodic action could
+paint "ESP-01 setup failed" over a module that was fine); resetting the tick
+counter when a session opens rather than freezing it (freezing means a client
+that vanishes is swept for that much *sooner*, which is the case this exists
+for); and a repeating sweep (a refusal window every five minutes for as long as
+the machine is switched on).
+
+**Cost: WiFi +64 bytes** (`main_end` 0xFBF4 → 0xFC34, **620** free to the
+identity block). **The UART ROM is byte-identical** to `main`'s pinned
+(`e2818821…` both sides, `build/*.bin` deleted first), which is what says
+nothing leaked across the transport boundary: `esp_idle_tick` is in the WiFi
+build only and the macro expands to nothing in the other. **This changes a ROM,
+so the merge carries a `make bump`.**
+
+**NOT COVERED, and none of it is hidden.** **That the sweep REPAIRS anything** —
+no emulator run can leak a slot to a peer that vanished or make the module
+unresponsive, so every green check here shows the *mechanism fires* and never
+that it recovered a module in trouble, which is the wording #24's acceptance
+criteria ask for. **Real hardware**: nothing here has run on a Next, and the
+five-minute period has never been watched anywhere — the shipped value is
+reasoned from the module's 1800, and every bench runs at 10. **The shipped
+`ESP_IDLE_SWEEP_SECS` itself**, for the same reason `ESP_SERVER_TIMEOUT`'s 1800
+is unmeasured as a policy. **A fault raised INSIDE the idle sweep** escalates to
+`esp_recover` through `rxtx_error` exactly as a fault from
+`transport_byte_available` already can from the same loop — deliberate, and not
+staged by any run. And **association loss**, which #24 also listed: split out
+into its own issue, because jnext's module is permanently associated
+(`AT+CWJAP?` is query-only, `STA_IP` is a `static constexpr`) so no headless run
+can produce it.
+
+---
+
 ## 2026-08-09 — The shipped link is 460800 now, and the criteria were met rather than waived
 
 **Decided (user) and built.** `ESP_BAUD_HIGH` defaults to **460800** instead of

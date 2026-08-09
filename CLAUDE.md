@@ -592,9 +592,9 @@ strongest:
    **Not part of `make test`**: it binds a host TCP port. **It says nothing about hardware** — but
    what it validates is the display-file addressing, attribute decoding and palette, which are the
    same silicon either way. The reader **cannot see the border** in either place.
-4j. **`make test-slot-recovery`** — whether a recovery gives the module's inbound slots back
-   (issue #19), 2 headless jnext runs, 3 checks, and the **fifth** bench to move a build-time
-   constant to reach its subject. Nothing in the stub had ever closed an established connection:
+4j. **`make test-slot-recovery`** — whether anything gives the module's inbound slots back
+   (issues #19 and **#24**), **5 headless jnext runs, 7 checks**, and the **fifth and eighth**
+   benches to move a build-time constant to reach their subject. Nothing in the stub had ever closed an established connection:
    `AT+CIPSERVER=0` retires the *listener* and leaves live connections alone, so a peer that wedged
    rather than closing kept its slot until the **module** reaped it, and enough of them left
    the module refusing every new client while `esp_recover` went on reporting success — **issue
@@ -625,6 +625,34 @@ strongest:
    (measured on the user's Next, 2026-08-06) — the sweep is written not to care, and no run here
    can check that it was right to be. It also does not reproduce a **wedged** peer, only an
    occupied slot, and it is **not** a fix for #15.
+   **S4-S7 ARE THE TRIGGER, WHICH IS THE HALF #19 NEVER HAD** (issue #24). `esp_recover` fires on
+   `ESP_FAULT_LIMIT` consecutive faults, and the state that strands a user **raises none** — a new
+   client never completes the module's handshake so the stub sees no bytes to time out, the leaked
+   peers are silent by construction, and an unprompted send to a stale id takes
+   `esp_wait_prompt`'s `ERROR` arm and returns quietly. The sweep was **structurally unreachable**
+   from the one thing that could call it. `esp_idle_tick` reaches it from a quiet stub: idle this
+   long with no DZRP session and nothing arriving, sweep once. **S4** the sweep fires with
+   **no fault anywhere** — nobody connects at all, `AT+CIPCLOSE` appears and `AT+CIPSERVER=0` does
+   not, which is what attributes it to the idle trigger rather than to a recovery, and a fresh
+   client is served afterwards (the listener is never retired, unlike a recovery's sweep).
+   **S5** it fires **once** per idle period, not every period for ever: exactly `LINK_IDS` closes
+   over many periods, or the shipped ROM would open a refusal window every five minutes for as
+   long as the machine was switched on. **S6** it does **not** fire while a DZRP session is open —
+   a client at a breakpoint is silent and healthy, and #24 forbids closing on suspicion —
+   **and its own control is in the same run**: the client disconnects and a sweep must follow,
+   which is what shows the timer was live throughout rather than the run merely being short.
+   **S7** the control, `IDLE_SWEEP=0`, the trigger assembled out. Measured: `during_session=0`
+   against `after_disconnect=1`, and `closes=5 recoveries=0` for S4/S5 against `closes=0` for S7.
+   **S6'S FIRST VERSION FAILED A STUB THAT WAS BEHAVING**, and the reason is worth keeping: it
+   counted every `AT+CIPCLOSE` in the run and charged them all to the hold, but the stub is idle
+   from the moment it comes up and headless jnext runs several emulated seconds per wall second,
+   so with a ten-second probe period it had **already swept before the client connected** — the
+   sweep at 18:31:38.96 against the client's first frame at 18:31:39.54. The baseline is now taken
+   at the moment the session opens, through a sentinel the client writes. It failed in the
+   direction that goes **red**, which is the only reason it was caught rather than believed.
+   **What a green idle check does NOT establish**: that the sweep repaired anything. No emulator
+   run can leak a slot or make the module unresponsive, so what is shown is that the **mechanism
+   fires** from a quiet stub, which is what issue #24's acceptance criteria ask to be said out loud.
 4k. **`make test-mfinstall`** — the `.mfinstall` dot command (issue #21), **12 headless jnext runs,
    9 checks**, and the only bench here that drives a program from the **NextZXOS command line**
    rather than through a socket or a screenshot alone: every run boots NextZXOS, types the command

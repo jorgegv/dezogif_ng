@@ -1286,3 +1286,44 @@ entry is the literal string `~/src/spectrum/sjasmplus`. sjasmplus 1.23.1 was
 installed the whole time.
 
 **Fix.** `$HOME` instead of `~` inside the quotes.
+
+---
+
+## A bench that charged a stub with something that happened before the client arrived
+
+**Symptom.** A new check, S6 in `test/run-slot-recovery.sh`, reported that the
+stub had swept its link ids **while a DZRP session was open** — the one thing the
+feature it was checking is forbidden to do, and the property the whole design
+rests on. `during=5`, against a stub whose entire session guard is three
+instructions at the top of the routine.
+
+**Cause, and it is in the bench.** The check counted every `AT+CIPCLOSE` in the
+run and charged them all to the hold. But the stub is idle from the moment it
+comes up, the probe ROM's idle period is ten **emulated** seconds, and headless
+jnext runs several emulated seconds per wall second — so between the listener
+appearing and the client's first frame it had already swept once, legitimately.
+From jnext's own log: the five closes at `18:31:38.96`-`39.08`, the client's
+first `+IPD` at `18:31:39.54`, and **not one close** in the thirty seconds of
+the hold.
+
+**Fix.** The baseline is taken when the SESSION opens rather than when the run
+does, through a sentinel the client writes once its `CMD_INIT` has been
+answered and before it goes silent. The verdict is the delta.
+
+**WHAT MADE IT SURVIVABLE IS THAT IT FAILED IN THE RED DIRECTION.** A bench that
+counts from the wrong moment is not a rare mistake; this one happened to
+over-count, so it accused a stub that was behaving. The same error the other way
+round — a baseline taken too late — would have **passed silently** and left the
+session guard checked by nothing at all. That asymmetry is worth designing for:
+when a check measures a delta, ask which way a mis-placed baseline fails, and
+prefer the arrangement whose failure is loud.
+
+**And the transferable half is the order of operations.** The tempting move,
+with a green stub-side argument in hand, is to adjust the bench until it agrees.
+What settled it in one step instead was reading the emulator's log for the
+**ordering** — closes before the client's first frame, none during the hold —
+which is a fact about the run rather than a story about either party. This file
+already carries "a plausible mechanism asserted instead of a traced one" under
+three other names; this is its mirror image, where the plausible mechanism would
+have been *"my code is right, the bench is wrong"* and happened to be true. It
+was still worth ten seconds of `grep` to know it rather than believe it.

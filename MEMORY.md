@@ -5,6 +5,131 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-09 — The bank had a 768-byte buffer nothing declared, and the assembler could not see it
+
+**Built, issue #31 — and the headline is that the baud rate had nothing to do
+with it.** `main_bank_entry` copied the 0x300-byte ZX font into the top of
+`MAIN_BANK` at `0xFD00 - MF.main_prg_copy` = **`0xFBC0`**, and `text.init`
+pointed `font_address` 0x100 lower so a character code indexed it directly.
+**Nothing in the source emitted a byte into that region**, so the assembler had
+no idea it was occupied, and all three `ASSERT`s on `main_end` guarded `0x10000`,
+`0xFF00` and `ROM_MAGIC_ADDR` — **every one of them 736 bytes too loose**.
+
+Past `0xFBC0` the debugger's variables and the glyph bitmaps for **space** and
+**`!`** are the same memory, in both directions: the font copy destroys the
+variables at boot, and every later write to one of them draws itself into the
+glyph. `BAUD_HIGH=460800` costs 145 bytes, which took `main_end` to `0xFBCF` —
+**15 bytes over** — and that is the whole of why the rate appeared to matter.
+
+**EVERY CAPTURED BYTE IS ACCOUNTED FOR, WHICH IS WHAT MAKES THIS A MECHANISM
+RATHER THAN A STORY.** The corrupt space glyph read `00 30 00 00 00 00 30 33`:
+
+| offset | address | symbol | value |
+|---|---|---|---|
+| 1 | `0xFBC1` | `text_one_char.char` | `0x30` = `'0'` |
+| 3-5 | `0xFBC3` | `text_core_version`'s `AT` prefix | zeroed by the font copy at boot, never rewritten |
+| 6-7 | `0xFBC6` | `text_core_version.major` | `"03"` — the machine's own core version |
+
+And the corrupt `i` of "WiFi" at row 0 column 14 is **the real `i` XOR the real
+`0`**, checked against the font read off the user's own machine: the font copy
+zeroed `text_one_char`'s **y coordinate** (it sits at `0xFBC0`), so it printed
+its `'0'` at row 0. **That retires the previous session's "it is not correct
+glyph XOR junk"** — it is exactly that, and the junk is the `'0'` glyph. The
+earlier test looked for the other operand in the font and the operand was there.
+
+**THE FIX RECLAIMS THE BUFFER RATHER THAN GUARDING IT** (user's call, offered
+against two cheaper options). `text.init` points at `ROM_FONT` and the `MEMCOPY`
+is gone, so the bank gets its top 768 bytes back: **WiFi headroom 119 → 818,
+UART 2496 → 3201**, and the `BAUD_HIGH` probe ROMs assemble again — the first
+`ASSERT` I wrote, at the true bound, had made `make test-baud` unbuildable, which
+is what the independent review rejected it for.
+
+**WHAT IT COSTS IS THAT PRINTING NOW DEPENDS ON MACHINE STATE A COPY MADE IT
+IMMUNE TO**, held by `text.font_map` / `text.font_unmap`:
+
+* **MMU slot 1** must map ROM. It has **no backup anywhere** — `slot_backup`
+  holds slots 0 and 7 only, and `cmd_get_registers` reads slots 0-6 **live from
+  the MMU** — so a slot left wrong is both reported wrong to DeZog and handed to
+  the debuggee on its next `CMD_CONTINUE`. **Issue #26, one slot along.**
+* **NR `0x8C` bit 5** locks the Alt ROM to its 48K half, which is the only half
+  `copy_modify_altrom` ever writes. Without it the half served follows port
+  `0x7FFD` bit 4 (`zxnext.vhd:2981-3006`). **That is also, mechanically,
+  upstream's "your program cannot use any of the other ROMs" constraint** — the
+  patched image carrying the `RST 0` hooks is in that one half too. One cause.
+
+**AND NR `0x8E` IS DELIBERATELY NOT USED, WHICH THE VHDL HAD TO SETTLE.** Writing
+it — or ports `0x7FFD`/`0x1FFD`/`0xDFFD`/`0xEFF7` — **re-derives MMU0 and MMU1
+from scratch** (`zxnext.vhd:3811-3814`, `:4619-4645`) and would silently undo the
+slot just set. `copy_altrom` survives only because it writes NR `0x8E` *before*
+its MMU writes. NR `0x8C` is in no such list and reads back exactly
+(`:6155-6156`), unlike NR `0x04`. Two exposures needed **nothing**: Layer 2 is
+already off for the session (`save_layer2_rw`), and DivMMC outranks the Alt ROM
+in the same arbiter but the `RST 0` breakpoint path already depends on it being
+absent.
+
+**`show_ui` IS WRAPPED AS A SHELL, NOT GIVEN A PROLOGUE AND EPILOGUE**, because
+its body has **two** exits — an early `ret z` and a tail `jp` into
+`print_string`. A restore written at "the end" runs on one of them, which is
+[[ERRORS.md]]'s "Enumerating a control flow's exits by reading the ones you
+expected" twice over. Wrapping a `call` cannot miss an exit nobody thought of.
+
+**Evidence: bench check N7, shown red first**, and it is judged over the socket
+because `cmd_get_registers` reads the MMU live. With `font_unmap` deleted from
+`esp_refresh_client_line`: **slot 1 reads 255 (`ROM_BANK`), was 62.** It targets
+the **autonomous** painter deliberately — `show_ui` is reached from `cmd_init`,
+which resets slot 1 itself and would mask the answer.
+
+**CONFIRMED ON THE USER'S REAL NEXT, AND IT CLOSES #31 WHERE IT WAS FOUND.** At
+`BAUD_HIGH=460800`: the link negotiates, **the screen is perfectly clean**, and
+`make test-hardware` passes **5 runs of 5** — 6/6 with 15/15 conformance and H6
+clean (0 bright-red pixels) every time. Median **6.6 ms** latency against the
+115200 baseline's 11.2, and **20.3 KB/s** against 8.3, i.e. **2.45x**.
+
+**THE HEADROOM CORRECTION IS THE HALF THAT OUTLIVES #31.** `CLAUDE.md` and
+[doc/ASYNCHRONOUS-BREAK-DESIGN.md] both told the next session the WiFi build had
+"over a kilobyte of headroom, i.e. many such steps". It had **119 bytes**, and
+M2 grows this bank. Both are corrected; `MEMORY.md`'s two sites are annotated
+rather than rewritten. What survives unchanged is that a 16-byte step of the MF
+ROM half still **spends 16 bytes of the debugger half**, because the image ends
+at `0xE000 + 0x2000 - MF.main_prg_copy` — probed, one step moved the old buffer
+to `0xFBB0` with `main_end` unmoved. **The two halves share one budget.**
+
+**Rejected.** Keeping the `ASSERT` alone (it is the diagnosis, and it left
+`make test-baud` unbuildable); freeing ~17 bytes in the negotiation instead (it
+buys the probe ROMs and leaves the trap for the next person); **locking ROM1
+permanently at init** rather than per paint (it changes what the debuggee sees,
+where the per-paint save/restore leaves debuggee-visible state identical);
+save/restore inside `show_ui`'s body (two exits, above); and **fixing #28 in the
+same change**, which was offered and is wrong: forcing slot 2 in `show_ui` would
+make `esp_ui_bank` always record the forced bank, so `esp_refresh_client_line`
+would always abandon and N5/N6 would go red. #28 needs a design that accounts for
+#23 and stays its own issue.
+
+**Cost: UART `main_end` 0xF200 → 0xF21F, WiFi 0xFB49 → 0xFB6E** — the guards are
+~37 bytes against 768 recovered. **Both ROMs move, by design**: `text.asm`,
+`main.asm`, `ui.asm` and `data.asm` are common code, so the UART byte-identity
+gate breaks deliberately, as it did for #7, #8, #9, #12 and #20. **This changes a
+ROM, so the merge carries a `make bump`.**
+
+**Regression: `make test` 7/7, `test-dzrp-stub` 15/15 with W1-W6,
+`test-client-status` 7/7 with the new N7, `test-baud` 5/5 (it builds again),
+`test-unit` 5/5, both variants `check-reproducible`** — every one re-run
+independently by the reviewer, who also re-derived the overlap, the byte budget
+and the N7 red.
+
+**NOT COVERED.** The **`show_ui` half** of the guard has no check of its own —
+N7 exercises the autonomous painter, and `cmd_init` resets slot 1 itself, so the
+synchronous path's restore is reasoned from the shell's shape rather than
+measured. **A debuggee that has selected the 128K ROM** is handled by the NR
+`0x8C` lock but no run stages it. **#28 is still open** and `show_ui` can still
+`MEMCLEAR` 8 KB through a retargeted slot 2. And the **M1 → `R` → M1 recovery at
+460800** — the sixth of the criteria written beside `ESP_BAUD_HIGH`, and the one
+no bench anywhere covers — has not been run.
+
+[doc/ASYNCHRONOUS-BREAK-DESIGN.md]: doc/ASYNCHRONOUS-BREAK-DESIGN.md
+
+---
+
 ## 2026-08-09 — The baud negotiation is built and is switched OFF, because 1 Mbps is past what the Z80 can carry
 
 **Built, issue #25 — and the headline is a measurement that contradicts the

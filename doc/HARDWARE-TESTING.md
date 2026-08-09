@@ -10,8 +10,9 @@ are at the bottom of this page, with the numbers.
 
 **That "12" is the count the suite had on the day, and it has grown since**: C13/C14 (issue #9) and
 C15 (`CMD_CLOSE`) were added afterwards, so H2 now delegates **15** checks — and **the full 15
-have since passed on a real Next: 15 of 15, 2026-08-08 12:37**, see the second results table at the
-bottom of this page. Read every conformance total on this page as a record of the run that produced
+have since passed on a real Next: 15 of 15, 2026-08-08 12:37**, recorded under *"The suite at its
+full size"* — named rather than counted, because dated sections keep being appended and "the second
+table at the bottom" has already gone stale once. Read every conformance total on this page as a record of the run that produced
 it, not as the size of the suite today — `python3 test/dzrp/conformance.py --help` lists
 what it actually carries.
 

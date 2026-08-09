@@ -35,8 +35,14 @@ own refusal on hardware"*, wrote a mechanism for it (backpressure, `drain_main`'
 [#35](https://github.com/jorgegv/dezogif_ng/issues/35). **The build under test was
 assumed.** A photograph of the screen then showed `build 00.16` in its first line
 — the pre-fix ROM, which has no bound at all, so the walk was expected and the
-hypothesis was about a code path that build does not contain. #35 carries the
-retraction.
+hypothesis was about a code path that build does not contain.
+
+**#35 SHOULD NOT HAVE BEEN OPENED AT ALL** (user, 2026-08-09), and that is the
+sharper reading of the same mistake: the build was not merely unverified before
+the *diagnosis*, it was unverified before an **outward-facing, public** claim that
+shipped code was defective. It is closed as `not planned`, carrying the
+retraction, rather than deleted — the correction is worth more visible than
+absent. **Verify before you file, not only before you conclude.**
 
 **The lesson is one this project already owns and I had applied twice the same
 evening in a different organ**: ERRORS.md's *prove which file ran*. Hours earlier

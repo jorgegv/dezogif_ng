@@ -1191,7 +1191,23 @@ swap-window bound is believed rather than merely reviewed. Same machine, same cl
 | **C18** — a 12288-byte `CMD_LOOPBACK` | **FAIL** — *left the remote not serving* | **PASS** — *a 12288-byte payload was declined and the remote served on* |
 | C15, H3 | FAIL — cascade from a stub that had stopped serving | PASS |
 | the machine afterwards | **stub destroyed**, power cycle required | healthy |
-| the bench | 1 passed, 3 failed of 6 | **6 of 6**, conformance **18 of 18** |
+| the bench | **did not complete** — H1 pass, H2/H3 fail, H4 skip, **H5 and H6 never ran** | **6 of 6**, conformance **18 of 18** |
+
+**THE RED RUN'S TRANSCRIPT, VERBATIM, because summarising it is how this section got it wrong
+once.** An earlier version of the table above said *"1 passed, 3 failed of 6"*. There is no such
+tally: `hardware-check.py` reports H4, H5 and H6 as **SKIP** rather than FAIL when it cannot connect
+(`:715`, `:733`, `:776`), so at most two checks can fail this way — and the run never printed a
+summary line at all, because it stopped after H4:
+
+    H1   PASS  connected to 192.168.100.136:11000 in 1037 ms, session opened and closed cleanly
+    H2   FAIL  C18, C15 failed; C18, C15 not known-red, so new on this remote
+    H3   FAIL  could not open two simultaneous connections: gave up after 2 attempts
+    H4   SKIP  could not connect: gave up after 2 attempts
+
+**The asymmetry that produced the error is worth more than the error.** The green run was
+transcribed line by line from the terminal; the red one was compressed into a summary from memory —
+in a section whose own argument is that **the red is worth more than the green**. If a run is worth
+citing as evidence, paste it.
 
 **What the red was.** `cmd_loopback` buffers into a bank paged at `SWAP_ADDR`, an **8 KB** window,
 and — before `00.19` — walked upward for as many bytes as the frame **declared**. One slot on is
@@ -1223,6 +1239,11 @@ build under test had been assumed.** A photograph of the screen then showed **`b
 first line: the pre-fix ROM, which contains no bound at all, so the walk was expected and the
 hypothesis described a code path that build does not have.
 
+**That issue should never have been opened**, and it is closed as `not planned`. The build was
+unverified not merely before a *conclusion* but before a **public claim that shipped code was
+defective** — so the rule below has a second half: **verify before you file, not only before you
+conclude.**
+
 **So: ask for the banner before interpreting a hardware run.** Row 0 carries
 `dezogif_ng <variant> NN.NN` for exactly this reason (issue #12), it is free to read, and it is the
 only thing on the machine that says which ROM is executing — DZRP's `PROGRAM_NAME` reports
@@ -1232,12 +1253,17 @@ wrong tree, and was then not applied here.
 
 ### The measurements from the green run
 
-    H1   PASS  connected in 30 ms, session opened and closed cleanly
-    H2   PASS  the DZRP conformance suite passed in full          (18 of 18)
+    H1   PASS  connected to 192.168.100.136:11000 in 30 ms, session opened and closed cleanly
+    H2   PASS  the DZRP conformance suite passed in full
     H3   PASS  two simultaneous connections each got their own payload back
     H4   MEAS  20 samples: min 5.9, median 6.3, max 13.2 ms
-    H5   MEAS  4096 bytes in 0.40 s — 20.0 KB/s round trip, 10.0 KB/s one way
-    H6   MEAS  the error area is CLEAN — 0 bright-red pixels
+    H5   MEAS  4096 bytes in 0.40 s: 20.0 KB/s round trip, 10.0 KB/s one way
+    H6   MEAS  the error area is CLEAN — 0 bright-red pixels on the stub's own screen
+
+    3 passed, 0 failed, 3 measured, 0 skipped of 6
+
+(H2's own line carries no count; the **18 of 18** comes from the conformance block it delegates to,
+which is quoted in full at the top of this section.)
 
 **C16 and C17 are the scheduled question, and they pass.** C17 pushes **16384 bytes** in one
 `CMD_WRITE_MEM` — **four times** the largest payload that established the 460800 ceiling, on the

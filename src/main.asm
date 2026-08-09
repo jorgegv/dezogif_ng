@@ -281,6 +281,22 @@ main_end:
     ; beyond that would have been silently truncated rather than rejected.
     ASSERT main_end <= ROM_MAGIC_ADDR
 
+    ; AND THIS IS TIGHTER STILL, BY 736 BYTES, WHICH IS WHY THE ONE ABOVE WAS
+    ; NOT ENOUGH. `main_bank_entry` copies the ZX font into the top of this bank
+    ; at the address below (0xFBC0) — see the MEMCOPY at the head of this file
+    ; and `text.init`, which points `font_address` 0x100 lower so a character
+    ; code indexes it directly. That buffer is 0x300 bytes and it runs to the
+    ; end of the image, so the identity block is its last four glyphs.
+    ;
+    ; NOTHING IN THE SOURCE EMITS A BYTE THERE, so the assembler cannot see the
+    ; collision and the two regions silently become the same memory: the font
+    ; copy destroys the variables at boot, and every later write to one of them
+    ; draws itself into the glyph. Issue #31 — at BAUD_HIGH=460800 `main_end`
+    ; reached 0xFBCF, and `text_core_version.major` landed on bytes 6 and 7 of
+    ; the SPACE glyph, so every space printed on the stub's own screen carried
+    ; the core version's "03" as stray pixels while every check stayed green.
+    ASSERT main_end <= MAIN_ADDR+0x2000-ROM_FONT_SIZE+MF_ORIGIN_ROM-MF.main_prg_copy
+
 
 ;===========================================================================
 ; ROM identity block. See constants.asm for what it is for and why it lives

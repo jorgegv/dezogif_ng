@@ -108,14 +108,36 @@ has ever sent anywhere. **The other users of a client-declared
 length WERE audited, and the scoping is narrower than it needed to be.** Every
 consumer of `receive_buffer.length` in `commands.asm` was enumerated
 mechanically, and the rest are immune for a structural reason rather than by
-luck: `cmd_write_mem`, `cmd_read_mem`, `cmd_restore_mem` and
-`cmd_set_breakpoints` all go through **`memory_loop`**, which is phase-aware and
-redirects any target in `0xE000-0xFFFF` through `SWAP_SLOT` instead
-(`backup.asm:311-338`), and `cmd_exec_asm` already carried its own bound against
-`PAYLOAD_EXEC_ASM`. What made `cmd_loopback` and `cmd_write_bank` the two is
-that they buffer **straight into `SWAP_ADDR`** with a plain `ldi (hl),a` /
-`receive_bytes` loop and no phase logic at all. So the fix is exactly as wide as
-the defect. **The error
+luck — **but by TWO mechanisms rather than one, and an earlier version of this
+paragraph named only the first and attached it to all four handlers.**
+
+* `cmd_read_mem` (`commands.asm:594`) and `cmd_write_mem` (`:630`) go through
+  **`memory_loop`** (`backup.asm:321-338`), which splits a transfer at `0xE000`
+  and runs the high phase through `SWAP_SLOT`.
+* `cmd_set_breakpoints` (`:873-890`) and `cmd_restore_mem` (`:955-970`) do not
+  call it **at all**. Each carries its own dot-local `.page_in_bank` making the
+  same decision per address — `cp HIGH MAIN_ADDR`, then `slot_backup.slot7` into
+  `SWAP_SLOT`.
+
+What makes all four safe is the same pair of instructions, present in both
+copies: `and 0x1F` / `add HIGH SWAP_ADDR` **masks every address into the 8 KB
+window**, so no client-declared count can walk out of it. `cmd_exec_asm` already
+carried its own bound against `PAYLOAD_EXEC_ASM`. What made `cmd_loopback` and
+`cmd_write_bank` the two is that they buffer **straight into `SWAP_ADDR`** with a
+plain `receive_bytes` loop and no address translation at all. So the fix is
+exactly as wide as the defect.
+
+**THE CORRECTION IS WORTH MORE THAN THE CLAIM IT REPLACES.** It was found by the
+independent reviewer doing mechanically what the first version merely *said* it
+had done: `grep -n memory_loop src/commands.asm` returns **two** call sites, not
+four. Left standing it would have told a future session that `memory_loop` is the
+single point of protection for all four handlers — so a change to it would be
+audited and the duplicated copy would silently not be. A plausible mechanism
+stated instead of a traced one, with a specific but inapplicable line citation,
+in the one file every session is told to read first and treat as ground truth.
+[[ERRORS.md]] names the disease; this is the instance. **The safety conclusion is
+unchanged** — both handlers really are immune — which is exactly what makes this
+kind of error survive. **The error
 text itself** is drawn by no check; nothing reads row 15 back for this code, and
 the 32-column fit is by inspection. And **what a real client does with the
 silence**: DeZog has never sent an oversize frame and there is no reason it

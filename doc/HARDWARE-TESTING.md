@@ -1073,6 +1073,59 @@ An earlier draft of this section reported that as "about a third of the estimate
 one-way payload figure against a line rate. It is recorded here because the arithmetic error
 pointed at the wrong optimisation.
 
+## At 460800 baud — measured 2026-08-09, on a real Next, build `00.16`
+
+**The first runs above 115200, and the first time the bring-up probe has executed anywhere.** The
+ROM is `make TRANSPORT=wifi BAUD_HIGH=460800 mf-rom` at build `00.16`, i.e. carrying issue #31's
+fix — **that matters, because at 460800 without it the stub's own screen is visibly corrupt** and
+the "the screen must say 460800" criterion cannot be read honestly off a screen drawing wrong.
+
+**Five consecutive runs, `192.168.100.136`, every one 3 passed / 0 failed / 3 measured of 6, with
+15 of 15 conformance.**
+
+| check | result across the five runs |
+|---|---|
+| **H1** | PASS — connected in 107, 7, 119, 106, 55 ms |
+| **H2** | PASS — **15 of 15** every run, 0 failed, 0 unsupported |
+| **H3** | PASS — two simultaneous connections each got their own payload back |
+| **H4** | median **6.4 / 6.8 / 6.7 / 6.4 / 6.6 ms** (min 6.0, max 12.3) |
+| **H5** | 4096 bytes in ~0.39 s — **19.8 / 20.4 / 20.0 / 20.3 / 20.3 KB/s** round trip |
+| **H6** | the error area is **CLEAN** every run, 0 bright-red pixels, and no `RX Overflow` |
+
+**Against the 115200 baseline: latency 11.2 → 6.6 ms median, throughput 8.3 → 20.3 KB/s, i.e.
+2.45x.** The latency result **contradicts the prediction recorded with the negotiation**, which said
+to expect it unchanged because 11.2 ms is WiFi round trip rather than wire time. It nearly halved,
+so a material part of that figure was the wire after all.
+
+### The bring-up probe fired, and the precondition was OBSERVED rather than inferred
+
+`transport_init` greets the module at 115200 and, on silence, at `ESP_BAUD_HIGH`. That second
+greeting is **structurally unreachable in jnext**, whose module answers the first one every time, so
+no bench in this repository can execute it. It is also the only recovery the stub ships: a soft reset
+leaves the UART prescaler alone (`i_reset_hard` is tied to `'0'`, `zxnext.vhd:3361-3367`) and does
+not reset the module, so after `R` **both ends are still at 460800** while a fresh `esp_uart_init`
+assumes 115200.
+
+Sequence run at the machine: **M1** (stub up at 460800) → **`R`** → **M1**, and the stub came back
+up with row 3 reading 460800.
+
+**What makes that a measurement rather than a story is the step in between.** With the machine
+sitting after the reset, `.UART` sent `AT` at 115200 and **got no answer** — so the module was not at
+115200, and had held 460800 across the soft reset. The stub's 115200 greeting must therefore have
+failed, and `ESP_BAUD_HIGH` is the only other rate it tries.
+
+**And the instrument was controlled, which is what the "no answer" needed.** Silence has two causes
+— the wrong rate, or a `.UART` that does not work. So: power-cycle, which returns the module to its
+115200 firmware default, then `.UART` and `AT` again → **`OK`**. The tool works at 115200; the
+earlier silence was the rate. Without that second step the evidence would have been worth nothing,
+which is this document's standing rule about negative results from uncontrolled instruments.
+
+**NOT established by these runs.** A **DeZog `.nex` load** at this rate — `CMD_WRITE_BANK` pushes
+8-16 KB per bank, far more than C5's largest 4096 bytes, on the very receive path whose per-byte cost
+is what stops 600000 working. A **second machine or module**. And the probe **against a module at a
+rate this ROM was not built for**, which nothing stages: it only ever tries the two rates it knows.
+
+
 ## The suite at its full size — measured 2026-08-08 12:37, on a real Next
 
 The run above was 12 checks because that is the size the suite was that day. C13/C14 (issue #9) and

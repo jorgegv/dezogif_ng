@@ -255,6 +255,19 @@ stub **ships**.
 FILED UNDER "COVERED".** jnext's module answers the first greeting every time, so
 nothing here has ever executed the probe.
 
+*(**IT HAS NOW, ON A REAL NEXT — 2026-08-09, build `00.16`, and this is the first
+time that code has run anywhere.** Sequence: M1 (stub up, 460800), `R`, M1 — the
+stub came back up with row 3 reading 460800. **The precondition was OBSERVED
+rather than inferred**, which is what makes it a measurement: between the reset
+and the second press, `.UART` sent `AT` at 115200 and **got no answer**, so the
+module was not at 115200 and had held 460800 across the soft reset. The stub's
+own greeting at 115200 must therefore have failed, and the only other rate it
+tries is `ESP_BAUD_HIGH`. **And the instrument was controlled** — power-cycling
+returns the module to its 115200 default, after which `.UART` sent `AT` and got
+`OK`, so the earlier silence was the rate and not a broken tool. Without that
+second step "no answer" had two causes and the evidence was worth nothing.
+Tier: `reported on hardware`.)*
+
 **THE SWITCH IS MADE ATOMIC WITH THE FRAME REGISTER, and the bench watched the
 hazard it closes.** There is no double buffering anywhere in `serial/uart.vhd`:
 the divisor's two 7-bit halves go through separate writes to `0x143B` and each
@@ -336,6 +349,22 @@ limit and the rate buys nothing; **H4 latency explicitly NOT the criterion** —
 material worsening as the red flag; and **M1, `R`, M1 again**, which no bench
 anywhere covers and which is the only recovery this stub ships.
 
+*(**ALL SIX WERE MET ON 2026-08-09, build `00.16`** — the ROM that carries issue
+#31's fix, without which the 460800 screen is visibly corrupt and criterion one
+cannot honestly be read. Measured on the user's own Next: the screen says 460800
+and is **perfectly clean**; `make test-hardware` **5 runs of 5** at 6/6 with
+**15/15** conformance each, so C5 passed five times; **H6 clean every run**, 0
+bright-red pixels, no `RX Overflow`; **H5 median 20.3 KB/s = 2.45x** the 8.3
+baseline; **H4 median 6.6 ms against 11.2**, i.e. 41% BETTER — and note that
+contradicts this entry's own prediction that latency would be unchanged because
+11.2 ms is "WiFi round trip", which was wrong; and **M1, `R`, M1** with the probe
+shown to have fired, see the annotation above.
+**SO THE DEFAULT IS NOW A DECISION AND NOT A MEASUREMENT.** Two things are still
+unmeasured and neither is on the list, which is why the list is not sufficient on
+its own: a **DeZog `.nex` load**, whose `CMD_WRITE_BANK` pushes 8-16 KB per bank
+and is far larger than C5's 4096 bytes on the very receive path the ceiling
+governs; and any rate behaviour on a **second machine or module**.)*
+
 **Rejected.** Defaulting to 1000000 (it fails the gate); defaulting to 460800
 (green here, unmeasured there, and this project's rule is explicit); using
 `AT+UART_DEF=` (it persists into flash, so a rate that turns out not to work
@@ -350,12 +379,17 @@ negotiation sits before `AT+CIPMUX` rather than at the end); switching after the
 listener is open (the switch empties both FIFOs, which with a client attached
 would silently destroy a command — issue #11's family).
 
-**NOT COVERED, and none of it is hidden.** **The rate itself** — no run here says
-anything about what a real ESP-01 will take. **The probe** — dead code in the
-emulator. **The half-switched link** — structurally unreachable. **The bring-up
-probe's interaction with a module at a rate this ROM was not built for** — the
-probe only tries the two rates it knows. And **the 460800 recommendation rests
-on emulator runs alone**.
+**NOT COVERED, and none of it is hidden.** ~~**The rate itself** — no run here
+says anything about what a real ESP-01 will take.~~ ~~**The probe** — dead code in
+the emulator.~~ ~~And **the 460800 recommendation rests on emulator runs
+alone**.~~ **All three were closed on hardware on 2026-08-09** — see the two
+annotations above; 460800 runs, and the probe has executed. **The half-switched
+link** — structurally unreachable, and still is. **The bring-up probe's
+interaction with a module at a rate this ROM was not built for** — the probe only
+tries the two rates it knows, and nothing has staged that. **A DeZog `.nex`
+load at 460800**, which is the largest inbound payload the stub ever sees and
+bigger than anything C5 covers. And **a second machine or module**: every rate
+result is one Next, one ESP-01, one reporter.
 
 **A CAVEAT THIS DOES NOT INHERIT, checked rather than assumed.** Issue #24's
 `esp_command_ok_or_error` header names #25 as its second caller and warns that

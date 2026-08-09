@@ -628,10 +628,13 @@ strongest:
    #15's outward signature reached by a mechanism that is entirely ours**. `esp_recover` now sweeps
    every link id with `AT+CIPCLOSE=<id>`. (That read "for the rest of the power-on session" until
    2026-08-08, when the module's `AT+CIPSTO` idle timeout was measured **enforced** on a real Next
-   at its 180 s default — so the leak is bounded at about three minutes, not at the power switch.
-   `KNOWN-ISSUES.md` #2 and `doc/HARDWARE-TESTING.md` carry the runs. The same clause survives in
-   `src/transport_esp.asm`'s `esp_recover` header and is a **known stale comment**, left because
-   this change deliberately touches no `src/` file.)
+   at its 180 s default — so the leak is bounded, not held until the power switch. **The bound is
+   ~180 s on that default and ~1800 s since issue #24 has the stub set it at bring-up**, so on any
+   build from `00.16` it is about thirty minutes rather than three.
+   `KNOWN-ISSUES.md` #2 and `doc/HARDWARE-TESTING.md` carry the runs. The same clause survived in
+   `src/transport_esp.asm`'s `esp_recover` header as a known stale comment, because that change
+   deliberately touched no `src/` file; **issue #29 has since corrected it**, comments only and with
+   both ROMs proven byte-identical.)
    **S1** fills every inbound slot with connections that were *answered* and are then held —
    answered, because a refusal at the ceiling otherwise has two indistinguishable causes, "the
    module is full" and "the stub is wedged", which is the position #15 was reported from — confirms

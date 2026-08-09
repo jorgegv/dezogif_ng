@@ -415,14 +415,22 @@ is being sent to it produces no traffic in either direction.
 **Closing the gap from the stub's side needed a sweep reachable from a quiet stub — periodic, or at
 connect time — and build `00.18` shipped the periodic one** (issue #24; connect time was examined
 and cannot be built, see above). `esp_idle_tick` calls the same sweep after five minutes of idling
-with no session, so the stub now reclaims the slots itself rather than waiting on the module's
-thirty-minute timer.
+with no session.
+
+**IT DOES NOT REPLACE THE MODULE'S THIRTY MINUTES, AND THIS SENTENCE USED TO SAY IT DID.** The sweep
+only counts while the stub believes no DZRP session is open, and a peer that vanishes never clears
+that belief — so for **this entry's own headline case** the trigger does not fire at all, and the
+module's `AT+CIPSTO` remains the thing that ends the fault. What the trigger reaches is the other
+shapes: sockets that never sent `CMD_INIT`, and ones superseded by a later session that closed
+cleanly. "What to do" and "What would reopen it" are both written against the module's thirty for
+exactly this reason, and neither should be re-derived from the five.
 
 **That does not retire this entry and must not be read as doing so.** What ships is a **trigger**
 for a mechanism whose repair value no run anywhere has demonstrated: no emulator can leak a slot to
-a peer that vanished, so S4-S7 show the sweep fires from a quiet stub and nothing more. Whether a
-real module hands the slots back when asked in this state is unmeasured, and the wait remains the
-advice above.
+a peer that vanished, so S4-S7 show the sweep fires from a quiet stub and nothing more — and
+because a vanished peer is precisely what they cannot stage, **no bench here exercises the trigger
+in the state this entry is about**. Whether a real module hands the slots back when asked in this
+state is unmeasured, and the wait remains the advice above.
 
 ### The one thing that will make this worse, deliberately
 

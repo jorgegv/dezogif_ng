@@ -630,7 +630,7 @@ strongest:
    2026-08-08, when the module's `AT+CIPSTO` idle timeout was measured **enforced** on a real Next
    at its 180 s default — so the leak is bounded, not held until the power switch. **The bound is
    ~180 s on that default and ~1800 s since issue #24 has the stub set it at bring-up**, so on any
-   build from `00.16` it is about thirty minutes rather than three.
+   build from `00.14` it is about thirty minutes rather than three.
    `KNOWN-ISSUES.md` #2 and `doc/HARDWARE-TESTING.md` carry the runs. The same clause survived in
    `src/transport_esp.asm`'s `esp_recover` header as a known stale comment, because that change
    deliberately touched no `src/` file; **issue #29 has since corrected it**, comments only and with

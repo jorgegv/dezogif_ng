@@ -704,6 +704,27 @@ ESP_CIPSTO_STRICT:  equ 0
 ; session, so what is at risk is only a connection that is silent for five
 ; minutes while every other peer is silent too.
 ;
+; AND THE CONVERSE IS THE ONE THAT LIMITS WHAT THIS BUYS, so it is written here
+; rather than left to be discovered: the guard also keeps the sweep away from
+; KNOWN-ISSUES.md #19's OWN HEADLINE CASE. esp_session_valid is cleared by
+; exactly two things — CMD_CLOSE (esp_client_detached) and the module reporting
+; <id>,CLOSED for that same session (esp_line_event) — and a peer that VANISHES
+; sends neither, which is the whole definition of the fault #19 describes. So
+; when the connection that vanished is the one that most recently sent CMD_INIT,
+; this routine never counts a single tick and never sweeps, globally, until the
+; module's own AT+CIPSTO reap eventually produces a <id>,CLOSED — if it announces
+; one at all, which nobody has checked.
+;
+; That is the guard working, not a hole in it: sweeping while a session looks
+; open is exactly the "close on suspicion" forbidden above, and weakening it to
+; reach this case would trade a bounded fault for a debugger that hangs up on a
+; user reading code. What it means is that this trigger reaches the OTHER shapes
+; — a socket that never introduced itself, and one superseded by a later session
+; that closed cleanly — and that the module's ~1800 s remains the backstop for
+; the headline one. KNOWN-ISSUES.md #19's "What to do" and "What would reopen it"
+; are both written against that 1800 rather than against this 300, for exactly
+; this reason. Do not "fix" the asymmetry by relaxing the guard.
+;
 ; 300 SECONDS, and the number is bounded from both sides rather than picked. It
 ; must be well under the module's own AT+CIPSTO reap — 1800 since this same
 ; issue's first half — or the module gets there first and this buys nothing. And

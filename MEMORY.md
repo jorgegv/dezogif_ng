@@ -165,7 +165,32 @@ no session on it**: `esp_session_valid` is set by `CMD_INIT`, so a peer that
 connected and never introduced itself is swept once nothing at all has arrived
 for the whole period. Deliberate — "a socket is not a session" is bench check
 N1's position and issue #23's — and narrower than it sounds, since **any**
-inbound frame from **any** connection restarts the timer. **That the sweep
+inbound frame from **any** connection restarts the timer.
+
+**AND THE CONVERSE, WHICH IS THE LIMIT ON WHAT THIS BUYS AND WHICH THE FIRST
+VERSION OF THIS ENTRY NEVER NAMED: the sweep cannot fire for KNOWN-ISSUES.md
+#19's own headline case.** `esp_session_valid` is cleared by exactly two things —
+`CMD_CLOSE`, and the module reporting `<id>,CLOSED` for that same session — and a
+peer that **vanishes** sends neither, which is what "vanishes" means. So when the
+connection that went silent is the one that most recently sent `CMD_INIT`, the
+gate stays set, `esp_idle_tick` never counts a tick, and **no sweep ever happens**
+until the module's own ~1800 s reap produces a `<id>,CLOSED` — if it announces
+one, which is unverified. What the trigger reaches is the other shapes: a socket
+that never introduced itself, and one superseded by a later session that closed
+cleanly. Both are real, and both are what S4-S7 stage — `--mode hold` ends in a
+plain `t.close()`, i.e. a FIN and an immediate `<id>,CLOSED`, so **no bench here
+stages a vanished peer at all**.
+
+**That is the guard working rather than a hole in it**, and it must not be
+"fixed": sweeping while a session looks open is the close-on-suspicion that
+KNOWN-ISSUES.md #19 and #24's own acceptance criteria both forbid. It does mean
+the five minutes is not a general replacement for the module's thirty, and
+KNOWN-ISSUES.md's "What to do" and "What would reopen it" are written against the
+thirty for that reason — a reopen criterion built on five would have fired on
+correct behaviour every time the vanished peer held the session, which is the
+common shape rather than an exotic one. Found by the independent reviewer, from
+the three writer sites of one byte; I had documented the exposure and not its
+mirror image. **That the sweep
 REPAIRS anything** —
 no emulator run can leak a slot to a peer that vanished or make the module
 unresponsive, so every green check here shows the *mechanism fires* and never

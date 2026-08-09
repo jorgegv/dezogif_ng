@@ -216,22 +216,41 @@ and is entirely ordinary.
 
 ### What to do
 
-**Wait about five minutes, then reconnect.** That is the whole procedure, and it is also the
-diagnosis: a machine that starts serving again was this, and one that does not is something else.
+**Wait, then reconnect — about five minutes in some cases and about thirty in the worst one.** That
+is the whole procedure, and it is also the diagnosis: a machine that starts serving again was this,
+and one that does not is something else.
 
-**Five, and it is the stub's own doing on any build from `00.18`.** Two separate things clear this
-and the shorter one governs:
+**Two separate things clear this, and WHICH ONE YOU GET DEPENDS ON WHETHER THE STUB THINKS A DEBUG
+SESSION IS STILL OPEN:**
 
 | what | after | since |
 |---|---|---|
-| **the stub** sweeps every link id with `AT+CIPCLOSE` when it has been idle with no DZRP session | **~5 min** | build `00.18`, issue #24 |
+| **the stub** sweeps every link id with `AT+CIPCLOSE`, once it has been idle with **no DZRP session it knows of** | **~5 min** | build `00.18`, issue #24 |
 | **the module** reaps each idle inbound connection itself, on `AT+CIPSTO` | **~30 min** | the value the stub sets at bring-up, issue #24 |
 
-**On an older build there is no stub-side sweep and the wait is the module's alone**, which is
-~3 minutes before `AT+CIPSTO=1800` shipped and ~30 after it. And `AT+CIPSTO` is settable: **`0`
-disables the module's half entirely**, on which module only the stub's five minutes remain — and
-before `00.18`, nothing at all did, which is when the old power-cycle advice was right.
-`AT+CIPSTO?` at the machine is what settles which you have.
+**AND THE HEADLINE CASE OF THIS ENTRY IS THE ONE THE STUB'S FIVE MINUTES DOES NOT REACH**, which is
+worth stating plainly because it is the opposite of what "whichever is shorter" would suggest. The
+stub only counts while `esp_session_valid` is clear, and that byte is set by `CMD_INIT` and cleared
+by exactly two things: a `CMD_CLOSE`, or the module reporting `<id>,CLOSED` for **that** session's
+own connection. A peer that **vanishes** sends neither — no FIN, no RST, no `CMD_CLOSE` — so if the
+connection that vanished is the one that most recently sent `CMD_INIT`, the stub goes on believing a
+session is open, never counts a tick, and never sweeps. The wait is then the module's ~30 minutes,
+and only if the module announces its reap as an `<id>,CLOSED` at all — which nobody has checked (see
+"What is not known").
+
+**That is not a defect and must not be fixed by weakening the guard.** Sweeping while a session
+looks open is "close on suspicion", which is the thing this entry's "why this is not fixed" section
+refuses: a DeZog session parked at a breakpoint is silent for minutes and perfectly healthy.
+
+**So the stub's five minutes helps the cases where the vanished sockets are not the tracked
+session** — peers that connected and never sent `CMD_INIT`, and peers superseded by a later session
+that ended cleanly. Those are real and they are what S4-S7 stage.
+
+**On an older build there is no stub-side sweep at all and the wait is the module's alone**, which
+is ~3 minutes before `AT+CIPSTO=1800` shipped and ~30 after it. And `AT+CIPSTO` is settable: **`0`
+disables the module's half entirely**, on which module only the stub's five minutes remain, in the
+cases it reaches — and before `00.18`, nothing at all did, which is when the old power-cycle advice
+was right. `AT+CIPSTO?` at the machine is what settles which you have.
 
 **Do not power-cycle**, which this entry used to tell you to do. It works, but it costs you the
 debuggee, the machine's state and — if you were about to report anything — the only evidence there
@@ -268,23 +287,31 @@ would also be affected. Unmeasured, and stated here so it is not assumed either 
 
 ### What would reopen it
 
-Connections refused, screen clean, and **still refused ten minutes after the last traffic**, with no
+Connections refused, screen clean, and **still refused an hour after the last traffic**, with no
 power cycle since boot.
 
-**Ten, because since build `00.18` two separate things clear this and the shorter one governs.** The
-stub sweeps the module's link ids itself after **five minutes** of idling (issue #24,
-`ESP_IDLE_SWEEP_SECS`); the module reaps on its own `AT+CIPSTO` after **thirty**. Whichever gets
-there first ends the fault, so the criterion is built on the stub's five minutes with a doubling for
-margin — the timer is counted in video frames, so a machine on 60 Hz timing runs it slightly fast
-and a busy one slightly slow, and neither moves it near ten.
+**AN HOUR, AND IT IS BUILT ON THE MODULE'S THIRTY MINUTES RATHER THAN THE STUB'S FIVE** — because
+the stub's five is exactly what the headline case does not get. Since build `00.18` two things can
+clear this, but they do not both apply to every instance:
+
+- the **stub** sweeps the link ids after **five minutes** idle (issue #24, `ESP_IDLE_SWEEP_SECS`) —
+  but only while it believes no DZRP session is open, so a vanished peer that was the tracked
+  session suppresses it entirely (see "What to do");
+- the **module** reaps on its own `AT+CIPSTO` after **thirty**, and that one has no such condition.
+
+So the criterion has to be built on the timer that always applies, doubled for margin. **A criterion
+built on the stub's five minutes would fire on ordinary, correct behaviour** every time the vanished
+peer happened to be the one holding the session — which is the common shape, not an exotic one.
 
 **The "still refused" clause is the load-bearing one.** A Next that refuses everybody and then
 recovers is #19 doing exactly what it is now measured to do, and is not worth reopening anything
-for. A refusal that **outlasts both timers** is the finding, and it now says something sharper than
-it used to: the stub's own sweep is a thing that runs on a clock nothing outside the machine
-influences, so a refusal surviving it means either that the sweep did not run — a stub that is
-wedged rather than idle, which the screen and the `B` key will tell you — or that asking the module
-to close those ids did not free them, which is a fault nobody here has ever staged.
+for. A refusal that **outlasts the module's timer** is the finding: either five peers really went
+quiet inside one window, or something is holding slots that idling does not free — and the second is
+a different fault wearing this one's face.
+
+**If it recovers between five and thirty minutes, that is informative and not a fault**: it says the
+stub's own sweep ran, i.e. it did not think a session was open. Worth noting in a report, because
+nothing here has ever observed that sweep repair a real leak — see "What already shipped".
 
 **`make probe-slots` cannot settle it in that state** and it is important not to expect it to: its
 discriminating check asks whether an *earlier* connection still answers, and a module with every
@@ -354,10 +381,21 @@ paragraphs up — with no session there is nothing to close on suspicion *of* �
 period" is what stops a machine left switched on opening a refusal window every five minutes.
 Bench checks S4-S7 in `make test-slot-recovery`, with `IDLE_SWEEP=0` as the control.
 
-**It does not change what this entry tells a user to do.** The wait is still the answer, because
-the stub's period is five minutes and the module's is thirty: whichever gets there first, waiting
-is what ends it. What it changes is that the stub is now capable of ending it too, and rather
-sooner.
+**It does not change what this entry tells a user to do**, and it changes less than it looks like it
+should. The wait is still the answer: the stub's period is five minutes and the module's is thirty,
+and waiting is what ends it either way.
+
+**BUT THE SESSION GUARD IS ALSO WHAT KEEPS THE NEW SWEEP AWAY FROM THIS ENTRY'S OWN HEADLINE CASE**,
+and that is the honest reading of what shipped. `esp_session_valid` is set by `CMD_INIT` and cleared
+only by `CMD_CLOSE` or by the module reporting `<id>,CLOSED` for that same session. A peer that
+vanishes sends none of those — so when the vanished connection *is* the tracked session, the stub
+never counts a tick and this trigger never fires. What it reaches is the rest: sockets that never
+opened a session, and ones superseded by a later session that closed cleanly.
+
+That is a guard doing its job rather than a gap to close — sweeping while a session looks open is
+the "close on suspicion" this entry refuses — but it means the five minutes is **not** a general
+replacement for the module's thirty, and "What to do" and "What would reopen it" are both written
+against the thirty for that reason.
 
 ### What already shipped
 

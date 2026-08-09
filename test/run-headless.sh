@@ -26,10 +26,20 @@
 #       instead of declining (issue #26) — see the note at T7. The only check
 #       here that presses the button twice, which is why five years of
 #       upstream and every earlier bench missed the defect it guards.
+#   T8  a second M1 press with NO reset is DECLINED, and the stub is still
+#       alive afterwards (issue #36). T7's other arm — see the note at T8.
 #
 # T3 is not decoration. Without it a broken fixture would make T4 look like a
 # stub bug (or, worse, a change in T4's screen would look like a pass). If T3
 # fails, the bench is broken and T4's verdict means nothing.
+#
+# T7 AND T8 ARE THE TWO ARMS OF ONE BRANCH, and neither covers the other. The
+# NMI dispatch keys on the bank slot 7 held at the moment of the press: not
+# MAIN_BANK means the debugger was NOT executing, so re-initialise (T7);
+# MAIN_BANK means it was, so decline (T8). A regression sending EVERY press to
+# init_main_bank would destroy live debug sessions and T7 would still pass,
+# because T7's own arm would keep working — which is why T8 exists, and why it
+# exists before M2 edits that routine.
 #
 # T4 AND T6 ARE NOT ALTERNATIVES, and an earlier note here said T6 would
 # "replace" T4. It does not. They test different NMI causes against the same
@@ -78,6 +88,34 @@ SECOND_NMI_FRAME=2030    # the second NextZXOS boot is complete by here
 RESET_SHOT_FRAMES=2202   # = SHOT_FRAMES + 36*32, and 172 frames after the NMI
 RESET_EXIT_FRAMES=2262
 
+# T8's choreography (issue #36), and every frame in it has a job. The stub is
+# brought up with a button NMI at BOOT_FRAMES; "3" retargets the joy port, which
+# is the state a re-initialisation would silently reset; the button is pressed a
+# SECOND time with NO reset anywhere; and "B" is the liveness probe, which must
+# come AFTER that press or it proves nothing about it. Same FLASH rule as
+# everywhere else here: NORESET_SHOT_FRAMES is a multiple of 32 frames after
+# SHOT_FRAMES (1050 + 13*32), and T8's two runs shoot at the same frame as each
+# other, which is what makes their comparison a comparison of one variable.
+#
+# The three event frames are overridable so that T8's harness preconditions can
+# be shown to FIRE rather than argued about — the reason run-dzrp-stub.sh's
+# SECOND_NMI_FRAMES is: a red nobody can re-run is a story about a scratch tree.
+# None of them is a build-constant seam of the IP_MAX family; no ROM is built
+# differently, only this bench's schedule moves. Measured, each on the shipped
+# ROM, and each takes a DIFFERENT one of T8's guards red:
+#   NORESET_JOY_FRAME=850  -> "the joy-port key never landed" — pressed before
+#                             the NMI, so the stub never polls it. 950 does NOT
+#                             do it: measured, the stub is in main_loop and
+#                             polling within 50 frames of the press, which is
+#                             also how much margin the schedule below has.
+#   NORESET_KEY_FRAME=1500 -> "the 'B' key never reached the one-press run"
+#   NORESET_NMI_FRAME=1500 -> "the second press is not scheduled between them"
+NORESET_JOY_FRAME=${NORESET_JOY_FRAME:-1100}   # "3", 200 frames after the stub came up
+NORESET_NMI_FRAME=${NORESET_NMI_FRAME:-1200}   # the second press — no reset before it, unlike T7
+NORESET_KEY_FRAME=${NORESET_KEY_FRAME:-1300}   # "B", 100 frames after that press
+NORESET_SHOT_FRAMES=1466 # = SHOT_FRAMES + 13*32
+NORESET_EXIT_FRAMES=1526
+
 # Wall-clock guard per emulator run. Headless runs above take ~6s.
 RUN_TIMEOUT=120
 
@@ -90,6 +128,7 @@ TAKEOVER_PCT=25
 
 SHOTS=$OUT/screenshots
 MF_ROM_PATH='::/machines/next/enNextMf.rom'
+FONT_ROM_PATH='::/machines/next/48.rom'
 
 # Shared jnext teardown — issue #17. Defines functions and nothing else, so it
 # cannot disturb the `set -euo pipefail` above or the trap below.
@@ -166,12 +205,58 @@ bench_jnext_supports "$JNEXT" '--delayed-nmi' \
 python3 -c 'import PIL' 2>/dev/null || die "python3 Pillow is required to compare screenshots"
 
 SCREEN_DIFF=$(dirname "$0")/screen-diff.py
+SCREEN_TEXT=$(dirname "$0")/screen-text.py
+[ -f "$SCREEN_TEXT" ] || die "screen reader not found: $SCREEN_TEXT (T8 reads a row of the stub's screen)"
 
 # Percentage of pixels differing between two screenshots.
 diff_pct() { python3 "$SCREEN_DIFF" "$1" "$2"; }
 
 # True when the difference reaches the takeover threshold.
 took_over() { awk -v pct="$1" -v thr="$TAKEOVER_PCT" 'BEGIN { exit !(pct >= thr) }'; }
+
+# read_row <png> <row> — one character row of a screenshot, decoded with the ZX
+# ROM font taken off the very SD image the machine boots. T8's use of it, and
+# why a reading rather than a comparison, is at T8. Prints nothing and returns
+# non-zero when the reader refuses; every caller treats that as a harness fault.
+read_row() { python3 "$SCREEN_TEXT" --font "$font" "$1" "$2" 2>/dev/null; }
+
+# border_rgb <png> — the border colour, as "r,g,b". Sampled at four corners,
+# which are border in every Next screen mode and never paper, and required to
+# agree so that a sample landing on something else is a hard error rather than a
+# number this bench would go on to compare. jnext composes the border into the
+# screenshot; it is the ULA that draws it.
+#
+# The same helper as test/run-no-hang.sh's, deliberately duplicated rather than
+# shared: bench-jnext.sh is the shared file and it earns its keep by defining
+# jnext teardown and NOTHING else, and factoring ten lines of pixel sampling out
+# would mean editing a second bench that this change has no business touching.
+border_rgb() {
+    python3 -c "
+from PIL import Image
+import sys
+im = Image.open('$1').convert('RGB')
+w, h = im.size
+pts = [(2, 2), (w - 3, 2), (2, h - 3), (w - 3, h - 3)]
+seen = {im.getpixel(p) for p in pts}
+if len(seen) != 1:
+    sys.exit('the four border corners of $1 do not agree: %s' % sorted(seen))
+print('%d,%d,%d' % seen.pop())
+"
+}
+
+# jnext renders a non-bright colour component as 182 and a bright one as 255;
+# `out (BORDER),a` carries no bright bit, so the border can only ever be one of
+# the eight non-bright colours. Same values as run-no-hang.sh's N1/N2.
+BORDER_BLACK=0,0,0
+
+# What the stub's own screen says, and both strings are drawn by ui.asm from
+# data_const.asm. The joy-port line is T8's discriminator; the key line is the
+# reader's control, chosen because it is drawn by the same code in the same font
+# and its text is not in question.
+NOJOY_TEXT="No joystick port used."
+NOJOY_ROW=6
+CONTROL_TEXT="R = Reset"
+CONTROL_ROW=12
 
 # Offset of the first partition, read from the MBR (LBA start is the 4 bytes
 # at 0x1BE+8) rather than assumed, so a different image still works.
@@ -192,6 +277,14 @@ log "== preparing SD images (reference: $SD_IMAGE, partition offset $part_off)"
 cp --reflink=auto -f "$SD_IMAGE" "$sd_stock"
 cp --reflink=auto -f "$SD_IMAGE" "$sd_ours"
 mcopy -o -i "$sd_ours@@$part_off" "$ROM" "$MF_ROM_PATH"
+
+# The font the stub prints with, for T8's screen reader — taken out of the SAME
+# image the machine boots, and out of the working COPY, so the reference is read
+# and never written. Extracted here rather than at T8 because the working images
+# are unlinked by the trap and this must happen while one exists.
+font=$OUT/font-48.rom
+mcopy -o -i "$sd_ours@@$part_off" "$FONT_ROM_PATH" "$font" \
+    || die "cannot read $FONT_ROM_PATH out of the SD image (T8 needs it to read the screen)"
 
 # --- runs ------------------------------------------------------------------
 
@@ -266,7 +359,44 @@ run_reset() {
     [ -s "$shot" ] || die "no screenshot written: $shot"
 }
 
-log "== running the bench (8 headless runs, ~70s)"
+# T8's two runs (issue #36): the stub comes up, "3" retargets the joy port, the
+# button is pressed a second time with NO reset — in the second run only — and
+# "B" is pressed afterwards. jnext's stdout is kept for the same reason as
+# run_reset's, and the log level is raised for the same reason too: the
+# "Delayed NMI button" line is platform/info, and a bench that suppressed it
+# would report 0 presses against a stub that had taken two. jnext's current
+# default happens to show it — run_reset above relies on that — but a
+# precondition this check cannot do without should not rest on a default.
+#
+# run_noreset <screenshot> <log> [second-nmi]
+run_noreset() {
+    local shot=$1 rlog=$2 second=${3:-}
+    local -a args=(
+        --headless --machine next
+        --sdcard "$sd_ours"
+        --rtc "2026-01-01 12:00:00"
+        --log-level "warn,platform=info"
+        --delayed-screenshot "$shot"
+        --delayed-screenshot-frames "$NORESET_SHOT_FRAMES"
+        --delayed-automatic-exit-frames "$NORESET_EXIT_FRAMES"
+        --delayed-nmi-frames "$BOOT_FRAMES" nmi
+        --delayed-keypress-frames "$NORESET_JOY_FRAME" 3
+    )
+    if [ -n "$second" ]; then
+        args+=(--delayed-nmi-frames "$NORESET_NMI_FRAME" nmi)
+    fi
+    args+=(--delayed-keypress-frames "$NORESET_KEY_FRAME" b)
+    rm -f "$shot"
+    current_image=$sd_ours
+    local rc=0
+    timeout "$RUN_TIMEOUT" "$JNEXT" "${args[@]}" >"$rlog" 2>&1 || rc=$?
+    bench_await_departure "$sd_ours"
+    current_image=""
+    [ "$rc" -eq 0 ] || die "jnext second-press run failed or timed out (shot=$shot)"
+    [ -s "$shot" ] || die "no screenshot written: $shot"
+}
+
+log "== running the bench (10 headless runs, ~90s)"
 run "$sd_stock" "$SHOTS/boot-stock.png"
 run "$sd_ours"  "$SHOTS/boot-ours.png"
 run "$sd_stock" "$SHOTS/nmi-stock.png" "$TRIGGER_BIN"
@@ -275,6 +405,8 @@ run "$sd_stock" "$SHOTS/copper-stock.png" "$COPPER_BIN"
 run "$sd_ours"  "$SHOTS/button-ours.png" "" nmi
 run_reset "$SHOTS/reset-ours.png"      "$SHOTS/reset-ours.log"
 run_reset "$SHOTS/second-nmi-ours.png" "$SHOTS/second-nmi-ours.log" second
+run_noreset "$SHOTS/press1-ours.png" "$SHOTS/press1-ours.log"
+run_noreset "$SHOTS/press2-ours.png" "$SHOTS/press2-ours.log" second
 
 # --- assertions ------------------------------------------------------------
 
@@ -429,10 +561,109 @@ else
     pass "T7 a second NMI after a soft reset re-initialises the debugger ($second_pct% repainted)"
 fi
 
+# T8 — a second M1 press with NO reset must be DECLINED, and the stub must still
+# be alive afterwards. Issue #36.
+#
+# THIS IS T7'S OTHER ARM, and it is the branch M2 edits first. The dispatch keys
+# on the bank slot 7 held at the press: not MAIN_BANK => the debugger was not
+# executing, re-initialise (T7); MAIN_BANK => it was, decline (here). Teaching
+# nmi66h to accept a software cause reuses the same MF.nmi_slot7 byte, so a
+# regression that sent EVERY press to init_main_bank would destroy live debug
+# sessions — and T7 would still pass, because T7's arm would keep working.
+#
+# "NOTHING CHANGED" IS ALSO WHAT A WEDGED MACHINE LOOKS LIKE. The stub's screen
+# is already painted and a hung Z80 repaints nothing, which is ERRORS.md's "the
+# screen changed is not the stub took over" in mirror image. So the decline is
+# judged on two things at once, and neither alone is enough.
+#
+# The liveness half is run-no-hang.sh's N1/N2 trick: press a key the stub polls
+# and read the BORDER. main_loop polls the keyboard and check_key_border turns
+# slow_border_change off, which blacks the border AND stops change_border_color
+# touching it again — so black is stable rather than caught mid-cycle. A stub
+# that never reached main_loop leaves whatever the cycle last wrote. That
+# discriminator is not theoretical: it is what diagnosed a genuinely wedged stub
+# on hardware on 2026-08-09, yellow and not cycling with B and R both dead.
+#
+# THE "3" PRESS IS STRUCTURALLY NECESSARY AND IS NOT DECORATION. Measured, not
+# reasoned: against a scratch ROM whose dispatch sends every press to
+# init_main_bank, a re-initialisation followed by the liveness key reproduces the
+# reference screen EXACTLY — the re-init resets slow_border_change, "B" then
+# turns it off again, and the two runs come out byte-identical. A check with the
+# liveness key alone would go green against the very regression it exists to
+# catch. So some state has to be moved away from its default BEFORE the second
+# press, and in the UART build the joy-port selector is the one a keypress can
+# reach: main_bank_entry sets it back to 2, so a re-init reverts the line and a
+# decline leaves it. Measured over the three ROMs, same choreography:
+#
+#   shipped ROM      row 6 "No joystick port used."  border black  0.00% (identical)
+#   every-press-init row 6 "Using Joy 2 (right)"     border black  0.33%
+#   decline spins    row 6 "No joystick port used."  border red    40.03%
+#
+# The row is READ rather than compared, because "these two differ" is not "this
+# one is right" — ERRORS.md, mfselect's M9 — and because reading it is what says
+# the "3" press landed at all. Without that the discriminator would vanish
+# silently and a re-init would pass. The reader is validated inside each shot
+# first (row 12 is "R = Reset", drawn by the same code in the same font), so a
+# broken reader reports itself instead of failing the subject.
+#
+# The byte comparison is the broad net that catches everything the two named
+# faults do not: an error painted in the red area, a corrupted line, anything at
+# all the second press might have changed.
+#
+# THE ORDER OF THE THREE EVENTS IS ASSERTED, NOT READ OFF THE CONSTANTS, AND
+# THAT GUARD WAS EARNED. Found while checking that the preconditions fire: with
+# NORESET_NMI_FRAME moved to 1500 — past the screenshot at 1466 — the whole
+# bench came out 8/8, having pressed the button after the picture was taken. The
+# NMI-count precondition below says both presses were DELIVERED and says nothing
+# about when, so on its own it lets this check pass having tested nothing. Same
+# shape as W6's window (CLAUDE.md §4c): get an edge wrong and it fails GREEN.
+# Two of the three edges have runtime preconditions instead — a joy-port key
+# that lands before the stub is up is not polled, and a "B" that lands after the
+# picture leaves the border uncycled — so what has to be static is only the
+# chain itself. Its middle link matters as much as the outer ones: a joy-port
+# press AFTER the second one would be re-applied by a re-initialisation and hide
+# it, and a "B" BEFORE it would answer a liveness question about the wrong
+# moment. Frames are emulated, not wall clock, so unlike W6 this really is by
+# construction once the constants are in order.
+noreset_nmis1=$(grep -c 'Delayed NMI button' "$SHOTS/press1-ours.log" || true)
+noreset_nmis2=$(grep -c 'Delayed NMI button' "$SHOTS/press2-ours.log" || true)
+ref_ctl=$(read_row "$SHOTS/press1-ours.png" "$CONTROL_ROW" || true)
+sub_ctl=$(read_row "$SHOTS/press2-ours.png" "$CONTROL_ROW" || true)
+ref_joy=$(read_row "$SHOTS/press1-ours.png" "$NOJOY_ROW" || true)
+sub_joy=$(read_row "$SHOTS/press2-ours.png" "$NOJOY_ROW" || true)
+# stderr is deliberately not swallowed: border_rgb refuses when the four corners
+# disagree, and that message says which shot and which colours.
+ref_border=$(border_rgb "$SHOTS/press1-ours.png" || true)
+sub_border=$(border_rgb "$SHOTS/press2-ours.png" || true)
+noreset_pct=$(diff_pct "$SHOTS/press1-ours.png" "$SHOTS/press2-ours.png")
+if [ "$NORESET_JOY_FRAME" -ge "$NORESET_NMI_FRAME" ] || [ "$NORESET_NMI_FRAME" -ge "$NORESET_KEY_FRAME" ]; then
+    fail "T8 harness: the second press is not scheduled between the two keys, so nothing here was judged"
+elif [ "$noreset_nmis1" -ne 1 ] || [ "$noreset_nmis2" -ne 2 ]; then
+    fail "T8 harness: jnext delivered $noreset_nmis1 of 1 and $noreset_nmis2 of 2 presses, so the sequence never ran"
+elif [ "$ref_ctl" != "$CONTROL_TEXT" ] || [ "$sub_ctl" != "$CONTROL_TEXT" ] \
+     || [ -z "$ref_border" ] || [ -z "$sub_border" ]; then
+    # Both readings, together: a border sample that refused would otherwise
+    # arrive at the WEDGED branch below as an empty string and be reported as a
+    # wedged stub, which is a reader fault wearing a finding's name.
+    fail "T8 harness: a screenshot could not be read — its control row or its border, so nothing was judged"
+elif [ "$ref_joy" != "$NOJOY_TEXT" ]; then
+    fail "T8 harness: the joy-port key never landed, so a re-initialisation would leave nothing to see"
+elif [ "$ref_border" != "$BORDER_BLACK" ]; then
+    fail "T8 harness: the 'B' key never reached the one-press run, so liveness could not be judged"
+elif [ "$sub_border" != "$BORDER_BLACK" ]; then
+    fail "T8 the stub is WEDGED after a second press: border $sub_border, not black, so 'B' was never polled"
+elif [ "$sub_joy" != "$NOJOY_TEXT" ]; then
+    fail "T8 a second press RE-INITIALISED the debugger instead of declining: the joy-port line was reset"
+elif ! cmp -s "$SHOTS/press1-ours.png" "$SHOTS/press2-ours.png"; then
+    fail "T8 a second press with no reset changed the screen ($noreset_pct% of pixels): see press2-ours.png"
+else
+    pass "T8 a second M1 press with no reset is declined and the stub is still alive (border $sub_border)"
+fi
+
 log ""
 # Derived, not hardcoded: the summary said "5/5" for a while after a sixth
 # check was added, which is a small lie in exactly the place a reader trusts.
-checks=7
+checks=8
 if [ "$failures" -eq 0 ]; then
     verdict="$checks/$checks checks passed"
 else

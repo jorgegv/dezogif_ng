@@ -66,9 +66,17 @@
 # on the shipped ROM the connect moves it to 1.65 and the client speaks at 1.25.
 # Three preconditions keep a mis-staged run from reporting a verdict: the period
 # must be sane, the connect must land in a band around 0.65, and no sweep may
-# have fired before the client connected. Measured, five consecutive periods in
-# one run: 1.737 1.789 1.790 1.786 1.797 s — a 3.4% spread against margins of
-# 28% or better.
+# have fired before the client connected.
+#
+# WHAT THE STAGING RESTS ON IS THAT THE PERIOD HOLDS WITHIN A RUN, NOT ON ANY
+# PARTICULAR NUMBER, which is why each run measures its own rather than trusting
+# one written down here. The absolute figure is a property of the machine and of
+# what else it is doing: five consecutive periods in one run came to 1.737 1.789
+# 1.790 1.786 1.797 s, and an independent reviewer on the same machine under a
+# different load measured 2.002-2.059 s. Both are ~3% within themselves, which
+# is the property that matters against margins of 28% or better, and the
+# relative staging held every time — connect_at lands at 0.674-0.677 whichever
+# absolute period the run is living in.
 #
 # WHY S3 AND S7 ARE BUILD SEAMS AND NOT SCRATCH TREES. The state being fixed
 # here is unreachable in the shipped ROM by construction, so without a seam the
@@ -828,14 +836,28 @@ judge_connect_grace() {
         # The control. It must both sweep and take the client with it: a run
         # where no sweep fired at all would leave the client alive for a reason
         # that has nothing to do with the reset being assembled out.
+        #
+        # TWO CODES ARE ACCEPTED AND THEY GET DIFFERENT SENTENCES, because they
+        # are different observations of the same sweep and only one of them is
+        # "closed before it spoke". rc=3 is the client's recv meeting EOF during
+        # the silence, which is the shape this stages for. rc=4 is the sweep
+        # landing in the gap between the silence ending and the reply arriving —
+        # the command is then eaten by the drains between the AT+CIPCLOSE lines
+        # rather than refused, and the client sees no answer. Both need
+        # at_speak > base8 above, so neither can be reported without a sweep
+        # having happened; what differs is where in the client's own timeline it
+        # fell, and a verdict that said "closed before it speaks" for the second
+        # would be describing something the run did not see.
         if [ "$at_speak" -eq "$base8" ]; then
             fail "$id no sweep fired at all, so the control never reached the state it compares"
         elif [ "$rc" -eq 0 ]; then
             fail "$id without the reset the silent client survived anyway, so S8's green is not it"
-        elif [ "$rc" -ne 3 ] && [ "$rc" -ne 4 ]; then
-            fail "$id the control client exited $rc, which is a harness fault and not a finding"
+        elif [ "$rc" -eq 3 ]; then
+            pass "$id without the connect reset the sweep closed the silent client before it spoke"
+        elif [ "$rc" -eq 4 ]; then
+            pass "$id without the connect reset the sweep took the silent client as it spoke"
         else
-            pass "$id without the connect reset the same client is closed before it speaks"
+            fail "$id the control client exited $rc, which is a harness fault and not a finding"
         fi
     fi
 }

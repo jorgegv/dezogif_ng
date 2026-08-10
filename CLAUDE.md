@@ -837,8 +837,11 @@ strongest:
    `CMD_LOOPBACK`, time the sweep that follows), arms again, waits 0.65 of it, connects the silent
    client and lets it speak 0.60 of a period later. Three preconditions stop a mis-staged run
    reporting a verdict at all: a sane period, a connect inside a band around 0.65, and no sweep
-   before the connect. Five consecutive periods in one run measured 1.737-1.797 s, a 3.4% spread
-   against margins of 28% or better.
+   before the connect. **The check rests on the period holding WITHIN a run and not on any
+   particular number** — which is why each run measures its own. The absolute figure is machine-
+   and load-dependent: five consecutive periods in one run gave 1.737-1.797 s, and an independent
+   reviewer on the same machine under different load measured 2.002-2.059 s. Both are ~3% within
+   themselves, against margins of 28% or better, and `connect_at` lands at 0.674-0.677 either way.
    **IT DOES NOT BLOCK #19's RECOVERY, and that was checked rather than assumed**: jnext closes a
    connection refused at the ceiling **before** queueing its `CONNECT` line (`esp_at.cpp:959-993`),
    so in the state where every slot is leaked a client retrying in a loop emits none, the timer is

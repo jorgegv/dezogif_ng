@@ -801,6 +801,15 @@ ESP_IDLE_SWEEP_TICKS:   equ ESP_IDLE_SWEEP_SECS * 50
 ; 1800 seconds since issue #24's first half — so the backstop is unmoved and
 ; only this stub's own housekeeping is deferred.
 ;
+; THAT IS THE COST PER EVENT AND CONNECTS CAN REPEAT, so read it as a deferral
+; and not as a one-off: a stream of accepted-but-silent connects pushes the
+; sweep back for as long as it keeps arriving. It is self-limiting rather than
+; unbounded, and by the mechanism this whole feature runs on — at the ceiling
+; the module refuses the connection and emits NO line for it, so the state where
+; a sweep is most wanted is exactly the one in which nothing can defer it. The
+; module's own reap bounds the rest. KNOWN-ISSUES.md #19 carries the case a user
+; meets.
+;
 ; IT IS NOT A CONNECT-TIME SWEEP, which is the thing #24 examined and could not
 ; build (see above). Nothing is closed here; a timer is restarted, and the sweep
 ; still fires from the same place on the same rule.
@@ -1304,6 +1313,18 @@ esp_line_ptr:       defw 0      ; meaningful in state 4 only
 ;
 ; Meaningful in state 4 only, exactly as esp_line_ptr is, and written on the
 ; same two paths that set it.
+;
+; IT CANNOT BE READ STALE, AND THE ARGUMENT IS AN ENUMERATION RATHER THAN A
+; HABIT — which is why it is written down here instead of being rediscovered.
+; esp_line_state is set to 4 in exactly one place, .tail_start, and that place
+; writes this byte unconditionally on the way past; state 4 dispatches to
+; .want_tail and nowhere else; and .want_tail is the only caller of
+; esp_line_event. So every read of this byte is preceded by a write of it in the
+; same line's own match.
+;
+; ANYTHING THAT ADDS A SECOND WAY INTO STATE 4 BREAKS THAT SILENTLY: the stale
+; value would still be one of 'O' or 'L', so the timer would simply be reset on
+; the wrong line, with nothing to see. Set this byte there too, or do not.
 esp_line_kind:      defb 0
  ENDIF
 
@@ -1413,7 +1434,8 @@ esp_idle_line:      defb 0
 ; Frames since the last inbound frame. Reset by esp_sync_ipd, so ANY traffic
 ; restarts the countdown — and, since issue #40, by esp_line_event on the
 ; module's `<id>,CONNECT`, so a socket that has been accepted but has not spoken
-; yet restarts it too. Those are the only two writers; esp_idle_tick reads it.
+; yet restarts it too. Those are the only two that RESET it; esp_idle_tick
+; INCREMENTS it, so there are three writers in all and a fourth would be news.
 esp_idle_ticks:     defw 0
  ENDIF
 
@@ -2554,6 +2576,21 @@ esp_line_event:
     ; NOTHING IS RE-ARMED, only reset. esp_idle_armed stays where it is, so a
     ; period that has already swept is not given a second one, and a stream of
     ; connects can never buy more sweeps than traffic would.
+    ;
+    ; IT ALSO RESETS THE COUNTER WHILE A SESSION IS OPEN, which touches a
+    ; decision #24 took deliberately and so is spelled out rather than left to
+    ; be found. esp_idle_tick FREEZES the counter during a session instead of
+    ; zeroing it, on the reasoning that a peer which then vanishes is swept that
+    ; much sooner. This runs before that guard — it has to, since the state it
+    ; exists for is the one where the guard returns — so a CONNECT arriving on
+    ; some OTHER connection while a session is open unfreezes nothing but does
+    ; put the frozen value back to zero, and a peer that vanishes afterwards
+    ; waits a full period rather than the remainder of one.
+    ;
+    ; That is the same "one period longer" already accepted above, reached by a
+    ; second route, and it is bounded by the module's own AT+CIPSTO exactly as
+    ; the first is. Deferring the reset until the session closes would need
+    ; another byte to remember it by, for a case the module already reaps.
     ld a,(esp_line_kind)
     cp 'O'                      ; 'O' of CONNECT; 'L' is CLOSED
     jr nz,.not_connect

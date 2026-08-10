@@ -70,10 +70,19 @@ control's deadline (1.00) falls inside that silence, the shipped ROM's moves to
 1.65. Three preconditions refuse a verdict on a mis-staged run — a sane period,
 a connect inside a band around 0.65, and **no sweep before the connect**.
 
-**The calibration is legitimate only because the period is stable, and that was
-measured before it was relied on**: five consecutive periods in one run at
-1.737 1.789 1.790 1.786 1.797 s, a **3.4%** spread against margins of 28% or
-better. `connect_at` came out 0.674-0.677 on every run since.
+**The calibration is legitimate only because the period is stable WITHIN a run,
+and that was measured before it was relied on**: five consecutive periods in one
+run at 1.737 1.789 1.790 1.786 1.797 s, a **3.4%** spread against margins of 28%
+or better.
+
+**THE ABSOLUTE NUMBER IS NOT THE PROPERTY, AND SAYING SO COST NOTHING BECAUSE THE
+REVIEWER MEASURED A DIFFERENT ONE**: 2.002-2.059 s on the same machine under a
+different load — ~3% within itself, and the staging held exactly as before,
+`connect_at` at 0.674-0.677 in every run either of us took. That is the whole
+reason each run measures its own period instead of trusting a constant, and the
+figures above are recorded as observations of one machine at one moment rather
+than as a specification. A check built on the number would have been red on the
+reviewer's first run.
 
 **Evidence: `make test-slot-recovery`, now 7 runs and 9 checks, 9/9, three
 times.** S8 is the subject and S9 the control, `CONNECT_RESET=0`, one constant
@@ -108,6 +117,55 @@ exited 1, so its silence proves nothing") rather than as a wrong verdict. S6
 waits the boot sweep out now. The general fact: a change that moves *when* a
 periodic action fires can put it in phase with a bench's own cadence, and the
 resonance here was `SETTLE` being one period.
+
+**AND THE RE-STAGING WAS CLEARED BY PROOF RATHER THAN BY MY ARGUMENT FOR IT,
+which is the right way round.** I flagged it and reasoned that the new wait
+could not be masking anything; the reviewer built a control with the session
+guard **deleted** from `esp_idle_tick` and **S6 went red** — `during_session=4`.
+So the wait does not mask the regression it would have to mask for this to be
+tuning-until-green, and the baseline is still taken at session open, *after* the
+wait, so the measured window is unchanged. Flagging it cost nothing and settled
+it; arguing for it would only have settled that I believed it.
+
+**The late-connect staging was confirmed load-bearing the same way**: at
+`connect_at ≈ 0.124` the silent client **survives on the `CONNECT_RESET=0`
+control too**, so a check that connected early really would be green against the
+defect. Both preconditions caught that when it was tried.
+
+**FIVE REVIEW FINDINGS, and the first is this file's own recurring disease in a
+comment I wrote.** *"Those are the only two writers"* of `esp_idle_ticks` —
+there are **three**, enumerated mechanically at 2147, 2561 and 3010:
+`esp_idle_tick` does not merely read the counter, it increments and stores it.
+The intent ("the only two that RESET it") was obvious and no behaviour depended
+on it, which is exactly what lets a wrong count survive in a file whose comments
+this project treats as the record. Also fixed: a stale *"recv blocks for up to a
+second"* inside the very function this change rewrote to make it block for
+`remaining`; and S9 accepting `rc=4` while printing *"closed before it speaks"*,
+which for that code is not what happened — it now gets its own sentence, since
+`rc=3` is the sweep meeting the client mid-silence and `rc=4` is the sweep
+landing between the silence ending and the reply, with `at_speak > base8`
+fencing both.
+
+**TWO INVARIANTS ARE NOW WRITTEN DOWN THAT WERE ONLY TRUE BY CONSTRUCTION.**
+`esp_line_kind` cannot be read stale — `esp_line_state` is set to 4 in exactly
+one place, that place writes the byte unconditionally, state 4 dispatches to one
+label, and that label is `esp_line_event`'s only caller — and **a second way into
+state 4 would break it silently**, because a stale value is still one of 'O' or
+'L' and the timer would simply reset on the wrong line. And putting the reset
+before the session checks has a second-order consequence for a decision #24 took
+deliberately: #24 **freezes** the counter during a session rather than zeroing
+it, so that a peer which vanishes is swept sooner, and a CONNECT arriving on
+another connection while a session is open now zeroes that frozen value. It is
+the same accepted "one period longer" by a second route, bounded by `AT+CIPSTO`
+the same way — not a defect, but a real interaction with a recorded decision, so
+it is recorded.
+
+**One trap was removed rather than documented.** `stay_silent` drives the socket
+timeout down towards zero as the silence runs out, so a caller going straight on
+to send a command was giving it whatever was left of `--watch` instead of
+`--timeout`. Harmless at today's sizes and it fails red, but it is a trap for
+whoever next shortens the silence, and putting the caller's timeout back on
+every exit costs three lines.
 
 **A BUILD-TIME TRAP WORTH ONE LINE.** sjasmplus substitutes a `-D` **textually**,
 so a derived symbol named `ESP_CONNECT_RESET_ON` becomes `0_ON` under
@@ -153,7 +211,11 @@ that cost this project a connection id of 0 and a 15-character address.
 exactly as a `CLOSED` is (issue #23's own NOT-COVERED list), so a socket whose
 line was eaten gets the old behaviour; nothing here stages that. **And the
 frames the sweep's own drains swallow** — the S6 collision above — are untouched
-and remain #24's documented cost.
+and remain #24's documented cost. **A STREAM of accepted-but-silent connects
+defers the sweep repeatedly** rather than once, which is the per-event cost read
+as a rate; self-limiting, because at the ceiling the module refuses and emits no
+line, so the state where a sweep is most wanted is the one nothing can defer.
+No run here stages a stream.
 
 ---
 

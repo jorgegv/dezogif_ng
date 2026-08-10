@@ -110,12 +110,26 @@ def stay_silent(t, seconds):
     is decided in ONE place: a recv of b"" is the module or the stub hanging
     up, and telling that apart from our own timeout is the whole point of
     reading rather than sleeping.
+
+    IT PUTS THE CALLER'S TIMEOUT BACK on every exit, which is not tidying up.
+    The loop drives the socket timeout down towards zero as the silence runs
+    out, so a caller that went straight on to send a command would be giving it
+    whatever was left of --watch instead of --timeout. Harmless at the sizes
+    used today — a second and a bit against a round trip of milliseconds — and
+    it fails in the red direction, but it is a trap for whoever next shortens
+    the silence, and it costs three lines to not have.
     """
+    entry_timeout = t.sock.gettimeout()
+
+    def done(result):
+        t.sock.settimeout(entry_timeout)
+        return result
+
     started = time.time()
     while True:
         remaining = seconds - (time.time() - started)
         if remaining <= 0:
-            return None
+            return done(None)
         # THE TIMEOUT IS THE REMAINING SILENCE, not a fixed poll, because a
         # fixed one quantises the wait upwards: a flat 1.0s against --watch
         # 1.20 slept 2.00, since the second recv had to time out in full before
@@ -128,13 +142,15 @@ def stay_silent(t, seconds):
         except socket.timeout:
             continue
         except OSError as e:                        # noqa: BLE001
-            return "socket error after %.2fs — %s" % (time.time() - started, e)
-        # AFTER the read, not before it: recv blocks for up to a second, so an
-        # elapsed taken at the top of the loop reports every drop as having
-        # happened at the moment of the last timeout rather than of the close.
+            return done("socket error after %.2fs — %s"
+                        % (time.time() - started, e))
+        # AFTER the read, not before it: recv blocks until the silence is up,
+        # so an elapsed taken at the top of the loop would report every drop as
+        # having happened when the loop last went round rather than when the
+        # peer went — which for a one-pass silence is "0.00s", every time.
         elapsed = time.time() - started
         if got == b"":
-            return "the peer closed the connection after %.2fs" % elapsed
+            return done("the peer closed the connection after %.2fs" % elapsed)
         # Nothing should arrive unprompted here. Report it rather than let a
         # surprise be read as silence.
         print("unexpected bytes from the stub at %.2fs" % elapsed)

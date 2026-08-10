@@ -140,8 +140,19 @@ what says `transport_esp.asm`'s change was comments only**, which is the claim
 that would otherwise have to be taken on inspection. **This changes a ROM, so
 the merge carries a `make bump`.**
 
-**NOT COVERED, and none of it is hidden.** **The "B" key**, above — no run here
-presses one, so `check_key_border`'s own jump to `main_redraw` is unguarded.
+**Regression: `test-client-status` 8/8, `make test` 8/8 (T8 included),
+`test-dzrp-stub` 21/21 with W1-W6, `test-unit` 5/5, `test-screen-agreement` all
+green (all 49152 pixels agree in both G1 and G2, which is the check that judges
+what `show_ui` actually draws), `test-no-hang` 4/4, and both variants
+`check-reproducible`.**
+
+**NOT COVERED, and none of it is hidden.** **A "B" press with slot 2
+retargeted** — and that is narrower than "the B key", which the first version of
+this paragraph said. `test-no-hang`'s **N2 does press it** and requires the
+border to come back **black**, which can only happen by way of
+`check_key_border` → `main_redraw` → `show_ui` → `main_loop`, so the key path
+runs through the new shell and returns. What no run does is press it while slot
+2 points somewhere else, which is N8's subject reached by the other trigger.
 **`drain_main`'s path to the same `show_ui`**, which is how this most often
 fires in the field and which no check stages deliberately — N6's `WIPED` outcome
 is the nearest thing and it is worded as a precondition. **The debuggee-banked

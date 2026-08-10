@@ -115,6 +115,23 @@ mf_nmi_button_pressed:
     ; Change SP to main slot
     ld sp,debug_stack.top
 
+    ; THE DEBUGGEE'S CLOCK SPEED AND NEXTREG LATCH, taken across from where the
+    ; NMI entry path parked them (issue #37). This is the one path on which the
+    ; values the entry path read really are the debuggee's — mf_rom.asm's
+    ; .break_into_debuggee is its only caller, and it is reached only while
+    ; prgm_state is PRGM_RUNNING — so it is the only place that may write them,
+    ; exactly as it is for slot_backup.slot7.
+    ;
+    ; HERE AND NOT IN .break_into_debuggee, for two reasons. A must survive to
+    ; save_registers, which has just run, so this is the first point at which
+    ; it is free. And the MF ROM half is exactly full: 12 bytes there would
+    ; cost a 16-byte step AND 16 bytes of this half, where 12 bytes here cost
+    ; only the 12.
+    ld a,(MF.nmi_io_next_reg)
+    ld (backup.io_next_reg),a
+    ld a,(MF.nmi_speed)
+    ld (backup.speed),a
+
     ; Save the return address from the debugged program to debugged_prgm_stack_copy.return1 and backup.pc
     call save_nmi_return_address
 
@@ -206,10 +223,15 @@ save_nmi_return_address:
 ;   The debugger's SP is in MF.backup_sp.
 ; ===========================================================================
 mf_nmi_button_pressed_immediate_return:
-    ; Restore IO_NEXTREG_REG
+    ; Restore IO_NEXTREG_REG and, below, the clock — from MF RAM, where the
+    ; entry path now parks them, and no longer from backup.*, which belongs to
+    ; the debuggee (issue #37). Same values, read from where this NMI's own
+    ; answers live rather than from the debuggee's saved state: this path runs
+    ; because the DEBUGGER was executing, so it is putting the debugger's
+    ; machine back, and backup.* must be left exactly as dbg_enter set it.
     push bc
     ld bc,IO_NEXTREG_REG
-    ld a,(backup.io_next_reg)
+    ld a,(MF.nmi_io_next_reg)
     out (c),a
     pop bc
 
@@ -219,8 +241,11 @@ mf_nmi_button_pressed_immediate_return:
     out (BORDER),a
     ENDIF
 
-    ; Restore speed
-    ld a,(backup.speed)
+    ; Restore speed — MF RAM, see above. Note REG_TURBO_MODE does not read back
+    ; what was written: bits 5:4 are the actual speed and 1:0 the programmed one
+    ; (zxnext.vhd:5903), while a write takes only 1:0 (:5789), so handing the
+    ; read-back value straight back is correct.
+    ld a,(MF.nmi_speed)
     nextreg REG_TURBO_MODE,a
     ; Pop from MF stack
     pop af

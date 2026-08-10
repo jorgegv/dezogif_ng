@@ -5,6 +5,123 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-10 — The press-while-stopped defect's other two bytes, and a check for a thing DZRP cannot see
+
+**Built, issue #37**, which is issue #26's defect two and eleven instructions
+along and had gone two builds without a check because **nothing in the protocol
+can observe it**.
+
+**THE DEFECT.** `mf_rom.asm`'s NMI entry path answers *"what was the machine
+like before this NMI?"* on **every** button press, before the dispatch has
+decided anything, and wrote the answers where the **debuggee's** saved state
+lives. #26 fixed `slot_backup.slot7`; `backup.io_next_reg` and `backup.speed`
+were saved by the same path with the same wrong question answered. While the
+debugger is stopped the machine is at **28 MHz** — `init_main_bank` leaves it
+there and it idles there — so a press taken while stopped overwrote the
+debuggee's saved clock speed with the debugger's, and the next `CMD_CONTINUE`
+handed the debuggee back at the wrong speed. Fatal to contended-memory, tape or
+beeper timing; invisible to everything else. Upstream's, in **both** ROMs.
+
+**THE FIX IS #26's, AND ITS ORDERING CONSTRAINT IS THE WHOLE RISK.** The entry
+path stores into `MF.nmi_io_next_reg` / `MF.nmi_speed`;
+`mf_nmi_button_pressed_immediate_return` restores from **those** rather than
+from `backup.*`, because that path runs precisely when the DEBUGGER was
+executing and is putting the debugger's own machine back; and only the path
+taken when a **running** debuggee was interrupted copies them across.
+
+**THAT COPY IS IN `mf_nmi_button_pressed`, NOT IN `.break_into_debuggee`, AND
+THE REASON IS BYTES AS MUCH AS REGISTERS.** A must survive the `pop af` into
+`save_registers`, so `.save_registers_continue` is the first point at which it
+is free — and `mf_rom.asm`'s half is **exactly full**, so 12 bytes there would
+cost a 16-byte `ALIGN` step **and** 16 bytes of the debugger half (the image
+ends at `0xE000 + 0x2000 - MF.main_prg_copy`), where 12 bytes in `mf.asm` cost
+only the 12. It is legitimate because `.break_into_debuggee` is
+`mf_nmi_button_pressed`'s **only** caller, checked by grep. The MF RAM bytes
+themselves cost **nothing**: `OUTEND` is above them, so they are not emitted.
+
+**THE CHECK IS THE DECISION HERE, AND THE APPROACH RECORDED AS DECIDED ON
+2026-08-10 WAS REPLACED — with the user's agreement, and because the menu it was
+chosen from lacked this option.** That menu was: a unit test (impossible —
+`ut_nmi`'s two cases are both `SKIP` headless), drawing the byte on the shipped
+screen (rejected), a **probe-ROM build seam** that draws it on a probe screen
+(chosen), fix-with-no-check, WONTFIX. **Issue #38 landed the missing option the
+same day**: `_peek_main_bank` borrows MMU slot 5 to put `MAIN_BANK` at
+`0xA000`, so a byte at `0xFCAE` is readable at `0xBCAE` with an ordinary
+`CMD_READ_MEM`. That is **zero Z80**, no tenth build seam, no Makefile
+plumbing, no extra emulator run — and it reads the byte itself rather than a
+rendering of it. It rides on **W6's existing press**, so #26's and #37's checks
+are one run and one press: **W7**.
+
+**THE ADDRESSES COME FROM THE BUILD.** `backup.speed` moves with every change
+to the debugger's data, so a constant in the bench would go stale in silence
+and point W7 at a neighbouring byte nothing ever writes — a green check that
+cannot fail, which this project has shipped three times under other names. The
+bench greps them out of sjasmplus's own label table (`--lstlab`) and a miss
+fails the run.
+
+**Evidence: `make test-dzrp-stub`, W1-W7 and 23/23, exit 0 — and W7 shown red
+first IN THE SAME RUN THAT SHOWED W6 GREEN**, which is what says the press and
+the harness were working and the new subject alone was broken:
+
+| ROM | slot7 | speed | io_next_reg |
+|---|---|---|---|
+| `main`'s | OK 30/30 | **BAD 0x00 → 0x33** | **BAD 0x00 → 0x02** |
+| as built | OK 30/30 | OK 0x00/0x00 | OK 0x00/0x00 |
+
+**`0x33` AND NOT `0x03`, WHICH FALSIFIED THE FIRST VACUITY GUARD I WROTE.**
+I predicted the read-back of 28 MHz would be `RTM_28MHZ` = 3 and guarded on
+equality with it. `REG_TURBO_MODE` does not read back what was written:
+`port_253b_dat <= "00" & cpu_speed & "00" & nr_07_cpu_speed`
+(`zxnext.vhd:5903`) puts the **actual** speed in bits 5:4 and the **programmed**
+one in bits 1:0, while a write takes only 1:0 (`:5789`). So the guard could
+never have fired and the check would have had no vacuity guard at all. The
+measurement caught it, not the reading — and the guard now masks, refusing to
+render a verdict if `backup.speed` already *selects* 28 MHz.
+
+**AND THE RED FOUND A SECOND, PRE-EXISTING DEFECT NOBODY WAS LOOKING FOR.**
+`io_next_reg` went `0x00 → 0x02`, and 2 is `REG_RESET`: `nmi66h`'s own cause
+check does `out (c),REG_RESET` **before** the instruction commented *"First
+backup contents of IO_NEXTREG_REG"* reads the latch back. So what that
+instruction saves is **always** `REG_RESET` and the debuggee's real latch is
+destroyed on every press, `.break_into_debuggee` included — which this fix does
+not change and is not scoped to. Harmless in practice (any code that writes a
+NextREG selects it first) and worth a line so the next reader does not mistake
+`backup.io_next_reg` for the debuggee's.
+
+**Rejected.** The probe-ROM screen seam (above — the user's call once the
+alternative existed); a unit test (`ut_nmi` is `SKIP`, so it would exist and
+never run); giving W7 its own emulator run (a second copy of the sentinel and
+frame-margin choreography, for a press W6 already makes); carrying both
+verdicts in the client's exit code (one number cannot say two things, so the
+bench parses one `RESULT` line per check and the exit code says only whether a
+verdict was reached); re-deriving each verdict from the printed numbers with a
+shell pattern (two renderings of one fact); and fixing the `REG_RESET` clobber
+above in the same change.
+
+**Cost: +12 bytes in BOTH ROMs, which is correct for common code.** `main_end`
+UART `0xF2B3` → `0xF2BF`, WiFi `0xFD42` → `0xFD4E` — **338** free to the
+identity block. **The MF ROM half did NOT grow**: `mf_nmi.bin` is 320 bytes
+either side, so no `ALIGN` step and `ROM_MAGIC_ADDR` is untouched. Proved to be
+one insertion and nothing else by symbol table: **2 added**
+(`MF.nmi_io_next_reg`, `MF.nmi_speed`), **0 removed**, and every remaining
+address symbol at **+0 or +12** — UART 420/333, WiFi 449/530. The single
+outlier is `BUILD_TIME16`, an EQU **value** and not an address. **The UART
+byte-identity gate breaks by design**, as for #7, #8, #9, #12, #20, #27, #28 and
+#38: `mf.asm` is common code. **This changes a ROM, so the merge carries a
+`make bump`.**
+
+**NOT COVERED, and none of it is hidden.** **Hardware** — nothing here has run
+on a Next, and W7's subject is not going to for W6's reason: it needs an M1
+press timed against a live session at the machine, which the user declined
+(2026-08-07). **The `.break_into_debuggee` half of the fix** — no run here
+presses M1 against a *running* debuggee, so the copy that hands the values to
+`backup.*` is reasoned from one grep and never executed. **The `io_next_reg`
+clobber above**, which is a different defect and untouched. And **that the
+defect ever bit anyone**: it has never been observed in a session, here or on
+silicon.
+
+---
+
 ## 2026-08-10 — #39 was never a timer: the button was the recovery, and the duration was a human's reaction time
 
 **Measured on the user's own Next, three runs, two builds — and CLOSED as

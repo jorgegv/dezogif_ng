@@ -396,9 +396,9 @@ strongest:
    `CMD_SET_SLOT` — is a frame margin **plus an assertion**, never "by construction": at the original
    600 frames it measured 149 ms in one run and **2 ms** in the next, and inverted it would let
    `CMD_SET_SLOT` overwrite what a corrupting press wrote, leaving `before=30 after=30` on a broken
-   ROM. So the margin is 3000 frames (17.2 s measured) *and* the bench requires **three `+IPD`
-   frames before the press** — the client's three setup commands — failing red as a precondition
-   otherwise. **`SECOND_NMI_FRAMES` is overridable so that control is re-runnable**:
+   ROM. So the margin is 3000 frames (17.2 s measured) *and* the bench requires **`W6_SETUP_FRAMES`
+   `+IPD` frames before the press** — every setup command the client sends, eight since W7 joined
+   the run — failing red as a precondition otherwise. **`SECOND_NMI_FRAMES` is overridable so that control is re-runnable**:
    `SECOND_NMI_FRAMES=901 make test-dzrp-stub` puts the press before the client speaks, the client
    reports the exact green a corrupting ROM gives, and the precondition catches it. It is a *bench*
    seam, not one of the `IP_MAX` / `RX_WAIT` / `LINK_IDS` build-constant family — no probe ROM is
@@ -407,6 +407,30 @@ strongest:
    a live DeZog session at the machine, and the user declined (2026-08-07). Unlike T7's, whose
    subject *was* confirmed on a Next, this defect's whole evidence is this emulator check — so read
    "issue #26 is fixed on hardware" as covering the decline and **not** the press-while-stopped.
+   **W7 RIDES ON W6's PRESS AND IS THE SAME DEFECT TWO BYTES ALONG** (issue #37): the entry path
+   saved the clock speed and the `IO_NEXTREG_REG` latch into `backup.*` on every press too, two and
+   eleven instructions after the slot-7 byte #26 fixed, so a press while stopped handed the debuggee
+   back at the debugger's **28 MHz**. **It is NOT observable over DZRP** — `CMD_GET_REGISTERS`
+   reports neither — which is why #37 shipped for two builds with no check where #26 had one from the
+   day it was fixed. So W7 reads `backup.speed` and `backup.io_next_reg` **directly out of
+   `MAIN_BANK`**, borrowing MMU slot 5 exactly as C22/C23 do, before and after the same press.
+   **The addresses come from the build, not from the bench**: they move with every change to the
+   debugger's data, so `run-dzrp-stub.sh` greps them out of sjasmplus's own label table
+   (`--lstlab`) and a miss fails the run — a constant would go stale in silence and point the check
+   at a byte nothing writes, which is the "green check that cannot fail" this project has shipped
+   three times. Shown red first, in the same run that showed W6 green: `speed=0x00/0x33`.
+   **`0x33` AND NOT `0x03`, WHICH FALSIFIED THE FIRST VACUITY GUARD**: `REG_TURBO_MODE` does not
+   read back what was written — bits 5:4 are the *actual* speed and 1:0 the *programmed* one
+   (`zxnext.vhd:5903`), while a write takes only 1:0 (`:5789`) — so the guard masks, and refuses to
+   render a verdict at all if `backup.speed` already selects 28 MHz. **The `io_next_reg` half turned
+   out to discriminate too, for a reason nobody was looking for**: `nmi66h`'s own cause check selects
+   NR `0x02` *before* the instruction that claims to back the latch up reads it, so what is saved is
+   always `REG_RESET` and the debuggee's real latch is destroyed on every press regardless
+   (`0x00/0x02`, measured). That is a **second, pre-existing** defect in the same three instructions,
+   deliberately out of #37's scope and harmless in practice — any code that writes a NextREG selects
+   it first — and W7 asserts only that the byte is unchanged. **NOT covered**: hardware, for W6's
+   reason and the same user decision; and the `.break_into_debuggee` half of the fix, since no run
+   here presses M1 against a *running* debuggee.
    **C2** was the standing red
    until issue #7 landed: `cmd_init` read the remote's program name until a NUL and ignored the
    frame's length field, so a length that disagreed with the payload desynchronised silently
@@ -1037,7 +1061,7 @@ Two things the shortening may **never** touch, because they are interface rather
   | `M1`-`M10` | `test/run-mfselect.sh` | `make test-mfselect` |
   | `E1`-`E4` | `test/esp-echo-client.py` | `make test-esp` |
   | `U1`-`U5` | `test/run-unit-tests.sh` | `make test-unit` |
-  | `W1`-`W6` | `test/run-dzrp-stub.sh` | `make test-dzrp-stub` |
+  | `W1`-`W7` | `test/run-dzrp-stub.sh` | `make test-dzrp-stub` |
   | `C1`-`C23` | `test/dzrp/conformance.py` | `test-dzrp-stub`, `test-dzrp`, `test-hardware` |
   | `B1`-`B2` | `test/run-ip-boundary.sh` | `make test-ip-boundary` |
   | `P1`-`P3` | `test/run-tx-patience.sh` | `make test-tx-patience` |

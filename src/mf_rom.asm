@@ -119,9 +119,27 @@ nmi66h:
     ; RAM costs no bytes of the 8192-byte ROM image.
     ld (MF.nmi_slot7),a
 
-    ; Save IO_NEXTREG_REG
+    ; Save IO_NEXTREG_REG and the clock speed — into MF RAM, and deliberately
+    ; NOT into backup.*, for MF.nmi_slot7's reason two and eleven instructions
+    ; along (issue #37). The same one byte was answering two questions:
+    ;   "what was the machine like before this NMI?"  — true on every press,
+    ;    and what the immediate return below has to put back
+    ;   "what does the debuggee get back?"            — meant by backup.*,
+    ;    which restore_registers hands over on continue
+    ; They agree only when the NMI interrupted a RUNNING debuggee. Pressing M1
+    ; while the debugger was STOPPED overwrote the debuggee's saved clock speed
+    ; with the DEBUGGER's, which is 28 MHz — init_main_bank leaves the machine
+    ; there and it idles there — so the next CMD_CONTINUE handed the debuggee
+    ; back at the wrong speed. Fatal to anything doing contended-memory, tape
+    ; or beeper timing, and invisible to everything else, which is why it went
+    ; two builds without a check.
+    ; .break_into_debuggee does NOT copy these across, unlike nmi_slot7:
+    ; mf_nmi_button_pressed does, at .save_registers_continue, and it is that
+    ; path's only caller. There rather than here because A must survive to
+    ; save_registers, and because these bytes cost the debugger half 12 there
+    ; and this half a 16-byte step here — the MF ROM half is exactly full.
     pop af
-    ld (backup.io_next_reg),a
+    ld (MF.nmi_io_next_reg),a
 
     ; Save clock
     ld a,REG_TURBO_MODE
@@ -130,7 +148,7 @@ nmi66h:
     ; Read register
     inc b
     in a,(c)
-    ld (backup.speed),a
+    ld (MF.nmi_speed),a
 
     ; Check for Symbol Shift being pressed the same time -> Init
     ld bc,PORT_KEYB_BNMSHIFTSPACE
@@ -204,6 +222,9 @@ nmi66h:
     ; below leaves slot_backup.slot7 alone so that a press taken while
     ; stopped cannot destroy what dbg_enter saved, and init_main_bank
     ; recopies the image, which resets it anyway.
+    ; MF.nmi_io_next_reg and MF.nmi_speed are the same story and are copied the
+    ; same way, but in mf_nmi_button_pressed below rather than here — A must
+    ; survive the pop into save_registers, and this half has no bytes left.
     ld a,(MF.nmi_slot7)
     ld (slot_backup.slot7),a
 
@@ -288,5 +309,15 @@ backup_sp:      defw 0
 ; path paged MAIN_BANK in over it. Scoped to the NMI entry, like backup_sp,
 ; and NOT the same thing as slot_backup.slot7 — see nmi66h.
 nmi_slot7:      defb 0
+
+; The IO_NEXTREG_REG latch and the clock speed as this NMI found them, for
+; nmi_slot7's reason and with the same scope — see issue #37 and nmi66h.
+; mf_nmi_button_pressed_immediate_return puts them back; only
+; mf_nmi_button_pressed, which runs when a RUNNING debuggee was interrupted,
+; copies them into backup.*.
+; They cost no bytes of the 8192-byte ROM image: OUTEND is above, so nothing
+; from here down is emitted.
+nmi_io_next_reg: defb 0
+nmi_speed:       defb 0
 
     ENDMODULE

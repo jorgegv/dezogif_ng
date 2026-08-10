@@ -2,7 +2,7 @@
 #
 # The DZRP conformance suite, pointed at OUR OWN STUB.
 #
-# Invoked by `make test-dzrp-stub`. Five headless jnext runs with the WiFi ROM
+# Invoked by `make test-dzrp-stub`. Six headless jnext runs with the WiFi ROM
 # installed as the Multiface ROM and an emulated M1 button press to bring the
 # debugger up, with a TCP client talking to the emulated ESP-01.
 #
@@ -58,6 +58,20 @@
 #          precondition — three frames, from two connections, in the order that
 #          makes the collision — is asserted from the module's log, as W4's is.
 #
+#   run 6
+#     W6   AN M1 PRESS WHILE THE DEBUGGER IS STOPPED LEAVES THE DEBUGGEE'S
+#          SAVED SLOT-7 BANK ALONE (issue #26). The entry path used to save the
+#          bank it found on every press, and while the debugger executes that
+#          bank is its own — so the next CMD_CONTINUE would have paged the
+#          debugger into the debuggee's slot 7.
+#     W7   THE SAME PRESS LEAVES backup.speed AND backup.io_next_reg ALONE
+#          (issue #37) — the same defect two bytes along, saved two and eleven
+#          instructions later by the same path, so a press while stopped handed
+#          the debuggee back 28 MHz. One press serves both: W6 reads its subject
+#          through CMD_GET_REGISTERS and W7 reads its own out of MAIN_BANK
+#          through a borrowed MMU slot, because DZRP reports neither the turbo
+#          mode nor the NextREG latch.
+#
 # WHAT IT DOES NOT COVER. Real hardware, where the ESP has to be associated
 # first and answers at whatever baud it was last left at (doc/WIFI-SETUP.md).
 # W2's CMD_CONTINUE is NOT evidence about the return path: it resumes zeroed
@@ -111,6 +125,14 @@ SD_IMAGE=${SD_IMAGE:-$HOME/.jnext/sdcard/cspect-next-1gb-fixed.img}
 OUT=${OUT:-build}
 ROM=${ROM:-$OUT/enNextMf-wifi.rom}
 DZRP_ARGS=${DZRP_ARGS:-}
+
+# The assembler's label table (--lstlab), for W7 alone. backup.speed and
+# backup.io_next_reg move with every change to the debugger's data, so their
+# addresses are read out of the build that is about to run rather than written
+# down here: a constant would go stale in silence and point W7 at some
+# neighbouring byte nothing ever writes, which is a check that cannot fail.
+# Derived from the ROM's own name, so a probe ROM brings its own table.
+LIST=${LIST:-$OUT/$(basename "$ROM" .rom | sed 's/^enNextMf/dezogif/').list}
 
 # Must match ESP_SERVER_PORT in src/transport_esp.asm. DeZog's `cspect` default.
 PORT=11000
@@ -173,6 +195,14 @@ NMI_STOPPED=$(dirname "$0")/dzrp/nmi-while-stopped.py
 # W6 must go RED on the precondition, not green.
 SECOND_NMI_FRAMES=${SECOND_NMI_FRAMES:-$((BOOT_FRAMES + 3000))}
 
+# How many commands run 6's client sends before it arms — CMD_INIT, the
+# CMD_SET_SLOT that puts a known bank in slot 7, the CMD_GET_REGISTERS that
+# proves it took, and the five of W7's "before" borrow (a CMD_GET_REGISTERS to
+# learn the slot, CMD_SET_SLOT, two CMD_READ_MEMs, CMD_SET_SLOT back). Every
+# one must have reached the module before the press, or the press raced the
+# setup and neither check judged anything — see the assertion below.
+W6_SETUP_FRAMES=8
+
 # Longer than the suite's own 5 s default. The loopback sweep now goes to 4096
 # bytes, which is ~8 KB over a 115200 link plus seventeen AT+CIPSEND round
 # trips, and the emulator does not run that at wall-clock speed.
@@ -192,6 +222,17 @@ SETTLE=${SETTLE:-2}
 log()  { printf '%s\n' "$*"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+# label_addr <label table> <name> — one symbol's address, or nothing and a
+# non-zero status. sjasmplus writes `0xFCAE   backup.speed`, name last; some
+# entries carry an `X` between the two, so the name is matched on $NF rather
+# than on a column number.
+label_addr() {
+    awk -v want="$2" '
+        $NF == want && $1 ~ /^0x[0-9A-Fa-f]+$/ { print $1; found = 1; exit }
+        END { exit !found }
+    ' "$1"
+}
+
 # --- pre-flight ------------------------------------------------------------
 
 [ -x "$JNEXT" ]      || die "jnext binary not found or not executable: $JNEXT"
@@ -201,6 +242,12 @@ die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [ -f "$ORPHAN" ]     || die "W2 fixture not found: $ORPHAN"
 [ -f "$QUEUED" ]     || die "W4 fixture not found: $QUEUED"
 [ -f "$SPLIT" ]      || die "W5 fixture not found: $SPLIT"
+[ -f "$NMI_STOPPED" ]|| die "W6/W7 fixture not found: $NMI_STOPPED"
+[ -f "$LIST" ]       || die "label table not found: $LIST (W7 needs it to locate its bytes)"
+BACKUP_SPEED_ADDR=$(label_addr "$LIST" backup.speed) \
+    || die "no backup.speed in $LIST — W7 cannot locate the byte it judges"
+BACKUP_IO_NEXT_REG_ADDR=$(label_addr "$LIST" backup.io_next_reg) \
+    || die "no backup.io_next_reg in $LIST — W7 cannot locate the byte it judges"
 python3 -c 'import PIL' 2>/dev/null || die "python3 Pillow is required for W2's screen check"
 command -v mcopy >/dev/null || die "mtools (mcopy) is required to install the ROM into the SD image"
 
@@ -652,18 +699,34 @@ EOF
 fi
 
 # ===========================================================================
-# Run 6 — W6: an M1 press while the debugger is STOPPED
+# Run 6 — W6 and W7: an M1 press while the debugger is STOPPED
 #
-# Issue #26's second defect. mf_rom.asm's entry path stored the bank it found
-# in MAIN_SLOT into slot_backup.slot7 on EVERY press, before the dispatch had
-# decided anything — so a press taken while the DEBUGGER was executing wrote
-# MAIN_BANK over the debuggee's bank, which dbg_enter had saved when the
-# breakpoint was taken, and the next CMD_CONTINUE would have paged the
-# debugger's own bank into the debuggee's slot 7.
+# Issue #26's second defect, and issue #37, which is the same defect two bytes
+# along. mf_rom.asm's entry path answered "what was the machine like before
+# this NMI?" on EVERY press, before the dispatch had decided anything, and
+# wrote the answers where the DEBUGGEE's saved state lives — so a press taken
+# while the DEBUGGER was executing overwrote what dbg_enter had saved when the
+# breakpoint was taken:
 #
-# It is observable over the socket because CMD_GET_REGISTERS reports slot 7
-# from that byte rather than from the MMU. See test/dzrp/nmi-while-stopped.py,
-# which carries the sequence and why each step is the one it is.
+#   W6  slot_backup.slot7 got MAIN_BANK, and the next CMD_CONTINUE would have
+#       paged the debugger's own bank into the debuggee's slot 7.
+#   W7  backup.speed got the debugger's 28 MHz and backup.io_next_reg the
+#       debugger's NextREG latch, and the next CMD_CONTINUE would have handed
+#       the debuggee back at the wrong clock.
+#
+# ONE PRESS SERVES BOTH, AND THEY READ THEIR SUBJECTS BY DIFFERENT ROUTES,
+# which is why #37 had no check for two builds while #26 had one from the day
+# it was fixed. CMD_GET_REGISTERS reports slot 7 from that byte rather than
+# from the MMU, so W6 is answerable in the protocol; it reports neither the
+# turbo mode nor the NextREG latch, so W7 reads MAIN_BANK directly through a
+# borrowed MMU slot, as conformance.py's C22/C23 do. See
+# test/dzrp/nmi-while-stopped.py, which carries the sequence, the addresses'
+# provenance and why each step is the one it is.
+#
+# THE VERDICTS COME FROM THE CLIENT'S RESULT LINES, NOT FROM ITS EXIT CODE.
+# Two checks share one run, so one number cannot carry both; the exit code says
+# only whether a verdict was reached at all, and a run that stopped on a
+# precondition fails BOTH — neither was tested.
 #
 # THE SENTINEL IS THE VACUITY GUARD FOR ONE EDGE OF THE WINDOW, NOT BOTH. The
 # press must land BETWEEN the client's two reads, and jnext schedules it in
@@ -684,9 +747,12 @@ rm -f "$sentinel6"
 
 if ! start_stub "$jlog6" "$shot6" "$SECOND_NMI_FRAMES"; then
     fail "W6 the stub never listened on 127.0.0.1:$PORT for the stopped-press run"
+    fail "W7 the stub never listened on 127.0.0.1:$PORT for the stopped-press run"
 else
     set +e
     SENTINEL="$sentinel6" DZRP_PORT="$PORT" DZRP_TIMEOUT="$DZRP_TIMEOUT" \
+        BACKUP_SPEED_ADDR="$BACKUP_SPEED_ADDR" \
+        BACKUP_IO_NEXT_REG_ADDR="$BACKUP_IO_NEXT_REG_ADDR" \
         python3 "$NMI_STOPPED" >"$OUT/dzrp-stub-w6.client" 2>&1 &
     client6_pid=$!
 
@@ -719,10 +785,10 @@ else
     # THE LEFT EDGE OF THE WINDOW, asserted from the module's own log exactly as
     # W4 and W5 assert theirs. The sentinel guarantees the press happened before
     # the SECOND read; nothing but a frame count guarantees it happened after
-    # the FIRST, and that direction fails GREEN. The client sends exactly three
-    # commands before it arms — CMD_INIT, CMD_SET_SLOT, CMD_GET_REGISTERS — so
-    # at least three inbound frames must precede the second press. Fewer means
-    # the press raced the setup and the run judged nothing.
+    # the FIRST, and that direction fails GREEN. The client sends
+    # W6_SETUP_FRAMES commands before it arms, so at least that many inbound
+    # frames must precede the second press. Fewer means the press raced the
+    # setup and the run judged nothing.
     w6_before=$(python3 - "$jlog6" <<'EOF'
 import re, sys
 ipd = 0
@@ -740,18 +806,49 @@ else:
 EOF
 )
 
+    # EVERY PRECONDITION HERE IS SHARED, because both checks share the run and
+    # the press — so a failed one is reported against BOTH. Naming only one
+    # would leave a reader crediting the other with a green it never earned.
+    w6_why=""
     if [ "$w6_connects" -gt 4 ]; then
-        fail "W6 CONTAMINATED: $w6_connects connections in $jlog6 where this fixture makes 1"
+        w6_why="CONTAMINATED: $w6_connects connections in $jlog6 where this fixture makes 1"
     elif [ "$w6_presses" -ne 2 ]; then
-        fail "W6 harness: jnext delivered $w6_presses of 2 NMI presses, so no press was judged"
+        w6_why="harness: jnext delivered $w6_presses of 2 NMI presses, so no press was judged"
     elif [ "$nmi_seen" -ne 1 ]; then
-        fail "W6 harness: the second press was never seen in the log while the client waited"
-    elif [ "$w6_before" -lt 3 ]; then
-        fail "W6 harness: the press raced the setup — $w6_before commands had arrived, needed 3"
+        w6_why="harness: the second press was never seen in the log while the client waited"
+    elif [ "$w6_before" -lt "$W6_SETUP_FRAMES" ]; then
+        w6_why="harness: the press raced the setup — $w6_before commands arrived, needed $W6_SETUP_FRAMES"
     elif [ "$w6_rc" -ne 0 ]; then
-        fail "W6 an M1 press while stopped destroyed the debuggee's saved slot 7 bank (issue #26)"
+        w6_why="precondition: the client rendered no verdict, so nothing was judged"
+    fi
+
+    # A MISSING RESULT LINE IS A RED, NEVER A PASS. `grep -c` and not `-q` for
+    # the reason the port pre-flight uses it: -q exits at its match, and the
+    # SIGPIPE that gives the writer comes back as 141 under pipefail.
+    w6_lines=$(grep -c '^RESULT slot7 ' "$OUT/dzrp-stub-w6.client" || true)
+    w6_ok=$(grep -c '^RESULT slot7 OK ' "$OUT/dzrp-stub-w6.client" || true)
+    w7_lines=$(grep -c '^RESULT saved ' "$OUT/dzrp-stub-w6.client" || true)
+    w7_ok=$(grep -c '^RESULT saved OK ' "$OUT/dzrp-stub-w6.client" || true)
+
+    if [ -n "$w6_why" ]; then
+        fail "W6 $w6_why"
+        fail "W7 $w6_why"
     else
-        pass "W6 an M1 press while the debugger is stopped leaves the debuggee's slot 7 bank intact"
+        if [ "$w6_lines" -eq 0 ]; then
+            fail "W6 the client printed no slot 7 verdict, so nothing was judged"
+        elif [ "$w6_ok" -eq 0 ]; then
+            fail "W6 an M1 press while stopped destroyed the debuggee's saved slot 7 bank (issue #26)"
+        else
+            pass "W6 an M1 press while the debugger is stopped leaves the debuggee's slot 7 bank intact"
+        fi
+
+        if [ "$w7_lines" -eq 0 ]; then
+            fail "W7 the client printed no saved-state verdict, so nothing was judged"
+        elif [ "$w7_ok" -eq 0 ]; then
+            fail "W7 an M1 press while stopped destroyed the debuggee's saved clock speed or NextREG select (issue #37)"
+        else
+            pass "W7 an M1 press while the debugger is stopped leaves the debuggee's saved clock speed intact"
+        fi
     fi
 fi
 

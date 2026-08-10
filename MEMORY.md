@@ -2113,6 +2113,21 @@ while 6/11/13 show it re-initialises correctly: **both arms of the
 discriminator, on silicon**, which **no bench here does today** — T7 presses
 twice with a reset between, and nothing presses twice without one.
 
+*(**CORRECTED 2026-08-10, and ONE CLAUSE ONLY: "nothing presses twice without
+one" is now false.** Bench check **T8** does exactly that — two presses, no
+reset between — and is in `make test`; issue #36, and the entry at the top of
+this file. So the follow-up the paragraph below leaves open is **built**, and
+with the liveness control that paragraph correctly says it needed: the border,
+after a "B" pressed AFTER the second press. **Everything else in this passage
+was true when written and is why T8 exists at all** — the decline arm really was
+guarded by one hardware observation and nothing else, and a regression sending
+*every* press to `init_main_bank` really would have left T7 passing, which was
+measured against exactly such a ROM when T8 was built: T1-T7 green, T8 the only
+red. This is annotated rather than rewritten because a reader landing here by
+grep or by following a citation would otherwise meet the falsified half with
+nothing attached to it — MEMORY.md's own 2026-08-08 rule, this file being the
+one every session is told to read first.)*
+
 **"No bench here CAN do it" is what this entry said first, and the reviewer
 disproved it by running it.** Two headless jnext runs, both shot at the same
 absolute frame, one with a single NMI at 900 and one with a second at 950:
@@ -2405,6 +2420,17 @@ cycle. Against `main`'s ROM: T1-T6 green, **T7 red, `0.00% changed`** — the
 decline, byte-identical screens. With the fix: **7/7, T7 at 90.32%
 repainted** and byte-identical to the stub's own screen from run 6 (the probe
 measured C vs A at exactly 0.00%).
+
+*(**CORRECTED 2026-08-10, four words of it: "the only one that presses the
+button twice".** **T8** presses twice as well, with no reset between — issue
+#36. Checked rather than assumed to be safe, because the rest of this paragraph
+is a **record of what was run** and stands untouched: the two runs, the frame
+arithmetic, `7/7`, and `T7 red at 0.00%` against `main`'s ROM all describe the
+bench as it was on 2026-08-07 and are not claims about today. The explanation
+attached to the stale clause also stands — nothing before T7 ever put a reset
+*between* two presses, which really is why the defect survived five years. And
+`make test` is **8/8** now, not 7/7, which is the other number here a reader
+should not carry forward.)*
 
 **T7's preconditions are what keep it from passing vacuously, and one is
 asserted from jnext's own log.** `--delayed-nmi-frames` QUEUES rather than

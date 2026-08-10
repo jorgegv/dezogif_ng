@@ -291,6 +291,28 @@ ifneq ($(ADDR_CHECK),)
   VARIANT_FLAGS  += -DESP_ADDR_CHECK_SECS=$(ADDR_CHECK)
 endif
 
+# CONNECT_RESET — the tenth bench seam, and the only one of the family that is
+# a plain on/off: 1 ships, 0 is the control.
+#
+# It is issue #40. The idle sweep's timer is restarted by the module's own
+# `<id>,CONNECT` line, so a socket that has been accepted but has not spoken
+# yet gets a WHOLE period before the sweep can reap it instead of whatever was
+# left of the one it happened to land in. CONNECT_RESET=0 assembles that reset
+# out, which is main's behaviour before this and is what run-slot-recovery.sh's
+# S9 needs to be red against — the ONLY setting this seam exists for.
+#
+# It cannot be checked by moving IDLE_SWEEP instead: with the sweep assembled
+# out (IDLE_SWEEP=0) nothing reaps anybody, so the silent client survives for
+# the wrong reason and the check would pass against a stub with the defect.
+#
+# Same naming rule as the others: each probe ROM gets its own output name.
+CONNECT_RESET ?=
+
+ifneq ($(CONNECT_RESET),)
+  VARIANT_SUFFIX := $(VARIANT_SUFFIX)-cr$(CONNECT_RESET)
+  VARIANT_FLAGS  += -DESP_CONNECT_RESET=$(CONNECT_RESET)
+endif
+
 # BAUD_HIGH — the seventh bench seam, and the only one of the family whose
 # "off" setting is also a SHIPPABLE ROM rather than only a control.
 #
@@ -826,23 +848,31 @@ test-no-hang:
 # is that AT+CIPSERVER=0 is absent from the log, so a build one stray timeout
 # away from a recovery would make that reading worth much less.
 #
+# S8-S9 are issue #40, the trigger's own side effect: the sweep was reaping
+# sockets the module had accepted but which had not spoken yet, because only a
+# parsed +IPD restarted its timer and a bare TCP connect never reaches one. The
+# module's `<id>,CONNECT` now restarts it too. CONNECT_RESET=0 assembles that
+# reset out and is S9's control, one constant from S8's ROM.
+#
 # It needs jnext >= 0.99.127 (jnext#211's AT+CIPCLOSE=<id>) and binds a host TCP
 # port, so it is not part of `make test`. It says NOTHING about a real ESP-01,
 # whose ceiling differs from the emulator's by design, and nothing about the
 # sweep having REPAIRED anything — no emulator run can leak a slot; see the
 # script's header.
 #
-# Run the slot-recovery bench (5 jnext runs, 7 checks; not part of `make test`)
+# Run the slot-recovery bench (7 jnext runs, 9 checks; not part of `make test`)
 test-slot-recovery:
 	@$(MAKE) --no-print-directory TRANSPORT=wifi FAULT_LIMIT=1 mf-rom
 	@$(MAKE) --no-print-directory TRANSPORT=wifi FAULT_LIMIT=1 LINK_IDS=0 mf-rom
 	@$(MAKE) --no-print-directory TRANSPORT=wifi IDLE_SWEEP=10 mf-rom
 	@$(MAKE) --no-print-directory TRANSPORT=wifi IDLE_SWEEP=0 mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi IDLE_SWEEP=10 CONNECT_RESET=0 mf-rom
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
 	 ROM_SWEEP="$(OUT)/enNextMf-wifi-fl1.rom" \
 	 ROM_NOSWEEP="$(OUT)/enNextMf-wifi-fl1-li0.rom" \
 	 ROM_IDLE="$(OUT)/enNextMf-wifi-idle10.rom" \
-	 ROM_NOIDLE="$(OUT)/enNextMf-wifi-idle0.rom" $(TEST)/run-slot-recovery.sh
+	 ROM_NOIDLE="$(OUT)/enNextMf-wifi-idle0.rom" \
+	 ROM_NOCONNRESET="$(OUT)/enNextMf-wifi-idle10-cr0.rom" $(TEST)/run-slot-recovery.sh
 
 # ---------------------------------------------------------------------------
 # The Next losing and regaining its WiFi association — issue #32.

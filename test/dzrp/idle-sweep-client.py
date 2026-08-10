@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""A DZRP client for the idle-sweep checks — issue #24.
+"""A DZRP client for the idle-sweep checks — issues #24 and #40.
 
-The client half of S4-S7 in test/run-slot-recovery.sh. It has two jobs and they
-are opposite ones, which is why it has two modes rather than two scripts: every
-check here turns on whether the stub swept while nobody was talking to it, and
-the only thing that differs is whether somebody was.
+The client half of S4-S9 in test/run-slot-recovery.sh. Every check here turns
+on whether the stub swept while nobody was talking to it, and the modes differ
+only in who was connected and whether they had said anything.
 
   --mode fresh   connect, prove the stub is serving, leave. The bench has
                  already waited out several idle periods before starting this,
@@ -20,6 +19,23 @@ the only thing that differs is whether somebody was.
                  which is S6's own in-run control and is why the mode does not
                  simply exit while connected.
 
+  --mode arm     connect, send ONE CMD_LOOPBACK, leave. Issue #40's staging
+                 needs a known origin for the idle timer, and an inbound frame
+                 is what sets one: esp_sync_ipd resets the tick counter and
+                 re-arms the sweep. It is a bare CMD_LOOPBACK and NOT CMD_INIT
+                 on purpose — CMD_INIT would open a DZRP session, which stops
+                 the clock entirely (S6's subject) and would leave the origin
+                 depending on the module reporting the close afterwards.
+
+  --mode silent  connect and say NOTHING AT ALL for --watch seconds, then send
+                 one CMD_LOOPBACK and report whether it was answered. This is
+                 issue #40: a socket the module has accepted but which has not
+                 yet introduced itself. It writes its --sentinel the moment the
+                 socket is open — before any traffic, unlike --mode hold, whose
+                 sentinel marks an open SESSION — so the bench can read the
+                 sweep count at the instant of the connect and know where in
+                 the idle period this client landed.
+
 WHY THE HOLD MUST BE OBSERVED AND NOT SLEPT THROUGH. If the module hangs up on
 us mid-hold — its own AT+CIPSTO timeout, which this ROM sets to 1800 s and which
 therefore should not fire — the session ends early and every later "no sweep
@@ -31,6 +47,8 @@ WHAT IT DOES NOT DO IS JUDGE. It prints one machine-readable line —
 
     RESULT served
     RESULT held 30.00
+    RESULT armed
+    RESULT silent 1.10
 
 — and the bench decides, because the counting that matters happens in jnext's
 own log rather than over this socket: no PC-side client can see an AT+CIPCLOSE.
@@ -39,8 +57,9 @@ EXIT CODES
   0   the mode ran to its own conclusion; read the RESULT line
   1   CMD_INIT was never answered — the run is not evidence about anything
   2   could not connect at all
-  3   --mode hold: the connection was dropped during the hold, so the session
-      the check needs was not held for the time it claims
+  3   the connection was dropped while it was meant to be held: --mode hold
+      lost the session it claims to have held, and --mode silent was closed
+      before it ever spoke, which is issue #40's whole subject
   4   the follow-up command was unanswered or came back wrong
 
 THE --sentinel FILE IS WHAT MAKES S6 MEAN ANYTHING, and it was added because the
@@ -83,19 +102,47 @@ def serving(d):
                          % (reply, payload))
 
 
+def stay_silent(t, seconds):
+    """Hold the socket open, saying nothing, for `seconds`.
+
+    Returns None if the silence ran its course, or a string saying how it
+    ended. Shared by --mode hold and --mode silent so that "the peer closed"
+    is decided in ONE place: a recv of b"" is the module or the stub hanging
+    up, and telling that apart from our own timeout is the whole point of
+    reading rather than sleeping.
+    """
+    t.sock.settimeout(1.0)
+    started = time.time()
+    while True:
+        elapsed = time.time() - started
+        if elapsed >= seconds:
+            return None
+        try:
+            if t.sock.recv(64) == b"":
+                return "the peer closed the connection after %.2fs" % elapsed
+        except socket.timeout:
+            continue
+        except OSError as e:                        # noqa: BLE001
+            return "socket error after %.2fs — %s" % (elapsed, e)
+        # Nothing should arrive unprompted here. Report it rather than let a
+        # surprise be read as silence.
+        print("unexpected bytes from the stub at %.2fs" % elapsed)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=11000)
     ap.add_argument("--timeout", type=float, default=20.0)
-    ap.add_argument("--mode", choices=("fresh", "hold"), required=True)
+    ap.add_argument("--mode", choices=("fresh", "hold", "arm", "silent"),
+                    required=True)
     ap.add_argument("--watch", type=float, default=30.0,
-                    help="--mode hold: how long to hold the session open in "
-                         "silence")
+                    help="--mode hold / --mode silent: how long to say nothing")
     ap.add_argument("--sentinel", default=None,
-                    help="--mode hold: a file to write once the session is "
-                         "open and the silence is about to start, so the bench "
-                         "can take its baseline at that moment and not before")
+                    help="a file to write at the moment the silence starts, so "
+                         "the bench can take its baseline then and not before. "
+                         "--mode hold writes it once the SESSION is open; "
+                         "--mode silent once the SOCKET is, having sent nothing")
     args = ap.parse_args()
 
     try:
@@ -107,6 +154,62 @@ def main():
     # No 0xA5 preamble: this is the WiFi build, where the byte is absent by
     # design (transport_esp.asm, point 1).
     d = dzrp.Dzrp(t, start_byte=None)
+    payload = bytes(range(8))
+
+    def loopback():
+        """One CMD_LOOPBACK. Returns None if it echoed, else why it did not."""
+        try:
+            reply = d.command(dzrp.CMD_LOOPBACK, payload)
+        except Exception as e:                      # noqa: BLE001
+            return "%s: %s" % (type(e).__name__, e)
+        if reply != payload:
+            return "came back %r, expected %r" % (reply, payload)
+        return None
+
+    # --- arm ----------------------------------------------------------------
+    # ONE inbound frame and nothing else, which is what gives the checks below
+    # a known origin for the idle timer: esp_sync_ipd resets the tick counter
+    # and re-arms the sweep on every frame it parses. NOT CMD_INIT — that would
+    # open a session and stop the clock; see the module docstring.
+    if args.mode == "arm":
+        why = loopback()
+        if why is not None:
+            print("the arming CMD_LOOPBACK failed — %s" % why)
+            t.close()
+            return 4
+        print("RESULT armed")
+        t.close()
+        return 0
+
+    # --- silent -------------------------------------------------------------
+    # Issue #40. NOTHING is sent before the silence, so from the stub's side
+    # this is a socket the module has accepted and which has never introduced
+    # itself. The sentinel goes out here, before any traffic at all, because
+    # what the bench needs to know is WHERE IN THE IDLE PERIOD the connect
+    # landed — not when a session opened, which is --mode hold's question.
+    if args.mode == "silent":
+        if args.sentinel:
+            with open(args.sentinel, "w") as fh:
+                fh.write("socket open\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+        print("socket open, nothing sent; silent for %.2fs" % args.watch)
+        started = time.time()
+        why = stay_silent(t, args.watch)
+        if why is not None:
+            print("%s, before it had said anything at all" % why)
+            t.close()
+            return 3
+        # It survived. Only an answered command says the stub will still serve
+        # it — a socket that is merely unclosed proves nothing.
+        why = loopback()
+        if why is not None:
+            print("the silent client's first command failed — %s" % why)
+            t.close()
+            return 4
+        print("RESULT silent %.2f" % (time.time() - started))
+        t.close()
+        return 0
 
     t0 = time.time()
     try:
@@ -118,15 +221,9 @@ def main():
         return 1
     print("CMD_INIT answered in %.2fs" % (time.time() - t0))
 
-    payload = bytes(range(8))
-    try:
-        reply = d.command(dzrp.CMD_LOOPBACK, payload)
-    except Exception as e:                          # noqa: BLE001
-        print("CMD_LOOPBACK unanswered — %s: %s" % (type(e).__name__, e))
-        t.close()
-        return 4
-    if reply != payload:
-        print("CMD_LOOPBACK came back wrong: %r against %r" % (reply, payload))
+    why = loopback()
+    if why is not None:
+        print("CMD_LOOPBACK failed — %s" % why)
         t.close()
         return 4
 
@@ -145,40 +242,18 @@ def main():
             os.fsync(fh.fileno())
 
     print("session open; holding it silent for %.0fs" % args.watch)
-    t.sock.settimeout(1.0)
     held = time.time()
-    while True:
-        elapsed = time.time() - held
-        if elapsed >= args.watch:
-            break
-        try:
-            if t.sock.recv(64) == b"":
-                print("the stub or the module closed the connection after "
-                      "%.2fs — the session was not held" % elapsed)
-                t.close()
-                return 3
-        except socket.timeout:
-            continue
-        except OSError as e:                        # noqa: BLE001
-            print("socket error after %.2fs — %s" % (elapsed, e))
-            t.close()
-            return 3
-        # Nothing should arrive unprompted here. Report it rather than let a
-        # surprise be read as silence.
-        print("unexpected bytes from the stub at %.2fs" % elapsed)
+    why = stay_silent(t, args.watch)
+    if why is not None:
+        print("%s — the session was not held" % why)
+        t.close()
+        return 3
 
     # Still alive after the silence? A command answered here is what says the
     # session really was open for the whole hold rather than merely unclosed.
-    try:
-        reply = d.command(dzrp.CMD_LOOPBACK, payload)
-    except Exception as e:                          # noqa: BLE001
-        print("the held session stopped answering — %s: %s"
-              % (type(e).__name__, e))
-        t.close()
-        return 4
-    if reply != payload:
-        print("the held session answered wrongly: %r against %r"
-              % (reply, payload))
+    why = loopback()
+    if why is not None:
+        print("the held session stopped answering — %s" % why)
         t.close()
         return 4
 

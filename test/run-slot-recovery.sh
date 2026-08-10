@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
-# run-slot-recovery.sh — does anything give the module's inbound slots back?
-# Issues #19 and #24. Five headless jnext runs, seven checks, and the verdict is
-# a socket and a log rather than a picture.
+# run-slot-recovery.sh — does anything give the module's inbound slots back,
+# and does it reap anyone it should not? Issues #19, #24 and #40. Seven headless
+# jnext runs, nine checks, and the verdict is a socket and a log rather than a
+# picture.
 #
 # S1-S3 are issue #19: the sweep itself, reached the only way it could be
 # reached when it was written — from esp_recover, after consecutive faults.
@@ -41,6 +42,33 @@
 #       was simply too short would pass.
 #   S7  the control, IDLE_SWEEP=0: the trigger assembled out. The same run must
 #       show no AT+CIPCLOSE at all.
+#
+# S8-S9 are issue #40, which is the trigger's own side effect rather than a new
+# feature. Only a parsed +IPD restarted the timer, and a bare TCP connect never
+# reaches one — so a socket the module accepted while the stub was idle sat
+# inside a period it had not started, and was reaped by it. The module's
+# `<id>,CONNECT` line now restarts the timer too, which gives such a socket a
+# WHOLE period rather than whatever was left of somebody else's.
+#
+#   S8  a client connects and says NOTHING. It must still be there, and still
+#       be served, at a moment past the deadline the run's own previous period
+#       had set — and the log must show no sweep in between.
+#   S9  the control, CONNECT_RESET=0: the same staging, the reset assembled
+#       out. The same client must be closed before it ever speaks.
+#
+# HOW S8 IS STAGED, because "connect and wait" is not enough on its own. The
+# grace the fix buys is exactly one period, so the difference is only visible
+# to a client that connects LATE in one — connect at the start of a period and
+# both ROMs let it live. So each run measures its own period first (arm the
+# timer with one CMD_LOOPBACK, time the sweep that follows), then arms again,
+# waits 0.65 of that, connects the silent client, and lets it speak 0.60 of a
+# period later. On the control the deadline (1.00) falls inside that silence;
+# on the shipped ROM the connect moves it to 1.65 and the client speaks at 1.25.
+# Three preconditions keep a mis-staged run from reporting a verdict: the period
+# must be sane, the connect must land in a band around 0.65, and no sweep may
+# have fired before the client connected. Measured, five consecutive periods in
+# one run: 1.737 1.789 1.790 1.786 1.797 s — a 3.4% spread against margins of
+# 28% or better.
 #
 # WHY S3 AND S7 ARE BUILD SEAMS AND NOT SCRATCH TREES. The state being fixed
 # here is unreachable in the shipped ROM by construction, so without a seam the
@@ -88,16 +116,23 @@
 #     wording and this is it.
 #   * ANY REAL TIMING. esp_idle_tick counts emulated video lines, and headless
 #     jnext runs frames faster than real time, so the wall-clock waits below are
-#     upper bounds on several idle periods rather than measurements of one.
+#     upper bounds on several idle periods rather than measurements of one. S8's
+#     calibration is the one exception and it is deliberately RELATIVE: it never
+#     says what a period is, only that one stretch of a run is 0.65 of another.
+#   * THAT A REAL CLIENT WAS EVER BITTEN by what S8 covers. DeZog sends CMD_INIT
+#     the moment it connects, so its own window is milliseconds wide against a
+#     shipped period of 300 seconds. S8 stages a reachable state, not an
+#     observed one; issue #40 says so in as many words.
 #
 # Environment (all set by the Makefile, all overridable):
-#   JNEXT         path to the jnext binary
-#   SD_IMAGE      reference SD card image; NEVER written, only copied
-#   OUT           build directory
-#   ROM_SWEEP     WiFi ROM, FAULT_LIMIT=1
-#   ROM_NOSWEEP   the same, plus LINK_IDS=0
-#   ROM_IDLE      WiFi ROM, IDLE_SWEEP=10 (shipped fault limit)
-#   ROM_NOIDLE    the same, plus IDLE_SWEEP=0 — the trigger assembled out
+#   JNEXT            path to the jnext binary
+#   SD_IMAGE         reference SD card image; NEVER written, only copied
+#   OUT              build directory
+#   ROM_SWEEP        WiFi ROM, FAULT_LIMIT=1
+#   ROM_NOSWEEP      the same, plus LINK_IDS=0
+#   ROM_IDLE         WiFi ROM, IDLE_SWEEP=10 (shipped fault limit)
+#   ROM_NOIDLE       the same, plus IDLE_SWEEP=0 — the trigger assembled out
+#   ROM_NOCONNRESET  the same, plus CONNECT_RESET=0 — the connect reset out
 
 set -euo pipefail
 
@@ -120,6 +155,7 @@ ROM_SWEEP=${ROM_SWEEP:-$OUT/enNextMf-wifi-fl1.rom}
 ROM_NOSWEEP=${ROM_NOSWEEP:-$OUT/enNextMf-wifi-fl1-li0.rom}
 ROM_IDLE=${ROM_IDLE:-$OUT/enNextMf-wifi-idle10.rom}
 ROM_NOIDLE=${ROM_NOIDLE:-$OUT/enNextMf-wifi-idle0.rom}
+ROM_NOCONNRESET=${ROM_NOCONNRESET:-$OUT/enNextMf-wifi-idle10-cr0.rom}
 
 CLIENT=$(dirname "$0")/dzrp/slot-recovery-client.py
 IDLE_CLIENT=$(dirname "$0")/dzrp/idle-sweep-client.py
@@ -147,6 +183,34 @@ HOLD_SECS=${HOLD_SECS:-30}
 # How many link ids the shipped sweep asks about. Pinned here as well as in the
 # source deliberately: S2 is worth nothing if it counts whatever it finds.
 LINK_IDS=5
+
+# S8/S9's staging, as fractions of the period each run measures for itself. The
+# silent client connects at CONNECT_AT and speaks SILENT_FOR later, so it speaks
+# at 1.25 — past the control's deadline of 1.00 and well inside the shipped
+# ROM's 1.65. See the header for the margins each of those leaves.
+CONNECT_AT=0.65
+SILENT_FOR=0.60
+
+# The band the connect must actually land in for a verdict to be given, again as
+# fractions of the measured period. Below 0.45 the control's own deadline would
+# fall after the client had already spoken and its red would mean nothing; above
+# 0.85 the sweep is likely to beat the client to the connect, which the sweep
+# count checks directly anyway. Nominal is CONNECT_AT plus the client's own
+# start-up, about 0.03 of a period here.
+CONNECT_AT_MIN=0.45
+CONNECT_AT_MAX=0.85
+
+# A period this bench refuses to time anything against, in wall seconds. Ten
+# emulated seconds measured 1.74-1.80 s here; a run far outside that is an
+# emulator running at a speed these fractions were never chosen for.
+PERIOD_MIN=${PERIOD_MIN:-0.30}
+PERIOD_MAX=${PERIOD_MAX:-30.0}
+
+# Long enough for a sweep's five-id walk to finish, in wall seconds. A client
+# opened during one keeps its slot but may be closed by a LATER id in the same
+# pass — a documented cost of #24 (transport_esp.asm, ESP_IDLE_SWEEP_SECS) and
+# not what S8 is about, so the staging stays clear of it.
+WALK_SETTLE=${WALK_SETTLE:-3}
 
 BOOT_FRAMES=900
 SHOT_FRAMES=200000
@@ -183,7 +247,8 @@ command -v mcopy >/dev/null || die "mtools (mcopy) is required to install the RO
 
 [ -f "$IDLE_CLIENT" ] || die "client not found: $IDLE_CLIENT"
 
-for rom in "$ROM_SWEEP" "$ROM_NOSWEEP" "$ROM_IDLE" "$ROM_NOIDLE"; do
+for rom in "$ROM_SWEEP" "$ROM_NOSWEEP" "$ROM_IDLE" "$ROM_NOIDLE" \
+           "$ROM_NOCONNRESET"; do
     [ -f "$rom" ] || die "not built: $rom (run 'make test-slot-recovery')"
     # The magic string issue #4 put at a fixed offset, used for what it is for:
     # a UART ROM here would boot, take the NMI, paint its UI and listen on
@@ -601,11 +666,192 @@ else
     pass "S7 with the trigger assembled out the same idling produces no sweep at all"
 fi
 
+# --- S8/S9: a socket the module accepted, which has not spoken yet ----------
+#
+# Issue #40. Everything above measures whether the sweep FIRES; this measures
+# who it takes with it.
+
+# Floating point, because everything here is a fraction of a period the run has
+# just measured for itself. awk rather than bc: it is already a hard dependency
+# of this tree's benches and bc is not.
+fmul() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.3f", a*b}'; }
+fsub() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.3f", a-b}'; }
+fdiv() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.3f", (b==0 ? 0 : a/b)}'; }
+flt()  { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a<b)}'; }
+
+# Like wait_for_more_sweeps but polling twenty times a second instead of four.
+# The period being timed is under two seconds here, so a quarter-second poll
+# would put a 14% error on the one number every fraction below is taken from.
+wait_for_more_sweeps_fine() {
+    local logfile=$1 baseline=$2 limit=$3 i n
+    for i in $(seq $((limit * 20))); do
+        n=$(grep -c 'AT <- "AT+CIPCLOSE=' "$logfile" 2>/dev/null || true)
+        if [ "${n:-0}" -gt "$baseline" ]; then
+            return 0
+        fi
+        sleep 0.05
+    done
+    return 1
+}
+
+# run_connect_grace <rom> <logfile> <shotfile> <clientout> — stages a silent
+# client late in a measured idle period. Leaves $rc, $period, $connect_at,
+# $base8, $at_connect and $at_speak set.
+#
+#   rc  0  the client survived its silence and was then served
+#       3  it was closed before it ever spoke — issue #40's defect
+#       4  it survived but its first command was not answered
+#      97  the calibration never saw a sweep
+#      98  an arming command was not answered
+#      99  the stub's listener never appeared
+run_connect_grace() {
+    local rom=$1 logfile=$2 shotfile=$3 clientout=$4
+    local base t0 t1 t2 t3 pre watch sentinel client_pid
+    rc=0; period=0; connect_at=0; base8=0; at_connect=0; at_speak=0
+
+    if ! start_stub "$rom" "$logfile" "$shotfile"; then
+        rc=99
+        return 0
+    fi
+
+    # The stub sweeps once shortly after boot, on its own, and then disarms, so
+    # the state this needs — armed and counting from a known moment — has to be
+    # created deliberately. Wait that first sweep out and let its five-id walk
+    # finish before anything else connects.
+    wait_for_sweep "$logfile" "$SWEEP_TIMEOUT" || true
+    sleep "$WALK_SETTLE"
+
+    # --- calibrate: one arming frame, then time the sweep it leads to -------
+    count_log "$logfile"
+    base=$closes
+    if ! python3 "$IDLE_CLIENT" --host 127.0.0.1 --port "$PORT" \
+            --timeout "$CLIENT_TIMEOUT" --mode arm >/dev/null 2>&1; then
+        rc=98; stop_stub; return 0
+    fi
+    t0=$(date +%s.%N)
+    if ! wait_for_more_sweeps_fine "$logfile" "$base" "$SWEEP_TIMEOUT"; then
+        rc=97; stop_stub; return 0
+    fi
+    t1=$(date +%s.%N)
+    period=$(fsub "$t1" "$t0")
+    sleep "$WALK_SETTLE"
+
+    # --- stage: arm again, wait most of a period, then connect in silence ---
+    count_log "$logfile"
+    base8=$closes
+    if ! python3 "$IDLE_CLIENT" --host 127.0.0.1 --port "$PORT" \
+            --timeout "$CLIENT_TIMEOUT" --mode arm >/dev/null 2>&1; then
+        rc=98; stop_stub; return 0
+    fi
+    t2=$(date +%s.%N)
+    pre=$(fmul "$period" "$CONNECT_AT")
+    watch=$(fmul "$period" "$SILENT_FOR")
+    sleep "$pre"
+
+    sentinel=$OUT/connect-grace.sentinel
+    rm -f "$sentinel"
+    # Backgrounded WITHOUT a pipe: `cmd | sed &` makes $! the pid of sed, so
+    # `wait` would report the wrong status. Same shape, same reason, as S6.
+    python3 "$IDLE_CLIENT" --host 127.0.0.1 --port "$PORT" \
+        --timeout "$CLIENT_TIMEOUT" --mode silent --watch "$watch" \
+        --sentinel "$sentinel" >"$clientout" 2>&1 &
+    client_pid=$!
+
+    # The sentinel is written the instant the SOCKET is open and before a byte
+    # is sent, so this is where in the idle period the connect really landed —
+    # which is the one thing the whole staging turns on.
+    for _ in $(seq 500); do
+        [ -s "$sentinel" ] && break
+        kill -0 "$client_pid" 2>/dev/null || break
+        sleep 0.02
+    done
+    t3=$(date +%s.%N)
+    count_log "$logfile"
+    at_connect=$closes
+    connect_at=$(fdiv "$(fsub "$t3" "$t2")" "$period")
+
+    rc=0
+    wait "$client_pid" || rc=$?
+    count_log "$logfile"
+    at_speak=$closes
+    stop_stub
+}
+
+# judge_connect_grace <id> <expect> — the two checks differ in one thing, which
+# is what they want to have happened to the silent client, so their four shared
+# preconditions are written once. <expect> is `served` or `swept`.
+judge_connect_grace() {
+    local id=$1 expect=$2
+    if [ "$rc" -eq 99 ]; then
+        fail "$id the stub's listener never appeared, so nothing was tested"
+    elif [ "$rc" -eq 98 ]; then
+        fail "$id an arming command went unanswered, so the timer had no known origin"
+    elif [ "$rc" -eq 97 ]; then
+        fail "$id no sweep in the calibration, so this run has no period to time against"
+    elif flt "$period" "$PERIOD_MIN" || flt "$PERIOD_MAX" "$period"; then
+        fail "$id the measured idle period was ${period}s, outside anything these fractions fit"
+    elif flt "$connect_at" "$CONNECT_AT_MIN" || flt "$CONNECT_AT_MAX" "$connect_at"; then
+        fail "$id the client connected at $connect_at of the period, outside the staged band"
+    elif [ "$at_connect" -ne "$base8" ]; then
+        fail "$id a sweep had already fired when the client connected: it was never staged"
+    elif [ "$expect" = "served" ]; then
+        # The subject. Two things, and the second is what makes the first a
+        # statement about the timer rather than about luck: no sweep may have
+        # happened at all while the client sat there.
+        if [ "$rc" -eq 3 ]; then
+            fail "$id the silent client was closed before it ever spoke: the connect did not count"
+        elif [ "$rc" -ne 0 ]; then
+            fail "$id the silent client survived but was not served: the client exited $rc"
+        elif [ "$at_speak" -ne "$base8" ]; then
+            fail "$id a sweep fired while the silent client waited, $((at_speak - base8)) link ids closed"
+        else
+            pass "$id a client that connected and said nothing was not swept, and was served"
+        fi
+    else
+        # The control. It must both sweep and take the client with it: a run
+        # where no sweep fired at all would leave the client alive for a reason
+        # that has nothing to do with the reset being assembled out.
+        if [ "$at_speak" -eq "$base8" ]; then
+            fail "$id no sweep fired at all, so the control never reached the state it compares"
+        elif [ "$rc" -eq 0 ]; then
+            fail "$id without the reset the silent client survived anyway, so S8's green is not it"
+        elif [ "$rc" -ne 3 ] && [ "$rc" -ne 4 ]; then
+            fail "$id the control client exited $rc, which is a harness fault and not a finding"
+        else
+            pass "$id without the connect reset the same client is closed before it speaks"
+        fi
+    fi
+}
+
+log ""
+log "== S8: a client that connects and has not spoken yet must not be swept"
+
+log6=$OUT/slot-recovery-connect-grace.log
+run_connect_grace "$ROM_IDLE" "$log6" \
+    "$OUT/screenshots/slot-recovery-connect-grace.png" \
+    "$OUT/connect-grace-client.txt"
+[ -f "$OUT/connect-grace-client.txt" ] && sed 's/^/  | /' "$OUT/connect-grace-client.txt"
+
+log "  period=${period}s connect_at=$connect_at base=$base8 at_connect=$at_connect at_speak=$at_speak rc=$rc (from $log6)"
+judge_connect_grace S8 served
+
+log ""
+log "== S9: the control, CONNECT_RESET=0 — the connect reset assembled out"
+
+log7=$OUT/slot-recovery-noconnreset.log
+run_connect_grace "$ROM_NOCONNRESET" "$log7" \
+    "$OUT/screenshots/slot-recovery-noconnreset.png" \
+    "$OUT/noconnreset-client.txt"
+[ -f "$OUT/noconnreset-client.txt" ] && sed 's/^/  | /' "$OUT/noconnreset-client.txt"
+
+log "  period=${period}s connect_at=$connect_at base=$base8 at_connect=$at_connect at_speak=$at_speak rc=$rc (from $log7)"
+judge_connect_grace S9 swept
+
 # --- verdict ---------------------------------------------------------------
 
 log ""
 if [ "$failures" -eq 0 ]; then
-    log "All checks passed (7/7)."
+    log "All checks passed (9/9)."
 else
     log "$failures check(s) FAILED."
 fi

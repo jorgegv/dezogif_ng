@@ -5,6 +5,167 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-10 — #39 was never a timer: the button was the recovery, and the duration was a human's reaction time
+
+**Measured on the user's own Next, three runs, two builds — and CLOSED as
+working-as-designed.** Issue #39 said `CMD_CONTINUE` from an uninitialised
+`PC`/`SP` *"makes the Next unresponsive for tens of seconds, then it recovers by
+itself"*. **Both halves are false.**
+
+| | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| build | `00.19` | `00.1E` | `00.1E` |
+| M1 pressed | yes, ~40 s | yes, ~59 s | **withheld** |
+| outcome | "recovered" ~40 s | "recovered" ~59 s | **hung at 4 min** |
+| then M1 | — | — | **recovered IMMEDIATELY** |
+
+**THE ~40 AND ~59 SECONDS WERE THE USER'S REACTION TIME.** That is why they
+matched no constant in the ROM — not `TRANSPORT_WAIT_RX_SECONDS` (5), not
+`ESP_IDLE_SWEEP_SECS` (300), not `ESP_SERVER_TIMEOUT` (1800). **The mismatch was
+the answer and I had been treating it as the puzzle**, sweeping the constants for
+one that fitted. Run 3's control is what settled it, and both of its halves are
+load-bearing: withheld, still dead at four minutes; pressed, back **at once**. An
+instantaneous recovery on the press is not a timer coinciding with it.
+
+**THE USER PROPOSED THE HYPOTHESIS, UNPROMPTED, FROM THEIR OWN RUN** — *"may be
+the recovery is related to the moment I press M1?"* — after noticing they had
+pressed later in run 2 and waited longer. Two mechanisms had already been
+retracted on that issue and I was refusing to offer a third; the person at the
+machine had the observation neither of them contained.
+
+**IT IS NOT A DEFECT, AND THE SOURCE SAYS SO.** `CMD_CONTINUE` ends at
+`exit_code_di` (`src/breakpoints.asm:64`), which pages `MAIN_BANK` **out** of
+slot 7 and `ret`s into the debuggee. The stub then is not executing and its bank
+is not mapped, so **nothing polls the link — structurally, not by omission**.
+Exactly two things return control: an `RST 0` breakpoint through the AltROM
+trampoline, or an NMI. Resume into garbage from `PC = 0`, reach no breakpoint,
+and the button is the only way home. That is dezogif's headline limitation, and
+it is precisely what **#22 (M2)** removes — the finding is carried there.
+
+**M1 WAS NEVER "DOING NOTHING", AND THAT MISREADING COST TWO RUNS.** DeZog showed
+`Manual break` at `8FE4.4` the moment the border resumed —
+`BREAK_REASON.MANUAL_BREAK`, emitted only by `send_ntf_pause` from
+`mf_nmi_button_pressed`, and only while `prgm_state` is `PRGM_RUNNING`. The press
+was doing the whole job; the break path goes to `cmd_loop`, **which does not
+repaint**, so the only effects are the border resuming and the notification
+reaching the client. A live PC also says the Z80 was **executing**, not wedged.
+**Any M2 bench judging a poll-triggered break off the stub's own screen will be
+judging the wrong surface.**
+
+**THE FROZEN BORDER'S COLOUR IS A DISCRIMINATOR AND IT IS WORTH KEEPING.**
+`change_border_color` has exactly one caller, `main.asm:257`, and returns early
+only when cycling is off — so a frozen border means `main_loop` is not turning.
+And `transport_read_byte` writes BLUE then YELLOW around every read
+(`transport_esp.asm:3468-3483`), so a stub parked in the transport leaves
+**yellow**, which is bench N1's signature. #39's was **black** — which is what
+said the Z80 was in the debuggee rather than in the transport, and pointed the
+search away from where both retracted mechanisms had looked.
+
+**#27's FIX IS IRRELEVANT HERE, ESTABLISHED CLEANLY RATHER THAN ASSUMED.** Runs 1
+and 2 differ only in the ROM — `00.19` predates #27, `00.1E` carries it — and
+behaved identically, with a byte-identical screen trace. A Step Into plants
+temporary breakpoints at the addresses *after* `PC = 0`; once the garbage runs
+away from those it never returns, so whether they land is beside the point. The
+build was read off line 1 **and** independently over the wire before each run,
+which is 2026-08-09's lesson applied rather than recorded.
+
+**THE `RX Timeout` WAS MY OWN INSTRUMENT, IN BOTH RUNS, AND I NEARLY BUILT ON
+IT.** `test/dzrp/screen-client.py` connects, reads and closes; its `<id>,CLOSED`
+ends `cmd_loop`'s wait, fails to parse as a `+IPD` header and reaches
+`drain_main`, which paints it — MEMORY.md 2026-08-06, which also records it is
+*not* unconditional. Each read was **clean at the moment of reading** and its own
+close armed the error seen minutes later; run 1 was additionally confounded by
+DeZog departing, which is what moved the session line to `Session lost - client
+gone`. **The tell was that run 2's error appeared with the session line still
+reading `Session opened`**, which the run-1 explanation could not produce. That
+is [[ERRORS.md]]'s stale-fake-peer entry in a new organ: the instrument produced
+the finding. I flagged the risk before the first read and then did not follow it
+through until the second reading contradicted the first.
+
+**What survives is the datum that matters: the hang raises no fault.** Both
+post-recovery reads were clean, taken before their own close — which excludes
+`esp_recover` and every path through `drain_main` during the window.
+
+**Rejected.** Offering a third mechanism (the issue forbids it in as many words,
+and two had already been retracted); closing on run 1 alone (the ~40 s looked
+like a timer and would have sent the next session hunting constants); reading the
+screen during run 3 (my own reader arms the very error under discussion); keeping
+#39 open re-scoped (it describes behaviour working as designed, and #22 is where
+the symptom actually goes).
+
+**NOT ESTABLISHED.** **That the original report was this** — same recipe and same
+symptom, but a different session with nothing captured; tonight's runs are
+re-runnable and that one is not. **The design question the issue raised is
+untouched**: should `CMD_CONTINUE` refuse an uninitialised `backup.pc`/`backup.sp`?
+The cost of not refusing is now measured — the session dies and somebody walks to
+the machine — but DZRP has no failure response, so "refuse" can only mean report
+on the Next's screen and let the client time out, which is the silence issues #8
+and #9 call a defect. Undecided, and it needs no mechanism. **One machine, one
+reporter**, though now with a recipe anyone with a Next can repeat.
+
+**Cost: no `src/` change, no ROM byte, no `make bump`.**
+
+---
+
+## 2026-08-10 — The check-id register names its emitters, and the three collisions are accepted rather than renamed
+
+**Decided (user) and built.** `CLAUDE.md`'s check-id list — the register that
+`CLAUDE.md` itself declares **interface, not prose** — now names the file that
+**emits** each range, carries all 22 ranges, and states its collisions.
+
+**IT WAS WRONG IN TWO WAYS AND HAD GONE STALE FOUR TIMES.** Three ranges were
+absent entirely (`A0`-`A6` `slot-ceiling-probe.py`, `B0`-`B5`
+`vanished-peer-probe.py`, `V1`-`V2` `run-probes-jnext.sh`), and **three ids mean
+two different things each**:
+
+| ids | and | worst? |
+|---|---|---|
+| `N1`-`N4` | `run-no-hang.sh` **and** `run-client-status.sh` | **both gates** |
+| `P1`-`P3` | `run-tx-patience.sh` **and** `screen-agreement.py` | both gates, but see below |
+| `B1`-`B2` | `run-ip-boundary.sh` **and** `vanished-peer-probe.py` | mildest — the second renders **no verdict at all** |
+
+The register had previously gone stale at `N1`-`N6`, `S1`-`S3` and `H1`-`H5`; the
+fourth, found here, is `S1`-`S7` against the `S8`/`S9` **issue #40 added the same
+day**. *The enumeration is a grep, not a memory* — turned on the register itself,
+now for the fourth time.
+
+**RENAMING WAS REJECTED, AND THE REASON IS THE RULE'S OWN.** `CLAUDE.md` says the
+id is never shortened and never renumbered; that rule now carries its reason —
+ids are cited by number across `MEMORY.md`, `doc/` and closed issues, and several
+`MEMORY.md` entries are **deliberately frozen** records of what was measured at
+the time, so they cannot be edited to match a renumbering. Also rejected:
+prefixing the printed id with the bench name (it keeps every citation valid, but
+edits every verdict line in two benches and needs re-checking against the
+20-word rule); and leaving it alone.
+
+**THE COLLISIONS ARE HARMLESS TODAY AND THAT IS ASSERTED FROM THE CODE, NOT
+ASSUMED.** The only two mechanical consumers of ids are `run-dzrp-stub.sh`'s W3
+grep of `^FAIL  C10 ` and `hardware-check.py`'s `classify()`, whose single caller
+is fed only by the `conformance.py` subprocess — so neither can ever see an `N`,
+`B` or `P`. `hardware-check.py`'s own lines are two-space indented and cannot
+match `^FAIL ` either. **The residual risk is human**: writing "N2 is green" and
+meaning the other bench.
+
+**TWO PRINTED FORMS NOBODY KNEW, both found by the implementer.**
+`screen-agreement.py`'s `P` ids are **never printed bare** — `tag = args.label + " "`,
+and the driver passes `G1`/`G2`, so the line reads `PASS  G1 P1 …` and field 2 is
+the `G`. That softens the `P` collision without removing it, since humans write
+"P2" in prose — as that file's own docstring does. And **`E4` prints as `E4a` and
+`E4b`**, so a grep for `E4 ` misses both.
+
+**MY OWN BRIEF CONTAINED ONE WRONG ROW AND THE IMPLEMENTER CAUGHT IT** — I
+attributed `G1`-`G2` to `screen-agreement.py`, where `run-screen-agreement.sh`
+prints them. It is a small error and it is exactly the class this change exists
+to remove, which is why the brief told the implementer to re-derive the table and
+that their result would win. It did. The independent reviewer then rebuilt the
+table a **third** time, from scratch, and agreed in every cell.
+
+**Cost: documentation only.** `git diff --name-only main..HEAD` is `CLAUDE.md`
+alone; nothing under `src/`, no `Makefile`, **no `make bump`** — checked
+mechanically.
+
+---
+
 ## 2026-08-10 — The sweep was reaping sockets it had never been introduced to, and the fix is a timer reset rather than an exemption
 
 **Built, issue #40**, and the shape of it was **decided by the user before any

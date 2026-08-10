@@ -7,7 +7,7 @@
 .PHONY: help all main unit-tests ut-headless mf-rom mf-rom-wifi mf-rom-sum mfselect test \
         test-unit test-mfselect mfinstall test-mfinstall \
         test-esp test-dzrp test-dzrp-stub test-ip-boundary test-tx-patience \
-        test-client-status test-no-hang test-screen-agreement \
+        test-client-status test-no-hang test-screen-agreement test-wifi-assoc \
         test-hardware probe-jnext probe-slots probe-vanished probe-idle-drop \
         read-screen \
         bump bump-major check-reproducible \
@@ -270,6 +270,25 @@ IDLE_SWEEP ?=
 ifneq ($(IDLE_SWEEP),)
   VARIANT_SUFFIX := $(VARIANT_SUFFIX)-idle$(IDLE_SWEEP)
   VARIANT_FLAGS  += -DESP_IDLE_SWEEP_SECS=$(IDLE_SWEEP)
+endif
+
+# ADDR_CHECK — the ninth bench seam, in seconds, and the only one of the family
+# whose shipped value needs NO moving to be watchable: 60 seconds is 3000
+# frames, which a headless run sits out in well under a minute of wall clock.
+#
+# It is issue #32's re-query of AT+CIFSR from the idle path — the stub has been
+# idle this long with no DZRP session, so ask the module whether it still has
+# the address the screen is advertising. ADDR_CHECK=0 leaves the whole thing
+# out, which is the control and is main's behaviour before this: one query at
+# bring-up and never again. That control is the only setting this seam exists
+# for, since the shipped period is already benchable.
+#
+# Same naming rule as the others: each probe ROM gets its own output name.
+ADDR_CHECK ?=
+
+ifneq ($(ADDR_CHECK),)
+  VARIANT_SUFFIX := $(VARIANT_SUFFIX)-addr$(ADDR_CHECK)
+  VARIANT_FLAGS  += -DESP_ADDR_CHECK_SECS=$(ADDR_CHECK)
 endif
 
 # BAUD_HIGH — the seventh bench seam, and the only one of the family whose
@@ -824,6 +843,41 @@ test-slot-recovery:
 	 ROM_NOSWEEP="$(OUT)/enNextMf-wifi-fl1-li0.rom" \
 	 ROM_IDLE="$(OUT)/enNextMf-wifi-idle10.rom" \
 	 ROM_NOIDLE="$(OUT)/enNextMf-wifi-idle0.rom" $(TEST)/run-slot-recovery.sh
+
+# ---------------------------------------------------------------------------
+# The Next losing and regaining its WiFi association — issue #32.
+#
+# AT+CIFSR is asked once, at bring-up, so `Connect at <ip>:11000` is decided
+# there and never revisited. A Next that drops off the WiFi afterwards — or that
+# came up before its router did — goes on showing whatever was true then, and
+# nothing on the machine ever says otherwise.
+#
+# IT WAS BLOCKED RATHER THAN UNTESTED until jnext could take the emulated module
+# off its network: AT+CWJAP? was query-only, there was no AT+CWQAP, and STA_IP
+# was a constexpr. jnext#246 (0.99.148) gave the outage and jnext#247 (0.99.151)
+# gave the address the right to come back DIFFERENT — and the second is what
+# makes a check discriminate at all, since after an A -> 0.0.0.0 -> A outage the
+# stub's cached A is correct and every wrong answer agrees with the right one.
+#
+# The subject is the SHIPPED ROM: 60 seconds is 3000 frames, which a headless
+# run sits out. ADDR_CHECK=0 assembles the re-query out and is the control, one
+# constant away — the ninth seam of the family, and the only member whose
+# shipped value needed no moving.
+#
+# It binds no host TCP port for its verdicts (they are screenshots read back as
+# text) but D6 opens one connection, so it is not part of `make test`. It says
+# NOTHING about real hardware: every association fact in it is modelled by the
+# emulator, told what to do by this bench's own command line, and jnext#247
+# records that an address CHANGING across an outage has never been observed on
+# an ESP-01 at all. See test/run-wifi-assoc.sh.
+#
+# Run the WiFi-association bench (5 jnext runs, 6 checks; not part of `make test`)
+test-wifi-assoc:
+	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi ADDR_CHECK=0 mf-rom
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
+	 ROM="$(OUT)/enNextMf-wifi.rom" \
+	 ROM_CONTROL="$(OUT)/enNextMf-wifi-addr0.rom" $(TEST)/run-wifi-assoc.sh
 
 # ---------------------------------------------------------------------------
 # The module's own idle timeout — issue #24.

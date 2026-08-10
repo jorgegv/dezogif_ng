@@ -601,8 +601,9 @@ strongest:
    check does**: the probe is *not* zero-**free**, as this paragraph used to say — eight of its
    2048 bytes are `0x00`, which is why a red reports 2040 changed — and the all-zeros outcome
    **cannot fire at all**, because any run reaching `show_ui` also draws glyphs into character rows
-   8-15, which is exactly the probed `0x4800`-`0x4FFF`, so it reports `CORRUPT` instead. **Shown red against this branch's own first commit**, which has the
-   writer and not the guard: `96 of 2048 bytes changed, first at 0x4908`. **The first version of
+   8-15, which is exactly the probed `0x4800`-`0x4FFF`, so it reports `CORRUPT` instead.
+   **Shown red against this branch's own first commit**, which has the writer and not the
+   guard: `96 of 2048 bytes changed, first at 0x4908`. **The first version of
    N6 was 32 bytes at `0x4800` and passed against that same ROM** — scanline 0 is the one scanline
    two text strings cannot differ on, because the top row of essentially every ZX glyph is blank.
    Measured against the font, not reasoned.
@@ -614,26 +615,25 @@ strongest:
    writes one row; `show_ui` opens with `MEMCLEAR SCREEN, SCREEN_SIZE` and then fills 1248 more
    bytes of attributes before it prints a character, so through a retargeted slot 2 that is
    `0x4000`-`0x5CDF` — **7392 bytes** — of the client's bank destroyed rather than 96 bytes of it.
-   (The issue says 8 KB; that is the size of the *slot*, not of the write.) Upstream's, in **both**
-   builds, and
-   the fix is the opposite shape to N6's: `show_ui` **forces** the window and restores it
-   (`ui.asm`'s `screen_map`), because abandoning the debugger's own screen would leave the machine
-   showing whatever was there and `last_error` unreported. **Its trigger is `CMD_CLOSE`, not the
-   "B" key issue #28 names** — the same `main_redraw` either way, but a client ordering its own
-   commands over a socket carries **no margin at all**, where an injected keypress is scheduled in
-   emulated frames against a client counting wall clock (W6's mismatch, and N5's `IDLE_WAIT` is
-   still a margin). That also **widens** the defect the issue describes: `CMD_CLOSE` is what DeZog
-   sends on every Shift+F5 and `drain_main` reaches the same `show_ui` on any RX timeout, so nobody
-   need be at the machine — which is the state N6's `WIPED` wording *describes* while being unable
-   to reach it (above). The precondition is `N3`'s ordering proof reused: `cmd_close`
-   answers **before** `show_ui`, so only a reply to a *further* command shows the repaint happened.
-   Slot 2 is read back **before** the bank so "left the window forced" and "wrote through the
-   client's bank" are two verdicts and not one. **Shown red first**, against `main`'s ROM:
-   `2040 of 2048 bytes changed, first at 0x4800` — 2040 and not 2048 because eight bytes of the
-   probe are themselves `0x00`. **What it does not cover**: a "B" press with slot 2 retargeted, and
-   the return of a *post-press* `show_ui` — `test-no-hang`'s N2 presses "B", but its black border
-   is written by `check_key_border` itself before `jp z,main_redraw` is taken, so it shows the
-   shell was **entered** and says nothing about its returning. Nor does N8 check
+   (The issue says 8 KB; that is the size of the *slot*, not of the write.) Upstream's, in
+   **both** builds, and the fix is the opposite shape to N6's: `show_ui` **forces** the window and
+   restores it (`ui.asm`'s `screen_map`), because abandoning the debugger's own screen would leave
+   the machine showing whatever was there and `last_error` unreported. **Its trigger is
+   `CMD_CLOSE`, not the "B" key issue #28 names** — the same `main_redraw` either way, but a
+   client ordering its own commands over a socket carries **no margin at all**, where an injected
+   keypress is scheduled in emulated frames against a client counting wall clock (W6's mismatch,
+   and N5's `IDLE_WAIT` is still a margin). That also **widens** the defect the issue describes:
+   `CMD_CLOSE` is what DeZog sends on every Shift+F5 and `drain_main` reaches the same `show_ui`
+   on any RX timeout, so nobody need be at the machine — which is the state N6's `WIPED` wording
+   *describes* while being unable to reach it (above). The precondition is `N3`'s ordering proof
+   reused: `cmd_close` answers **before** `show_ui`, so only a reply to a *further* command shows
+   the repaint happened. Slot 2 is read back **before** the bank so "left the window forced" and
+   "wrote through the client's bank" are two verdicts and not one. **Shown red first**, against
+   `main`'s ROM: `2040 of 2048 bytes changed, first at 0x4800` — 2040 and not 2048 because eight
+   bytes of the probe are themselves `0x00`. **What it does not cover**: a "B" press with slot 2
+   retargeted, and the return of a *post-press* `show_ui` — `test-no-hang`'s N2 presses "B", but
+   its black border is written by `check_key_border` itself before `jp z,main_redraw` is taken, so
+   it shows the shell was **entered** and says nothing about its returning. Nor does N8 check
    `SCREEN_BANK`'s **value**: a `SCREEN_BANK=11` build spares the client's bank too and would pass
    it. N1-N5 cover the number, by reading row 8 back as text.
    **Why not a cross-run comparison**: the two interesting states are adjacent lines of similar

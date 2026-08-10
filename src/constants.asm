@@ -43,7 +43,8 @@ SWAP_SIZE:      EQU 0x2000
 ; bit 6 drives port 0x7FFD bit 3 (:3658-3660) which is the shadow-screen select
 ; (:3768). So show_ui already forces the ULA onto bank 5; this forces the CPU's
 ; window onto the same place. Corroborated from a third direction: MMU2's own
-; reset value is X"0A" (:4612).
+; reset value is X"0A" (:4613 — :4612 is MMU1, and an earlier version of this
+; comment cited it by mistake).
 ;
 ; NOTE that no check here asserts this NUMBER. Bench N8 would pass a build with
 ; SCREEN_BANK=11 — the client's bank is spared either way — so what covers the

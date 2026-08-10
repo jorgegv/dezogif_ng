@@ -1333,6 +1333,25 @@ measured. **A debuggee that has selected the 128K ROM** is handled by the NR
 460800** — the sixth of the criteria written beside `ESP_BAUD_HIGH`, and the one
 no bench anywhere covers — has not been run.
 
+*(**CORRECTED 2026-08-10: BOTH clauses of the #28 sentence are now false.** It
+is **closed** — `show_ui` maps the display file under `0x4000` itself and
+restores what was there (`ui.asm`'s `screen_map`), with bench check **N8** shown
+red first. And the write was never 8 KB: it is **7392 bytes**, `0x4000`-`0x5CDF`
+— `MEMCLEAR`'s 6144 plus the attribute `MEMFILL`'s 1248 — where 8 KB is the size
+of the **slot**. See the entry at the top of this file.*
+
+*Recorded because of **how** this site survived. This entry was already
+annotated at a different site — the `esp_ui_bank` prediction in its `Rejected.`
+paragraph — and **three separate sweeps by two people still missed this one**,
+which is `MEMORY.md` 2026-08-08's lesson exactly: "I searched around the sites
+already known instead of across the whole file". What found it in one pass was
+grepping the **subject** (`#28`, and `MEMCLEAR ... slot 2`) over the flattened
+file and reading every hit, rather than the **object** — both earlier sweeps
+matched "8 KB" only when followed by "client"/"that bank"/"somebody", and this
+sentence names none of them. **The grep must be for the claim, not for any
+phrasing of the thing the claim is about — and an annotated entry is not a
+swept entry.**)*
+
 [doc/ASYNCHRONOUS-BREAK-DESIGN.md]: doc/ASYNCHRONOUS-BREAK-DESIGN.md
 
 ---

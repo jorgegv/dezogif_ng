@@ -111,6 +111,7 @@ NAMES = {
     "GET_SPRITES": dzrp.CMD_GET_SPRITES,
     "GET_SPRITE_PATTERNS": dzrp.CMD_GET_SPRITE_PATTERNS,
     "SET_BREAKPOINTS": dzrp.CMD_SET_BREAKPOINTS,
+    "RESTORE_MEM": dzrp.CMD_RESTORE_MEM,
 }
 
 # The byte a DZRP breakpoint substitutes (RST 0), and the byte the ROM
@@ -1182,6 +1183,188 @@ def chk_rom_breakpoint_spares_trampoline(d):
                   "taken" % len(TRAMPOLINE))
 
 
+# ---------------------------------------------------------------------------
+# C22 and C23 — the 64K address form inside the DEBUGGER's own slot
+# ---------------------------------------------------------------------------
+#
+# DZRP GIVES AN ADDRESS TWO FORMS AND THIS SUITE HAD ONLY EVER SENT THE SECOND
+# ONE LOW. CMD_SET_BREAKPOINTS and CMD_RESTORE_MEM each carry a 16-bit address
+# plus a bank+1 byte: non-zero names a bank outright, zero means "the 64K
+# address as the debuggee currently sees it". The stub answers the second form
+# by asking whether the address is at or above 0xE000, because that range is
+# MAIN_SLOT — where the debugger itself is executing — so reaching the
+# DEBUGGEE's memory there means paging its bank into the swap window first.
+#
+# BOTH HANDLERS MADE THAT DECISION ON THE WRONG REGISTER (issue #38): the `cp
+# HIGH MAIN_ADDR` ran with A still holding the bank+1 byte, which on this path
+# is zero by definition, so the test was always 0 < 0xE0 and the direct-write
+# branch was always taken. A 64K-form address at 0xE000 or above therefore
+# wrote into MAIN_BANK — the bank the debugger is running out of. Same family
+# as C18, one command along: a client-controlled write over the running
+# debugger.
+#
+# NOTHING HERE HAD EVER FIRED IT, which is why a green suite stayed green.
+# DeZog sends long addresses; C19 and C21 send the 64K form, but only at 0x1234
+# and 0x8000, where the direct branch is the CORRECT one. The defect lived in
+# the one input nobody sent.
+
+# The probe address, and every part of it is chosen.
+#
+#  - IN MAIN_SLOT, or there is no wrong branch to take.
+#  - ABOVE ANY BYTE THE DEBUGGER OCCUPIES IN MAIN_BANK, so that a remote which
+#    still has the defect writes into DEAD SPACE and the red is a repeatable
+#    reading rather than a crash somewhere in the debugger's own code. Only
+#    main_end-MAIN_ADDR bytes are ever copied into that bank (mf_rom.asm's
+#    MEMCOPY), main.asm ASSERTs main_end <= ROM_MAGIC_ADDR, and the identity
+#    block ROM_MAGIC_ADDR names ends at 0xFEB4 — and it only ever moves DOWN,
+#    16 bytes at a time, as the MF ROM half grows. So this is above everything
+#    either variant can hold, now and after M2.
+#  - NOT 0xFFFF, so nothing here rests on the last byte of a bank.
+#
+# The stray byte a defective remote leaves in MAIN_BANK survives the run and is
+# inert; the debuggee's own byte is put back below.
+SLOT7_ADDR = 0xFF80
+SLOT7_SEED = 0x5A       # seeded into the DEBUGGEE's bank. Not BP_OPCODE.
+SLOT7_VALUE = 0xA5      # what CMD_RESTORE_MEM is asked to write. Not the seed.
+
+# constants.asm: the bank the debugger executes from, and the one thing the
+# debuggee's slot 7 must not be for these checks to discriminate at all.
+MAIN_BANK = 94
+
+
+def _slot7(d):
+    """Which bank the DEBUGGEE's slot 7 holds, per the remote's own bookkeeping.
+
+    Byte 36 of CMD_GET_REGISTERS: 28 register bytes, the slot count at 28,
+    slots 0-6 read LIVE from the MMU at 29-35, and slot 7 at 36 — which our
+    stub reports from slot_backup.slot7 instead, because while the debugger is
+    stopped the MMU's slot 7 holds the debugger's own bank and reporting that
+    would be answering a different question.
+    """
+    body = talk(d, dzrp.CMD_GET_REGISTERS)
+    if len(body) < 37:
+        raise Precondition("the register block is %d bytes, too short for the "
+                           "slot list" % len(body))
+    return body[36]
+
+
+def _seed_slot7(d):
+    """Put a known byte at SLOT7_ADDR in the debuggee's bank, and show it landed.
+
+    THIS IS WHAT STOPS THE TWO CHECKS BELOW PASSING VACUOUSLY, in two separate
+    ways.
+
+    If the debuggee's slot 7 held MAIN_BANK, the swap window and the direct
+    write would reach the SAME memory and no observation could tell the two
+    branches apart. That is refused rather than measured.
+
+    And the seed has to be shown to be there. CMD_WRITE_MEM and CMD_READ_MEM
+    reach 0xE000+ through memory_loop, which makes the same decision correctly
+    (backup.asm:325, `ld a,h` before the compare), so a round trip says that
+    route works in THIS run — and a red below is then about the handler rather
+    than about the address being unreachable by anything.
+
+    WHAT IT DOES NOT ESTABLISH, said out loud: memory_loop is a SHARED
+    dependency of the seed and the verdict. Were it broken the same way, the
+    seed would round-trip through MAIN_BANK and both checks would pass against
+    a defective remote. No socket-side observation separates those; what rules
+    it out is the source, enumerated, and not this run.
+    """
+    slot7 = _slot7(d)
+    if slot7 == MAIN_BANK:
+        raise Precondition("the debuggee's slot 7 holds bank %d, the debugger's "
+                           "own, so both branches write one place" % MAIN_BANK)
+    _write_mem(d, SLOT7_ADDR, bytes([SLOT7_SEED]))
+    back = _read_mem(d, SLOT7_ADDR, 1)
+    if back != bytes([SLOT7_SEED]):
+        raise Precondition("0x%04X reads %s after being seeded 0x%02X: nothing "
+                           "can write there" % (SLOT7_ADDR, back.hex(), SLOT7_SEED))
+    return slot7
+
+
+def chk_slot7_breakpoint_uses_swap_window(d):
+    """A 64K-form breakpoint at 0xE000+ must reach the debuggee, not the debugger.
+
+    THE OBSERVATION IS POSITIVE AND HAS THREE OUTCOMES, which is worth more than
+    waiting to see whether the remote dies — a one-byte write into the running
+    debugger may or may not be fatal depending on where it lands, so "it
+    crashed" is a weak and flaky signal for this defect. CMD_READ_MEM reaches
+    the same address through memory_loop's swap window, so afterwards it reads:
+
+      the RST 0     - the write went where the client asked;
+      the seed      - it went somewhere else, and the only other place a 64K
+                      address at 0xE000+ can land is MAIN_BANK: the defect;
+      anything else - a third thing, reported as a third thing.
+
+    THE REPLY BYTE IS A SECOND, INDEPENDENT OBSERVATION of the same routing: the
+    remote must report the opcode it FOUND, which on the swap path is the seed.
+    It is judged after the read-back because it is the weaker of the two — a
+    defective remote reads an uninitialised byte out of MAIN_BANK and could
+    match the seed by chance, one time in 256 — where the read-back is
+    deterministic whichever branch ran.
+
+    SURVIVAL IS ASSERTED IN BAND rather than on a fresh connection as C18 does:
+    the read-back is itself an exchange the remote has to serve AFTER the
+    offending write, so a remote that overwrote itself fails here as a timeout,
+    which main() reports as the connection fault it is.
+    """
+    talk(d, dzrp.CMD_INIT, dzrp.init_payload())
+    _seed_slot7(d)
+
+    old = _set_bps(d, (SLOT7_ADDR,))
+    now = _read_mem(d, SLOT7_ADDR, 1)[0]
+    # Put the seed back with CMD_WRITE_MEM and NOT CMD_RESTORE_MEM: that handler
+    # is C23's subject and carries the same defect, so on a red remote the
+    # restore would go to the wrong bank and leave this one behind.
+    _write_mem(d, SLOT7_ADDR, bytes([SLOT7_SEED]))
+
+    if now == SLOT7_SEED:
+        return FAIL, ("0x%04X is untouched: the RST 0 went to the debugger's "
+                      "own bank" % SLOT7_ADDR)
+    if now != BP_OPCODE:
+        return FAIL, ("0x%04X reads 0x%02X, neither the breakpoint nor the seed"
+                      % (SLOT7_ADDR, now))
+    if old[0] != SLOT7_SEED:
+        return FAIL, ("the opcode reported for 0x%04X was 0x%02X, not the seed"
+                      % (SLOT7_ADDR, old[0]))
+    return PASS, ("a 64K-form breakpoint at 0x%04X reached the debuggee's bank"
+                  % SLOT7_ADDR)
+
+
+def chk_slot7_restore_uses_swap_window(d):
+    """CMD_RESTORE_MEM, 64K form, at 0xE000+ — the same defect one handler along.
+
+    NOT A COPY OF C22, and the difference is why it is its own check: the two
+    handlers carry SEPARATE copies of that decision — cmd_set_breakpoints and
+    cmd_restore_mem in commands.asm — so a fix to one leaves the other exactly
+    as it was, and a single check covering both would not say which.
+
+    This is also the worse of the pair, because the byte written is the
+    CLIENT'S rather than a fixed RST 0: an arbitrary value at an arbitrary
+    offset of the running debugger's bank.
+
+    Same three-outcome read-back as C22, with SLOT7_VALUE in place of the
+    breakpoint. There is no reply to corroborate it with — CMD_RESTORE_MEM
+    answers Length=1 and carries no payload — so the read-back is the whole of
+    the evidence here.
+    """
+    talk(d, dzrp.CMD_INIT, dzrp.init_payload())
+    _seed_slot7(d)
+
+    _restore_bps(d, ((SLOT7_ADDR, SLOT7_VALUE),))
+    now = _read_mem(d, SLOT7_ADDR, 1)[0]
+    _write_mem(d, SLOT7_ADDR, bytes([SLOT7_SEED]))
+
+    if now == SLOT7_SEED:
+        return FAIL, ("0x%04X is untouched: the byte went to the debugger's "
+                      "own bank" % SLOT7_ADDR)
+    if now != SLOT7_VALUE:
+        return FAIL, ("0x%04X reads 0x%02X, neither the value sent nor the seed"
+                      % (SLOT7_ADDR, now))
+    return PASS, ("a 64K-form CMD_RESTORE_MEM at 0x%04X reached the debuggee's "
+                  "bank" % SLOT7_ADDR)
+
+
 # One byte over would be the boundary and is not what this asks. C5's 8192 holds
 # the boundary; this asks whether a frame that is decisively too big is SURVIVED,
 # and a size well past the window is what makes the unfixed failure unambiguous
@@ -1422,6 +1605,16 @@ CHECKS = [
     # reports a Precondition rather than a vacuous green.
     ("C21 a breakpoint spares the debugger's own trampoline",
      chk_rom_breakpoint_spares_trampoline, "SET_BREAKPOINTS"),
+    # C22 AND C23 ARE TWO CHECKS BECAUSE THE DEFECT HAS TWO SEPARATE COPIES —
+    # one in cmd_set_breakpoints, one in cmd_restore_mem — so a fix to either
+    # alone must still leave a red naming the other. They sit here, above C18,
+    # because on a defective remote the mis-routed write lands in dead space
+    # above main_end and leaves the remote serving; nothing below them depends
+    # on that being true, and C18 and C15 keep their own places.
+    ("C22 a 64K breakpoint above 0xE000 uses the swap window",
+     chk_slot7_breakpoint_uses_swap_window, "SET_BREAKPOINTS"),
+    ("C23 a 64K CMD_RESTORE_MEM above 0xE000 uses the swap window",
+     chk_slot7_restore_uses_swap_window, "RESTORE_MEM"),
     # C18 IS SECOND-TO-LAST, and for a weaker version of C15's reason. Our stub
     # answers an oversize frame by reporting on its own screen and going to
     # drain_main, which re-initialises the debugger — so anything below it would

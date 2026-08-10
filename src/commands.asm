@@ -874,7 +874,16 @@ cmd_set_breakpoints:
 
 .handle_64k_address:
     ; Normal 64k address:
-    ; Check memory area
+    ; Check memory area. LD A,H FIRST, and it is the whole of issue #38: A still
+    ; holds the bank+1 byte here, which on this path is zero BY DEFINITION — it
+    ; is what the jump above tested — so the compare was always 0 < 0xE0 and
+    ; .normal always won. A 64K address at 0xE000 or above then took the direct
+    ; write, into MAIN_SLOT, i.e. into MAIN_BANK: the bank this code is running
+    ; out of. The address to judge is in HL, exactly as in set_tmp_breakpoint
+    ; and clear_tmp_breakpoint (breakpoints.asm) and memory_loop (backup.asm),
+    ; which are the other three sites making this decision and all get it right.
+    ; Bench check C22.
+    ld a,h
     cp HIGH MAIN_ADDR	; 0xE000
     jr c,.normal
 
@@ -965,7 +974,12 @@ cmd_restore_mem:
     jr .page_in_bank
 
 .handle_64k_address:
-    ; Check memory area
+    ; Check memory area. The second copy of issue #38, and worse than
+    ; cmd_set_breakpoints' because the byte written below is the CLIENT'S rather
+    ; than a fixed RST 0 — an arbitrary value at an arbitrary offset of the
+    ; running debugger's bank. See the same comment there for why A is not the
+    ; register to test. Bench check C23.
+    ld a,h
     cp HIGH MAIN_ADDR	; 0xE000
     jr c,.normal
 

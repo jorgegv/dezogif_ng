@@ -464,7 +464,19 @@ strongest:
    The **id** is interface, not prose: `run-dzrp-stub.sh`'s
    W3 greps `^FAIL  C10 ` and `hardware-check.py` takes the code from field 2 of every `FAIL` line.
    **Result 2026-08-05: W1-W5 pass, 15 passed / 0 failed of 15 — the target exits 0.**
-   **The suite is 18 since C16-C18 landed**; the 2026-08-05 figure is left as the measurement it was
+   **C19 AND C20 ARE A STANDING RED, AND THEY ARE ISSUE #27**: a DZRP breakpoint is a byte patched
+   into memory, and `0x0000-0x3FFF` on a stopped Next is **not writable** — `sram_pre_rdonly <= not
+   (nr_8c_altrom_en and nr_8c_altrom_rw)` (`zxnext.vhd:3056`) gates the SRAM cycle at `:3154`, and
+   `src/altrom.asm:55` leaves NR `0x8C` at `10000000b` (bit 7 set, **bit 6 clear**) for the whole
+   session. So the `RST 0` is discarded and the stub reports success, because no breakpoint path
+   reads back what it wrote. **C19 is the mechanism** — the byte does not land — **and C20 is the
+   consequence** — the breakpoint never fires. Each carries its own RAM control **in the same run**,
+   because a breakpoint that does not fire is otherwise indistinguishable from a resume that never
+   worked. Measured: `0x1234` reads back `0xED` after a `CMD_SET_BREAKPOINTS` that took at `0x8000`,
+   and a debuggee that `call`s a ROM `RET` runs straight through to the RAM control. Until #27 is
+   fixed **`make test-dzrp-stub` exits 1 at 18 passed / 2 failed of 20**, exactly as C2 stood red
+   until issue #7 and C12 until #8. See `doc/DZRP-TESTING.md`.
+   **The suite is 20 since C19-C20 landed, and was 18 since C16-C18**; the 2026-08-05 figure is left as the measurement it was
    rather than restated, and the hardware run of 2026-08-08 that reports 15 of 15 was also taken at
    the suite's size then. **C16-C18 HAVE now run on hardware — 2026-08-09, build `00.19`, 18 of 18
    with the whole bench at 6 of 6.** And C18 carries the strongest evidence in this project's
@@ -811,7 +823,7 @@ read once; a document can be revised, cited and diffed.
 
 Two things the shortening may **never** touch, because they are interface rather than prose:
 
-- **The check id.** `T1`-`T8`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W6`, `C1`-`C18`, `B1`-`B2`,
+- **The check id.** `T1`-`T8`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W6`, `C1`-`C20`, `B1`-`B2`,
   `P1`-`P3`, `N1`-`N6`, `G1`-`G2`, `I1`-`I9`, `S1`-`S3`, `K1`-`K4`, `R0`-`R5`, `L1`-`L5`, `H1`-`H5` are cited
   by every
   document and

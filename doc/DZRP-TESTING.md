@@ -302,6 +302,46 @@ running it, so the shell kills itself — this cost two aborted commands before 
 | C13 | `CMD_GET_SPRITES` is answered at `count*5` bytes, the length DeZog asserts client-side — see below |
 | C14 | `CMD_GET_SPRITE_PATTERNS` is answered at `count*256` bytes, likewise |
 | C15 | **`CMD_CLOSE` is answered, and the remote goes on serving afterwards** — see below |
+| C16 | a full 8192-byte bank goes in with `CMD_WRITE_BANK` and reads back byte-identical |
+| C17 | **16 KB in one `CMD_WRITE_MEM`**, the largest single inbound payload there is, across a slot boundary |
+| C18 | an oversize payload is declined and **the remote goes on serving** — see `MEMORY.md` |
+| C19 | **a breakpoint in ROM space is written to memory** — and can be taken out again — see below |
+| C20 | **a breakpoint in ROM space stops the debuggee** — see below |
+
+### C19 and C20: breakpoints where ROM is mapped (issue #27)
+
+**A DZRP breakpoint is a byte patched into memory**, and `0x0000-0x3FFF` on a stopped Next is not
+writable. Every fixture in this suite lives at `0x8000` in a RAM bank, so until these two checks
+existed nothing here had ever asked.
+
+**The mechanism is one line of the FPGA.** In the normal ROM-serving branch of the slot-0/1 decode,
+`sram_pre_rdonly <= not (nr_8c_altrom_en and nr_8c_altrom_rw)` (`zxnext.vhd:3056`) — NR `0x8C`
+bits 7 and 6 — and `sram_pre_rdonly` gates the physical SRAM cycle at `:3154`. `src/altrom.asm:55`
+leaves NR `0x8C` at `10000000b` for the whole debug session: **bit 7 set so the patched Alt ROM
+serves reads, bit 6 clear so a write is discarded outright.** Nothing is mismapped and nothing is
+corrupted — the byte never reaches memory, and the stub reports success because no breakpoint path
+reads back what it wrote.
+
+**Two checks, and they are not the same check twice.** C19 asks whether the byte lands, which
+localises the fault to the write; C20 asks whether the breakpoint **fires**, which is what a user
+suffers. A fix that made writes land but broke the restore passes C20 and fails C19; one that
+patched the wrong image passes C19 and fails C20.
+
+**Each carries its own control, in the same run, and that is what makes them believable.** A
+breakpoint that does not fire is indistinguishable from a resume that never worked — that confound
+is what wrecked the one attempt to test this at the machine — so both do the identical thing at a
+RAM address alongside and report a **Precondition**, not a verdict, if the RAM half misbehaves.
+Both also assert that MMU slot 0 really holds the ROM (read back out of `CMD_GET_REGISTERS`, whose
+byte 28 is the slot *count* and byte 29 is slot 0), so a run in which `0x1234` was not ROM space at
+all cannot be reported as a ROM finding.
+
+**C20's fixture is built so that BOTH outcomes are positive observations**, which is why it needs no
+timeout. The ROM address it uses is one whose byte is `0xC9` — a `RET` — **found by reading the
+machine** rather than hardcoded, so nothing depends on which ROM is paged in. The debuggee `call`s
+it: if the breakpoint landed the `RST 0` runs and the debugger is entered there; if it was discarded
+the `RET` runs and control falls through to a `nop` one instruction later, which is the control.
+An `NTF_PAUSE` arrives either way and its address says which happened — so a *silence* is a third
+outcome again, and means the resume itself failed rather than the breakpoint.
 
 ### A verdict line is one sentence; this file is where the reasoning is
 

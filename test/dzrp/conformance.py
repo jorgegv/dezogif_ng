@@ -110,7 +110,14 @@ NAMES = {
     "PAUSE": dzrp.CMD_PAUSE,
     "GET_SPRITES": dzrp.CMD_GET_SPRITES,
     "GET_SPRITE_PATTERNS": dzrp.CMD_GET_SPRITE_PATTERNS,
+    "SET_BREAKPOINTS": dzrp.CMD_SET_BREAKPOINTS,
 }
+
+# The byte a DZRP breakpoint substitutes (RST 0), and the byte the ROM
+# breakpoint check looks for something to CALL. Both are Z80 opcodes rather
+# than anything protocol-level, which is why they are here and not in dzrp.py.
+BP_OPCODE = 0xC7
+RET_OPCODE = 0xC9
 
 # Set from --remote. The execution-control checks need a SECOND connection to
 # ask "is the remote still alive?" after an exchange that produced no answer,
@@ -868,6 +875,201 @@ def _first_diff(a, b):
     return "nowhere"
 
 
+# ==========================================================================
+# Breakpoints where ROM is mapped — issue #27.
+#
+# A DZRP breakpoint is a byte patched into memory: the remote replaces the
+# opcode at the address with an RST 0 and keeps the byte it replaced. That
+# works wherever the address is writable, and 0x0000-0x3FFF on a stopped Next
+# is NOT — which no check here had ever asked, because every fixture in this
+# file lives at 0x8000 in a RAM bank.
+#
+# WHY IT IS NOT WRITABLE, and it is one line of the FPGA. In the normal
+# ROM-serving branch of the slot-0/1 decode, `sram_pre_rdonly <= not
+# (nr_8c_altrom_en and nr_8c_altrom_rw)` (zxnext.vhd:3056) — NR 0x8C bits 7
+# and 6 — and `sram_pre_rdonly` is what gates the physical SRAM cycle at
+# :3154. src/altrom.asm:55 leaves NR 0x8C at 10000000b for the whole debug
+# session: bit 7 set so the patched Alt ROM SERVES READS, bit 6 clear so a
+# write is discarded outright. It is not mismapped and nothing is corrupted;
+# the byte simply never reaches memory, and the remote reports success because
+# neither breakpoint path reads back what it wrote.
+#
+# TWO CHECKS, AND THEY ARE NOT THE SAME CHECK TWICE. C19 asks whether the byte
+# lands, which localises the fault to the write; C20 asks whether the
+# breakpoint FIRES, which is what a user suffers. A fix that made writes land
+# but broke the restore would pass C20 and fail C19, and one that patched the
+# wrong image would pass C19 and fail C20.
+#
+# EACH CARRIES ITS OWN CONTROL, IN THE SAME RUN, and that is the whole reason
+# they can be believed. A breakpoint that does not fire is indistinguishable
+# from a resume that never worked — that confound is what wrecked the one
+# attempt to test this at the machine (issue #27's own record of it) — so both
+# checks do the identical thing at a RAM address alongside, and report a
+# Precondition rather than a verdict if the RAM half misbehaves.
+# ==========================================================================
+
+# An ordinary 48K ROM address, nothing special about it: the point is that it
+# is somewhere ROM is mapped, not that it is anywhere in particular. The
+# trampoline at 0x0000/0x0066 is deliberately NOT used here — a breakpoint
+# there is a separate defect with a separate fix, and using it would conflate
+# "ROM is not writable" with "the debugger's own code is in the firing line".
+ROM_BP_ADDR = 0x1234
+# The control, in the bank CMD_INIT maps at 0x8000. Same address C8/C10 use.
+RAM_BP_ADDR = 0x8000
+ROM_BANK = 255          # what MMU slot 0 holds while the debugger is stopped
+
+
+def _slot0(d):
+    """Which bank MMU slot 0 holds, read back out of CMD_GET_REGISTERS.
+
+    Byte 28 of the payload is the slot COUNT and byte 29 is slot 0 — an
+    off-by-one here reads the constant 8 and concludes the ROM is not mapped,
+    which is a check that passes for the wrong reason.
+    """
+    body = talk(d, dzrp.CMD_GET_REGISTERS)
+    if len(body) < 37:
+        raise Precondition("the register block is %d bytes, too short for the "
+                           "slot list" % len(body))
+    return body[29]
+
+
+def _set_bps(d, addrs):
+    """CMD_SET_BREAKPOINTS for a list of 64K addresses; returns the old opcodes.
+
+    The reply is one byte per breakpoint — the opcode the remote found before
+    it wrote, which is exactly what it must keep in order to un-patch later.
+    """
+    body = talk(d, dzrp.CMD_SET_BREAKPOINTS,
+                b"".join(_w(a) + b"\x00" for a in addrs))
+    if len(body) != len(addrs):
+        raise Precondition("CMD_SET_BREAKPOINTS answered %d bytes for %d "
+                           "breakpoints" % (len(body), len(addrs)))
+    return body
+
+
+def _restore_bps(d, pairs):
+    """CMD_RESTORE_MEM, four bytes per entry: address, bank+1, value."""
+    talk(d, dzrp.CMD_RESTORE_MEM,
+         b"".join(_w(a) + b"\x00" + bytes([v]) for a, v in pairs))
+
+
+def chk_rom_breakpoint_lands(d):
+    """Does the RST 0 of a breakpoint in ROM space actually reach memory?
+
+    Read the byte, set a breakpoint on it, read it again. The RAM breakpoint
+    alongside is the control and is asserted as a PRECONDITION: if the byte
+    at 0x8000 did not become an RST 0 either, then this run says nothing
+    about ROM and reporting it as a ROM finding would be a false attribution.
+
+    THE RESTORE IS PART OF THE SUBJECT, not tidying up. A breakpoint that can
+    be set and not removed is worse than one that cannot be set at all — it
+    leaves an RST 0 in the image the debuggee executes for the rest of the
+    session — so a landed write whose restore does not land is a failure here,
+    and the check says which of the two happened.
+    """
+    talk(d, dzrp.CMD_INIT, dzrp.init_payload())
+
+    slot0 = _slot0(d)
+    if slot0 != ROM_BANK:
+        raise Precondition("MMU slot 0 holds bank %d, not the ROM: 0x%04X is "
+                           "not ROM space in this run" % (slot0, ROM_BP_ADDR))
+
+    before = talk(d, dzrp.CMD_READ_MEM, b"\x00" + _w(ROM_BP_ADDR) + _w(1))[0]
+    if before == BP_OPCODE:
+        raise Precondition("0x%04X already reads 0x%02X, so setting a "
+                           "breakpoint there proves nothing"
+                           % (ROM_BP_ADDR, BP_OPCODE))
+
+    old = _set_bps(d, (ROM_BP_ADDR, RAM_BP_ADDR))
+    rom_now = talk(d, dzrp.CMD_READ_MEM, b"\x00" + _w(ROM_BP_ADDR) + _w(1))[0]
+    ram_now = talk(d, dzrp.CMD_READ_MEM, b"\x00" + _w(RAM_BP_ADDR) + _w(1))[0]
+    # Put both back before judging anything, so a red cannot leave the machine
+    # patched for the checks below.
+    _restore_bps(d, ((ROM_BP_ADDR, before), (RAM_BP_ADDR, old[1])))
+    rom_back = talk(d, dzrp.CMD_READ_MEM, b"\x00" + _w(ROM_BP_ADDR) + _w(1))[0]
+
+    if ram_now != BP_OPCODE:
+        raise Precondition("the RAM control at 0x%04X read back 0x%02X, not "
+                           "0x%02X" % (RAM_BP_ADDR, ram_now, BP_OPCODE))
+    if rom_now != BP_OPCODE:
+        return FAIL, ("0x%04X still reads 0x%02X: the RST 0 was discarded while "
+                      "RAM took one" % (ROM_BP_ADDR, rom_now))
+    if rom_back != before:
+        return FAIL, ("the breakpoint landed at 0x%04X but would not come out "
+                      "(0x%02X)" % (ROM_BP_ADDR, rom_back))
+    return PASS, ("a breakpoint at 0x%04X in ROM was set and removed, RAM "
+                  "control too" % ROM_BP_ADDR)
+
+
+def chk_rom_breakpoint_fires(d):
+    """Does a temporary breakpoint in ROM space stop the debuggee?
+
+    THE FIXTURE IS BUILT SO THAT BOTH OUTCOMES ARE POSITIVE OBSERVATIONS, which
+    is what makes this better than waiting out a timeout. The ROM address is
+    one whose byte is 0xC9 — a RET — FOUND BY READING THE MACHINE rather than
+    hardcoded, so nothing here depends on which ROM is paged in. The debuggee
+    CALLs it:
+
+        call <rom>      ; RST 0 there if the breakpoint landed
+        nop             ; <- the RAM control
+        jr $
+
+    If the breakpoint landed, the RST 0 runs and the debugger is entered at the
+    ROM address. If it was discarded, the RET runs, control returns, and the
+    RAM control catches it one instruction later. An NTF_PAUSE arrives either
+    way and its address says which happened — so a silence is a third thing
+    again, and means the resume itself failed rather than the breakpoint.
+
+    Both breakpoints go in one CMD_CONTINUE, so the control is not merely in
+    the same run but in the same resume.
+    """
+    talk(d, dzrp.CMD_INIT, dzrp.init_payload())
+
+    slot0 = _slot0(d)
+    if slot0 != ROM_BANK:
+        raise Precondition("MMU slot 0 holds bank %d, not the ROM: there is no "
+                           "ROM to break in" % slot0)
+
+    # 0x0100 upward: clear of the RST vectors and of the trampoline the stub
+    # patches into the Alt ROM at 0x0000 and 0x0066, so the byte found is a
+    # plain ROM byte and not one of ours.
+    rom = talk(d, dzrp.CMD_READ_MEM, b"\x00" + _w(0x0100) + _w(0x1F00))
+    if bytes([RET_OPCODE]) not in rom:
+        raise Precondition("no 0x%02X byte anywhere in 0x0100-0x1FFF, so this "
+                           "check has nothing to call" % RET_OPCODE)
+    rom_addr = 0x0100 + rom.index(RET_OPCODE)
+
+    fixture = b"\xCD" + _w(rom_addr) + b"\x00" + b"\x18\xFE"
+    ram_trap = DBG_CODE + 3
+    _write_mem(d, DBG_CODE, fixture)
+    if _read_mem(d, DBG_CODE, len(fixture)) != fixture:
+        raise Precondition("the fixture did not land at 0x%04X" % DBG_CODE)
+    _set_reg(d, REG_PC, DBG_CODE)
+    _set_reg(d, REG_SP, DBG_STACK)
+
+    payload = (bytes([1]) + _w(rom_addr) +      # the subject
+               bytes([1]) + _w(ram_trap) +      # the control
+               bytes([0]) + _w(0) + _w(0))
+    if not NO_CONTINUE:
+        talk(d, dzrp.CMD_CONTINUE, payload)
+    try:
+        ntf = d.wait_notification()
+    except dzrp.Timeout:
+        return FAIL, ("neither breakpoint fired within %.0fs: the resume "
+                      "failed, not the breakpoint" % d.base_timeout)
+    if len(ntf) < 4 or ntf[0] != dzrp.NTF_PAUSE:
+        return FAIL, "the notification is not an NTF_PAUSE (%s)" % ntf.hex()
+
+    addr = int.from_bytes(ntf[2:4], "little")
+    if addr == rom_addr:
+        return PASS, "the debuggee stopped on the ROM breakpoint at 0x%04X" % addr
+    if addr == ram_trap:
+        return FAIL, ("the ROM breakpoint at 0x%04X never fired; the RAM control "
+                      "did" % rom_addr)
+    return FAIL, ("stopped at 0x%04X, which is neither the ROM breakpoint nor "
+                  "the control" % addr)
+
+
 # One byte over would be the boundary and is not what this asks. C5's 8192 holds
 # the boundary; this asks whether a frame that is decisively too big is SURVIVED,
 # and a size well past the window is what makes the unfixed failure unambiguous
@@ -1092,6 +1294,16 @@ CHECKS = [
     ("C16 a full 8 KB bank round-trips", chk_write_bank_full, "WRITE_BANK"),
     ("C17 16 KB in one CMD_WRITE_MEM round-trips", chk_write_mem_large,
      "WRITE_MEM"),
+    # C19 AND C20 ARE ORDERED MECHANISM-THEN-CONSEQUENCE, deliberately. If both
+    # go red, C19's line says the write never reached memory and C20's says what
+    # that costs; read in the other order the second looks like a resume fault.
+    # Neither leaves the machine patched — C19 restores what it set and C20's
+    # temporary breakpoints are cleared by the remote on its way back in — so
+    # they are safe above C18 and C15.
+    ("C19 a breakpoint in ROM space is written to memory",
+     chk_rom_breakpoint_lands, "SET_BREAKPOINTS"),
+    ("C20 a breakpoint in ROM space stops the debuggee",
+     chk_rom_breakpoint_fires, "CONTINUE"),
     # C18 IS SECOND-TO-LAST, and for a weaker version of C15's reason. Our stub
     # answers an oversize frame by reporting on its own screen and going to
     # drain_main, which re-initialises the debugger — so anything below it would

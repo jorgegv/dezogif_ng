@@ -2,7 +2,7 @@
 #
 # The Next losing and regaining its WiFi association — issue #32.
 #
-# Invoked by `make test-wifi-assoc`. Five headless jnext runs with the WiFi ROM
+# Invoked by `make test-wifi-assoc`. Six headless jnext runs with the WiFi ROM
 # installed as the Multiface ROM and an emulated M1 button press. Each takes the
 # module off its network at a chosen frame, some put it back, and every verdict
 # is the stub's OWN CONNECT BLOCK — screen rows 6 and 7 — READ BACK AS TEXT.
@@ -13,6 +13,7 @@
 #   D4  ... the control, ADDR_CHECK=0        ->  rows 6/7 still advertise one
 #   D5  it goes and COMES BACK unchanged     ->  rows 6/7 advertise it again
 #   D6  the stub still serves DZRP afterwards
+#   D7  with NO ESP at all, the "setup failed" screen is NOT downgraded
 #
 # THE DEFECT. AT+CIFSR is asked exactly ONCE, as the last step of
 # transport_init, so esp_link_state and the `Connect at <ip>:11000` line are
@@ -140,7 +141,7 @@
 #     nothing to check; what a user sees in that case is unchanged.
 #   * UART mode, which has no association to lose and gets none of this.
 #
-# The check ids are D1-D6. The plan's Appendix B.4 numbers three WORKFLOW STEPS
+# The check ids are D1-D7. The plan's Appendix B.4 numbers three WORKFLOW STEPS
 # D1-D3; those are not check ids, nothing greps them, and no script matches on
 # them. The ids here are interface — run-*.sh and hardware-check.py match on
 # field 2 of a FAIL line — so they are never renumbered.
@@ -390,6 +391,7 @@ link_rows() {
 # pieces the ROM composes them from, so a reworded string moves one line.
 connect_line() { printf 'Remote debugger ACTIVE / Connect at %s:%d' "$1" "$PORT"; }
 NO_ADDRESS_ROWS='No WiFi address. Set the Next / up first: run wifi2.bas'
+FAILED_ROWS='ESP-01 setup failed. Check it / is fitted and enabled.'
 
 # assert_edges <log> <expect-regained: yes|no> — the run really did what the
 # command line asked for. Without this every check below could pass vacuously
@@ -565,6 +567,61 @@ else
         # block — this branch's guard admits it, unlike D2's and D3's — and the
         # longer prose this line used to carry took the detail to 22 words.
         fail "D5 the returned address did not reach the screen: $got"
+    fi
+fi
+stop_all
+
+# ---------------------------------------------------------------------------
+# D7 — a FAILED bring-up is never downgraded to "no address".
+#
+# THE ONE CHECK HERE THAT GUARDS AGAINST THIS FIX RECREATING THE DEFECT IT
+# REMOVES. esp_query_address writes ESP_LINK_NO_ADDRESS on ENTRY and clears it
+# only on success, so an unguarded re-query overwrites ESP_LINK_FAILED at the
+# first tick — and permanently, since only transport_init sets FAILED again and
+# esp_recover cannot fire on this path. A machine whose ESP is absent, disabled
+# or not answering at 115200 would then stop saying so after one minute and
+# start telling a correctly set-up user to go and run wifi2.bas. Those two
+# screens are doc/WIFI-SETUP.md's user diagnostic and the distinction they draw
+# — "not on the WiFi" against "no ESP there" — is exactly what must not blur.
+#
+# THE RUN IS THE CHEAPEST IN THIS BENCH and needs no seam: jnext with NO --esp
+# at all, so the AT chain cannot complete and bring-up ends at .no_bringup. It
+# therefore has no listener, which is why it does not go through start_run.
+#
+# THE SHOT IS AT $SHOT_FRAMES, thirteen query periods in, so this asserts the
+# state is STILL right long after the first tick rather than that it survived
+# one. Measured one build apart with the base ROM's identity pinned by hash:
+# main keeps "ESP-01 setup failed" at frames 3000, 9000 and 40000, and the
+# unguarded build says "No WiFi address" from 9000 onwards.
+#
+# Nothing else here can see this: every other run passes --esp, so every other
+# run has a module, and esp_link_state is never FAILED in any of them.
+# ---------------------------------------------------------------------------
+log "--- D7: no ESP at all — the setup-failed diagnosis must survive ---"
+shot=$OUT/screenshots/wifi-assoc-noesp.png
+runlog=$OUT/wifi-assoc-noesp.log
+rm -f "$shot"
+mcopy -o -i "$sd@@$part_off" "$ROM" "$MF_ROM_PATH"
+timeout "$RUN_TIMEOUT" "$JNEXT" \
+    --headless --machine next \
+    --sdcard "$sd" \
+    --rtc "2026-01-01 12:00:00" \
+    --log-level "warn,platform=info" \
+    --delayed-nmi-frames "$BOOT_FRAMES" nmi \
+    --delayed-screenshot "$shot" --delayed-screenshot-frames "$SHOT_FRAMES" \
+    --delayed-automatic-exit-frames "$EXIT_FRAMES" \
+    >"$runlog" 2>&1 &
+jnext_pid=$!
+if ! await_shot "$shot"; then
+    fail "D7 no screenshot: the no-ESP run ended before frame $SHOT_FRAMES"
+elif ! reader_ok "$shot"; then
+    fail "D7 the screen reader failed its own row-$CONTROL_ROW check, so the line was NOT judged"
+else
+    got=$(link_rows "$shot")
+    if [ "$got" = "$FAILED_ROWS" ]; then
+        pass "D7 with no ESP the screen still reports a failed setup, not a missing address"
+    else
+        fail "D7 the failed-setup diagnosis was overwritten: $got"
     fi
 fi
 stop_all

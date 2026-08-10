@@ -3979,14 +3979,21 @@ esp_query_address:
 ; pressed "B". That half of transport_init's old comment was always right; the
 ; half that was wrong is quoted at ESP_LINK_OK.
 ;
-; A TIMEOUT LEAVES IT SAYING "NO ADDRESS", which is a real cost of polling and
-; is accepted rather than worked around. esp_query_address sets
+; A TIMEOUT LEAVES IT SAYING "NO ADDRESS" FOR ONE PERIOD, which is a real cost
+; of polling and is accepted rather than worked around. esp_query_address sets
 ; ESP_LINK_NO_ADDRESS on entry and only clears it on success, so a module that
 ; simply did not answer inside the read budget flips the screen to the "no
-; address" block for one period. The next check puts it back, because this one
-; repeats; a first version that tried to distinguish "no answer" from "no
-; address" would need a fourth screen state and a wait that can tell silence
-; from a refusal, for a condition nothing here has ever produced.
+; address" block until the next check, which puts it back because this one
+; repeats. Distinguishing "no answer" from "no address" would need a fourth
+; screen state and a wait that can tell silence from a refusal, for a condition
+; nothing here has ever produced.
+;
+; THAT SELF-CORRECTION IS TRUE OF `OK -> NO_ADDRESS` AND FALSE OF
+; `FAILED -> NO_ADDRESS`, and an earlier version of this paragraph claimed it
+; for both — the case a real user with an absent ESP actually meets. Nothing
+; repeating can undo that one, because a successful query is what would be
+; needed and there is no module to answer it. The guard at the top of
+; esp_check_address is what stops it arising at all; see there.
 ;
 ; THE BUFFER IS LEFT INCONSISTENT ON THE 0.0.0.0 PATH and that is safe only
 ; because of what is drawn. esp_query_address writes the address into
@@ -4003,6 +4010,34 @@ esp_query_address:
 ;  and TRANSPORT_IDLE_TICK promises its caller everything else.
 ;===========================================================================
 esp_check_address:
+    ; A FAILED BRING-UP IS NEVER REVISITED, and this guard is the whole of what
+    ; stops this routine RECREATING the defect it exists to remove.
+    ;
+    ; esp_query_address writes ESP_LINK_NO_ADDRESS on ENTRY and clears it only on
+    ; success, so calling it unconditionally overwrites ESP_LINK_FAILED with
+    ; ESP_LINK_NO_ADDRESS at the first tick — and PERMANENTLY, because the only
+    ; thing that sets FAILED again is transport_init, reachable from an M1 or
+    ; Symbol Shift re-init or from esp_recover, and esp_recover cannot fire here:
+    ; neither esp_wait_string's timeout (`ret c`) nor esp_send_raw reaches
+    ; rxtx_error. So a machine whose ESP is absent, disabled or not answering at
+    ; 115200 would stop saying so after one minute and start telling a correctly
+    ; set-up user to go and run wifi2.bas. Measured, one build apart, with no
+    ; --esp: main keeps "ESP-01 setup failed" at frames 3000, 9000 and 40000; the
+    ; unguarded build says "No WiFi address" from 9000 onwards. Bench check D7.
+    ;
+    ; There is also nothing to be gained by asking: the AT chain did not
+    ; complete, so there is no module answering and no listener for a recovered
+    ; address to reach. The two screens are doc/WIFI-SETUP.md's user diagnostic
+    ; and they distinguish "your Next is not on the WiFi" from "your ESP is not
+    ; there", which is exactly the distinction this must not blur.
+    ;
+    ; NOTE THIS IS NOT THE TIMEOUT CASE BELOW. An OK -> NO_ADDRESS flip from a
+    ; module that simply did not answer in time is transient and self-correcting,
+    ; because this repeats. A FAILED -> NO_ADDRESS flip is neither.
+    ld a,(esp_link_state)
+    cp ESP_LINK_FAILED
+    ret z
+
     call esp_query_address
 
     ; A lost address goes in the error area too, which is what transport_init

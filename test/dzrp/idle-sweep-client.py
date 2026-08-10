@@ -111,19 +111,30 @@ def stay_silent(t, seconds):
     up, and telling that apart from our own timeout is the whole point of
     reading rather than sleeping.
     """
-    t.sock.settimeout(1.0)
     started = time.time()
     while True:
-        elapsed = time.time() - started
-        if elapsed >= seconds:
+        remaining = seconds - (time.time() - started)
+        if remaining <= 0:
             return None
+        # THE TIMEOUT IS THE REMAINING SILENCE, not a fixed poll, because a
+        # fixed one quantises the wait upwards: a flat 1.0s against --watch
+        # 1.20 slept 2.00, since the second recv had to time out in full before
+        # the loop could look at the clock again. S8 stages its client to speak
+        # at a computed fraction of a measured period, so an overshoot of most
+        # of a second is the difference between a verdict and a coin toss.
+        t.sock.settimeout(remaining)
         try:
-            if t.sock.recv(64) == b"":
-                return "the peer closed the connection after %.2fs" % elapsed
+            got = t.sock.recv(64)
         except socket.timeout:
             continue
         except OSError as e:                        # noqa: BLE001
-            return "socket error after %.2fs — %s" % (elapsed, e)
+            return "socket error after %.2fs — %s" % (time.time() - started, e)
+        # AFTER the read, not before it: recv blocks for up to a second, so an
+        # elapsed taken at the top of the loop reports every drop as having
+        # happened at the moment of the last timeout rather than of the close.
+        elapsed = time.time() - started
+        if got == b"":
+            return "the peer closed the connection after %.2fs" % elapsed
         # Nothing should arrive unprompted here. Report it rather than let a
         # surprise be read as silence.
         print("unexpected bytes from the stub at %.2fs" % elapsed)

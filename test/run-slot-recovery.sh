@@ -570,6 +570,23 @@ shot4=$OUT/screenshots/slot-recovery-idle-session.png
 after=0
 
 if start_stub "$ROM_IDLE" "$log4" "$shot4"; then
+    # LET THE BOOT SWEEP FINISH BEFORE THE CLIENT ARRIVES. The stub sweeps once
+    # shortly after it comes up, and a client whose CMD_INIT lands inside that
+    # five-id walk has it eaten by the drains between the AT+CIPCLOSE lines —
+    # a documented cost of #24 (transport_esp.asm, ESP_IDLE_SWEEP_SECS) and
+    # nothing to do with what S6 measures, which then reports "the client
+    # exited 1" and judges nothing.
+    #
+    # IT BECAME SYSTEMATIC WITH ISSUE #40 AND WAS LUCK BEFORE IT. The sweep now
+    # fires one period after the last CONNECT, and start_stub's own port poll
+    # is a bare connect — so with SETTLE at 2s and this probe ROM's period at
+    # 1.8-2.0s of wall clock, the walk landed on the client's arrival every
+    # time. Waiting for it is what removes the coincidence; the client is then
+    # the only thing that can re-arm the sweep at all, and it does so with the
+    # +IPD that opens the session it is about to hold.
+    wait_for_sweep "$log4" "$SWEEP_TIMEOUT" || true
+    sleep "$WALK_SETTLE"
+
     sentinel=$OUT/idle-session.sentinel
     out4=$OUT/idle-session-client.txt
     rm -f "$sentinel"

@@ -704,6 +704,15 @@ ESP_CIPSTO_STRICT:  equ 0
 ; session, so what is at risk is only a connection that is silent for five
 ; minutes while every other peer is silent too.
 ;
+; AND IT USED TO BE WORSE THAN THAT SENTENCE ADMITS — issue #40. The timer was
+; restarted only by a parsed +IPD, and a bare TCP connect never reaches one, so
+; a socket the module accepted while the stub was idle got not "five minutes"
+; but whatever happened to be left of a period somebody else had started, down
+; to nothing at all. The module's `<id>,CONNECT` now restarts it too
+; (esp_line_event), which is what makes "five minutes" true of a newly arrived
+; socket rather than only of one that has already spoken. See ESP_CONNECT_RESET
+; for what that costs.
+;
 ; AND THE CONVERSE IS THE ONE THAT LIMITS WHAT THIS BUYS, so it is written here
 ; rather than left to be discovered: the guard also keeps the sweep away from
 ; KNOWN-ISSUES.md #19's OWN HEADLINE CASE. esp_session_valid is cleared by
@@ -773,6 +782,46 @@ ESP_IDLE_SWEEP_SECS:    equ 300
 ; 0x1E/0x1F has at that same rollover.
 ESP_IDLE_SWEEP_TICKS:   equ ESP_IDLE_SWEEP_SECS * 50
     ASSERT ESP_IDLE_SWEEP_TICKS < 65536      ; the counter is 16 bits
+
+; Whether the module's `<id>,CONNECT` restarts the timer above — issue #40. 0
+; assembles that out, which is what shipped before this and is the ONLY reason
+; the seam exists: bench check S9 has to be red against something.
+;
+; WHAT IT FIXES. Before this, only a parsed +IPD restarted the countdown, and a
+; bare TCP connect never reaches one — so a socket the module accepted while the
+; stub was idle sat inside a period it had not started, and was reaped by it
+; after whatever was left. Reproduced deterministically at IDLE_SWEEP=10, 60
+; closures out of 60. Restarting on the connect gives such a socket a WHOLE
+; period instead, which for the shipped 300 seconds is every client that speaks
+; at all promptly.
+;
+; WHAT IT COSTS, and it is accepted rather than avoided: a genuinely leaked
+; socket now holds its slot for one period longer than it would have. That is
+; free in practice because the module reaps on its own AT+CIPSTO regardless —
+; 1800 seconds since issue #24's first half — so the backstop is unmoved and
+; only this stub's own housekeeping is deferred.
+;
+; IT IS NOT A CONNECT-TIME SWEEP, which is the thing #24 examined and could not
+; build (see above). Nothing is closed here; a timer is restarted, and the sweep
+; still fires from the same place on the same rule.
+;
+; REJECTED: per-id state recording which connections have arrived since the last
+; sweep, so that only THOSE are spared. It is more state and a subtler rule for
+; a case the module's own timeout already bounds (user, 2026-08-10).
+ IFNDEF ESP_CONNECT_RESET
+ESP_CONNECT_RESET:      equ 1
+ ENDIF
+
+; The three sites below share one condition, and it is written once so that they
+; cannot drift: with the sweep itself assembled out there is no counter to
+; restart, so IDLE_SWEEP=0 takes this with it.
+;
+; ITS NAME MUST NOT BEGIN WITH THE SEAM'S, and that is a build-time trap rather
+; than a style rule: sjasmplus substitutes a -D textually, so with
+; -DESP_CONNECT_RESET=0 a symbol called ESP_CONNECT_RESET_ON becomes `0_ON` and
+; every use of it is a hard error. Written the other way round for that reason,
+; and the multiply is what stands in for a logical AND.
+ESP_RESET_ON_CONNECT:   equ ESP_CONNECT_RESET * (ESP_IDLE_SWEEP_TICKS > 0)
 
 ; How long the stub sits idle, with no DZRP session, before it asks the module
 ; again whether it still has the address the screen is advertising — issue #32,
@@ -1246,6 +1295,18 @@ esp_line_state:     defb 0
 esp_line_id:        defb 0
 esp_line_ptr:       defw 0      ; meaningful in state 4 only
 
+ IF ESP_RESET_ON_CONNECT
+; WHICH of the two lines is being matched — 'O' for CONNECT, 'L' for CLOSED,
+; the byte that chose the tail. Issue #40 is the first consumer that cares, and
+; only one of them is one: a CONNECT restarts the idle sweep's timer and a
+; CLOSED must not, because a closed connection is a slot the module has just
+; handed back and deferring the sweep for it would be backwards.
+;
+; Meaningful in state 4 only, exactly as esp_line_ptr is, and written on the
+; same two paths that set it.
+esp_line_kind:      defb 0
+ ENDIF
+
 ;---------------------------------------------------------------------------
 ; Which connection the DZRP session is on — issue #23.
 ;
@@ -1350,7 +1411,9 @@ esp_idle_line:      defb 0
 ; bytes are used.
 ;
 ; Frames since the last inbound frame. Reset by esp_sync_ipd, so ANY traffic
-; restarts the countdown.
+; restarts the countdown — and, since issue #40, by esp_line_event on the
+; module's `<id>,CONNECT`, so a socket that has been accepted but has not spoken
+; yet restarts it too. Those are the only two writers; esp_idle_tick reads it.
 esp_idle_ticks:     defw 0
  ENDIF
 
@@ -2412,14 +2475,23 @@ esp_watch_line:
 .connect:
     ld hl,esp_str_connect_tail
 .tail_start:
+ IF ESP_RESET_ON_CONNECT
+    ; A still holds the byte that chose the tail — 'O' or 'L' — which is the
+    ; cheapest possible record of which line this is. Kept because issue #40
+    ; needs the two told apart; see esp_line_kind, and esp_line_event, which is
+    ; where the difference is acted on.
+    ld (esp_line_kind),a
+ ENDIF
     ld (esp_line_ptr),hl
     ld a,4
     ld (esp_line_state),a
     jr .out
 
 .want_tail:
-    ; WHICH of the two matched is deliberately not remembered: both mean the
-    ; same thing to the only consumer there is. See esp_line_event.
+    ; WHICH of the two matched is remembered in esp_line_kind and nowhere else:
+    ; they mean the same thing to esp_line_event's SESSION half, which is why
+    ; this used to remember nothing at all, and opposite things to the idle
+    ; timer that issue #40 added there.
     ld a,(hl)
     cp d
     jr nz,.first
@@ -2435,13 +2507,14 @@ esp_watch_line:
 ;===========================================================================
 ; A complete `<id>,CONNECT` or `<id>,CLOSED` line has been seen — issue #23.
 ;
-; WHAT IT IS ALLOWED TO TOUCH IS THE WHOLE OF THIS DESIGN, and the list is
-; three bytes long: esp_session_valid, esp_client_state and esp_ui_dirty. It
-; does NOT write esp_conn_id, esp_conn_valid, the esp_tx_conn_* latch, esp_cmd_*
-; or any of the esp_rx_* state. So no message in flight can be redirected, no
-; command being assembled can change owner and no frame can be lost — which is
-; what leaves bench checks W4 and W5, where two clients are served at once,
-; measuring exactly what they measured before.
+; WHAT IT IS ALLOWED TO TOUCH IS THE WHOLE OF THIS DESIGN, and the list is four
+; bytes long: esp_session_valid, esp_client_state, esp_ui_dirty and — since
+; issue #40 — esp_idle_ticks. It does NOT write esp_conn_id, esp_conn_valid, the
+; esp_tx_conn_* latch, esp_cmd_* or any of the esp_rx_* state. So no message in
+; flight can be redirected, no command being assembled can change owner and no
+; frame can be lost — which is what leaves bench checks W4 and W5, where two
+; clients are served at once, measuring exactly what they measured before. That
+; list is the invariant; its length is not.
 ;
 ; ONE OF THOSE ABSTENTIONS WAS MEASURED RATHER THAN CHOSEN, and it is the
 ; interesting one. Clearing esp_conn_valid here — "the module says the peer has
@@ -2461,10 +2534,33 @@ esp_watch_line:
 ; Only the connection a DZRP session was opened on is interesting: any other id
 ; belongs to a client this stub has never been introduced to, and reporting on
 ; it would be the screen claiming to see sockets again.
+;
+; THE IDLE TIMER IS THE ONE THING HERE THAT IS NOT ABOUT THE SESSION, and it is
+; deliberately first — issue #40. Every id matters to it, session or not, which
+; is exactly what the two early returns below throw away; and the state it cares
+; about is the one in which they always return. See ESP_CONNECT_RESET.
 ; Changes:
 ;  AF, HL
 ;===========================================================================
 esp_line_event:
+ IF ESP_RESET_ON_CONNECT
+    ; A CONNECT and only a CONNECT. The idle sweep exists to reap sockets
+    ; nobody is using, and one that has just arrived is the opposite of that —
+    ; so it gets a whole period to introduce itself in, rather than whatever was
+    ; left of a period somebody else started. A CLOSED is left alone on purpose:
+    ; that slot has just come BACK, and deferring the sweep for it would delay
+    ; the housekeeping this whole timer exists to do.
+    ;
+    ; NOTHING IS RE-ARMED, only reset. esp_idle_armed stays where it is, so a
+    ; period that has already swept is not given a second one, and a stream of
+    ; connects can never buy more sweeps than traffic would.
+    ld a,(esp_line_kind)
+    cp 'O'                      ; 'O' of CONNECT; 'L' is CLOSED
+    jr nz,.not_connect
+    ld hl,0
+    ld (esp_idle_ticks),hl
+.not_connect:
+ ENDIF
     ld a,(esp_session_valid)
     or a
     ret z

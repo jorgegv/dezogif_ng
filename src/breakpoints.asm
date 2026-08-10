@@ -346,9 +346,29 @@ clear_tmp_breakpoint:
 ; it would be the original ROM's rather than our own trampoline's. Every caller
 ; already reads the opcode before calling this, which is the order that works.
 ;
-; It is a no-op wherever ROM is not mapped: an MMU RAM page in slot 0 or 1 wins
-; the decode outright (zxnext.vhd:3042) and NR 0x8C has no bearing on the
-; access, so a caller does not have to know which kind of memory it is writing.
+; WHERE IT IS A NO-OP, AND THE THREE THINGS THAT CAN OVERRIDE IT. An MMU RAM
+; page in slot 0 or 1 wins the four-way decode outright (zxnext.vhd:3042) before
+; the ROM branch runs at all, so NR 0x8C has no bearing and the write lands in
+; that page regardless — a caller does not have to know which kind of memory it
+; is writing. But the ROM branch also sets sram_pre_override <= "111" (:3057),
+; which leaves TWO more claimants eligible in the second arbiter, and an earlier
+; version of this comment named neither:
+;
+;   Layer 2 (:3100)  — safe, but BY ACCIDENT rather than by design: dbg_enter
+;                      disables layer 2 read/write on entry and restore_layer2_rw
+;                      only puts it back on the way out, so it is off for the
+;                      whole of cmd_loop. Nothing asserts that, and nothing here
+;                      would notice if it changed.
+;   DivMMC (:3084)   — UNADDRESSED, and it outranks everything above. If DivMMC
+;                      ROM or RAM were mapped at 0x0000 the write would go there
+;                      instead. Nothing in this program has ever read port 0xE3
+;                      during a debug session, so this is not established either
+;                      way. It is a PRE-EXISTING dependency of the whole
+;                      breakpoint mechanism rather than something this routine
+;                      introduces: an RST 0 at 0x0000 has always had to reach
+;                      our Alt ROM trampoline rather than DivMMC's ROM.
+;                      doc/CONFIG-MODE-ROM-REPLACEMENT.md §1.2c is the nearest
+;                      thing to a measurement anyone has taken of it.
 ;
 ; Parameters:
 ;   A  = byte to write
@@ -376,8 +396,20 @@ write_debuggee_byte:
 ; That is the mechanism the original report guessed at, and making the write
 ; work is exactly what would create it.
 ;
-; The bounds are taken from the labels copy_modify_altrom itself copies with,
-; so they cannot drift from the blocks they describe.
+; The bounds come from the labels copy_modify_altrom itself copies with, so the
+; CONSTANTS cannot drift from the blocks they describe. THAT IS NOT THE SAME AS
+; THE COMPARISON BEING RIGHT, and an earlier version of this routine said it was
+; and was wrong: `ret c` below the 0x0066 test returned with CARRY SET, i.e.
+; "refuse", so the whole of 0x0008-0x0065 was silently refused as well — 116
+; bytes rather than 22, including RST 8, RST 0x10 through RST 0x30 and 0x0038,
+; the IM1 handler, which are the addresses a Spectrum developer breaks on most.
+; Because set_tmp_breakpoint shares this guard, stepping ran away there too:
+; the very failure #27 exists to fix, recreated in a 94-byte window.
+;
+; So what holds the extent is not this comment but conformance check C21, which
+; asserts every byte of both blocks refused AND the adjacent bytes 0x0008 and
+; 0x0074 taken, measured over the wire. Re-measure it there after any change
+; here; reading the code is what missed it.
 ;
 ; A refused breakpoint is simply not planted, which leaves the caller doing
 ; what it did before this change: nothing reached memory then either. So this
@@ -395,15 +427,16 @@ TRAMPOLINE_0000_END:	EQU copy_rom_start_0000h_code_end-copy_rom_start_0000h_code
 
 bp_hits_trampoline:
     ld a,h
-    or a
-    ret nz	; Above 0x00FF: NC, and nothing below is reached
+    or a	; Clears carry, so the return below is NC
+    ret nz	; Above 0x00FF: ordinary memory
     ld a,l
-    cp TRAMPOLINE_0000_END		; 0x0000-0x0007, the RST 0 entry
-    jr c,.hit
+    cp TRAMPOLINE_0000_END		; 0x0008
+    jr c,.hit				; 0x0000-0x0007: the RST 0 entry
     cp copy_rom_start_0066h_code	; 0x0066
-    ret c	; 0x0008-0x0065: ordinary ROM
+    ccf
+    ret nc	; 0x0008-0x0065: ordinary ROM. CCF because CP set carry here
     cp copy_rom_start_0066h_code_end	; 0x0074
-    ret nc	; 0x0074 upwards: ordinary ROM
+    ret		; C: 0x0066-0x0073, dbg_enter.  NC: 0x0074 upwards
 .hit:
     scf
     ret

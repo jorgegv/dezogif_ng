@@ -485,11 +485,19 @@ strongest:
    live: `copy_modify_altrom` patches 8 bytes at `0x0000` and 14 at `0x0066`, and an `RST 0` over
    `dbg_enter` makes every breakpoint re-enter itself. So `bp_hits_trampoline` refuses those 22
    bytes — leaving them behaving exactly as they did before, since nothing reached them then
-   either — and **C21's control is an ordinary ROM address that must have taken a breakpoint in the
-   same command**, so against an unfixed ROM it reports a Precondition instead of a vacuous green.
-   Shown red both ways: unfixed → C19/C20 red and C21 Precondition; fix present, guard removed →
-   C19/C20 green and **C21 red naming both blocks**. Restores are deliberately **unguarded**: a
-   breakpoint that can be set and not removed leaves an `RST 0` in the Alt ROM for the session.
+   either. **THE GUARD SHIPPED WRONG AND THE REVIEW MEASURED IT**: a `ret c` returned with the carry
+   its own contract reads as "refuse", so it took `0x0000-0x0073` — **116 bytes**, including `RST 8`,
+   the `RST 0x10`-`0x30` vectors and **`0x0038`, the IM1 handler** — and, since `set_tmp_breakpoint`
+   shares it, **stepping ran away** in that window, which is #27's own failure recreated by its fix.
+   **So C21 asserts the EXTENT**, every byte of both blocks refused *and* `0x0008`/`0x0065`/`0x0074`
+   taken: a version constraining only `0x0000` and `0x0066` passed green against a guard planting
+   `RST 0` at `0x0001-0x0007`. Shown red four ways — unfixed → Precondition; no guard, guard too
+   narrow, and guard too wide → three different C21 reds. **Measured over the wire, not read**:
+   refusal set `0x0000-0x0007 0x0066-0x0073`, and `0x0052` now stops on its breakpoint. Restores are deliberately **unguarded**: a
+   **`cmd_restore_mem` is guarded too**, and the first version was not: a client put its own byte on
+   `0x0000`/`0x0066` through it — C18's defect one command along. `bp_hits_trampoline` is a pure
+   function of the address, so guarding a restore can never strand a legitimate un-patch.
+   `clear_tmp_breakpoint` stays unguarded because its address is the stub's, not a client's.
    **NOT covered**: `CMD_WRITE_MEM` into ROM space is still discarded (`memory_loop`'s per-byte path
    is the receive path the baud ceiling is about, so it is deliberately not bracketed), and none of
    this has run on hardware. See `doc/DZRP-TESTING.md`.
@@ -840,7 +848,7 @@ read once; a document can be revised, cited and diffed.
 
 Two things the shortening may **never** touch, because they are interface rather than prose:
 
-- **The check id.** `T1`-`T8`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W6`, `C1`-`C20`, `B1`-`B2`,
+- **The check id.** `T1`-`T8`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W6`, `C1`-`C21`, `B1`-`B2`,
   `P1`-`P3`, `N1`-`N6`, `G1`-`G2`, `I1`-`I9`, `S1`-`S3`, `K1`-`K4`, `R0`-`R5`, `L1`-`L5`, `H1`-`H5` are cited
   by every
   document and

@@ -990,12 +990,32 @@ cmd_restore_mem:
     jr .next
 
 .normal:
-    ; Get value
+    ; Get value. Read whatever happens next, so the stream stays in step even
+    ; when the write below is refused; parked in E, because the guard uses A.
     call transport_read_byte
-    ; Set memory. UNGUARDED, for cmd_set_breakpoints' own sake: this is how a
-    ; breakpoint is REMOVED, and a set that cannot be undone is worse than one
-    ; that never happened. The byte written is the one the stub itself reported
-    ; when the breakpoint went in.
+    ld e,a
+
+    ; REFUSE THE TRAMPOLINE HERE TOO. This is a client-controlled write of a
+    ; client-chosen byte, and until write_debuggee_byte existed it could not
+    ; reach ROM space at all — so leaving it open would reopen C18's defect one
+    ; command along: a client overwriting the running debugger.
+    ;
+    ; An earlier version left it unguarded, arguing that a breakpoint which can
+    ; be set and not removed is worse than one that never happened. That
+    ; argument does not survive the guard's own existence: bp_hits_trampoline is
+    ; a pure function of the address, so an address it refuses here is one
+    ; cmd_set_breakpoints refused to patch in the first place, and refusing the
+    ; restore can never strand a legitimate un-patch.
+    ;
+    ; clear_tmp_breakpoint deliberately stays unguarded, and the difference is
+    ; who chose the address: its comes from tmp_breakpoint_X.bp_address, which
+    ; only set_tmp_breakpoint.store writes and only on the path where this same
+    ; guard already passed. A trampoline address cannot get in there.
+    call bp_hits_trampoline
+    ld a,e	; The value to write. LD does not disturb the carry.
+    jr c,.next
+
+    ; Set memory
     call write_debuggee_byte
 
 .next:

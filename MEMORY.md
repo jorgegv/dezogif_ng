@@ -21,7 +21,8 @@ physical SRAM cycle at `:3154`. So **the `RST 0` never reached memory at all**,
 and every breakpoint path reported success because **none of them reads back what
 it wrote**. Nothing is mismapped and nothing is corrupted; the byte is simply
 discarded. The trampoline breakpoint the issue was filed about is one instance of
-a defect covering three quarters of the address space.
+a defect covering the whole of `0x0000-0x3FFF` — a quarter of the address space,
+and the quarter every ROM call goes to.
 
 **MEASURED BEFORE ANYTHING WAS WRITTEN, AND THAT IS THE WHOLE POINT OF THIS
 BRANCH.** This issue had already cost **two retracted mechanisms**, each
@@ -55,8 +56,10 @@ While writes were discarded a breakpoint aimed at them was harmless; the moment
 they land, an `RST 0` over `dbg_enter`'s first byte makes every breakpoint
 re-enter itself and walk the stack down through memory. **That is mechanism A
 from the original report — impossible today, live the moment mechanism B is
-fixed.** `bp_hits_trampoline` refuses those 22 bytes, with bounds taken from the
-labels `copy_modify_altrom` itself copies with so they cannot drift.
+fixed.** `bp_hits_trampoline` refuses those 22 bytes. Its bounds come from the
+labels `copy_modify_altrom` itself copies with, so the **constants** cannot
+drift — which is not the same as the comparison being right, and the next
+paragraph is what that cost.
 
 **READS MUST NOT BE TAKEN WITH BIT 6 SET, and it is the trap in this fix.** The
 two settings are complementary rather than a level and a flag (`:3078`): with bit
@@ -66,38 +69,88 @@ that state would be the wrong byte to keep for un-patching — at `0x0000` and
 caller already read the opcode before writing, which is the order that works, and
 the helper writes only.
 
-**RESTORES ARE DELIBERATELY UNGUARDED.** Putting a byte back can only undo a
-write that was allowed, and a breakpoint that can be **set and not removed**
-leaves an `RST 0` in the Alt ROM for the rest of the session — worse than never
-setting it. That is also why `cmd_restore_mem` had to move with
-`cmd_set_breakpoints` rather than after it.
+**THE GUARD SHIPPED WRONG AND THE REVIEW MEASURED IT, WHICH IS THE MOST USEFUL
+THING IN THIS ENTRY.** `bp_hits_trampoline`'s `ret c` below the `0x0066` test
+returned **with carry set** — which the routine's own contract three lines above
+defines as *"refuse, it is ours"*. Assembled `D8`. So the guard refused
+`0x0000-0x0073`: **116 bytes, not 22**, of which 94 are ordinary ROM — `RST 8`,
+`RST 0x10` through `RST 0x30`, and **`0x0038`, the IM1 handler**, which are the
+addresses a Spectrum developer breaks on most.
+
+**And because `set_tmp_breakpoint` shares the guard, STEPPING RAN AWAY there.**
+Measured with C20's fixture aimed at `0x0052`, the one `RET` in the window: the
+debuggee ran straight past a temporary breakpoint the client had asked for and
+stopped at the RAM control. **That is the exact user-visible failure #27 exists
+to fix, recreated by the fix for it in a 94-byte window.** Corrected to
+`ccf` / `ret nc` / `cp` / `ret`, and re-measured over the wire rather than
+re-read: refusal set now `0x0000-0x0007 0x0066-0x0073`, exactly 22, with `0x0052`
+stopping on its breakpoint.
+
+**THE LESSON IS ABOUT THE COMMENT, NOT THE FLAG.** The bounds are taken from the
+labels `copy_modify_altrom` copies with, and the comment said they therefore
+"cannot drift". That is true of the **constants** and says nothing about the
+**comparison** — and the constants were right the whole time. A claim of
+correctness attached to the half that was not in question. What holds the extent
+now is C21 measuring it over the wire, and the comment says so instead.
+
+**RESTORES: `cmd_restore_mem` IS GUARDED, `clear_tmp_breakpoint` IS NOT, AND THE
+FIRST VERSION HAD THAT BACKWARDS.** It left both unguarded, arguing that "a
+breakpoint that can be set and not removed is worse than one that never
+happened". **That argument does not survive the guard's own existence**:
+`bp_hits_trampoline` is a pure function of the address, so an address refused on
+the restore is one that was refused on the set, and guarding can never strand a
+legitimate un-patch. Measured on the merged ROM: a client `CMD_RESTORE_MEM` put
+its own `0x00` on `0x0000`, `0x0003`, `0x0066` and `0x0070` — **C18's defect
+reopened one command along**, a client-controlled write over the running
+debugger, in a command where `main` discarded it. Now refused, with the same
+command still landing on ordinary ROM. `clear_tmp_breakpoint` stays unguarded
+because the difference is **who chose the address**: its comes from
+`tmp_breakpoint_X.bp_address`, written only by `set_tmp_breakpoint.store` and
+only where this same guard already passed.
 
 **A REFUSED BREAKPOINT IS SILENT, AND THIS IS THE ONE JUDGEMENT CALL HERE.** DZRP
 has no "cannot place a breakpoint there" response, and a reply of the wrong length
 desynchronises everything after it — the argument that already governs
-`error_payload_too_big`. But the decisive reason is narrower and is about
-behaviour rather than protocol: **refusing leaves the trampoline behaving exactly
-as it does today**, since nothing reached it then either. So this change moves the
-rest of ROM and moves the trampoline not at all, which is the smallest claim the
-fix can make. Issues #8 and #9 call silence a defect where a real client
-legitimately sends the command; this is not that — it needs the debuggee's PC to
-be inside the stub's own trampoline, which only happens when the session is
-already broken.
+`error_payload_too_big`. The decisive reason is narrower and is about behaviour
+rather than protocol: **refusing leaves the trampoline behaving exactly as it does
+today**, since nothing reached it then either. So this change moves the rest of
+ROM and moves the trampoline not at all, which is the smallest claim the fix can
+make.
+
+**THE FIRST VERSION JUSTIFIED THAT SILENCE WITH A CLAIM THE GUARD BUG
+FALSIFIED**, and it is corrected rather than deleted: it said refusal only bites
+when "the debuggee's PC is inside the stub's own trampoline, which only happens
+when the session is already broken". While the guard covered 116 bytes that was
+simply untrue — `0x0038` and every `RST` vector are ordinary places a healthy
+session steps into. The claim is only defensible for the 22 bytes actually
+refused, so it now rests on the **measured extent** rather than on an assertion
+about the code, which is the whole reason C21 asserts that extent. Issues #8 and
+#9 call silence a defect where a real client legitimately sends the command; 22
+bytes of our own trampoline is not that, and 116 bytes of the RST vectors would
+have been.
 
 **Evidence: `make test-dzrp-stub` 21/21 with W1-W6, exit 0**, and every check
 shown red first — **in both directions for C21**, which is the half a degenerate
 control cannot reach:
 
-| ROM | C19 | C20 | C21 |
+| ROM under test | C19 | C20 | C21 |
 |---|---|---|---|
 | before the fix | FAIL | FAIL | **PRECONDITION**, not a vacuous green |
-| fix present, **guard removed** | PASS | PASS | **FAIL** — *planted on the trampoline at 0x0000, 0x0066* |
+| writability, **no guard at all** | PASS | PASS | FAIL — *planted at 0x0000-0x0007 0x0066-0x0073* |
+| writability, guard **too narrow** (0x0000 and 0x0066 only) | PASS | PASS | **FAIL** — *planted at 0x0001-0x0007 0x0067-0x0073* |
+| writability, guard **too wide** (the shipped `ret c`) | PASS | PASS | **FAIL** — *the guard also refused 0x0008 0x0065, which is ordinary ROM* |
 | as merged | PASS | PASS | PASS |
 
-The middle row is the one worth having. `ERRORS.md` records that a control which
-only collapses two cases together proves only that direction, and C21's control —
-an ordinary ROM address that must take a breakpoint in the same command — is what
-stops it passing against exactly the ROM it was written to distinguish from.
+**THE MIDDLE TWO ROWS ARE THE ONES THAT HAD TO BE EARNED, AND THE FIRST VERSION
+OF C21 FAILED BOTH.** It constrained the guard at `0x0000` and `0x0066` and
+nowhere else, so it passed green against a guard that plants `RST 0` on
+`0x0001-0x0007` and `0x0067-0x0073`, and it could not see the 116-byte over-refusal
+that actually shipped. **This is mfselect's M9 and N6's scanline-0 for the third
+time in this project**: a control that only collapses the cases together proves
+only that direction. C21 now asserts the **extent** — every byte of both blocks
+refused, and `0x0008`, `0x0065` and `0x0074` taken — which is what makes all four
+reds reachable. `0x0065` is in there because it is the byte below the *second*
+block, so a guard that got only the first boundary right still fails.
 
 **Rejected.** Bracketing `memory_loop`'s inner write instead, which would fix
 `CMD_WRITE_MEM` into ROM as well (it is the **per-byte receive path** whose cost
@@ -110,10 +163,11 @@ fixing issue #27's third strand here (below); and leaving the reproduction with
 no fix, which was the fallback if the mechanism had not been demonstrable —
 it was, on the first probe ROM.
 
-**Cost: +51 bytes in BOTH ROMs, which is correct for common code.** `main_end`
-UART 0xF25B → **0xF28E**, WiFi 0xFC72 → **0xFCA5**, leaving **507** free to the
-identity block. Pinned: UART `ab06656e…` → `4ee1a593…`, WiFi `d500eea0…` →
-`016b6bec…`. **The UART byte-identity gate breaks by design** —
+**Cost: +59 bytes in BOTH ROMs, which is correct for common code.** `main_end`
+UART 0xF25B → **0xF296**, WiFi 0xFC72 → **0xFCAD**, leaving **499** free to the
+identity block. Pinned: UART `ab06656e…` → `14eea03f…`, WiFi `d500eea0…` →
+`ea13c33e…`. (+51 and `4ee1a593…`/`016b6bec…` were the first, rejected version;
+the review's guard and restore fixes are the other 8 bytes.) **The UART byte-identity gate breaks by design** —
 `breakpoints.asm`, `commands.asm`, `constants.asm` and `altrom.asm` are all
 common code — as it did for #7, #8, #9, #12, #20 and #31. **This changes a ROM,
 so the merge carries a `make bump`.**
@@ -144,9 +198,12 @@ so the merge carries a `make bump`.**
   comparison always carries and a 64K address is *always* taken as `.normal`.
   `set_tmp_breakpoint` gets this right. A plain 64K breakpoint at `0xE000` or
   above therefore writes directly into whatever slot 7 holds, which while the
-  debugger is stopped is `MAIN_BANK` — the debugger itself. Unreachable from
-  DeZog, which sends long addresses, and **unchanged by this branch** since it is
-  not a ROM write. Filing it is the manager's call.
+  debugger is stopped is `MAIN_BANK` — the debugger itself. **`cmd_restore_mem`
+  has the identical defect** (`commands.asm`, its own `.handle_64k_address`), so
+  it is two sites and not one — found by grep after the review pointed out the
+  first count was short, which is the enumeration lesson this file keeps
+  recording. Unreachable from DeZog, which sends long addresses, and **unchanged
+  by this branch** since neither is a ROM write. The manager is filing it.
 * **The refusal's user-facing behaviour** is exercised by nothing but C21: no
   real client sends a breakpoint at the trampoline, and what DeZog does about
   getting no breakpoint there is unknown.

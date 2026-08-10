@@ -1074,11 +1074,38 @@ def chk_rom_breakpoint_fires(d):
 # (the RST 0 entry and the return path) and 14 at 0x0066 (dbg_enter). They are
 # the only reason an RST 0 reaches the debugger at all, so a breakpoint must
 # never be planted on them. Taken from src/breakpoints.asm's own DISP blocks.
-TRAMPOLINE = (0x0000, 0x0066)
+TRAMPOLINE = tuple(range(0x0000, 0x0008)) + tuple(range(0x0066, 0x0074))
+
+# THE BYTES IMMEDIATELY OUTSIDE, AND THEY ARE THE HALF THAT DISCRIMINATES.
+# Asserting only that the trampoline is spared cannot tell a guard that refuses
+# 22 bytes from one that refuses far more — and the first version of this fix
+# refused 116, the whole of 0x0000-0x0073, because a `ret c` returned with the
+# carry its own contract read as "refuse". That silently swallowed RST 8,
+# RST 0x10 through RST 0x30 and 0x0038, the IM1 handler, and — since
+# set_tmp_breakpoint shares the guard — made stepping run away in that window,
+# which is the very failure #27 exists to fix. C21 did not see it, because it
+# constrained the guard at two addresses and nowhere else.
+#
+# 0x0065 is included as well as 0x0008 and 0x0074: it is the byte below the
+# SECOND block, so a guard that got only the first boundary right still fails.
+TRAMPOLINE_ADJACENT = (0x0008, 0x0065, 0x0074)
+
+
+def _runs(xs):
+    """Consecutive addresses as ranges, so a verdict can name a set briefly."""
+    out, i, xs = [], 0, sorted(xs)
+    while i < len(xs):
+        j = i
+        while j + 1 < len(xs) and xs[j + 1] == xs[j] + 1:
+            j += 1
+        out.append("0x%04X" % xs[i] if i == j
+                   else "0x%04X-0x%04X" % (xs[i], xs[j]))
+        i = j + 1
+    return " ".join(out)
 
 
 def chk_rom_breakpoint_spares_trampoline(d):
-    """A breakpoint must NOT be planted on the debugger's own trampoline.
+    """A breakpoint must be refused on the trampoline AND NOWHERE ELSE.
 
     THIS CHECK ONLY EXISTS BECAUSE C19 PASSES. While writes into ROM space were
     discarded, a breakpoint aimed at the trampoline was harmless; the moment
@@ -1087,10 +1114,18 @@ def chk_rom_breakpoint_spares_trampoline(d):
     writability fix are therefore one change, and this is the half that says
     the guard is there rather than assumed.
 
-    THE CONTROL IS A PRECONDITION AND IT IS THE WHOLE POINT. On a remote where
-    ROM writes are discarded, the trampoline is untouched for the wrong reason
-    and every assertion below holds vacuously — so an ordinary ROM address goes
-    in the same command and must have taken the breakpoint. Without that, this
+    IT ASSERTS THE EXTENT, IN BOTH DIRECTIONS, and the second direction is the
+    one that earns it. A version of this check that constrained the guard only
+    at 0x0000 and 0x0066 passed green against a guard refusing the whole of
+    0x0000-0x0073 — 116 bytes including RST 8, the RST 0x10..0x30 vectors and
+    0x0038, the IM1 handler — which made STEPPING RUN AWAY in that window,
+    because set_tmp_breakpoint shares the guard. So every byte of both blocks
+    must be refused, and the bytes immediately outside must be TAKEN.
+
+    THE CONTROL IS A PRECONDITION AND IT IS ALSO THE POINT. On a remote where
+    ROM writes are discarded the trampoline is untouched for the wrong reason
+    and every assertion here holds vacuously — so an ordinary ROM address goes
+    in the same command and must have taken the breakpoint. Without it this
     check passes against exactly the ROM it was written to distinguish from.
     """
     talk(d, dzrp.CMD_INIT, dzrp.init_payload())
@@ -1100,28 +1135,42 @@ def chk_rom_breakpoint_spares_trampoline(d):
         raise Precondition("MMU slot 0 holds bank %d, not the ROM: the "
                            "trampoline is not mapped" % slot0)
 
-    addrs = TRAMPOLINE + (ROM_BP_ADDR,)
-    before = [talk(d, dzrp.CMD_READ_MEM, b"\x00" + _w(a) + _w(1))[0] for a in addrs]
-    old = _set_bps(d, addrs)
-    after = [talk(d, dzrp.CMD_READ_MEM, b"\x00" + _w(a) + _w(1))[0] for a in addrs]
-    _restore_bps(d, ((ROM_BP_ADDR, before[-1]),))
+    must_take = TRAMPOLINE_ADJACENT + (ROM_BP_ADDR,)
+    addrs = TRAMPOLINE + must_take
+    before = {a: talk(d, dzrp.CMD_READ_MEM, b"\x00" + _w(a) + _w(1))[0]
+              for a in addrs}
+    old = dict(zip(addrs, _set_bps(d, addrs)))
+    after = {a: talk(d, dzrp.CMD_READ_MEM, b"\x00" + _w(a) + _w(1))[0]
+             for a in addrs}
+    # Put back only what actually moved, before judging anything, so a red
+    # cannot leave an RST 0 in the Alt ROM for the checks below.
+    changed = [(a, before[a]) for a in addrs if after[a] != before[a]]
+    if changed:
+        _restore_bps(d, changed)
+    left = [a for a, v in changed
+            if talk(d, dzrp.CMD_READ_MEM, b"\x00" + _w(a) + _w(1))[0] != v]
 
-    if after[-1] != BP_OPCODE:
+    if after[ROM_BP_ADDR] != BP_OPCODE:
         raise Precondition("the ROM control at 0x%04X did not take a breakpoint, "
                            "so nothing here is proven" % ROM_BP_ADDR)
-    hit = ["0x%04X" % a for a, b, n in zip(addrs, before, after)
-           if a in TRAMPOLINE and n != b]
-    if hit:
-        return FAIL, "a breakpoint was planted on the debugger's trampoline at %s" \
-            % ", ".join(hit)
+    planted = [a for a in TRAMPOLINE if after[a] != before[a]]
+    if planted:
+        return FAIL, ("a breakpoint was planted on the debugger's trampoline at %s"
+                      % _runs(planted))
+    spared = [a for a in must_take if after[a] == before[a]]
+    if spared:
+        return FAIL, ("the guard also refused %s, which is ordinary ROM"
+                      % _runs(spared))
     # The client is still told what was there, so it is not lied to about the
     # address; it simply gets no breakpoint.
-    wrong = [a for a, b, o in zip(addrs, before, old) if a in TRAMPOLINE and o != b]
+    wrong = [a for a in TRAMPOLINE if old[a] != before[a]]
     if wrong:
         return FAIL, ("the refused address 0x%04X was reported as the wrong "
                       "opcode" % wrong[0])
-    return PASS, ("the trampoline at 0x0000 and 0x0066 was spared while ordinary "
-                  "ROM took one")
+    if left:
+        return FAIL, "a breakpoint at %s could not be removed" % _runs(left)
+    return PASS, ("all %d trampoline bytes refused, and 0x0008/0x0065/0x0074 "
+                  "taken" % len(TRAMPOLINE))
 
 
 # One byte over would be the boundary and is not what this asks. C5's 8192 holds

@@ -359,24 +359,55 @@ A refused breakpoint is simply not planted. The client is still told what opcode
 so it is not lied to; it just gets no breakpoint — **which is exactly what it got before the write
 was able to land at all**, so the trampoline's behaviour is unchanged and only the rest of ROM moves.
 
-**Restores are deliberately UNGUARDED**, in both `clear_tmp_breakpoint` and `cmd_restore_mem`.
-Putting a byte back can only undo a write that was allowed in the first place, and a breakpoint that
-can be set but not removed would leave an `RST 0` in the Alt ROM for the rest of the session — worse
-than never setting it.
+**`cmd_restore_mem` is guarded with the same predicate; `clear_tmp_breakpoint` is not.** The
+difference is who chose the address. A restore is a **client-controlled write of a client-chosen
+byte**, and until this fix it could not reach ROM space at all — so leaving it open reopens C18's
+defect one command along. Guarding it can never strand a legitimate un-patch, because
+`bp_hits_trampoline` is a pure function of the address: anything it refuses here is something
+`cmd_set_breakpoints` refused to patch in the first place. `clear_tmp_breakpoint`'s address comes
+from `tmp_breakpoint_X.bp_address`, which only `set_tmp_breakpoint.store` writes and only where that
+same guard already passed, so a trampoline address cannot get in there.
 
-**C21's control is a precondition, and that is the whole point.** On a remote where ROM writes are
-discarded the trampoline is untouched *for the wrong reason*, and every assertion in C21 holds
-vacuously — so an ordinary ROM address goes in the same `CMD_SET_BREAKPOINTS` and must have taken
-the breakpoint. Shown red both ways rather than only the easy one:
+#### C21 asserts the EXTENT, because constraining two addresses is not constraining a guard
+
+The first version of C21 checked `0x0000` and `0x0066` and nowhere else, and that is **not enough in
+either direction**:
+
+* a guard refusing *only those two exact bytes* plants `RST 0` on `0x0001-0x0007` and
+  `0x0067-0x0073` — and passed green;
+* the guard that actually shipped refused **116 bytes**, `0x0000-0x0073`, because a `ret c` returned
+  with the carry its own contract reads as "refuse". That swallowed `RST 8`, the `RST 0x10`-`0x30`
+  vectors and **`0x0038`, the IM1 handler** — and, because `set_tmp_breakpoint` shares the guard,
+  **made stepping run away** there. C21 could not see it.
+
+So C21 now requires **every byte of both blocks refused** *and* the bytes immediately outside —
+`0x0008`, `0x0065`, `0x0074` — **taken**. `0x0065` earns its place by being below the *second*
+block, so a guard that got only the first boundary right still fails. Its control remains a
+precondition: on a remote where ROM writes are discarded the trampoline is untouched *for the wrong
+reason*, so an ordinary ROM address goes in the same `CMD_SET_BREAKPOINTS` and must have taken the
+breakpoint.
 
 | ROM under test | C19 | C20 | C21 |
 |---|---|---|---|
 | before the fix | FAIL, `0x1234` still reads `0xED` | FAIL, the RAM control fired instead | **PRECONDITION** — not a vacuous green |
-| fix present, **guard removed** | PASS | PASS | **FAIL** — *a breakpoint was planted on the debugger's trampoline at 0x0000, 0x0066* |
+| writability, **no guard** | PASS | PASS | FAIL — *planted at 0x0000-0x0007 0x0066-0x0073* |
+| writability, guard **too narrow** | PASS | PASS | **FAIL** — *planted at 0x0001-0x0007 0x0067-0x0073* |
+| writability, guard **too wide** | PASS | PASS | **FAIL** — *the guard also refused 0x0008 0x0065, which is ordinary ROM* |
 | as merged | PASS | PASS | PASS |
 
-The middle row is the one that matters: a control that only collapses the two cases together proves
-only that direction, which `ERRORS.md` records under "these two differ is not this one is right".
+The two middle rows are the ones that had to be earned. A control that only collapses the cases
+together proves only that direction — `ERRORS.md`'s "these two differ is not this one is right",
+which mfselect's M9 and bench N6's scanline-0 have each already cost this project once.
+
+**The extent is verified over the wire, not read.** The refusal set as merged, measured by sweeping
+`CMD_SET_BREAKPOINTS` across `0x0000-0x010F` and reading every byte back:
+
+```
+PLANTED : 0x0008-0x0065 0x0074-0x010F 0x1234 0x1FFF-0x2000 0x3FFF
+REFUSED : 0x0000-0x0007 0x0066-0x0073
+```
+
+Re-measure it that way after any change to the guard. Reading the code is what missed the defect.
 
 ### A verdict line is one sentence; this file is where the reasoning is
 

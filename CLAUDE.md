@@ -186,7 +186,10 @@ DeZoGiFnG_UART_0001      DeZoGiFnG_WIFI_0001
 field, and **never the build number**, which changes and is only ever displayed.
 
 **AS OF ISSUE #26 THE MF ROM HALF IS EXACTLY FULL — AND IT GROWS IN 16-BYTE STEPS, WHICH AN EARLIER
-VERSION OF THIS PARAGRAPH DENIED.** `mf_nmi.bin` is `ALIGN 16`-ed to 320 bytes (`0x140`), the ROM is
+VERSION OF THIS PARAGRAPH DENIED.** *(**M2 HAS SINCE TAKEN THREE OF THOSE STEPS**, issue #22:
+`mf_nmi.bin` is **368 bytes (`0x170`)** and `ROM_MAGIC_ADDR` is **`0xFE70`**. The numbers below are
+the pre-M2 ones and the arithmetic is unchanged — the file offset is still `0x1FE0`, which is the
+whole point.)* `mf_nmi.bin` is `ALIGN 16`-ed to 320 bytes (`0x140`), the ROM is
 that followed by `main.bin`, and the block's file offset is `0x140 + (0xFEA0 - 0xE000)` = `0x1FE0`.
 One byte over the boundary moves `main_prg_copy` to `0x150` — **and moving `ROM_MAGIC_ADDR` down by
 the same 16 keeps the file offset at `0x1FE0`**, which is the thing `tools/mfselect/mfselect.c`
@@ -197,7 +200,14 @@ builds clean, the ROM stays 8192 bytes and the block still reads at `0x1FE0`.
 **THE HEADROOM IS THE ONE NUMBER HERE MOST WORTH GETTING RIGHT, AND IT WAS WRONG UNTIL 2026-08-09.**
 This paragraph used to end "the WiFi build has over a kilobyte of headroom, i.e. many such steps".
 It had **119 bytes**, because of a 768-byte buffer nothing declared. Issue #31 removed the buffer;
-the current figures, measured, are **UART 3201, WiFi 818** free to the identity block.
+the figures then were **UART 3201, WiFi 818** free to the identity block.
+
+**SINCE M2 (issue #22) THEY ARE UART 2946 AND WiFi 216**, measured, and the WiFi number is the one
+to plan against. M2 spent it twice over, which is exactly what this section warns about: 48 bytes of
+the MF ROM half (three `ALIGN` steps) cost 48 bytes of the debugger half as well, because
+`ROM_MAGIC_ADDR` came down with `main_prg_copy`, and the poll's own code in `mf.asm` and the
+transports cost the rest. **Anything further that grows the MF ROM half should expect to pay 32
+bytes per byte** and should put its code in the debugger half instead, as `mf_nmi_poll` does.
 
 - **`ROM_MAGIC_ADDR` really is the ceiling again** — it had not been since the fork.
   `main_bank_entry` used to copy the ZX font into the top of the bank at `0xFD00 -
@@ -250,7 +260,8 @@ strongest:
    - T2 our `enNextMf.rom` does not perturb the NextZXOS boot
    - T3 **control** — the software-NMI fixture really fires the Multiface NMI, shown against the
      SD image's stock MF ROM. If T3 fails the bench is broken and T4 means nothing.
-   - T4 our stub **declines** that NMI and leaves the screen alone — see below
+   - T4 our stub **declines** that NMI and leaves the screen alone. **M2 DID NOT INVERT THIS, and
+     everything in this file used to say it would** — see below
    - T5 a two-instruction **Copper** list raises the Multiface NMI on its own, at a chosen
      raster line, with no CPU involvement. That is M2's break mechanism, and it is now known
      to work headless rather than assumed to. Shown against the stock MF ROM for T3's reason:
@@ -301,6 +312,29 @@ strongest:
      `MAIN_BANK` → decline, which is T8. A regression that sent *every* press to `init_main_bank`
      would destroy live debug sessions and **T7 would still pass** — measured, not argued: against
      exactly that ROM, T1-T7 are all green and T8 is the only red.
+   - T9 **THE ASYNCHRONOUS-BREAK POLL (issue #22, M2), and the only check anywhere that runs
+     the software-cause path** — about 400 times in one run, where every other check here fires
+     an NMI once. A Copper list installed by the **debugged program** raises the Multiface NMI
+     every frame; three runs. **Run 11** is the precondition, T3's shape: the same fixture against
+     the stock MF ROM must take over, or a fixture that installed nothing would leave runs 12 and
+     13 passing having polled nothing. **Run 12 is the transparency verdict** — no button is
+     pressed, so no debugger exists, every poll pages `MAIN_BANK` in, finds somebody else's bytes
+     where the magic should be, and must decline **and put MMU slot 7 back**; that is issue #26 on
+     a 50 Hz timer, and it is the only run in which the interrupted program cares what slot 7
+     holds. **Run 13 is liveness**: the stub is brought up and then polled thousands of times while
+     stopped, judged byte-identical to T8's one-press screen **and** black-bordered, because
+     "nothing changed" is also what a wedged machine looks like. Run 13 reuses T8's schedule
+     unchanged so the pair differ only by the Copper list. Shown red: a build with the slot-7
+     restore removed takes run 12 red, against the shipped ROM green three times.
+     **NOT covered**: it never breaks in (no client, so `transport_poll_traffic` answers "quiet"
+     every time — that is W8); it cannot discriminate the `prgm_state` test, since with no traffic
+     a build omitting it would decline anyway; and **it does not cover the NextREG latch restore**,
+     which was found by building that red-first and watching it come out **green** — the poll's own
+     `.save_slot7_page_in` leaves port 0x243B selecting exactly the register the fixture reads.
+     **AND IT IS PADDED AROUND A PRE-EXISTING DEFECT**: a software NMI, taken repeatedly and
+     returned from, does not reliably put the CPU back on the instruction it interrupted —
+     reproduced on `main`'s OWN ROM, measured at ~2 NMIs, absorbed by eight NOPs either side of the
+     check. Cause unresolved.
    - T8 a second M1 press with **no reset** is **declined**, and the stub is still alive
      afterwards (issue #36). Two runs differing only in that press, shot at the same frame; the
      screen must be **byte-identical** and the border **black**. Both halves are required,
@@ -407,6 +441,25 @@ strongest:
    a live DeZog session at the machine, and the user declined (2026-08-07). Unlike T7's, whose
    subject *was* confirmed on a Next, this defect's whole evidence is this emulator check — so read
    "issue #26 is fixed on hardware" as covering the decline and **not** the press-while-stopped.
+   **W8 IS MILESTONE M2's ACCEPTANCE CRITERION AND IT IS A STANDING RED.** A freely running
+   debuggee is stopped from the PC — the thing dezogif has never been able to do, and which nothing
+   in this project had ever shown. The debuggee installs the two Copper instructions itself, is
+   resumed with **no temporary breakpoint** (so nothing the debugger planted can bring it back),
+   left running a whole second, and then sent `CMD_PAUSE`. Its own run 8 is the **control**,
+   `PAUSE_RUNNING_CONTROL=0` to disable: identical up to the pause, which is withheld, and nothing
+   may come back — W3's argument, and without it a green W8 would not say the *pause* caused the
+   break rather than the debuggee stopping by itself or never running.
+   **What is demonstrated**: the break happens, the `NTF_PAUSE` carries `MANUAL_BREAK`, `CMD_PAUSE`
+   is answered with the specified Length=1 response, the stub serves on afterwards, and the control
+   is silent. **What is RED**: the notification reports **PC 0x0000** instead of the debuggee's
+   address. `save_nmi_return_address` takes the stackless branch (NR 0xC0 bit 3 set, read back as
+   0x0A) and reads NR 0xC2/0xC3, which `zxnext.vhd:2060-2063` latches on any NMI acknowledge — and
+   gets zero. Left red rather than softened, exactly as C2 was until issue #7 and C12 until #8: a
+   client told the wrong PC shows the wrong source line, and a `CMD_CONTINUE` from a `backup.pc` of
+   0 is issue #39's recipe. **Nothing in this project has ever exercised that branch in an emulator
+   before** (C10 sets `PC` itself), and in the same run NR 0xC3C2 reads a *debugger* address
+   afterwards, because the poll keeps firing while the debugger is stopped and every acknowledge
+   overwrites the pair. Cause unresolved — stub, upstream or jnext.
    **W7 RIDES ON W6's PRESS AND IS THE SAME DEFECT TWO BYTES ALONG** (issue #37): the entry path
    saved the clock speed and the `IO_NEXTREG_REG` latch into `backup.*` on every press too, two and
    eleven instructions after the slot-7 byte #26 fixed, so a press while stopped handed the debuggee
@@ -1057,11 +1110,11 @@ Two things the shortening may **never** touch, because they are interface rather
 
   | ids | printed by | run it with |
   |---|---|---|
-  | `T1`-`T8` | `test/run-headless.sh` | `make test` |
+  | `T1`-`T9` | `test/run-headless.sh` | `make test` |
   | `M1`-`M10` | `test/run-mfselect.sh` | `make test-mfselect` |
   | `E1`-`E4` | `test/esp-echo-client.py` | `make test-esp` |
   | `U1`-`U5` | `test/run-unit-tests.sh` | `make test-unit` |
-  | `W1`-`W7` | `test/run-dzrp-stub.sh` | `make test-dzrp-stub` |
+  | `W1`-`W8` | `test/run-dzrp-stub.sh` | `make test-dzrp-stub` |
   | `C1`-`C23` | `test/dzrp/conformance.py` | `test-dzrp-stub`, `test-dzrp`, `test-hardware` |
   | `B1`-`B2` | `test/run-ip-boundary.sh` | `make test-ip-boundary` |
   | `P1`-`P3` | `test/run-tx-patience.sh` | `make test-tx-patience` |
@@ -1130,6 +1183,17 @@ Two things the shortening may **never** touch, because they are interface rather
   contaminated run is worthless *in either direction* (it can come out **green**), and that,
   with the `pgrep -x jnext` recovery, is now three lines above them in `run-dzrp-stub.sh`. If a
   clause cannot survive either move, keep the long line and say so out loud.
+
+**M2 IS BUILT (2026-08-10) AND IT DID NOT INVERT T4.** The paragraphs below were written before
+any M2 code existed and predicted that teaching `nmi66h` to accept a software cause would make T4
+assert a takeover. It does not, and the prediction rested on an assumption about the shape of the
+fix rather than on anything measured: the poll path accepts the cause and then **declines** unless
+our image is in `MAIN_BANK` *and* a debuggee is running. In T4's run no debugger has ever been
+started, so the magic check fails, the screen is untouched, and T4's verdict is unchanged — what
+changed is its reason, which is now "the software cause is SERVED and correctly declines". T8's
+expectations were likewise re-examined and are unchanged: the branch M2 edits first is the *cause*
+check, not the slot-7 discriminator T8 asserts. Where the software cause being served is asserted
+is **T9**. The original text follows, annotated rather than deleted.
 
 **Why T4 expects a decline, and what M2 has to change.** `mf_rom.asm`'s `nmi66h` reads NR `0x02`
 on entry, masks `00011100b` and returns immediately unless the result is zero — it serves *button*

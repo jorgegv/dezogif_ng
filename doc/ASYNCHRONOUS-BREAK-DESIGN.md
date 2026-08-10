@@ -1,12 +1,137 @@
 # Asynchronous break — feasibility and design
 
 **Issue [#22](https://github.com/jorgegv/dezogif_ng/issues/22), milestone M2.** Written 2026-08-08,
-before any M2 code exists, to answer one question the plan parked and one it did not think to ask.
+before any M2 code existed, to answer one question the plan parked and one it did not think to ask.
+**Built 2026-08-10, and the build changed the shape of the thing** — see the next section, which is
+the one to read first. Everything below it is the pre-build evaluation, annotated where the build
+falsified it and left standing where it did not, because this project annotates superseded claims
+rather than editing evidence.
 
-**Verdict: it can be done, and it should be OPT-IN rather than default.** The mechanism works and is
-already proven headless. What the plan understates is the price: enabling asynchronous break
-**destroys** any Copper program the debuggee had, irrecoverably, and the debuggee can switch the
-break off by accident in a way nothing can recover from without a human pressing the M1 button.
+---
+
+## 0. AS BUILT, 2026-08-10 — and the decision that reshaped it
+
+**THE DEBUGGED PROGRAM INSTALLS THE COPPER LIST, NOT THE DEBUGGER** (user's call, before any code).
+That single decision removes this document's headline cost. §3.1's argument — that enabling
+asynchronous break **destroys** the debuggee's Copper program irrecoverably, because the list is
+write-only and cannot be saved — was correct and is now **moot**: the debugger installs nothing, so
+there is nothing to destroy. A developer who wants PC-initiated break puts
+
+```
+WAIT line,0
+MOVE $02,$08
+```
+
+at the start of their program, or into their own Copper list, and compiles it out for release.
+Measured cost in the program: **44 bytes** (16 for the NR 0x06 bit-3 read-modify-write, 28 for seven
+`nextreg` writes; 28 if you trust NextZXOS to have left the gate set, which it does).
+
+**The cost, stated in the direction it now falls:** a program that does not cooperate gets no
+asynchronous break at all, and the debugger cannot install one for it — because it cannot read what
+it would be overwriting. That is a strictly smaller price than the one this document was written to
+weigh, and it is why the feature no longer needs to be "opt-in" in the debugger at all: it is opt-in
+in the *debuggee*, by construction.
+
+### What the stub gained
+
+`nmi66h` serves a software Multiface NMI (NR 0x02 bit 3). The path is deliberately not the button
+path: it never changes the clock unless it breaks in, never reaches `init_main_bank`, and **restores
+MMU slot 7**, because it fires while the *debuggee* is executing. The decision itself lives in
+`mf_nmi_poll` in the debugger's own bank, behind a two-byte magic check, so that MF ROM bytes — which
+cost 32 each, a 16-byte `ALIGN` step in that half plus 16 of the other — are spent only where they
+must be. §4.5's byte arithmetic held: the half went 0x140 → 0x170, three steps.
+
+**T4 was NOT inverted, and this document, `CLAUDE.md` and the plan all said it would be.** That
+instruction assumed the fix would make a software cause *take over*. It does not: the poll accepts
+the cause and then declines unless our image is in `MAIN_BANK` **and** a debuggee is running. In
+T4's run no debugger has ever been started, so the decline — and T4's verdict — are unchanged. What
+changed is the reason. §4.1 and the plan's risk table are annotated accordingly.
+
+**A defect M2 would have made dangerous was fixed with it.** `nmi66h`'s cause check selected NR 0x02
+*before* the instruction that claimed to save the debuggee's NextREG select latch, so what was saved
+was always `REG_RESET` — issue #37's second discovery, harmless once per button press and a
+recurring corruption of the debuggee at 50 Hz. The latch is now read once at the top of `nmi66h` and
+restored on every path that returns to the interrupted code. It costs four bytes **less** than the
+version it replaces.
+
+### §4.3's open question is decided: BREAK ON ANY BYTE
+
+`transport_poll_traffic` is O(1) by contract and may not scan, so it cannot tell a `CMD_PAUSE` from
+one of the ESP module's unsolicited `<id>,CONNECT` / `<id>,CLOSED` lines. Such a line therefore
+breaks a running debuggee in when nobody asked. The alternative — parsing inside the NMI — costs up
+to ~100 ms per frame, which is not a poll. The precedent is `cmd_loop`'s own `transport_wait_rx`,
+which has always ended on any byte from the module.
+
+**The break reason is `MANUAL_BREAK`**, and no fourth reason was invented: `BREAK_REASON` has three
+values (`src/breakpoints.asm:18-20`), DZRP defines no "the client asked", and DeZog's `cspect`
+remote already understands the one a button press reports. `cmd_pause` is unchanged, and issue #8's
+two prohibitions still hold for #8's own reasons — the break is caused by the **poll**, so by the
+time `cmd_loop` reads command 7 the machine is already stopped and `send_ntf_pause` has already set
+`prgm_state`.
+
+### TWO THINGS ARE MEASURED AND UNRESOLVED, AND NEITHER MAY BE READ PAST
+
+**1. THE REPORTED PC IS WRONG, AND BENCH CHECK W8 IS A STANDING RED BECAUSE OF IT.** A freely running
+debuggee really is stopped by `CMD_PAUSE` — the notification arrives, carries `MANUAL_BREAK`, the
+command is answered, the stub serves on, and the control shows nothing comes back without the pause.
+But the address the notification reports is **0x0000** instead of the debuggee's PC.
+`save_nmi_return_address` takes the stackless branch (NR 0xC0 bit 3 is set, read back as 0x0A) and
+reads NR 0xC2/0xC3, which `zxnext.vhd:2060-2063` latches on **any** NMI acknowledge. It reads zero.
+A client told the wrong PC shows the wrong source line, and a `CMD_CONTINUE` from a `backup.pc` of 0
+is issue #39's recipe. Left red rather than softened, as C2 was until issue #7 and C12 until #8.
+
+Two facts that bear on it and are not yet a diagnosis: **nothing in this project has ever exercised
+that branch in an emulator** (MEMORY.md 2026-08-05 — C10 sets `PC` itself), and in the same run
+NR 0xC3C2 reads a **debugger** address afterwards, because the poll keeps firing while the debugger
+is stopped and every acknowledge overwrites the pair.
+
+**2. A SOFTWARE NMI DOES NOT RELIABLY RETURN TO THE INSTRUCTION IT INTERRUPTED — AND THIS IS
+PRE-EXISTING, NOT M2's.** Measured 2026-08-10 and reproduced on `main`'s own ROM as well as on M2's:
+a tight loop of one-byte instructions derails within about two NMIs — `xor a` / `jr nz` takes the
+branch — while the same loop with eight NOPs either side runs 18132 iterations across ~400 NMIs
+untouched, with registers, flags, SP and PC all intact in a snapshot afterwards. The control is
+clean: the same Copper writing NR 0x02 with bit 3 **clear** (so no NMI) leaves the loop green.
+Nothing in this project had ever returned from a software NMI more than once, so it could not have
+been seen before. Whether the cause is upstream's handler or jnext's NMI model is unresolved; T9's
+fixture is padded around it and says so.
+
+### A LIMITATION NOBODY HAD WRITTEN DOWN, AND IT ANSWERS THE PLAN'S OPEN QUESTION 5
+
+**Any live DivMMC automap session blocks every Multiface NMI, the poll included, for its whole
+duration.** `zxnext.vhd:2107` accepts one only `if nmi_assert_mf = '1' and port_e3_reg(7) = '0' and
+divmmc_nmi_hold = '0'`, and `divmmc_nmi_hold` is DivMMC's `o_disable_nmi <= automap or button_nmi`
+(`device/divmmc.vhd:150`), where `automap` is asserted for the whole time `automap_held = '1'`
+(`:148`). That is not merely the esxDOS NMI menu: it is **any** esxDOS file-I/O call, any dot
+command, any `RST 8` trap window. The same gate applies while CONMEM is held (`port_e3_reg(7)`,
+`:4181`), which is `.mfinstall`'s config-mode window.
+
+Requests are dropped rather than queued (`:2095-2116`), so each lost poll simply retries next frame
+— but **a debuggee sitting inside a long esxDOS call cannot be paused until it comes out**, and
+nothing in software can see this happen, because `nmi_mf` never latches and `nmi66h` never runs.
+
+The mirror case: a DivMMC (drive) button press landing while our handler executes is dropped, since
+`nmi_assert_divmmc` is accepted only `and mf_is_active = '0'` (`:2109`). Our handler is short, so the
+exposure is small — but it is per frame.
+
+**Memory state is not at risk in either direction**, and that was checked rather than assumed: while
+`mf_mem_en = '1'` the priority arbiter sets `sram_pre_override <= "000"` so DivMMC automap cannot
+newly trigger (`:3029-3036`, `:3137`), a pre-existing `automap_held` self-holds unchanged, and
+`divmmc_retn_seen <= z80_retn_seen_28 and not mf_is_active` (`:4111`) means our own exit RETN is
+deliberately not seen by DivMMC as its own.
+
+**None of this has been observed running.** It is read from the VHDL, and no run anywhere stages a
+poll landing inside a DivMMC automap window.
+
+---
+
+**Verdict (2026-08-08, before the build): it can be done, and it should be OPT-IN rather than
+default.** The mechanism works and is already proven headless. What the plan understates is the
+price: enabling asynchronous break **destroys** any Copper program the debuggee had, irrecoverably,
+and the debuggee can switch the break off by accident in a way nothing can recover from without a
+human pressing the M1 button.
+
+*(**ANNOTATED 2026-08-10**: the destruction half is moot as built — §0. "Opt-in" survives in a
+different and better form: it is opt-in in the debuggee, which is where the two instructions live.)*
 
 Everything below about hardware is read from the FPGA VHDL with line citations, per this project's
 first hard rule. Everything about the stub is read from `src/`. Where something is an estimate or a
@@ -249,6 +374,12 @@ repainted. The encoding is read from `device/copper.vhd:91-104`, not from a wiki
 
 ### 3.1 The Copper list is WRITE-ONLY, so the debuggee's program is destroyed, not borrowed
 
+**ANNOTATED 2026-08-10: THIS SECTION'S FACTS ALL HOLD AND ITS CONCLUSION IS MOOT.** The list really
+is write-only and really cannot be saved and restored — every citation below stands. What the build
+changed is who writes it: the debugged program does, so the debugger destroys nothing and the
+"cannot be debugged with asynchronous break enabled" consequence does not arise. The escape hatch at
+the end of this section became the primary route. See §0.
+
 The plan says async break "consumes the Copper, which the debuggee may want". That is too gentle.
 
 Both Copper instruction stores are `dpram2` instances whose CPU-facing read output is **discarded at
@@ -281,6 +412,12 @@ a source change rather than losing the Copper entirely. That should be documente
 route for Copper-using programs rather than left for someone to discover.
 
 ### 3.2 The debuggee can switch the break off silently, and the stub cannot get it back
+
+**ANNOTATED 2026-08-10: LARGELY DEFUSED BY THE BUILD, BUT NOT ENTIRELY.** A program that installs its
+own list also restarts its own list, so the NR 0x62 half is now the program's business rather than a
+thing done to it behind its back. The NR 0x06 bit 3 half survives untouched: a debuggee that clears
+that gate still kills its own break with no way for the stub to notice or restore it, because the
+poll is what would have noticed.
 
 Two independent ways, and the second is worse than it looks:
 
@@ -493,11 +630,17 @@ of a different kind from stolen cycles for anything doing contended-memory or be
 
 ## 6. What this document does NOT establish
 
-- **Nothing here has run.** No M2 code exists. Every hardware claim is VHDL; the mechanism's only
-  execution is T5, which raises the NMI against the *stock* Multiface ROM, not against our stub.
+**ANNOTATED 2026-08-10: the first bullet is overtaken and the rest are not.** M2 is built and runs
+in the emulator — bench T9 and W8 — so "nothing here has run" is false. Everything else in this list
+survives, and §0 adds three items to it: the reported PC (a standing red), the software-NMI
+mis-return, and the DivMMC automap block, none of which has run on hardware either.
+
+- ~~**Nothing here has run.** No M2 code exists.~~ Built 2026-08-10; see §0. Every hardware claim is
+  still VHDL rather than silicon, and **no part of M2 has run on a real Next.**
 - **The cost figure is unmeasured**, see §5.
-- **The unsolicited-line decision in §4.3 is unmade**, and it has a user-visible consequence either
-  way.
+- ~~**The unsolicited-line decision in §4.3 is unmade**~~ — made: break on any byte, §0. Its
+  user-visible consequence stands and nothing stages it: no run here makes the module emit an
+  unsolicited line while a debuggee is running.
 - **jnext's Copper model has not been checked against this document.** T5 shows the NMI path works;
   nothing here confirms the emulator reproduces the NR `0x62`-restarts-the-list behaviour of
   `device/copper.vhd:69-78`, which is what §3.2's silent-failure claim rests on. A bench for M2 needs
@@ -510,15 +653,23 @@ of a different kind from stolen cycles for anything doing contended-memory or be
 
 ---
 
-## 7. Recommendation
+## 7. Recommendation — and what became of it
 
-Build it, **opt-in**, and document the Copper cost where a user will meet it rather than here. The
-sequence that follows from the above:
+**ANNOTATED 2026-08-10.** Items 1 and 4 are done. Item 2 was examined and **rejected with a reason**:
+T4's verdict is unchanged because the poll declines at a machine with no debugger (§0). Item 3 is
+struck — the program installs the list (§4.4). Item 5 was **not** done: see §5, the estimate is still
+an estimate. Item 6 changes shape with §0 — what a user needs to be told is how to add the two
+instructions, not what the debugger will destroy — and the HOWTO is deliberately not written here.
 
-1. the fast path in `nmi66h` plus the poll-and-return exit that restores slot 7 (§4.1, §4.2);
-2. invert T4 in the same change, deliberately (§4.1);
-3. install/remove the Copper list around resume and break (§4.4);
-4. decide §4.3's unsolicited-line question and write down which way and why;
-5. measure the per-frame cost rather than inheriting the estimate (§5);
-6. document, for users: async break destroys the Copper, can be switched off by the debuggee
-   silently, and a Copper-using program can instead carry the two instructions itself (§3.1).
+The original recommendation follows for the record.
+
+> Build it, **opt-in**, and document the Copper cost where a user will meet it rather than here. The
+> sequence that follows from the above:
+>
+> 1. the fast path in `nmi66h` plus the poll-and-return exit that restores slot 7 (§4.1, §4.2);
+> 2. invert T4 in the same change, deliberately (§4.1);
+> 3. install/remove the Copper list around resume and break (§4.4);
+> 4. decide §4.3's unsolicited-line question and write down which way and why;
+> 5. measure the per-frame cost rather than inheriting the estimate (§5);
+> 6. document, for users: async break destroys the Copper, can be switched off by the debuggee
+>    silently, and a Copper-using program can instead carry the two instructions itself (§3.1).

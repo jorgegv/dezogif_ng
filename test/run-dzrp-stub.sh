@@ -197,11 +197,12 @@ SECOND_NMI_FRAMES=${SECOND_NMI_FRAMES:-$((BOOT_FRAMES + 3000))}
 
 # How many commands run 6's client sends before it arms — CMD_INIT, the
 # CMD_SET_SLOT that puts a known bank in slot 7, the CMD_GET_REGISTERS that
-# proves it took, and the five of W7's "before" borrow (a CMD_GET_REGISTERS to
-# learn the slot, CMD_SET_SLOT, two CMD_READ_MEMs, CMD_SET_SLOT back). Every
+# proves it took, and the six of W7's "before" borrow (a CMD_GET_REGISTERS to
+# learn the slot, CMD_SET_SLOT, a CMD_GET_REGISTERS asserting the borrow took,
+# two CMD_READ_MEMs, CMD_SET_SLOT back). Every
 # one must have reached the module before the press, or the press raced the
 # setup and neither check judged anything — see the assertion below.
-W6_SETUP_FRAMES=8
+W6_SETUP_FRAMES=9
 
 # Longer than the suite's own 5 s default. The loopback sweep now goes to 4096
 # bytes, which is ~8 KB over a 115200 link plus seventeen AT+CIPSEND round
@@ -715,7 +716,7 @@ fi
 #       the debuggee back at the wrong clock.
 #
 # ONE PRESS SERVES BOTH, AND THEY READ THEIR SUBJECTS BY DIFFERENT ROUTES,
-# which is why #37 had no check for two builds while #26 had one from the day
+# which is why #37 shipped with no check at all while #26 had one from the day
 # it was fixed. CMD_GET_REGISTERS reports slot 7 from that byte rather than
 # from the MMU, so W6 is answerable in the protocol; it reports neither the
 # turbo mode nor the NextREG latch, so W7 reads MAIN_BANK directly through a

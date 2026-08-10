@@ -8,8 +8,8 @@ decided, why, and what was rejected. Read this at the start of every session.
 ## 2026-08-10 — The press-while-stopped defect's other two bytes, and a check for a thing DZRP cannot see
 
 **Built, issue #37**, which is issue #26's defect two and eleven instructions
-along and had gone two builds without a check because **nothing in the protocol
-can observe it**.
+along and shipped with no check at all — five ROM-moving builds between its
+filing and this one — because **nothing in the protocol can observe it**.
 
 **THE DEFECT.** `mf_rom.asm`'s NMI entry path answers *"what was the machine
 like before this NMI?"* on **every** button press, before the dispatch has
@@ -59,6 +59,15 @@ cannot fail, which this project has shipped three times under other names. The
 bench greps them out of sjasmplus's own label table (`--lstlab`) and a miss
 fails the run.
 
+**AND THE BORROW IS ASSERTED, WHICH THE FIRST VERSION LEFT OUT** (found by the
+independent reviewer, and it is the same shape as C23's own late-added
+precondition). A `CMD_SET_SLOT` that did nothing would leave the **debuggee's**
+bank 5 under the window, both readings would come from it, they would agree, and
+W7 would pass against a stub with the defect intact. So the borrow reads MMU
+slot 5 back — live from the MMU, via `CMD_GET_REGISTERS` — and refuses to
+proceed unless it really holds `MAIN_BANK`. One command, and it turns "we asked
+for the debugger's bank" into "we are reading it".
+
 **Evidence: `make test-dzrp-stub`, W1-W7 and 23/23, exit 0 — and W7 shown red
 first IN THE SAME RUN THAT SHOWED W6 GREEN**, which is what says the press and
 the harness were working and the new subject alone was broken:
@@ -102,13 +111,35 @@ above in the same change.
 UART `0xF2B3` → `0xF2BF`, WiFi `0xFD42` → `0xFD4E` — **338** free to the
 identity block. **The MF ROM half did NOT grow**: `mf_nmi.bin` is 320 bytes
 either side, so no `ALIGN` step and `ROM_MAGIC_ADDR` is untouched. Proved to be
-one insertion and nothing else by symbol table: **2 added**
-(`MF.nmi_io_next_reg`, `MF.nmi_speed`), **0 removed**, and every remaining
-address symbol at **+0 or +12** — UART 420/333, WiFi 449/530. The single
-outlier is `BUILD_TIME16`, an EQU **value** and not an address. **The UART
+one insertion and nothing else by symbol table, both trees built **pinned** with
+`build/*.bin`, `build/enNextMf*.rom` and `build/*.list` deleted first: **2
+added** (`MF.nmi_io_next_reg`, `MF.nmi_speed`), **0 removed**, every remaining
+symbol at **+0 or +12** — UART 421/333, WiFi 450/530 — and **zero outliers**.
+(Unpinned there is one, `BUILD_TIME16`, which is an EQU *value* rather than an
+address; pinning removes it and is the simpler statement, as the review noted.) **The UART
 byte-identity gate breaks by design**, as for #7, #8, #9, #12, #20, #27, #28 and
 #38: `mf.asm` is common code. **This changes a ROM, so the merge carries a
 `make bump`.**
+
+**THE REVIEW'S FIVE FINDINGS WERE ALL MINOR AND THE FIRST WAS A NUMBER I MADE
+UP.** I wrote, in five places including this file's top entry, that #37 "had
+gone two builds without a check". Nothing measured that and it is wrong under
+every reading: **five** ROM-moving bumps shipped between #37 being filed
+(2026-08-09) and this fix, and measured from the fork it is the whole history —
+which the same sentences say correctly two lines away. Corrected everywhere.
+Nothing depended on it, which is exactly what lets this kind of error survive,
+and `MEMORY.md` is the worst place for it. The other four: the borrow assertion
+above; a `drain_main` between the press and the second read could restore
+`backup.speed` and hide a defective ROM, which the **tuple** comparison
+backstops because `main` does not reset `io_next_reg` (now said in the client
+rather than left accidental); the symbol counts above, re-derived pinned; and
+`LIST` not being a declared prerequisite, which fails loudly and is accepted.
+
+**W5 FLAKED IN THE REVIEWER'S RUN, AND IT IS NOT THIS BRANCH.** Their green run
+exited 2 with *"W5 the precondition never happened"* — the documented race
+(MEMORY.md records 1 of 3 on 2026-08-07 and 2 of 4 on 2026-08-09), in a run this
+diff does not touch, with W6 and W7 green in the same run. So read "exit 0"
+above as one run's result rather than a property of the suite.
 
 **NOT COVERED, and none of it is hidden.** **Hardware** — nothing here has run
 on a Next, and W7's subject is not going to for W6's reason: it needs an M1

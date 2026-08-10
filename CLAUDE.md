@@ -397,7 +397,7 @@ strongest:
    600 frames it measured 149 ms in one run and **2 ms** in the next, and inverted it would let
    `CMD_SET_SLOT` overwrite what a corrupting press wrote, leaving `before=30 after=30` on a broken
    ROM. So the margin is 3000 frames (17.2 s measured) *and* the bench requires **`W6_SETUP_FRAMES`
-   `+IPD` frames before the press** — every setup command the client sends, eight since W7 joined
+   `+IPD` frames before the press** — every setup command the client sends, nine since W7 joined
    the run — failing red as a precondition otherwise. **`SECOND_NMI_FRAMES` is overridable so that control is re-runnable**:
    `SECOND_NMI_FRAMES=901 make test-dzrp-stub` puts the press before the client speaks, the client
    reports the exact green a corrupting ROM gives, and the precondition catches it. It is a *bench*
@@ -411,7 +411,7 @@ strongest:
    saved the clock speed and the `IO_NEXTREG_REG` latch into `backup.*` on every press too, two and
    eleven instructions after the slot-7 byte #26 fixed, so a press while stopped handed the debuggee
    back at the debugger's **28 MHz**. **It is NOT observable over DZRP** — `CMD_GET_REGISTERS`
-   reports neither — which is why #37 shipped for two builds with no check where #26 had one from the
+   reports neither — which is why #37 shipped with no check at all where #26 had one from the
    day it was fixed. So W7 reads `backup.speed` and `backup.io_next_reg` **directly out of
    `MAIN_BANK`**, borrowing MMU slot 5 exactly as C22/C23 do, before and after the same press.
    **The addresses come from the build, not from the bench**: they move with every change to the

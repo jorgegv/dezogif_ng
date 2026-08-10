@@ -132,7 +132,7 @@ nmi66h:
     ; there and it idles there — so the next CMD_CONTINUE handed the debuggee
     ; back at the wrong speed. Fatal to anything doing contended-memory, tape
     ; or beeper timing, and invisible to everything else, which is why it went
-    ; two builds without a check.
+    ; uncaught: five ROM-moving builds shipped between #37 being filed and this.
     ; .break_into_debuggee does NOT copy these across, unlike nmi_slot7:
     ; mf_nmi_button_pressed does, at .save_registers_continue, and it is that
     ; path's only caller. There rather than here because A must survive to

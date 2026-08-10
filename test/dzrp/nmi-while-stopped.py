@@ -19,7 +19,7 @@ running debuggee and wrong when the debugger itself is executing.
                   debugger's and the next CMD_CONTINUE handed it back at 28 MHz.
 
 W6 IS OBSERVABLE OVER DZRP AND W7 IS NOT, which is why they read their subjects
-by different routes and why #37 had no check for two builds. CMD_GET_REGISTERS
+by different routes and why #37 shipped with no check at all. CMD_GET_REGISTERS
 reports slot 7 from slot_backup.slot7 — the last byte of the 37-byte payload,
 the only one of the eight read from memory rather than from an MMU register. It
 reports neither the turbo mode nor the NextREG latch, and nothing else in the
@@ -79,6 +79,14 @@ because the values are the stub's rather than ours to choose.
     practice (any code that writes a NextREG selects it first), and it is not
     what this asserts. This asserts the byte is unchanged, which is the property
     #37 is about, and it is the speed byte that carries the guarantee.
+
+AND THE TUPLE COMPARISON IS WHAT MAKES THAT ROBUST TO A `drain_main`, which is
+the one residual way the speed byte alone could report a false green: drain_main
+falls into main, whose prologue rewrites backup.speed to RTM_3MHZ — so a drain
+landing between the press and the second read would put the "before" value back
+on a defective ROM. main does NOT touch backup.io_next_reg, so the REG_RESET
+witness still fires and the pair still differs. Both bytes are compared for that
+reason as well as because both must be intact.
 
 THE PRESS HAS TO LAND BETWEEN THE TWO READS, AND THE TWO EDGES OF THAT WINDOW
 ARE HELD BY DIFFERENT MEANS. Getting this wrong is how the check fails green,
@@ -208,6 +216,17 @@ def peek_saved(d):
     was = body[SLOT_BASE + PROBE_SLOT]
     d.command(CMD_SET_SLOT, bytes([PROBE_SLOT, MAIN_BANK]))
     try:
+        # THE BORROW IS ASSERTED, NOT ASSUMED, and without this the check has a
+        # silent false green: a CMD_SET_SLOT that did nothing would leave the
+        # DEBUGGEE's bank there, both readings would come from it, they would
+        # agree, and W7 would pass against a stub with the defect intact. Slots
+        # 0-6 are reported live from the MMU, so this observes the register
+        # rather than the stub's bookkeeping.
+        body = d.command(CMD_GET_REGISTERS)
+        if body[SLOT_BASE + PROBE_SLOT] != MAIN_BANK:
+            raise SystemExit("PRECONDITION MMU slot %d reads %d after being set to MAIN_BANK "
+                             "(%d): the borrow did not take"
+                             % (PROBE_SLOT, body[SLOT_BASE + PROBE_SLOT], MAIN_BANK))
         out = []
         for _, addr in SAVED:
             probe = PROBE_SLOT * 0x2000 + (addr & 0x1FFF)

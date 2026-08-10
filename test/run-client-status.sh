@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# The session line on the Next's own screen — issues #14 and #23.
+# The session line on the Next's own screen — issues #14, #23 and #28.
 #
-# Invoked by `make test-client-status`. Six headless jnext runs with the WiFi
+# Invoked by `make test-client-status`. Eight headless jnext runs with the WiFi
 # ROM installed as the Multiface ROM and an emulated M1 button press. Five put
 # the stub in a different session state and read row 8 of its screen BACK AS
-# TEXT; the sixth judges memory over the socket instead.
+# TEXT; the last three judge memory over the socket instead.
 #
 #   N1  a client connects over TCP and says NOTHING  ->  "No debug session yet."
 #   N2  a client sends CMD_INIT                      ->  "Session opened - CMD_INIT"
@@ -14,6 +14,7 @@
 #   N5  the same, with the stub back in its idle loop first
 #   N6  the same again with MMU slot 2 retargeted    ->  that bank is UNTOUCHED
 #   N7  the same again with MMU slot 1 retargeted    ->  that SLOT is given back
+#   N8  slot 2 retargeted, then CMD_CLOSE            ->  show_ui leaves it alone
 #
 # WHY IT READS THE ROW RATHER THAN COMPARING RUNS. A check that only requires
 # the three screens to differ cannot say which of them is right, and ERRORS.md
@@ -571,6 +572,86 @@ slot1_run() {
 }
 
 slot1_run N7 "a client retargets MMU slot 1, then vanishes"
+
+
+# ===========================================================================
+# N8 — show_ui itself must not draw through a retargeted slot 2
+#
+# ISSUE #28, AND THE BIG ONE. N6 covers the autonomous painter, which writes one
+# row; this covers show_ui, which opens with `MEMCLEAR SCREEN, SCREEN_SIZE` and
+# then fills 1248 more bytes of attributes before printing anything. Through a
+# slot 2 a client has retargeted with CMD_SET_SLOT that is 8 KB of the client's
+# own bank destroyed, permanently — nothing backs a bank up, only
+# slot_backup.slot0 and .slot7 — and the debuggee gets it back that way.
+#
+# THE TRIGGER IS CMD_CLOSE, NOT THE "B" KEY that issue #28 names. It is the same
+# routine: `check_key_border` jumps to main_redraw and cmd_close reaches it
+# through `jp main`, with show_ui below both. What CMD_CLOSE buys is that there
+# is NO MARGIN anywhere in the check — the client orders its own commands over
+# the socket, where an injected keypress is scheduled in emulated frames against
+# a client counting wall clock, which is the mismatch W6 was caught by and which
+# N5's IDLE_WAIT is documented as still carrying.
+#
+# IT ALSO WIDENS THE DEFECT, honestly: #28 says it needs "someone pressing B at
+# the machine", and CMD_CLOSE is what DeZog sends on every Shift+F5. No human is
+# involved. What this check therefore does NOT cover is `check_key_border`'s own
+# `jp z,main_redraw` — nothing here presses a key, and a regression that stopped
+# the "B" key reaching main_redraw would pass.
+#
+# THE PRECONDITION IS THE ORDERING PROOF `close` ALREADY USES: cmd_close answers
+# before it reaches show_ui, so a reply to a FURTHER command is what says the
+# repaint happened. Reported as UNRUN, distinct from a verdict, because a run
+# that never redrew has tested nothing.
+#
+# AND THE SLOT IS READ BACK BEFORE THE BANK, so "the window was left forced" and
+# "the bank was written through" are two verdicts and not one. See
+# test/dzrp/session-client.py.
+# ===========================================================================
+close_slot_run() {
+    local name=$1 why=$2
+    CHECKS=$((CHECKS + 1))
+    local jlog=$OUT/client-status-$name.log
+    local shot=$OUT/screenshots/client-status-$name.png
+    local cout=$OUT/client-status-$name.client.txt
+
+    log ""
+    log "== $name: $why"
+
+    if ! start_stub "$jlog" "$shot"; then
+        fail "$name the stub never listened on 127.0.0.1:$PORT (see $jlog)"
+        stop_all
+        return
+    fi
+
+    : >"$cout"
+    HOLD=5 DZRP_PORT="$PORT" python3 "$CLIENT" close-slot >"$cout" 2>&1 &
+    client_pid=$!
+
+    local i verdict=""
+    for i in $(seq 240); do
+        verdict=$(awk '/^SHOW_UI /{print $2; exit}' "$cout" 2>/dev/null || true)
+        [ -n "$verdict" ] && break
+        kill -0 "$client_pid" 2>/dev/null || break
+        sleep 0.25
+    done
+    sed 's/^/  | /' "$cout"
+    stop_all
+
+    case "$verdict" in
+        OK)
+            pass "$name show_ui redrew without touching the bank a client had paged into slot 2" ;;
+        CORRUPT)
+            fail "$name show_ui cleared and redrew through the client's bank at slot 2" ;;
+        LEAKED)
+            fail "$name show_ui left its own screen bank in slot 2 instead of the client's" ;;
+        UNRUN)
+            fail "$name PRECONDITION: nothing was answered after CMD_CLOSE, so show_ui never ran" ;;
+        *)
+            fail "$name the client reached no verdict — see $cout and $jlog" ;;
+    esac
+}
+
+close_slot_run N8 "a client retargets MMU slot 2, then sends CMD_CLOSE"
 
 log ""
 if [ "$failures" -ne 0 ]; then

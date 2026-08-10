@@ -9,6 +9,8 @@
                                     back to its idle loop
     session-client.py vanish-slot   the same again, with MMU slot 2 retargeted
                                     first, and the bank checked afterwards
+    session-client.py close-slot    MMU slot 2 retargeted, then CMD_CLOSE, whose
+                                    show_ui must not draw through that window
 
 Bench test/run-client-status.sh reads the verdict off the Next's own screen
 (issue #14), so all this has to do is put the stub in a known state and then be
@@ -81,6 +83,40 @@ would hide the very thing being read.
 AND IT COVERS THE WHOLE 2 KB THE ROW CAN REACH, because a narrower probe was
 measured to be blind — see PROBE below. That mistake is the reason this check
 was watched to go red before it was believed.
+
+`close-slot` IS THE SAME QUESTION ASKED OF show_ui ITSELF — issue #28, and the
+larger of the two hazards by three orders of magnitude. esp_refresh_client_line
+draws one row; show_ui opens with `MEMCLEAR SCREEN, SCREEN_SIZE`, so it zeroes
+6144 bytes and then fills 1248 more with attributes before it prints a character.
+Through a retargeted slot 2 that is 8 KB of somebody else's bank, gone.
+
+ITS TRIGGER IS CMD_CLOSE AND NOT THE "B" KEY, which is the trigger issue #28
+names. Same routine either way — `check_key_border` reaches main_redraw and so
+does `jp main` from cmd_close, and show_ui is below both — but the trigger a
+client can send itself needs no margin at all, where an injected keypress is
+scheduled in emulated FRAMES against a client counting wall clock. That mismatch
+is the one W6 was caught by, and N5's own IDLE_WAIT is documented as a margin
+rather than a proof. Here there is nothing to get wrong: the commands are
+ordered by the socket.
+
+AND IT SAYS SOMETHING THE "B" KEY CANNOT. Issue #28 records that the defect
+"needs a client that uses CMD_SET_SLOT on slot 2 AND someone pressing B at the
+machine". CMD_CLOSE is what DeZog's CSpectRemote.disconnect() sends on every
+Shift+F5, so no one need be at the machine at all — and drain_main reaches the
+same show_ui on any RX timeout, which is what N6's third outcome has been
+quietly reporting as "tested nothing" all along.
+
+THE PRECONDITION IS THE ONE `close` ALREADY ARGUES FOR, reused rather than
+invented: cmd_close answers BEFORE it reaches show_ui, so its own response
+proves nothing. A reply to a FURTHER command does, because the stub only serves
+again from main_loop, which is below main_redraw's show_ui.
+
+THE READ-BACK DELIBERATELY DOES NOT RE-ISSUE CMD_SET_SLOT, and that is what
+makes this cover the second half of the fix as well. A show_ui that forced the
+window and then forgot to put it back would leave 0x4000 addressing the screen;
+the probe read would come back as screen data and the check would be right to
+fail. Slot 2 is read out of CMD_GET_REGISTERS first so the two faults are told
+apart instead of being reported as one.
 """
 import os
 import sys
@@ -155,15 +191,19 @@ SLOT1_BANK = int(os.environ.get("SLOT1_BANK", "62"))
 SLOTS_AT = 29
 
 
-def slot1_of(body):
+def slot_of(body, slot):
     if len(body) != 37:
         raise SystemExit("PRECONDITION CMD_GET_REGISTERS answered %d payload bytes, "
                          "expected 37" % len(body))
-    return body[SLOTS_AT + 1]
+    return body[SLOTS_AT + slot]
+
+
+def slot1_of(body):
+    return slot_of(body, 1)
 
 
 PHASES = ("silent", "init", "close", "vanish", "vanish-idle", "vanish-slot",
-          "vanish-slot1")
+          "vanish-slot1", "close-slot")
 
 
 def _w(v):
@@ -277,6 +317,68 @@ def vanish_slot(t, d):
     return done()
 
 
+def close_slot(t, d):
+    """N8: show_ui must not clear and redraw through a retargeted slot 2.
+
+    Issue #28. Everything interesting is in the module docstring; what follows
+    is only the order of events.
+    """
+    d.command(CMD_SET_SLOT, bytes([2, SLOT2_BANK]))
+    d.command(CMD_WRITE_MEM, b"\x00" + _w(PROBE_ADDR) + PROBE)
+
+    # Asserted rather than assumed, as vanish-slot does: a bank that never took
+    # the write would give a "corrupt" verdict that means nothing.
+    before = read_probe(d)
+    if before != PROBE:
+        print("PRECONDITION the probe did not survive its own write to bank %d: %s"
+              % (SLOT2_BANK, before.hex()), file=sys.stderr)
+        return 1
+    print("bank %d holds the probe at 0x%04X" % (SLOT2_BANK, PROBE_ADDR))
+    sys.stdout.flush()
+
+    body = d.command(CMD_CLOSE)
+    print("CMD_CLOSE answered: %s" % body.hex())
+    sys.stdout.flush()
+
+    # THE PRECONDITION. cmd_close writes its response and only then reaches
+    # show_ui through `jp main`, so the response above proves nothing at all.
+    # The stub serves again only from main_loop, which is below main_redraw's
+    # show_ui, so an answer here is what makes the repaint an observed fact.
+    # CMD_LOOPBACK because it changes no state and repaints nothing.
+    echo = b"\x1c\x1c\x1c\x1c"
+    body = d.command(CMD_LOOPBACK, echo)
+    if body != echo:
+        print("SHOW_UI UNRUN no reply after CMD_CLOSE (got %s)" % body.hex())
+        return done()
+    print("CMD_LOOPBACK after CMD_CLOSE answered, so show_ui has run")
+    sys.stdout.flush()
+
+    # Slot 2 FIRST, because if the window was left forced the probe read below
+    # would be reading the display file and its verdict would name the wrong
+    # fault. NO CMD_SET_SLOT here: putting the bank back would hide exactly that.
+    slot2 = slot_of(d.command(CMD_GET_REGISTERS), 2)
+    if slot2 != SLOT2_BANK:
+        print("SHOW_UI LEAKED slot 2 reads %d after the redraw, was %d"
+              % (slot2, SLOT2_BANK))
+        return done()
+
+    after = read_probe(d)
+    if after == PROBE:
+        print("SHOW_UI OK bank %d unchanged across %d bytes from 0x%04X"
+              % (SLOT2_BANK, len(PROBE), PROBE_ADDR))
+    else:
+        # A digest and not a dump, for vanish_slot's reason: 2 KB of hex buries
+        # every other line of the run. All-zero is called out by name because it
+        # is the MEMCLEAR's own signature and is what identifies show_ui as the
+        # writer rather than some later print.
+        changed = sum(1 for a, b in zip(PROBE, after) if a != b)
+        first = next(i for i, (a, b) in enumerate(zip(PROBE, after)) if a != b)
+        how = "zeroed" if after == bytes(len(PROBE)) else "overwritten"
+        print("SHOW_UI CORRUPT bank %d %s: %d of %d bytes changed, first at 0x%04X"
+              % (SLOT2_BANK, how, changed, len(PROBE), PROBE_ADDR + first))
+    return done()
+
+
 def main(argv):
     if len(argv) != 2 or argv[1] not in PHASES:
         print(__doc__.strip(), file=sys.stderr)
@@ -305,6 +407,9 @@ def main(argv):
 
     if phase == "vanish-slot1":
         return vanish_slot1(t, d)
+
+    if phase == "close-slot":
+        return close_slot(t, d)
 
     if phase in ("vanish", "vanish-idle"):
         if phase == "vanish-idle":

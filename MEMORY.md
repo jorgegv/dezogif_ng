@@ -56,7 +56,8 @@ judging the wrong surface.**
 `change_border_color` has exactly one caller, `main.asm:257`, and returns early
 only when cycling is off — so a frozen border means `main_loop` is not turning.
 And `transport_read_byte` writes BLUE then YELLOW around every read
-(`transport_esp.asm:3468-3483`), so a stub parked in the transport leaves
+(`transport_esp.asm:3467-3509` — `.flash1` at `:3470`, `.flash2` at `:3508`),
+so a stub parked in the transport leaves
 **yellow**, which is bench N1's signature. #39's was **black** — which is what
 said the Z80 was in the debuggee rather than in the transport, and pointed the
 search away from where both retracted mechanisms had looked.

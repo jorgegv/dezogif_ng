@@ -561,7 +561,10 @@ else
     if [ "$got" = "$want" ]; then
         pass "D5 the address came back and the screen advertises it again"
     else
-        fail "D5 the address came back and the screen does not say so: $got"
+        # Kept short deliberately: $got here can be the eleven-word "no address"
+        # block — this branch's guard admits it, unlike D2's and D3's — and the
+        # longer prose this line used to carry took the detail to 22 words.
+        fail "D5 the returned address did not reach the screen: $got"
     fi
 fi
 stop_all

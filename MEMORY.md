@@ -5,6 +5,158 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-10 — The sweep was reaping sockets it had never been introduced to, and the fix is a timer reset rather than an exemption
+
+**Built, issue #40**, and the shape of it was **decided by the user before any
+code**: a bare TCP connect SHALL restart the idle sweep's timer, via the
+module's own `<id>,CONNECT`.
+
+**THE DEFECT IS #24's OWN TRIGGER, NOT A NEW FEATURE.** `esp_idle_tick` counts
+while `esp_idle_armed` is set and no DZRP session is open, and the **only**
+thing that reset the counter was `esp_sync_ipd` — a parsed `+IPD`. A bare TCP
+connect never reaches one. So a socket the module accepted while the stub was
+idle sat inside a period **it had not started** and the sweep reaped it after
+whatever happened to be left of somebody else's, down to nothing. Found while
+reviewing #32 and measured on `main` at the same rate, so it is not #32's:
+**60 closures of 60** across three `IDLE_SWEEP=10` ROMs.
+
+**THE HOOK ALREADY EXISTED AND HAD ONE CONSUMER.** Issue #23's `esp_watch_line`
+already watches `<id>,CONNECT` and `<id>,CLOSED`, and `esp_line_event` already
+runs on a complete line. The reset goes there, **before** the session checks,
+because every id matters to the timer and the state it cares about — no
+session — is precisely the one in which those checks return.
+
+**CONNECT AND NOT CLOSED, which is why the observer now remembers which line it
+matched.** A closed connection is a slot the module has just handed **back**;
+deferring the sweep for it would be backwards. `esp_watch_line` keeps the byte
+that chose the tail, `'O'` or `'L'`, at the one point where it already has it in
+A — three bytes and no new decision. Its header used to say the difference was
+"deliberately not remembered", which was true while `esp_line_event` was the
+only consumer and is now half true; both sites say so.
+
+**NOTHING IS RE-ARMED, ONLY RESET**, and that is the load-bearing restraint.
+`esp_idle_armed` is untouched, so a period that has already swept does not get
+a second one and a stream of connects can never buy **more** sweeps than
+traffic would. It also means the reset cannot turn into a connect-time sweep,
+which is the thing #24 examined and could not build.
+
+**THE ACCEPTED COST, stated rather than discovered: a genuinely leaked socket
+holds its slot one sweep period longer.** That is free in practice because the
+module reaps on its own `AT+CIPSTO` regardless — 1800 s since #24's first half
+— so the backstop is unmoved and only our own housekeeping is deferred.
+
+**AND IT DOES NOT BLOCK KNOWN-ISSUES.md #19's RECOVERY, which was checked
+rather than assumed** — the obvious worry being a stranded user retrying in a
+loop and pushing the sweep back for ever. In that state every slot is taken, so
+jnext **closes the refused connection before queueing its `CONNECT` line**
+(`esp_at.cpp:959-993`, the ceiling path `continue`s first), no line is emitted,
+the timer is not restarted and the sweep still fires. That is jnext's source,
+not hardware.
+
+**WHAT IT BUYS IS EXACTLY ONE PERIOD AND NOT IMMUNITY**, which is worth writing
+down because it is easy to over-read. A client silent for **longer** than a
+whole period is still swept — that is what the sweep is for. What changes is
+that the grace is now a whole period measured from **its own** connect instead
+of a random remainder of somebody else's. At the shipped 300 s that covers every
+client that speaks at all promptly.
+
+**THE CHECK HAD TO STAGE A LATE CONNECT, AND THAT IS THE ONLY HARD PART.**
+Because the grace is one period, a client connecting at the *start* of one
+survives on both ROMs — a check that did not notice would be **green against
+the defect**. So each run measures its own period first (arm the timer with one
+bare `CMD_LOOPBACK`, time the sweep that follows), arms again, waits 0.65 of it,
+connects a silent client, and lets it speak 0.60 of a period later: the
+control's deadline (1.00) falls inside that silence, the shipped ROM's moves to
+1.65. Three preconditions refuse a verdict on a mis-staged run — a sane period,
+a connect inside a band around 0.65, and **no sweep before the connect**.
+
+**The calibration is legitimate only because the period is stable, and that was
+measured before it was relied on**: five consecutive periods in one run at
+1.737 1.789 1.790 1.786 1.797 s, a **3.4%** spread against margins of 28% or
+better. `connect_at` came out 0.674-0.677 on every run since.
+
+**Evidence: `make test-slot-recovery`, now 7 runs and 9 checks, 9/9, three
+times.** S8 is the subject and S9 the control, `CONNECT_RESET=0`, one constant
+apart:
+
+| | `at_speak` vs base | the client |
+|---|---|---|
+| **S8**, shipped | **10 = 10** — no sweep at all | served |
+| **S9**, `CONNECT_RESET=0` | **14 > 10** | **closed 0.69 s into a 1.2 s silence** |
+
+**Shown red first twice, and the second time is the re-runnable one**: against
+the pre-fix source S8 read *"the silent client was closed before it ever spoke:
+the connect did not count"*, and pointing S8's own ROM at the `CONNECT_RESET=0`
+build reproduces that on the shipped harness at any time.
+
+**TWO HARNESS DEFECTS CAME OUT OF RUNNING IT, and the second is the one worth
+keeping.** `stay_silent`'s socket timeout was a flat 1.0 s, which quantised
+`--watch` **upwards** — 1.20 slept 2.00, because the second `recv` had to expire
+in full before the loop could look at the clock again — and that overshoot put
+the client 0.03 s the wrong side of the deadline it was staged against. It is
+the remaining silence now.
+
+**And S6 needed staging that THIS CHANGE made necessary**, which is recorded
+because it looks like tuning a check until it is green and is not. The sweep now
+fires one period after the last `CONNECT`, and `start_stub`'s **port poll is a
+bare connect** — so with `SETTLE` at 2 s against this probe ROM's 1.8-2.0 s
+period, the five-id walk landed on S6's client every time and its `CMD_INIT` was
+eaten by the drains between the `AT+CIPCLOSE` lines. That is #24's documented
+cost of connecting *during* a sweep, it has nothing to do with what S6 measures,
+and **the check reported it correctly as a precondition failure** ("the client
+exited 1, so its silence proves nothing") rather than as a wrong verdict. S6
+waits the boot sweep out now. The general fact: a change that moves *when* a
+periodic action fires can put it in phase with a bench's own cadence, and the
+resonance here was `SETTLE` being one period.
+
+**A BUILD-TIME TRAP WORTH ONE LINE.** sjasmplus substitutes a `-D` **textually**,
+so a derived symbol named `ESP_CONNECT_RESET_ON` becomes `0_ON` under
+`-DESP_CONNECT_RESET=0` and every use of it is a hard error. It is
+`ESP_RESET_ON_CONNECT`, and the reason is in the source: the seam's name must not
+be a **prefix** of anything derived from it.
+
+**Rejected.** Per-id "seen a CONNECT since the last sweep" state so that only
+those connections are spared (more state and a subtler rule, for a case the
+module's own timeout already bounds — the user's call, 2026-08-10); documenting
+it in `KNOWN-ISSUES.md` as WONTFIX (same call); resetting on `<id>,CLOSED` too
+(it delays reclaiming a slot that has just come back, which is the wrong
+direction, and it is not what was asked); re-arming as well as resetting (it
+would hand a swept period a second sweep and re-open the window one period
+later); putting the reset in `esp_watch_line` rather than `esp_line_event` (the
+matcher stays a matcher; the policy belongs with the event); and `IDLE_SWEEP=0`
+as S9's control — with the sweep assembled out the silent client survives **for
+the wrong reason**, so the check would pass against a stub that still had the
+defect.
+
+**Cost: WiFi +17 bytes** (`main_end` 0xFD31 → 0xFD42, **350** free to the
+identity block), which is one data byte, one `ld (nn),a` and the thirteen-byte
+reset — every byte accounted for. **The UART ROM is byte-identical** to `main`'s
+pinned, `96f11a12…` both sides with `build/*.bin` deleted first, which is what
+says nothing leaked across the transport boundary: `transport_esp.asm` is in the
+WiFi build only. WiFi `726eebf5…` → `450e3db3…`. **This changes a ROM, so the
+merge carries a `make bump`.**
+
+**Regression: `test-slot-recovery` 9/9 three times, `test-dzrp-stub` 23/23 with
+W1-W6, `test-client-status` 8/8, `make test` 8/8, both variants
+`check-reproducible`.**
+
+**NOT COVERED, and none of it is hidden.** **That a real client was ever
+bitten**: DeZog sends `CMD_INIT` the moment it connects, so its own window is
+milliseconds against a shipped period of 300 s. #40 stages a reachable state,
+not an observed one, and says so itself — the visible cost even then was one
+failed exchange and a retry, never a wedge. **The rate at the shipped 300 s**:
+everything here is at `IDLE_SWEEP=10`, which is what makes it stageable at all.
+**Hardware**: no Next has been near any of this, and the `<id>,CONNECT` line
+this now depends on is jnext's rendering of it — the same class of dependency
+that cost this project a connection id of 0 and a 15-character address.
+**A CONNECT arriving inside a `transport_drain`** is invisible to the observer,
+exactly as a `CLOSED` is (issue #23's own NOT-COVERED list), so a socket whose
+line was eaten gets the old behaviour; nothing here stages that. **And the
+frames the sweep's own drains swallow** — the S6 collision above — are untouched
+and remain #24's documented cost.
+
+---
+
 ## 2026-08-10 — A 64K address above 0xE000 wrote into the running debugger, and no input here had ever been that address
 
 **Built, issue #38.** `cmd_set_breakpoints` and `cmd_restore_mem` judge the

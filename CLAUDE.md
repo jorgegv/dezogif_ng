@@ -755,8 +755,9 @@ strongest:
    **Not part of `make test`**: it binds a host TCP port. **It says nothing about hardware** — but
    what it validates is the display-file addressing, attribute decoding and palette, which are the
    same silicon either way. The reader **cannot see the border** in either place.
-4j. **`make test-slot-recovery`** — whether anything gives the module's inbound slots back
-   (issues #19 and **#24**), **5 headless jnext runs, 7 checks**, and the **fifth and eighth**
+4j. **`make test-slot-recovery`** — whether anything gives the module's inbound slots back, and
+   whether it reaps anyone it should not (issues #19, **#24** and **#40**), **7 headless jnext runs,
+   9 checks**, and the **fifth, eighth and tenth**
    benches to move a build-time constant to reach their subject. Nothing in the stub had ever closed an established connection:
    `AT+CIPSERVER=0` retires the *listener* and leaves live connections alone, so a peer that wedged
    rather than closing kept its slot until the **module** reaped it, and enough of them left
@@ -819,6 +820,32 @@ strongest:
    **What a green idle check does NOT establish**: that the sweep repaired anything. No emulator
    run can leak a slot or make the module unresponsive, so what is shown is that the **mechanism
    fires** from a quiet stub, which is what issue #24's acceptance criteria ask to be said out loud.
+   **S8-S9 ARE THAT TRIGGER'S OWN SIDE EFFECT** (issue #40), and it is the sweep reaping a client
+   rather than a leak. Only a parsed `+IPD` restarted `esp_idle_ticks`, and **a bare TCP connect
+   never reaches one** — so a socket the module accepted while the stub was idle sat inside a period
+   it had not started and was closed after whatever was left of it, down to nothing. The module's own
+   `<id>,CONNECT` restarts the timer now, which buys such a socket a **whole** period; the cost,
+   accepted, is that a genuinely leaked one holds its slot one period longer, which the module's
+   `AT+CIPSTO` bounds regardless. **S8** a client connects, says nothing, and must still be there
+   and still be served past the deadline the run's own previous period had set, with **no sweep in
+   the log** in between; **S9** the control, `CONNECT_RESET=0`, where the same client is closed
+   before it speaks. Measured: `at_speak=10` against a base of 10 for S8, `14` for S9, closed 0.69 s
+   into a 1.2 s silence.
+   **THE GRACE IS EXACTLY ONE PERIOD, SO THE CHECK HAS TO STAGE A LATE CONNECT** — a client that
+   connects at the *start* of a period survives on either ROM, and a check that did not notice would
+   be green against the defect. So each run measures its own period first (arm the timer with one
+   `CMD_LOOPBACK`, time the sweep that follows), arms again, waits 0.65 of it, connects the silent
+   client and lets it speak 0.60 of a period later. Three preconditions stop a mis-staged run
+   reporting a verdict at all: a sane period, a connect inside a band around 0.65, and no sweep
+   before the connect. Five consecutive periods in one run measured 1.737-1.797 s, a 3.4% spread
+   against margins of 28% or better.
+   **IT DOES NOT BLOCK #19's RECOVERY, and that was checked rather than assumed**: jnext closes a
+   connection refused at the ceiling **before** queueing its `CONNECT` line (`esp_at.cpp:959-993`),
+   so in the state where every slot is leaked a client retrying in a loop emits none, the timer is
+   not restarted, and the sweep still fires. That is jnext's source and not hardware.
+   **NOT covered**: that a real client was ever bitten. DeZog sends `CMD_INIT` the moment it
+   connects, so its own window is milliseconds against a shipped period of 300 seconds — #40 stages
+   a reachable state, not an observed one, and says so itself.
 4k. **`make test-mfinstall`** — the `.mfinstall` dot command (issue #21), **12 headless jnext runs,
    9 checks**, and the only bench here that drives a program from the **NextZXOS command line**
    rather than through a socket or a screenshot alone: every run boots NextZXOS, types the command

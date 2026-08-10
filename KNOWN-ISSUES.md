@@ -252,7 +252,7 @@ SESSION IS STILL OPEN:**
 
 | what | after | since |
 |---|---|---|
-| **the stub** sweeps every link id with `AT+CIPCLOSE`, once it has been idle with **no DZRP session it knows of** | **~5 min** | build `00.18`, issue #24 |
+| **the stub** sweeps every link id with `AT+CIPCLOSE`, once it has been idle with **no DZRP session it knows of** and nothing has arrived or connected | **~5 min** | build `00.18`, issue #24; the connect half is #40 |
 | **the module** reaps each idle inbound connection itself, on `AT+CIPSTO` | **~30 min** | the value the stub sets at bring-up, issue #24 |
 
 **AND THE HEADLINE CASE OF THIS ENTRY IS THE ONE THE STUB'S FIVE MINUTES DOES NOT REACH**, which is
@@ -272,6 +272,14 @@ refuses: a DeZog session parked at a breakpoint is silent for minutes and perfec
 **So the stub's five minutes helps the cases where the vanished sockets are not the tracked
 session** — peers that connected and never sent `CMD_INIT`, and peers superseded by a later session
 that ended cleanly. Those are real and they are what S4-S7 stage.
+
+**AND RETRYING WHILE YOU WAIT DOES NOT PUSH THE FIVE MINUTES BACK**, which is worth saying because
+since issue #40 an accepted connection restarts that timer and retrying is exactly what a stranded
+user does. In this entry's own state it cannot: every slot is taken, so the module **refuses** the
+new connection and emits no `<id>,CONNECT` for it at all — checked in jnext's source
+(`esp_at.cpp:959-993`, the refusal path returns before the line is queued) rather than assumed, and
+not checked on hardware. Where slots remain a retry does restart it, and there the retry succeeds
+and there is nothing to wait for.
 
 **On an older build there is no stub-side sweep at all and the wait is the module's alone**, which
 is ~3 minutes before `AT+CIPSTO=1800` shipped and ~30 after it. And `AT+CIPSTO` is settable: **`0`

@@ -774,6 +774,68 @@ ESP_IDLE_SWEEP_SECS:    equ 300
 ESP_IDLE_SWEEP_TICKS:   equ ESP_IDLE_SWEEP_SECS * 50
     ASSERT ESP_IDLE_SWEEP_TICKS < 65536      ; the counter is 16 bits
 
+; How long the stub sits idle, with no DZRP session, before it asks the module
+; again whether it still has the address the screen is advertising — issue #32,
+; in seconds. 0 disables the re-query entirely, which is this seam's control and
+; is what shipped before this: one AT+CIFSR at bring-up and never another.
+;
+; WHY A PERIODIC QUERY AND NOT AN EVENT. A real module puts unsolicited `WIFI
+; DISCONNECT` / `WIFI CONNECTED` / `WIFI GOT IP` lines on the wire at these
+; edges, and a stub that watched for them would need no timer at all. It is not
+; done, for the reason this project declines every unverified mechanism: nobody
+; here has ever observed those lines, jnext models none of them (jnext#246 left
+; them out deliberately, for exactly that reason), and so a watcher for them
+; would be Z80 no bench could execute — issue #19's trade, refused again.
+; Polling is what can be checked, so polling is what is written.
+;
+; BOTH DIRECTIONS MATTER, and the second is the commoner one. Losing the
+; association leaves `Connect at <ip>:11000` on the screen naming an address
+; that no longer reaches the machine. But a Next switched on BEFORE its router
+; is ready comes up with no address at all, and then the screen says "No WiFi
+; address. Set the Next up first: run wifi2.bas" — which is not merely stale, it
+; is wrong ADVICE: the machine is set up correctly and the router simply was not
+; there yet. Before this, the only cure for either was an M1 press.
+;
+; 60 SECONDS, and what bounds it is the cost below rather than taste. It has to
+; be short enough that somebody standing at the machine, wondering why their
+; debugger will not attach, sees the screen put itself right while they are
+; still standing there — a minute passes that test and five does not. There is
+; no upper constraint worth naming: nothing else in the system depends on this
+; number, unlike ESP_IDLE_SWEEP_SECS, which has to stay well inside the module's
+; own AT+CIPSTO reap.
+;
+; WHAT IT COSTS, once a minute: one AT+CIFSR and its three-line answer. The
+; window that matters inside that is esp_query_address's wait for
+; `+CIFSR:STAIP,"` — a scan whose pattern begins with '+', which by
+; esp_wait_string_hold's rule is one of the only two scans in this transport
+; that CANNOT capture an inbound frame instead of destroying it. So a client
+; whose first command lands inside that window loses it, which is issue #10's
+; residual turned from a once-per-bring-up window into a recurring one.
+;
+; THAT COST IS SMALLER THAN ONE THIS TRANSPORT ALREADY SHIPS, which is the
+; argument for accepting it rather than a hope. esp_idle_tick's own sweep sends
+; five AT+CIPCLOSE lines and drains each answer with transport_drain, which
+; reads with raw `in` and hands the bytes to NOBODY — a strictly wider window,
+; on the same idle path, every ESP_IDLE_SWEEP_SECS. One scan a minute is less
+; exposure than five drains every five.
+;
+; AND THE GUARD KEEPS IT AWAY FROM A LIVE SESSION ENTIRELY. See
+; esp_check_address: nothing is asked while esp_session_valid is set, so a
+; client that has introduced itself with CMD_INIT — which is every real DeZog
+; session — can never have a command eaten by this. What remains exposed is the
+; gap between a socket being accepted and its first command arriving, which is
+; measured in milliseconds against a period measured in minutes.
+ IFNDEF ESP_ADDR_CHECK_SECS
+ESP_ADDR_CHECK_SECS:    equ 60
+ ENDIF
+
+; The same thing in ticks. ONE TICK IS ONE FRAME, and the whole argument for why
+; that is exactly true in every timing mode is above, at ESP_IDLE_SWEEP_TICKS —
+; this counter is stepped by the same edge, in the same routine, on the same
+; read of NR 0x1E bit 0.
+ESP_ADDR_CHECK_TICKS:   equ ESP_ADDR_CHECK_SECS * 50
+    ASSERT ESP_ADDR_CHECK_TICKS < 65536      ; the counter is 16 bits
+
  IF ESP_BAUD_HIGH != ESP_BAUDRATE
 ; How many times esp_negotiate_baud says `AT` at the new rate before deciding
 ; the rate does not work. Two, and the second one is what the constant is for:
@@ -799,9 +861,17 @@ ESP_BAUD_IS_LOW:    equ 0
 ESP_BAUD_IS_HIGH:   equ 1
  ENDIF
 
-; What the UI has to say about the link. Decided once, during bring-up, because
-; show_ui is re-entered on every redraw and an AT round trip per redraw would
-; buy nothing — the address cannot change while we hold the module.
+; What the UI has to say about the link. Decided at bring-up and, since issue
+; #32, revisited from the idle path — see ESP_ADDR_CHECK_SECS and
+; esp_check_address.
+;
+; IT IS STILL NOT DECIDED FROM show_ui, which is what this comment used to say
+; and half of which is still right: show_ui is re-entered on every redraw and an
+; AT round trip per redraw would be paid every time the border key is pressed.
+; The half that was WRONG is the reason it gave — "the address cannot change
+; while we hold the module". It can. Holding the module says nothing about
+; whether the module is still on a network, and the whole of issue #32 is that
+; the screen went on advertising an address after it had stopped being one.
 ESP_LINK_OK:            equ 0   ; associated, listening, and the address is known
 ESP_LINK_NO_ADDRESS:    equ 1   ; the module answered, but has no usable address
 ESP_LINK_FAILED:        equ 2   ; the AT chain did not complete
@@ -839,6 +909,17 @@ ESP_CLIENT_NONE:        equ 0   ; no CMD_INIT since the debugger came up
 ESP_CLIENT_ATTACHED:    equ 1   ; a CMD_INIT arrived, and no CMD_CLOSE since
 ESP_CLIENT_DETACHED:    equ 2   ; a CMD_CLOSE arrived
 ESP_CLIENT_LOST:        equ 3   ; the module says that connection has gone
+
+; The FIRST of the two rows the link status block is drawn on; the second is the
+; one below it. Every one of the three alternatives below is two rows, so this is
+; the whole of what that block occupies.
+;
+; A CONSTANT SINCE ISSUE #32 rather than the `6*8` it was written as three times,
+; because esp_check_address has to BLANK exactly the rows those strings occupy
+; before redrawing them, and a blank that was one row out would leave half of a
+; longer previous line standing under a shorter new one. Two renderings of one
+; fact is how they drift.
+ESP_LINK_ROW:           equ 6
 
 ; The row the session line is drawn on. Under the connect block at rows 6 and 7,
 ; which is where a reader looking for "has my session arrived" is already
@@ -1218,21 +1299,51 @@ esp_fault_count:    defb 0
 ; first of a new run, which is exactly what re-triggers a limit of one.
 esp_recovering:     defb 0
 
+ IF ESP_IDLE_SWEEP_TICKS > 0 || ESP_ADDR_CHECK_TICKS > 0
+; THE SHARED FRAME EDGE, and it is shared because there is only one clock: bit 8
+; of the active video line counter as it was last seen, so that its 1->0 edge
+; can be recognised. Both idle timers below are stepped by it, in one place, on
+; one NextREG read per turn of main_loop — see esp_idle_tick.
+;
+; It sits outside either feature's own IF for that reason, and the condition
+; above is an OR: a build with the sweep assembled out (IDLE_SWEEP=0, bench S7)
+; still needs the edge if the address check is in, and the reverse.
+;
+; Its initial value is a don't-care: 0 is what the first sample will most often
+; read anyway, and the worst a wrong guess can cost is one missed tick.
+esp_idle_line:      defb 0
+ ENDIF
+
  IF ESP_IDLE_SWEEP_TICKS > 0
 ; Issue #24's idle sweep — see ESP_IDLE_SWEEP_SECS for why it exists and why it
-; is a timer rather than a connect-time trigger, and esp_idle_tick for how the
-; three bytes are used.
+; is a timer rather than a connect-time trigger, and esp_idle_tick for how these
+; bytes are used.
 ;
-; Bit 8 of the active video line counter as it was last seen, so that its 1->0
-; edge can be recognised. Its initial value is a don't-care: 0 is what the first
-; sample will most often read anyway, and the worst a wrong guess can cost is
-; one missed tick out of ESP_IDLE_SWEEP_TICKS.
-esp_idle_line:      defb 0
-
-; Ticks of 256 lines since the last inbound frame. Reset by esp_sync_ipd, so
-; ANY traffic restarts the countdown.
+; Frames since the last inbound frame. Reset by esp_sync_ipd, so ANY traffic
+; restarts the countdown.
 esp_idle_ticks:     defw 0
+ ENDIF
 
+ IF ESP_ADDR_CHECK_TICKS > 0
+; Frames counted towards the next AT+CIFSR re-query — issue #32. Stepped by the
+; same edge as the counter above, in the same routine, and reset to zero each
+; time it fires, because unlike the sweep this one REPEATS: closing connections
+; over and over would open a refusal window every period for as long as the
+; machine was switched on, while asking the module a question does nothing to
+; anybody. So there is no `armed` byte beside it.
+;
+; AND IT IS NOT RESET BY INBOUND TRAFFIC, where esp_idle_ticks is. That is a
+; deliberate difference and not an oversight. The sweep is about PEERS, so
+; traffic is evidence about its subject and rightly restarts its clock; this is
+; about the module's own association, which no amount of traffic says anything
+; about. A stub that a client connects to every thirty seconds would otherwise
+; never check at all, and that is a debugger in use — the one this matters most
+; to. What keeps a live session safe is the session guard rather than the reset;
+; see esp_check_address.
+esp_addr_ticks:     defw 0
+ ENDIF
+
+ IF ESP_IDLE_SWEEP_TICKS > 0
 ; Whether a sweep is still owed for this idle period. Cleared when one runs and
 ; set again by esp_sync_ipd, which is what makes this fire ONCE per idle period
 ; instead of every ESP_IDLE_SWEEP_SECS for as long as the machine is switched
@@ -1281,9 +1392,9 @@ esp_client_state:   defb ESP_CLIENT_NONE
 ; is the failure this must not produce.
 ;---------------------------------------------------------------------------
 esp_text_connect:
-    defb AT, 0, 6*8
+    defb AT, 0, ESP_LINK_ROW*8
     defb "Remote debugger ACTIVE"
-    defb AT, 0, 7*8
+    defb AT, 0, (ESP_LINK_ROW+1)*8
     ; There is no room for the colon MEMORY.md's sketch put after "at", and the
     ; ASSERTs below are why: this prefix plus the longest address plus the port
     ; already ends exactly at column 32.
@@ -1351,15 +1462,15 @@ esp_baud_text_table_end:
  ENDIF
 
 esp_text_no_address:
-    defb AT, 0, 6*8
+    defb AT, 0, ESP_LINK_ROW*8
     defb "No WiFi address. Set the Next"
-    defb AT, 0, 7*8
+    defb AT, 0, (ESP_LINK_ROW+1)*8
     defb "up first: run wifi2.bas", 0
 
 esp_text_failed:
-    defb AT, 0, 6*8
+    defb AT, 0, ESP_LINK_ROW*8
     defb "ESP-01 setup failed. Check it"
-    defb AT, 0, 7*8
+    defb AT, 0, (ESP_LINK_ROW+1)*8
     defb "is fitted and enabled.", 0
 
 ; Indexed by esp_link_state, which esp_show_status does not range-check — so
@@ -1823,12 +1934,21 @@ esp_close_all_links:
 
 
 ;===========================================================================
-; One turn of main_loop with nothing to do — issue #24.
+; One turn of main_loop with nothing to do — issues #24 and #32.
 ;
-; It is the trigger issue #19's sweep never had. ESP_IDLE_SWEEP_SECS carries the
-; whole argument for why a timer rather than a connect-time hook, and why a
-; timer is allowed to close connections at all where "close on suspicion" is
-; forbidden; this is only how the counting works.
+; TWO TIMERS AND ONE CLOCK. The sweep (issue #24) frees the module's inbound
+; slots once per idle period; the address check (issue #32) asks the module
+; whether it still has the address the screen is advertising, every period, for
+; ever. ESP_IDLE_SWEEP_SECS and ESP_ADDR_CHECK_SECS carry the whole argument for
+; each — why a timer rather than a connect-time hook, why a timer may close
+; connections at all where "close on suspicion" is forbidden, and why one
+; repeats and the other does not. This is only how the counting works.
+;
+; THEY SHARE THE SESSION GUARD AND THE FRAME EDGE AND NOTHING ELSE. Sharing the
+; guard is not a saving, it is the same requirement twice: a DZRP session parked
+; at a breakpoint is silent and healthy, and neither closing its peers nor
+; putting an AT command in front of its next reply is allowed. Sharing the edge
+; is one NextREG read per turn of main_loop instead of two.
 ;
 ; THE CLOCK IS NR 0x1E BIT 0 — bit 8 of the active video line counter — and one
 ; tick is one frame, taken on its 1->0 edge. That register is free-running and
@@ -1852,31 +1972,37 @@ esp_close_all_links:
 ; puts an unsolicited line on the wire, and every frame boundary inside that is
 ; unseen. A missed frame lengthens the timer; nothing here can shorten it.
 ;
-; THE CLOCK STOPS WHILE A SESSION IS OPEN rather than being reset, so it is not
-; restarted by the session ending — which means a client that vanishes without
-; CMD_CLOSE is swept for that much sooner. That is the case this exists for, so
-; the direction is right; and the counter cannot be stale in the other
-; direction, because esp_sync_ipd resets it on every inbound frame.
+; THE SWEEP'S CLOCK STOPS WHILE A SESSION IS OPEN rather than being reset, so it
+; is not restarted by the session ending — which means a client that vanishes
+; without CMD_CLOSE is swept for that much sooner. That is the case it exists
+; for, so the direction is right; and its counter cannot be stale in the other
+; direction, because esp_sync_ipd resets it on every inbound frame. The address
+; check's counter is deliberately NOT reset by traffic; see esp_addr_ticks.
 ;
-; A FAULT INSIDE THE SWEEP IS NOT SPECIAL-CASED. esp_close_link sends and reads,
-; so a module that has stopped answering can raise faults here exactly as
-; transport_byte_available already can from the same loop, and enough of them
-; reach esp_recover through rxtx_error. That is an escalation from housekeeping
-; to a full re-init on a module that is genuinely broken, which is the right
-; answer and is why nothing here suppresses it.
+; A FAULT INSIDE EITHER IS NOT SPECIAL-CASED. esp_close_link and
+; esp_query_address both send and read, so a module that has stopped answering
+; can raise faults here exactly as transport_byte_available already can from the
+; same loop, and enough of them reach esp_recover through rxtx_error. That is an
+; escalation from housekeeping to a full re-init on a module that is genuinely
+; broken, which is the right answer and is why nothing here suppresses it.
+;
+; THE ORDER OF THE TWO OPENING TESTS CHANGED WITH ISSUE #32, and it is behaviour
+; and not tidying. The sweep's "already done this period" test used to come
+; first, as the cheapest question — but it also stopped the frame edge being
+; sampled at all once the sweep had run, which is fine for a timer that fires
+; once and wrong for one that repeats. The session guard leads now because it is
+; the one both timers share, and the sweep's own armed test has moved down to
+; where the sweep is counted. Both are side-effect-free early returns, so the
+; sweep behaves exactly as it did.
 ;
 ; Changes:
 ;  AF, BC, DE, HL — see TRANSPORT_IDLE_TICK for why those and no others.
 ;===========================================================================
 esp_idle_tick:
- IF ESP_IDLE_SWEEP_TICKS > 0
-    ; Cheapest question first: this idle period has already had its sweep.
-    ld a,(esp_idle_armed)
-    or a
-    ret z
-
-    ; A DZRP session stops the clock. Not "defers the sweep" — stops it, so that
-    ; no amount of a user reading code at a breakpoint can add up to one.
+ IF ESP_IDLE_SWEEP_TICKS > 0 || ESP_ADDR_CHECK_TICKS > 0
+    ; A DZRP session stops both clocks. Not "defers them" — stops them, so that
+    ; no amount of a user reading code at a breakpoint can add up to a sweep, or
+    ; put an AT command in front of the reply they are waiting for.
     ld a,(esp_session_valid)
     or a
     ret nz
@@ -1889,11 +2015,38 @@ esp_idle_tick:
     ld (hl),a
     ret nc
 
+  IF ESP_ADDR_CHECK_TICKS > 0
+    ; Issue #32. FIRST of the two, because it is the one that repeats: putting
+    ; it after the sweep's `ret c` would have made it unreachable for every
+    ; period but the sweep's own.
+    ld hl,(esp_addr_ticks)
+    inc hl
+    ld (esp_addr_ticks),hl
+    ld de,ESP_ADDR_CHECK_TICKS
+    or a                        ; A is the line byte; this only clears the carry
+    sbc hl,de
+    jr c,.no_address_check
+    ; Time is up. Zero the counter BEFORE the query, for the reason the sweep
+    ; disarms before sweeping: esp_query_address can leave through rxtx_error
+    ; rather than returning, and an idle loop that re-entered the query every
+    ; 20 ms afterwards would be far worse than one that skipped a period.
+    ld hl,0
+    ld (esp_addr_ticks),hl
+    call esp_check_address
+.no_address_check:
+  ENDIF
+
+  IF ESP_IDLE_SWEEP_TICKS > 0
+    ; Issue #24. This idle period has already had its sweep?
+    ld a,(esp_idle_armed)
+    or a
+    ret z
+
     ld hl,(esp_idle_ticks)
     inc hl
     ld (esp_idle_ticks),hl
     ld de,ESP_IDLE_SWEEP_TICKS
-    or a                        ; A is the line byte; this only clears the carry
+    or a                        ; A is esp_idle_armed; this only clears the carry
     sbc hl,de
     ret c
 
@@ -1903,8 +2056,10 @@ esp_idle_tick:
     xor a
     ld (esp_idle_armed),a
     jp esp_close_all_links
+  ENDIF
+    ret
  ELSE
-    ; The seam at 0 — the control build. Nothing counts and nothing is swept.
+    ; Both seams at 0 — nothing counts, nothing is swept and nothing is asked.
     ret
  ENDIF
 
@@ -3658,9 +3813,15 @@ transport_init:
 
     ; The address, for the UI. Asked for HERE rather than from show_ui because
     ; show_ui is re-entered on every redraw — the "B" key, CMD_CLOSE, an error
-    ; report — and an AT round trip per redraw would be paid for an answer that
-    ; cannot have changed. It is also the last step on purpose: it is the only
-    ; one whose failure still leaves a working listener.
+    ; report — and an AT round trip per redraw would be paid every time somebody
+    ; pressed a key. It is also the last step on purpose: it is the only one
+    ; whose failure still leaves a working listener.
+    ;
+    ; IT IS NO LONGER THE ONLY ASK. This comment used to end "for an answer that
+    ; cannot have changed", and issue #32 is the whole of why that was wrong: the
+    ; module's association can go after bring-up, and the screen went on naming
+    ; an address that no longer reached the machine. esp_check_address asks again
+    ; from the idle path, every ESP_ADDR_CHECK_SECS.
     call esp_query_address
     ld a,(esp_link_state)
     or a
@@ -3783,6 +3944,158 @@ esp_query_address:
     jp esp_wait_string_hold
 
 
+ IF ESP_ADDR_CHECK_TICKS > 0
+;===========================================================================
+; Asks the module again whether it still has the address on the screen, and
+; puts the screen right — issue #32.
+;
+; THE DEFECT IT CLOSES. AT+CIFSR was asked exactly once, at the end of
+; transport_init, so `Connect at <ip>:11000` was decided at bring-up and never
+; revisited. A Next that dropped off the WiFi afterwards went on advertising an
+; address that no longer reached it, and one switched on before its router was
+; ready went on telling its owner to go and run wifi2.bas on a machine that was
+; already set up correctly. Nothing on the screen ever changed either way, and
+; from the PC side both look exactly like KNOWN-ISSUES.md #2 and issue #18 —
+; states this project has already paid to learn to tell apart.
+;
+; ONE CALL DOES BOTH HALVES OF THE ISSUE, and that fell out rather than being
+; designed. esp_query_address rewrites esp_link_state AND recomposes
+; esp_connect_address from whatever the module now answers, so "detect that the
+; address has gone" and "advertise the new one when it comes back" are the same
+; instruction. What the issue called re-ACQUISITION — picking the listener back
+; up — turns out not to be needed at all: measured on a real Next across a
+; five-minute AP outage, the AT+CIPSERVER listener SURVIVES a de-association and
+; re-association, with a full hardware bench passing 6/6 afterwards and no M1
+; press or reset in between (jnext#246, reported on hardware). The emulated
+; module behaves the same way, measured here before any of this was written: a
+; TCP connection could be made throughout the outage and an already-open DZRP
+; session went on answering across both edges. So a "fix" that retired the
+; listener and rebuilt it would be a REGRESSION against measured behaviour, and
+; bench check D6 is what would catch one.
+;
+; WHY IT IS NOT CALLED FROM show_ui, which is where a reader will look for it
+; first: show_ui is re-entered on every redraw — the border key, CMD_CLOSE, any
+; error report — so an AT round trip there would be paid every time somebody
+; pressed "B". That half of transport_init's old comment was always right; the
+; half that was wrong is quoted at ESP_LINK_OK.
+;
+; A TIMEOUT LEAVES IT SAYING "NO ADDRESS", which is a real cost of polling and
+; is accepted rather than worked around. esp_query_address sets
+; ESP_LINK_NO_ADDRESS on entry and only clears it on success, so a module that
+; simply did not answer inside the read budget flips the screen to the "no
+; address" block for one period. The next check puts it back, because this one
+; repeats; a first version that tried to distinguish "no answer" from "no
+; address" would need a fourth screen state and a wait that can tell silence
+; from a refusal, for a condition nothing here has ever produced.
+;
+; THE BUFFER IS LEFT INCONSISTENT ON THE 0.0.0.0 PATH and that is safe only
+; because of what is drawn. esp_query_address writes the address into
+; esp_connect_address as it reads it and only appends ":<port>" and the NUL once
+; it has decided the address is usable — so after an unassociated module answers
+; 0.0.0.0 the buffer holds the first characters of "0.0.0.0" over the tail of
+; whatever was there before. Nothing ever draws it, because esp_link_state is
+; then not OK and esp_status_text_table sends the painter to the "no address"
+; block instead. Anyone adding a fourth state that draws the connect line must
+; read this paragraph first.
+;
+; Changes:
+;  AF, BC, DE, HL — IX is saved, because print_char uses it as its font pointer
+;  and TRANSPORT_IDLE_TICK promises its caller everything else.
+;===========================================================================
+esp_check_address:
+    call esp_query_address
+
+    ; A lost address goes in the error area too, which is what transport_init
+    ; does for the identical condition and where a user is trained to look.
+    ; NEVER OVER AN ERROR ALREADY STANDING: this runs on a timer and would
+    ; otherwise be able to bury a TX Timeout or an RX Overflow that a human
+    ; still needs to see. Same guard, and for the same reason, as show_ui's
+    ; core-version check.
+    ;
+    ; It is not DRAWN here, only recorded: painting the error area means
+    ; erasing whatever is in it, which is nine rows and a second painter. It
+    ; reaches the screen at the next full repaint. The actionable words are on
+    ; rows 6 and 7 in any case — "No WiFi address. Set the Next up first: run
+    ; wifi2.bas" — and those are repainted below.
+    ld a,(esp_link_state)
+    or a
+    jr z,.paint
+    ld a,(last_error)
+    or a
+    jr nz,.paint
+    ld a,ERROR_NO_WIFI_ADDRESS
+    ld (last_error),a
+
+.paint:
+    ; Is the debugger's own screen what is on the display? main_loop is
+    ; reachable with a debuggee STOPPED and its picture up — transport_wait_rx's
+    ; bound expires to main_idle, below main_redraw's show_ui — so without this
+    ; a timer would paint two rows of the debugger's UI over the program being
+    ; debugged. Same guard, same reason, as esp_refresh_client_line's.
+    ld a,(esp_ui_shown)
+    or a
+    ret z
+
+    push ix
+    ; IT FORCES THE WINDOW RATHER THAN CHECKING AND ABANDONING, which is the
+    ; opposite of what esp_refresh_client_line does one row along, and the
+    ; difference is issue #28's own argument applied to this painter. 0x4000 is
+    ; the display file only while MMU slot 2 says so and CMD_SET_SLOT lets any
+    ; client move it. Abandoning is right for the session line: a stale row
+    ; costs nothing until the next full repaint. It is wrong here, because a
+    ; screen that goes on naming an address that does not work IS the defect,
+    ; and a painter that declines to fix it whenever a client has looked at a
+    ; bank would leave the machine lying for exactly as long as before.
+    ;
+    ; Forcing is also what makes this correct BEFORE any client has connected,
+    ; which is the state it spends most of its life in: nothing has put
+    ; SCREEN_BANK in slot 2 at that point except show_ui itself, which puts back
+    ; whatever it found. screen_map reads NR 0x52, forces, and screen_unmap
+    ; restores exactly — so no debuggee-visible state moves either way.
+    ;
+    ; The single save area screen_map uses is safe because this cannot nest
+    ; inside show_ui: it is reached from main_loop's idle tick and from nowhere
+    ; else.
+    call screen_map
+    ; The glyphs come from the ROM since issue #31, so this needs slot 1 too,
+    ; and this is an AUTONOMOUS painter — it must hand both back on the one path
+    ; out, which is why the routine has exactly one.
+    call text.font_map
+
+    ; ERASE BY BLANKING, not by drawing the old string again. The XOR trick
+    ; esp_refresh_client_line uses needs the bytes that were drawn, and the
+    ; string drawn here is esp_text_connect, whose tail is the mutable
+    ; esp_connect_address buffer that esp_query_address has just overwritten.
+    ; XORing "the old line" would XOR the NEW address off a screen holding the
+    ; OLD one and leave neither — visible garbage on the one line that has to be
+    ; readable. Keeping a shadow copy of the old text would be a second
+    ; rendering of a buffer another routine writes in place, which is how two
+    ; renderings of one fact drift apart; blanking needs no such copy and is
+    ; correct for any pair of strings.
+    ;
+    ; Two character rows, eight scanlines, 32 columns: 0x40C0 upwards with the
+    ; usual 0x100 stride, because rows 6 and 7 are adjacent within each scanline
+    ; block. Both are in the screen's first third, so no third boundary is
+    ; crossed and the stride does not change.
+    ld hl,SCREEN + ESP_LINK_ROW*32
+    ld b,8
+.blank_scanline:
+    push bc
+    push hl
+    MEMCLEARHL 2*32
+    pop hl
+    pop bc
+    inc h
+    djnz .blank_scanline
+
+    call esp_put_status_block
+    call text.font_unmap
+    call screen_unmap
+    pop ix
+    ret
+ ENDIF
+
+
 ;===========================================================================
 ; Draws WiFi mode's status block, where UART mode draws its joy-port selection.
 ; Called from show_ui; see the data above.
@@ -3809,12 +4122,11 @@ esp_show_status:
     ld de,(hl)
     call text.ula.print_string
  ENDIF
-    ld hl,esp_status_text_table
-    ld a,(esp_link_state)
-    add a                       ; *2
-    add hl,a
-    ld de,(hl)
-    call text.ula.print_string
+    ; A CALL AND NOT A FALL-THROUGH, because the fall-through below it is
+    ; already spoken for: this routine's whole shape is "the link block, then
+    ; the session line", and esp_show_client_line has to stay the next thing
+    ; executed.
+    call esp_put_status_block
     ; Flow through
 
 
@@ -3866,6 +4178,35 @@ esp_show_client_line:
 ;===========================================================================
 esp_put_client_line:
     ld hl,esp_client_text_table
+    add a                       ; *2
+    add hl,a
+    ld de,(hl)
+    jp text.ula.print_string
+
+
+;===========================================================================
+; Prints the link status block — rows ESP_LINK_ROW and the one below — for
+; whatever esp_link_state currently says, and keeps no bookkeeping.
+;
+; A ROUTINE OF ITS OWN SINCE ISSUE #32, where it was six instructions inline in
+; esp_show_status, because it has a second caller: esp_check_address repaints
+; those two rows on a timer. It is CALLED from esp_show_status rather than
+; flowed into, and it sits down here rather than up there, for the same one
+; reason — esp_show_status's fall-through is esp_show_client_line's and must
+; stay so. A status painter that flowed on into the session line would XOR that
+; line off row 8 every time the timer fired.
+;
+; IT DRAWS ONTO WHATEVER IS THERE. show_ui has just MEMCLEARed the screen and
+; esp_check_address has just blanked these two rows, so both callers arrive with
+; them empty; the glyphs are XORed on (text.asm), so drawing over a non-blank
+; row would leave a mixture of the two strings and not the second one. Anyone
+; adding a third caller owes it the same.
+; Changes:
+;  AF, BC, DE, HL, IX
+;===========================================================================
+esp_put_status_block:
+    ld hl,esp_status_text_table
+    ld a,(esp_link_state)
     add a                       ; *2
     add hl,a
     ld de,(hl)

@@ -22,21 +22,32 @@ ROMs since the fork.
 
 **IT SURVIVED BECAUSE NOTHING HAD EVER SENT THAT INPUT, and that is the whole
 lesson rather than the arithmetic.** DeZog sends long addresses. C19 and C21
-*do* send the 64K form — `_set_bps` always has — but only at `0x1234` and
-`0x8000`, where the direct branch is the **correct** one. So a green suite was
-green by construction, exactly as it was for the swap-window bound until C16/C17
-pushed 8 KB (MEMORY.md 2026-08-09). **A bound no test DATA can reach is a bound
-with no test**, one organ along from [[ERRORS.md]]'s "a bound the emulator can
-never reach".
+*do* send the 64K form — `_set_bps` always has — but at addresses from `0x0000`
+to `0x8000`, where the direct branch is the **correct** one: C21 covers
+`0x0000`-`0x0008`, `0x0065`-`0x0074` and `0x1234`, and `0x8000` is **C19's** RAM
+control. (An earlier version of this entry said "only at `0x1234` and `0x8000`",
+attributing C19's control to C21; the conclusion is unchanged and was verified by
+enumerating every `_set_bps`/`_restore_bps` call site, none of which is at or
+above `0xE000`.) So a green suite was green by construction, exactly as it was
+for the swap-window bound until C16/C17 pushed 8 KB (MEMORY.md 2026-08-09).
+**A bound no test DATA can reach is a bound with no test**, one organ along from
+[[ERRORS.md]]'s "a bound the emulator can never reach".
 
 **THE POPULATION IS FIVE SITES AND THE ENUMERATION IS MECHANICAL**, which is
 what says there is no third. This boundary has exactly two spellings in the
 tree — `cp HIGH MAIN_ADDR` and `cp MAIN_SLOT*0x20` — so `grep -rn MAIN_ADDR
 src/` plus `grep -rn 'MAIN_SLOT\*0x20' src/` is exhaustive:
 `cmd_set_breakpoints` and `cmd_restore_mem` (both broken, `A` untouched);
-`clear_tmp_breakpoint` (`ld a,d`, address in `DE`); `set_tmp_breakpoint`
-(`ld a,h`); `memory_loop` (`ld a,h`). The fix matches the three that were
-already right rather than inventing a fourth idiom.
+`clear_tmp_breakpoint` (`breakpoints.asm:293`, `ld a,d` — the address is in
+`DE`); `set_tmp_breakpoint` (`:464`, `ld a,h`); `memory_loop`
+(`backup.asm:326`, `ld a,h`). The fix matches the three that were already right
+rather than inventing a fourth idiom.
+
+**THE REVIEWER FOUND THE FIX CLOSES AN EXPOSURE #27 COULD NOT HAVE**, which is
+worth recording because nobody was looking for it: pre-fix, a 64K address of
+`0xE000`-`0xE007` or `0xE066`-`0xE073` wrote over the **trampoline source** in
+`MAIN_BANK`, and `bp_hits_trampoline` cannot guard that — it only refuses when
+`H == 0`.
 
 **THE CHECK'S VERDICT IS A POSITIVE OBSERVATION, NOT A WAIT TO SEE WHETHER THE
 STUB DIES**, and that is the decision here. A one-byte write into the running
@@ -49,22 +60,44 @@ only other place a 64K address at `0xE000+` can land; anything else is a third
 thing. Survival is asserted **in band**, because the read-back is an exchange
 the stub must serve *after* the offending write.
 
+**AND `MAIN_BANK` IS READ DIRECTLY, BY A SECOND ROUTE, which is what turns "the
+write went where asked" into "THE DEBUGGER'S OWN BANK WAS NOT WRITTEN"** — the
+property this issue is actually about, asserted rather than inferred. MMU slot 5
+is borrowed to put `MAIN_BANK` at `0xA000`-`0xBFFF`, so `0xBF80` is the **same
+physical byte** as `0xFF80` but **below `0xE000`**, i.e. reached through
+`memory_loop`'s *phase 2* and not the swap window the verdict depends on. Read
+before and after; it must not have changed. Judged **first**, being the direct
+statement of harm. **Slot 5 and not slot 4**: slot 4 is `0x8000`-`0x9FFF`, where
+the fixture, the marker area and `BIG_MEM_ADDR` live, so a botched restore there
+would be **this issue's own defect, self-inflicted**. Belt and braces anyway —
+`cmd_init` resets MMU slots 1-6 outright and every check sends one first.
+
 **TWO CHECKS AND NOT ONE**, because the two handlers carry **separate copies**
 of the decision: a fix to either alone must still leave a red naming the other.
 
 **THE PROBE ADDRESS IS `0xFF80` AND EVERY PART OF THAT IS CHOSEN.** In
-`MAIN_SLOT`, or there is no wrong branch to take; **above any byte the debugger
-occupies in `MAIN_BANK`** — only `main_end-MAIN_ADDR` bytes are copied there
-(`mf_rom.asm`'s `MEMCOPY`), `main.asm` bounds `main_end` by `ROM_MAGIC_ADDR`,
-and that block ends at `0xFEB4` and only ever moves **down** — so a defective
+`MAIN_SLOT`, or there is no wrong branch to take; **above the end of the SAVEBIN
+image itself** — `ROM_MAGIC_ADDR` `0xFEA0` plus `ROM_MAGIC_SIZE` 32 is `0xFEC0`
+— let alone `main_end`, which `main.asm:279` bounds at `0xFF00` outright while
+the assert below it bounds it by `ROM_MAGIC_ADDR`, and that only ever moves
+**down**. So **224 bytes of margin at worst case, structurally**, a defective
 stub writes into **dead space**, the red is a repeatable reading rather than a
-crash, and every check below still runs; and not `0xFFFF`, so nothing rests on
-the last byte of a bank.
+crash, and every check below still runs. Not `0xFFFF`, so nothing rests on the
+last byte of a bank. **No new `ASSERT` is needed**, which the reviewer checked
+rather than assumed.
 
-**Shown red first, twice, byte-identically, and the red is the PRECISE branch**
-— *"0xFF80 is untouched: the RST 0 went to the debugger's own bank"* and
-*"…the byte went to…"* — with **21 of 23 green in the same runs**, which is also
-what says the mis-routed write really is inert.
+*(An earlier version of this entry said the block "ends at `0xFEB4`". That is the
+end of the 20-byte **string**; `ROM_MAGIC_SIZE` is 32, so the block — and the
+image — end at `0xFEC0`. Conclusion unaffected.)*
+
+**Shown red first, and the red DEMONSTRATES the write rather than inferring
+it**: *"the debugger's own bank was written: MAIN_BANK 0xFF80 went 0x00 to
+0xC7"* for C22 and *"…went 0xC7 to 0xA5"* for C23 — where C23's `0xC7` is C22's
+own stray `RST 0`, so the two corroborate each other. Against the earlier version
+of the checks, without the direct route, the same ROM gave *"0xFF80 is
+untouched"* byte-identically across two full runs. **21 of 23 green in every one
+of those runs, C18 and C15 included**, which is also what says the mis-routed
+write really is inert.
 
 **Rejected.** C18's shape alone, survival on a fresh connection (it would pass
 on a write that landed harmlessly in dead space — which is exactly what this
@@ -73,26 +106,61 @@ covering both handlers (a red would not say which); using `CMD_RESTORE_MEM` to
 put the seed back in C22 (it is C23's subject and carries the same defect, so
 on a red remote the restore would go to the wrong bank); aiming at a *live*
 part of `MAIN_BANK` to make the red louder (it makes the red a crash, i.e.
-flaky, and poisons C18 and C15 below).
+flaky, and poisons C18 and C15 below); **leaving the seed in place instead of
+restoring the debuggee's original byte** — C19 treats the restore as part of its
+subject, and on hardware `0xFF80` in a live NextZXOS slot-7 bank is not
+obviously inert, so one `CMD_READ_MEM` buys not having to argue it.
 
 **Cost: +2 bytes in BOTH ROMs, which is correct for common code.** `main_end`
 UART `0xF2B1` → `0xF2B3`, WiFi `0xFD2F` → `0xFD31` (**367** free to the
 identity block). Pinned, with `build/*.bin` deleted first: UART `ff40b145…` →
 `48629b22…`, WiFi `51ffc339…` → `536e8ae0…`. **The UART byte-identity gate
 breaks deliberately**, as for #7, #8, #9, #12, #20, #27 and #28 —
-`commands.asm` is shared. Proved to be the whole of it by symbol table: **973
-symbols before and after, none added, none removed**, 776 unmoved, 6 at +1 and
-191 at +2 — two one-byte insertions and nothing else. **This changes a ROM, so
-the merge carries a `make bump`.**
+`commands.asm` is shared. Proved to be the whole of it by symbol table:
+
+| | symbols | added | removed | 0 | +1 | +2 |
+|---|---|---|---|---|---|---|
+| UART | 754 | 0 | 0 | 553 | 6 | 195 |
+| WiFi | 976 | 0 | 0 | 779 | 6 | 191 |
+
+Two one-byte insertions and nothing else. **The extraction is quoted because the
+totals depend on it**, which is this file's 2026-08-09 lesson in its own organ:
+
+```sh
+grep -oE "^0x[0-9A-Fa-f]+ +X? *[A-Za-z_][A-Za-z0-9_.]*$" build/dezogif-wifi.list
+```
+
+*(A first version of this paragraph said "973 before and after, 776 unmoved",
+from a hand-written `^0x[0-9A-F]{4}` pattern that **silently dropped three
+symbols** — `BAUDRATE`, `ESP_BAUDRATE` and `ESP_BAUD_HIGH`, whose EQU values are
+five hex digits. The independent extraction that caught it gave 976/779, and
+`+1 = 6` and `+2 = 191` were identical in both. **A count over a hand-written
+pattern is an estimate**; what survives any parser is: none added, none removed,
+every delta 0, +1 or +2, and the +1 set is exactly the six labels lying between
+the two insertions.)* **This changes a ROM, so the merge carries a `make bump`.**
 
 **Regression: `test-dzrp-stub` 23/23 with W1-W6 and exit 0, `make test` 8/8,
 `test-unit` 5/5, both variants `check-reproducible`.**
 
-**NOT COVERED, and none of it is hidden.** **`memory_loop` is a shared
-dependency** of the seed and of the verdict: were it broken the same way the
-seed would round-trip through `MAIN_BANK` and both checks would pass against a
-defective remote. Nothing observable from a socket separates those; what rules
-it out is the source and the enumeration, not the run. **Hardware** — neither
+**THE `memory_loop` VACUITY IS CLOSED, AND THE FIRST VERSION OF THIS ENTRY
+UNDER-CLAIMED IT.** It said the hazard — `memory_loop` broken the same way,
+sending both the seed and the verdict to `MAIN_BANK` — was ruled out "by the
+source, enumerated, and not this run". **The run rules it out.** Pre-fix, the
+handler wrote `RST 0` into `MAIN_BANK` and the swap-window read-back returned
+**the seed**; had `memory_loop` routed `0xE000+` to `MAIN_BANK` too it would have
+returned `0xC7` and C22 would have **passed**. So the red itself proves the two
+routes reached different memory — and the direct `MAIN_BANK` view now asserts it
+in-suite, every run, which is the version that survives into the future. Note a
+**green** run alone would *not* prove it, since two identically-broken routes
+agree; that asymmetry is exactly why the direct route earns its bytes.
+
+**A caveat left standing becomes a gap a future session inherits**, and this one
+was written by the same session that had the disproof in its own log. Caught by
+the independent reviewer, who had built the control that shows it.
+
+**NOT COVERED, and none of it is hidden.** **A `memory_loop` wrong in some way
+OTHER than routing `0xE000+` to `MAIN_BANK`** — a different hazard, and not one
+these checks are exposed to. **Hardware** — neither
 check has run on a Next, and the defect has never been observed anywhere but
 here. **The UART build's half**: `commands.asm` is shared and the fix reaches
 both ROMs, but nothing has ever driven the serial transport with a DZRP client,

@@ -880,8 +880,9 @@ cmd_set_breakpoints:
     ; .normal always won. A 64K address at 0xE000 or above then took the direct
     ; write, into MAIN_SLOT, i.e. into MAIN_BANK: the bank this code is running
     ; out of. The address to judge is in HL, exactly as in set_tmp_breakpoint
-    ; and clear_tmp_breakpoint (breakpoints.asm) and memory_loop (backup.asm),
-    ; which are the other three sites making this decision and all get it right.
+    ; (breakpoints.asm) and memory_loop (backup.asm). clear_tmp_breakpoint is
+    ; the third site that gets this right and does it with `ld a,d`, because
+    ; there the address is in DE — the register differs, the rule does not.
     ; Bench check C22.
     ld a,h
     cp HIGH MAIN_ADDR	; 0xE000

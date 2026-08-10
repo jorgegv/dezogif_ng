@@ -1204,21 +1204,26 @@ def chk_rom_breakpoint_spares_trampoline(d):
 # debugger.
 #
 # NOTHING HERE HAD EVER FIRED IT, which is why a green suite stayed green.
-# DeZog sends long addresses; C19 and C21 send the 64K form, but only at 0x1234
-# and 0x8000, where the direct branch is the CORRECT one. The defect lived in
-# the one input nobody sent.
+# DeZog sends long addresses. C19 and C21 do send the 64K form — _set_bps has
+# always used it — but at addresses from 0x0000 to 0x8000, where the direct
+# branch is the CORRECT one: C21 covers 0x0000-0x0008, 0x0065-0x0074 and
+# 0x1234, and 0x8000 is C19's RAM control. Enumerated over every _set_bps and
+# _restore_bps call site; none was at or above 0xE000. The defect lived in the
+# one input nobody sent.
 
 # The probe address, and every part of it is chosen.
 #
 #  - IN MAIN_SLOT, or there is no wrong branch to take.
 #  - ABOVE ANY BYTE THE DEBUGGER OCCUPIES IN MAIN_BANK, so that a remote which
 #    still has the defect writes into DEAD SPACE and the red is a repeatable
-#    reading rather than a crash somewhere in the debugger's own code. Only
-#    main_end-MAIN_ADDR bytes are ever copied into that bank (mf_rom.asm's
-#    MEMCOPY), main.asm ASSERTs main_end <= ROM_MAGIC_ADDR, and the identity
-#    block ROM_MAGIC_ADDR names ends at 0xFEB4 — and it only ever moves DOWN,
-#    16 bytes at a time, as the MF ROM half grows. So this is above everything
-#    either variant can hold, now and after M2.
+#    reading rather than a crash somewhere in the debugger's own code. It is
+#    above the end of the SAVEBIN image itself: ROM_MAGIC_ADDR is 0xFEA0 and
+#    ROM_MAGIC_SIZE is 32, so the image ends at 0xFEC0 — and only
+#    main_end-MAIN_ADDR bytes are ever COPIED into the bank at all (mf_rom.asm's
+#    MEMCOPY). main.asm:279 bounds main_end at 0xFF00 outright and the assert
+#    below it bounds it by ROM_MAGIC_ADDR, which only ever moves DOWN, 16 bytes
+#    at a time, as the MF ROM half grows. So 224 bytes of margin at worst case,
+#    structurally, now and after M2 — and no new ASSERT is needed here.
 #  - NOT 0xFFFF, so nothing here rests on the last byte of a bank.
 #
 # The stray byte a defective remote leaves in MAIN_BANK survives the run and is
@@ -1230,6 +1235,47 @@ SLOT7_VALUE = 0xA5      # what CMD_RESTORE_MEM is asked to write. Not the seed.
 # constants.asm: the bank the debugger executes from, and the one thing the
 # debuggee's slot 7 must not be for these checks to discriminate at all.
 MAIN_BANK = 94
+
+# THE SECOND VIEW OF THE SAME PHYSICAL BYTE, and it is what makes the checks
+# below self-sufficient instead of resting on an argument.
+#
+# The verdict is a read-back through memory_loop's PHASE 1 — the swap window —
+# which is the same routing decision the handlers get wrong. So a memory_loop
+# broken the identical way would send the seed and the verdict to MAIN_BANK
+# too, and both checks would pass against a defective remote. Borrowing a slot
+# closes that: MMU slot 5 is 0xA000-0xBFFF, so MAIN_BANK's offset 0x1F80
+# appears at 0xBF80 — BELOW 0xE000, so CMD_READ_MEM takes memory_loop's PHASE
+# 2, the direct path, and reaches the byte without the window the verdict
+# depends on. Two routes, one byte, and the checks assert the debugger's own
+# bank was NOT written.
+#
+# SLOT 5 AND NOT SLOT 4, deliberately. Slot 4 is 0x8000-0x9FFF, where this
+# suite's fixture (DBG_CODE), its marker area (DBG_MARK) and BIG_MEM_ADDR all
+# live, so a restore that went wrong there would be maximally damaging — and it
+# would be this issue's own defect, self-inflicted. Nothing in this suite uses
+# 0xA000-0xBFFF. The explicit restore below is belt and braces in any case:
+# cmd_init resets MMU slots 1-6 outright (commands.asm), and every check opens
+# a fresh connection and sends CMD_INIT before anything else.
+PROBE_SLOT = 5
+PROBE_ADDR = PROBE_SLOT * 0x2000 + (SLOT7_ADDR & 0x1FFF)
+
+
+def _peek_main_bank(d):
+    """Read SLOT7_ADDR's byte out of MAIN_BANK, off memory_loop's phase-1 path.
+
+    The slot is put back from what CMD_GET_REGISTERS reported for it, which for
+    slots 0-6 is read LIVE from the MMU rather than from the stub's bookkeeping.
+    """
+    body = talk(d, dzrp.CMD_GET_REGISTERS)
+    if len(body) < 37:
+        raise Precondition("the register block is %d bytes, too short for the "
+                           "slot list" % len(body))
+    was = body[29 + PROBE_SLOT]
+    talk(d, dzrp.CMD_SET_SLOT, bytes([PROBE_SLOT, MAIN_BANK]))
+    try:
+        return _read_mem(d, PROBE_ADDR, 1)[0]
+    finally:
+        talk(d, dzrp.CMD_SET_SLOT, bytes([PROBE_SLOT, was]))
 
 
 def _slot7(d):
@@ -1249,10 +1295,9 @@ def _slot7(d):
 
 
 def _seed_slot7(d):
-    """Put a known byte at SLOT7_ADDR in the debuggee's bank, and show it landed.
+    """Put a known byte at SLOT7_ADDR in the debuggee's bank; return the original.
 
-    THIS IS WHAT STOPS THE TWO CHECKS BELOW PASSING VACUOUSLY, in two separate
-    ways.
+    THIS IS WHAT STOPS THE TWO CHECKS BELOW PASSING VACUOUSLY.
 
     If the debuggee's slot 7 held MAIN_BANK, the swap window and the direct
     write would reach the SAME memory and no observation could tell the two
@@ -1260,26 +1305,34 @@ def _seed_slot7(d):
 
     And the seed has to be shown to be there. CMD_WRITE_MEM and CMD_READ_MEM
     reach 0xE000+ through memory_loop, which makes the same decision correctly
-    (backup.asm:325, `ld a,h` before the compare), so a round trip says that
+    (backup.asm:326, `ld a,h` before the compare), so a round trip says that
     route works in THIS run — and a red below is then about the handler rather
     than about the address being unreachable by anything.
 
-    WHAT IT DOES NOT ESTABLISH, said out loud: memory_loop is a SHARED
-    dependency of the seed and the verdict. Were it broken the same way, the
-    seed would round-trip through MAIN_BANK and both checks would pass against
-    a defective remote. No socket-side observation separates those; what rules
-    it out is the source, enumerated, and not this run.
+    memory_loop being a SHARED dependency of the seed and the verdict is what
+    _peek_main_bank exists for; see there. What is NOT closed by any of this is
+    a memory_loop wrong in some way other than routing 0xE000+ to MAIN_BANK,
+    which is a different hazard and not the one these checks are exposed to.
+
+    THE ORIGINAL IS RETURNED SO THE CALLER CAN PUT IT BACK — C19's precedent,
+    where the restore is part of the subject rather than tidying up. This runs
+    against a live NextZXOS bank on hardware, where SLOT7_ADDR is not obviously
+    inert, and one CMD_READ_MEM is the whole cost of not having to argue that.
     """
     slot7 = _slot7(d)
     if slot7 == MAIN_BANK:
         raise Precondition("the debuggee's slot 7 holds bank %d, the debugger's "
                            "own, so both branches write one place" % MAIN_BANK)
+    original = _read_mem(d, SLOT7_ADDR, 1)
+    if len(original) != 1:
+        raise Precondition("0x%04X answered %d bytes, not one"
+                           % (SLOT7_ADDR, len(original)))
     _write_mem(d, SLOT7_ADDR, bytes([SLOT7_SEED]))
     back = _read_mem(d, SLOT7_ADDR, 1)
     if back != bytes([SLOT7_SEED]):
         raise Precondition("0x%04X reads %s after being seeded 0x%02X: nothing "
                            "can write there" % (SLOT7_ADDR, back.hex(), SLOT7_SEED))
-    return slot7
+    return original[0]
 
 
 def chk_slot7_breakpoint_uses_swap_window(d):
@@ -1296,12 +1349,15 @@ def chk_slot7_breakpoint_uses_swap_window(d):
                       address at 0xE000+ can land is MAIN_BANK: the defect;
       anything else - a third thing, reported as a third thing.
 
-    THE REPLY BYTE IS A SECOND, INDEPENDENT OBSERVATION of the same routing: the
-    remote must report the opcode it FOUND, which on the swap path is the seed.
-    It is judged after the read-back because it is the weaker of the two — a
-    defective remote reads an uninitialised byte out of MAIN_BANK and could
-    match the seed by chance, one time in 256 — where the read-back is
-    deterministic whichever branch ran.
+    AND MAIN_BANK IS READ DIRECTLY, by a second route, which is what turns "the
+    write went where asked" into "the debugger's own bank was not written" —
+    the property the issue is actually about. See _peek_main_bank. It is judged
+    FIRST because it is the direct statement of harm and is deterministic.
+
+    THE REPLY BYTE IS A THIRD OBSERVATION of the same routing: the remote must
+    report the opcode it FOUND, which on the swap path is the seed. It is judged
+    last because it is the weakest — a defective remote reads an uninitialised
+    byte out of MAIN_BANK and could match the seed by chance, one time in 256.
 
     SURVIVAL IS ASSERTED IN BAND rather than on a fresh connection as C18 does:
     the read-back is itself an exchange the remote has to serve AFTER the
@@ -1309,15 +1365,23 @@ def chk_slot7_breakpoint_uses_swap_window(d):
     which main() reports as the connection fault it is.
     """
     talk(d, dzrp.CMD_INIT, dzrp.init_payload())
-    _seed_slot7(d)
+    original = _seed_slot7(d)
 
+    main_before = _peek_main_bank(d)
     old = _set_bps(d, (SLOT7_ADDR,))
     now = _read_mem(d, SLOT7_ADDR, 1)[0]
-    # Put the seed back with CMD_WRITE_MEM and NOT CMD_RESTORE_MEM: that handler
-    # is C23's subject and carries the same defect, so on a red remote the
-    # restore would go to the wrong bank and leave this one behind.
-    _write_mem(d, SLOT7_ADDR, bytes([SLOT7_SEED]))
+    main_after = _peek_main_bank(d)
+    # Put the DEBUGGEE's own byte back, with CMD_WRITE_MEM and NOT
+    # CMD_RESTORE_MEM: that handler is C23's subject and carries the same
+    # defect, so on a red remote the restore would go to the wrong bank and
+    # leave this one behind. Before judging anything, so a red cannot leave the
+    # machine patched for the checks below.
+    _write_mem(d, SLOT7_ADDR, bytes([original]))
 
+    if main_after != main_before:
+        return FAIL, ("the debugger's own bank was written: MAIN_BANK 0x%04X "
+                      "went 0x%02X to 0x%02X"
+                      % (SLOT7_ADDR, main_before, main_after))
     if now == SLOT7_SEED:
         return FAIL, ("0x%04X is untouched: the RST 0 went to the debugger's "
                       "own bank" % SLOT7_ADDR)
@@ -1343,18 +1407,24 @@ def chk_slot7_restore_uses_swap_window(d):
     CLIENT'S rather than a fixed RST 0: an arbitrary value at an arbitrary
     offset of the running debugger's bank.
 
-    Same three-outcome read-back as C22, with SLOT7_VALUE in place of the
-    breakpoint. There is no reply to corroborate it with — CMD_RESTORE_MEM
-    answers Length=1 and carries no payload — so the read-back is the whole of
-    the evidence here.
+    Same read-back and same direct MAIN_BANK view as C22, with SLOT7_VALUE in
+    place of the breakpoint. There is no reply to corroborate them with —
+    CMD_RESTORE_MEM answers Length=1 and carries no payload — so this one has
+    two observations where C22 has three.
     """
     talk(d, dzrp.CMD_INIT, dzrp.init_payload())
-    _seed_slot7(d)
+    original = _seed_slot7(d)
 
+    main_before = _peek_main_bank(d)
     _restore_bps(d, ((SLOT7_ADDR, SLOT7_VALUE),))
     now = _read_mem(d, SLOT7_ADDR, 1)[0]
-    _write_mem(d, SLOT7_ADDR, bytes([SLOT7_SEED]))
+    main_after = _peek_main_bank(d)
+    _write_mem(d, SLOT7_ADDR, bytes([original]))
 
+    if main_after != main_before:
+        return FAIL, ("the debugger's own bank was written: MAIN_BANK 0x%04X "
+                      "went 0x%02X to 0x%02X"
+                      % (SLOT7_ADDR, main_before, main_after))
     if now == SLOT7_SEED:
         return FAIL, ("0x%04X is untouched: the byte went to the debugger's "
                       "own bank" % SLOT7_ADDR)

@@ -428,10 +428,13 @@ running out of, at a **client-chosen offset**, and in `cmd_restore_mem` with a *
 byte**. That is C18's family one command along, and it is upstream's, in both ROMs, since the fork.
 
 **It survived because nothing had ever sent that input.** DeZog sends long addresses. C19 and C21
-*do* send the 64K form — `_set_bps` has always used it — but only at `0x1234` and `0x8000`, where
-the direct branch is the **correct** one. So the defect lived in the one input nobody sent, and a
-green suite stayed green by construction. It was found by reading, by the independent reviewer of
-issue #27, and the second site by grepping for the pattern rather than trusting the first was alone.
+*do* send the 64K form — `_set_bps` has always used it — but at addresses from `0x0000` to
+`0x8000`, where the direct branch is the **correct** one: C21 covers `0x0000`-`0x0008`,
+`0x0065`-`0x0074` and `0x1234`, and `0x8000` is **C19's** RAM control. Enumerated over every
+`_set_bps` and `_restore_bps` call site; not one was at or above `0xE000`. So the defect lived in
+the one input nobody sent, and a green suite stayed green by construction. It was found by reading,
+by the independent reviewer of issue #27, and the second site by grepping for the pattern rather
+than trusting the first was alone.
 
 **The population is five sites and the enumeration is mechanical.** `MAIN_ADDR` has exactly two
 spellings of this boundary in the tree — `cp HIGH MAIN_ADDR` and `cp MAIN_SLOT*0x20` — and
@@ -441,9 +444,9 @@ spellings of this boundary in the tree — `cp HIGH MAIN_ADDR` and `cp MAIN_SLOT
 |---|---|---|
 | `commands.asm` `cmd_set_breakpoints.handle_64k_address` | nothing — `A` is the bank byte | **was broken** |
 | `commands.asm` `cmd_restore_mem.handle_64k_address` | nothing — `A` is the bank byte | **was broken** |
-| `breakpoints.asm` `clear_tmp_breakpoint` | `ld a,d` — the address is in `DE` | correct |
-| `breakpoints.asm` `set_tmp_breakpoint` | `ld a,h` | correct |
-| `backup.asm` `memory_loop` | `ld a,h` | correct |
+| `breakpoints.asm:293` `clear_tmp_breakpoint` | `ld a,d` — the address is in `DE` | correct |
+| `breakpoints.asm:464` `set_tmp_breakpoint` | `ld a,h` | correct |
+| `backup.asm:326` `memory_loop` | `ld a,h` | correct |
 
 The fix is `ld a,h`, twice, matching the three that already got it right rather than inventing a
 fourth idiom.
@@ -461,11 +464,25 @@ the probe address through `CMD_WRITE_MEM`, drive the handler, and read the addre
 | **the seed** | it went somewhere else, and the only other place a 64K address at `0xE000+` can land is `MAIN_BANK` — **the defect** |
 | anything else | a third thing, reported as a third thing |
 
-C22 has a **second, independent** observation of the same routing for free: `CMD_SET_BREAKPOINTS`
-replies with the opcode the remote *found*, which on the swap path is the seed. It is judged after
-the read-back because it is the weaker of the two — a defective remote reads an uninitialised byte
-out of `MAIN_BANK` and could match the seed one time in 256 — where the read-back is deterministic
-whichever branch ran.
+**`MAIN_BANK` is also read directly, by a second route**, and that is what turns *"the write went
+where asked"* into *"the debugger's own bank was not written"* — the property the issue is actually
+about, asserted rather than inferred. MMU slot 5 is borrowed to put `MAIN_BANK` at
+`0xA000`-`0xBFFF`, so `0xBF80` is the **same physical byte** as `0xFF80` but **below `0xE000`** —
+so `CMD_READ_MEM` reaches it through `memory_loop`'s **phase 2**, the direct path, *not* the swap
+window the verdict depends on. Read before and after, and it must not have changed. This is judged
+**first**, because it is the direct statement of harm and is deterministic.
+
+**Slot 5 and not slot 4**, deliberately: slot 4 is `0x8000`-`0x9FFF`, where this suite's fixture
+(`DBG_CODE`), its marker area (`DBG_MARK`) and `BIG_MEM_ADDR` all live, so a restore that went wrong
+there would be maximally damaging — and would be *this issue's own defect, self-inflicted*. Nothing
+in the suite uses `0xA000`-`0xBFFF`. The explicit restore is belt and braces in any case: `cmd_init`
+resets MMU slots 1-6 outright (`commands.asm`), and every check opens a fresh connection and sends
+`CMD_INIT` first.
+
+C22 has a **third** observation for free: `CMD_SET_BREAKPOINTS` replies with the opcode the remote
+*found*, which on the swap path is the seed. It is judged **last** because it is the weakest — a
+defective remote reads an uninitialised byte out of `MAIN_BANK` and could match the seed one time
+in 256.
 
 **Survival is asserted in band** rather than on a fresh connection as C18 does: the read-back is
 itself an exchange the remote must serve *after* the offending write.
@@ -477,34 +494,60 @@ either alone must still leave a red naming the other. A single check covering bo
 either way and would not say which.
 
 The probe address is **`0xFF80`**, and every part of that is chosen. It is in `MAIN_SLOT`, or there
-is no wrong branch to take. It is **above any byte the debugger occupies in `MAIN_BANK`** — only
-`main_end-MAIN_ADDR` bytes are ever copied into that bank (`mf_rom.asm`'s `MEMCOPY`), `main.asm`
-`ASSERT`s `main_end <= ROM_MAGIC_ADDR`, and the identity block ends at `0xFEB4`, which only ever
-moves **down** as the MF ROM half grows — so a defective remote writes into **dead space**, the red
-is a repeatable reading rather than a crash somewhere in the debugger's own code, and every check
-below it still runs. And it is not `0xFFFF`, so nothing rests on the last byte of a bank.
+is no wrong branch to take. It is **above any byte the debugger occupies in `MAIN_BANK`** — above
+the end of the SAVEBIN image itself, in fact: `ROM_MAGIC_ADDR` is `0xFEA0` and `ROM_MAGIC_SIZE` is
+32, so the image ends at **`0xFEC0`**, and only `main_end-MAIN_ADDR` bytes are ever *copied* into
+the bank at all (`mf_rom.asm`'s `MEMCOPY`). `main.asm:279` bounds `main_end` at `0xFF00` outright
+and the assert below it bounds it at `ROM_MAGIC_ADDR`, which only ever moves **down** as the MF ROM
+half grows — so `0xFF80` has **224 bytes of margin at worst case**, structurally. A defective remote
+therefore writes into **dead space**: the red is a repeatable reading rather than a crash somewhere
+in the debugger's own code, and every check below it still runs. And it is not `0xFFFF`, so nothing
+rests on the last byte of a bank. **No new `ASSERT` is needed** — the existing ones already pin it.
 
-Shown red first, and the red is the *precise* branch rather than a timeout:
+Shown red first, and the red **demonstrates** the write rather than inferring it:
 
 ```
-FAIL  C22 ... — 0xFF80 is untouched: the RST 0 went to the debugger's own bank
-FAIL  C23 ... — 0xFF80 is untouched: the byte went to the debugger's own bank
+FAIL  C22 ... — the debugger's own bank was written: MAIN_BANK 0xFF80 went 0x00 to 0xC7
+FAIL  C23 ... — the debugger's own bank was written: MAIN_BANK 0xFF80 went 0xC7 to 0xA5
 ```
 
-byte-identical across two full runs, with all 21 other checks green in the same runs — which is
-also what says the mis-routed write really is inert.
+C23's `0xC7` is C22's stray `RST 0`, still there — the two checks corroborate each other. Against an
+earlier version of the checks, without the direct `MAIN_BANK` view, the same ROM gave
+*"0xFF80 is untouched"* byte-identically across two full runs. **All 21 other checks were green in
+every one of those runs, C18 and C15 included**, which is also what says the mis-routed write really
+is inert.
 
-#### What C22 and C23 do NOT establish
+#### The `memory_loop` vacuity is closed, and this document under-claimed it
 
-**`memory_loop` is a shared dependency of the seed and of the verdict.** Were it broken the same
-way, the seed would round-trip through `MAIN_BANK` and both checks would pass against a defective
-remote. Nothing observable from a socket separates those; what rules it out is the source
-(`backup.asm:325`, `ld a,h` before the compare), enumerated above, and **not** this run. The
-`slot7 == MAIN_BANK` precondition covers the other vacuous case — if the debuggee's slot 7 held the
-debugger's own bank, both branches would write one place and no observation could tell them apart.
+A first version of this section said the hazard — `memory_loop` broken the same way, sending both
+the seed and the verdict to `MAIN_BANK`, so both checks pass against a defective remote — was ruled
+out "by the source and not the run". **That was an under-claim, and a caveat left standing becomes a
+gap a future session inherits.** Two things close it:
+
+- **The direct `MAIN_BANK` route above**, permanently and every run. It reaches the byte through
+  `memory_loop`'s *phase 2*, which is not the decision the handlers get wrong, so a phase-1 fault
+  cannot hide behind it. This is the version that survives into the future.
+- **The red-first pair, independently.** Pre-fix, the handler wrote `RST 0` into `MAIN_BANK` and the
+  swap-window read-back returned **the seed**. Had `memory_loop` routed `0xE000+` to `MAIN_BANK` too
+  it would have returned `0xC7` and C22 would have **passed**. So the red itself proves the two
+  routes reached different memory. Note a *green* run alone does not prove this — if both were
+  broken identically the check passes — which is exactly why the direct route earns its place.
+
+The `slot7 == MAIN_BANK` precondition covers the other vacuous case: if the debuggee's slot 7 held
+the debugger's own bank, both branches would write one place and no observation could tell them
+apart, so that is refused rather than measured.
+
+#### What C22 and C23 still do NOT establish
+
+**A `memory_loop` wrong in some way other than routing `0xE000+` to `MAIN_BANK`** — a different
+hazard, and not one these checks are exposed to.
 
 **Neither has run on hardware**, and the defect has never been observed anywhere but here: it is
 traced from the source and now measured in the emulator.
+
+**The UART build's half is predicted, not run.** `commands.asm` is common code so the fix reaches
+both ROMs, but nothing has ever driven the serial transport with a DZRP client — which is equally
+true of the defect.
 
 ### A verdict line is one sentence; this file is where the reasoning is
 

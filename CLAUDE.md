@@ -509,21 +509,34 @@ strongest:
    debugger executes from, at a client-chosen offset and — in `cmd_restore_mem` — with a
    client-chosen byte. Upstream's, in both ROMs since the fork; **C18's family, one command along**.
    It survived because **nothing had ever sent that input**: DeZog uses long addresses, and C19/C21
-   send the 64K form only at `0x1234` and `0x8000`, where the direct branch is the *correct* one.
-   The verdict is a **positive three-outcome read-back**, not a wait to see whether the stub dies —
-   a one-byte write into the running debugger may or may not be fatal, so "it crashed" would be a
-   weak and flaky signal. The debuggee's slot-7 bank is seeded through `CMD_WRITE_MEM`, the handler
-   is driven, and the address is read back through `memory_loop`'s own (correct) swap window: the
+   do send the 64K form but at addresses from `0x0000` to `0x8000` — C21 covers `0x0000`-`0x0008`,
+   `0x0065`-`0x0074` and `0x1234`, and `0x8000` is C19's RAM control — where the direct branch is
+   the *correct* one.
+   The verdict is a **positive read-back**, not a wait to see whether the stub dies — a one-byte
+   write into the running debugger may or may not be fatal, so "it crashed" would be a weak and
+   flaky signal. The debuggee's slot-7 bank is seeded through `CMD_WRITE_MEM`, the handler is
+   driven, and the address is read back through `memory_loop`'s own (correct) swap window: the
    written byte means the write went where it was asked, **the seed means it went to `MAIN_BANK`**,
-   anything else is a third thing. Survival is asserted **in band** — the read-back is an exchange
-   the stub has to serve *after* the offending write. **Two checks and not one**, because the two
-   handlers carry separate copies of the decision, so a fix to either alone must still leave a red
-   naming the other. The probe address is `0xFF80`, **above `main_end` in both variants** and above
-   `ROM_MAGIC_ADDR`, which only ever moves down — so a defective stub writes into dead space and the
-   red is a repeatable reading. Shown red first, twice, byte-identically: *"0xFF80 is untouched"*.
-   **NOT covered**: `memory_loop` is a shared dependency of the seed and the verdict, so a
-   `memory_loop` broken the same way would make both pass vacuously — what rules that out is the
-   source (`backup.asm:325`), enumerated, and not the run; and none of this has run on hardware.
+   anything else is a third thing. **`MAIN_BANK` IS ALSO READ DIRECTLY, BY A SECOND ROUTE**, which
+   is what turns "the write went where asked" into *"the debugger's own bank was not written"* — the
+   property the issue is about: MMU slot 5 is borrowed to put `MAIN_BANK` at `0xA000`-`0xBFFF`, so
+   `0xBF80` is the same physical byte **below** `0xE000`, i.e. reached by `memory_loop`'s *phase 2*
+   rather than the swap window the verdict depends on. Slot 5 and not slot 4, since slot 4 is where
+   the fixture, the marker area and `BIG_MEM_ADDR` live; `cmd_init` resets slots 1-6 outright, so a
+   botched restore self-heals at the next check. Survival is asserted **in band** — the read-back is
+   an exchange the stub has to serve *after* the offending write. **Two checks and not one**, because
+   the two handlers carry separate copies of the decision, so a fix to either alone must still leave
+   a red naming the other. The probe address is `0xFF80`, **above the SAVEBIN image itself**
+   (`0xFEC0`) let alone `main_end`, which `main.asm`'s `ASSERT` pins at or below `ROM_MAGIC_ADDR`
+   (`0xFEA0`, and it only ever moves down) — so a defective stub writes into dead space, the red is a
+   repeatable reading, and C18 and C15 below still pass. No new `ASSERT` is needed; the existing ones
+   pin it structurally with 224 bytes of margin. Shown red first, and the red **demonstrates** the
+   defect rather than inferring it: *"the debugger's own bank was written: MAIN_BANK 0xFF80 went 0x00
+   to 0xC7"*.
+   **NOT covered**: neither check has run on hardware, and the defect has never been observed
+   anywhere but here. What is **no longer** a gap is the `memory_loop` vacuity — see
+   `doc/DZRP-TESTING.md`; the second route closes it in-suite, and the red-first pair closed it
+   independently.
    **The suite is 23 since C22-C23 landed, was 21 since C19-C21, and 18 since C16-C18**; the 2026-08-05 figure is left as the measurement it was
    rather than restated, and the hardware run of 2026-08-08 that reports 15 of 15 was also taken at
    the suite's size then. **C16-C18 HAVE now run on hardware — 2026-08-09, build `00.19`, 18 of 18

@@ -19,10 +19,19 @@ server and speaks DZRP through it (`src/transport_esp.asm`). A DZRP client talks
 under jnext and gets correct answers: `make test-dzrp-stub`. The two ROMs now also **draw different
 screens**: WiFi mode reports the ESP's own baud rate and the address to connect to
 (`AT+CIFSR` → `Connect at <ip>:11000`) where UART mode keeps upstream's cable baud rate and
-joy-port selector. What is **not** built yet is M2's asynchronous break — **evaluated 2026-08-08
-before any code, and the evaluation changed its shape**: it is feasible and must be **opt-in**,
-because the Copper instruction list is write-only and enabling the break therefore destroys any
-Copper program the debuggee had. See @doc/ASYNCHRONOUS-BREAK-DESIGN.md.
+joy-port selector.
+
+**M2 IS BUILT TOO, since 2026-08-11 — a freely running debuggee is stopped by `CMD_PAUSE` from
+the PC, with no button press and no breakpoint** (bench **W8**). ~~What is not built yet is M2's
+asynchronous break — evaluated 2026-08-08 before any code, and the evaluation changed its shape:
+it is feasible and must be **opt-in**, because the Copper instruction list is write-only and
+enabling the break therefore destroys any Copper program the debuggee had.~~ **The opt-in half of
+that is retracted**: the user's call (2026-08-10) is that the **debuggee's own program** installs
+the two Copper instructions, so the debugger installs nothing, destroys nothing, and needs no
+switch. The write-only fact is unchanged and is precisely *why* the program owns the list. See
+@doc/ASYNCHRONOUS-BREAK-DESIGN.md for the design and
+@doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md for what a user has to add to their program (44 bytes) and
+the five states in which the break will not fire. **Nothing in M2 has run on hardware.**
 
 **It has now run on a real ZX Spectrum Next**, 2026-08-04 — the stub takes the M1 NMI and paints
 its UI on core 03.02.01, and mfselect installed it. That single evening found **two bugs no
@@ -63,13 +72,22 @@ to work.
   start of every session; add to it after any architecture/logic/format decision.
 - **@ERRORS.md** — approaches that failed and the fix. Check it before attempting anything it
   covers; add to it whenever something takes more than two attempts to work.
-- **@doc/ASYNCHRONOUS-BREAK-DESIGN.md** — M2 (issue #22), evaluated 2026-08-08 **before any code
-  exists**. Verdict: feasible and it should be **opt-in**, because the Copper instruction list is
-  write-only and so enabling asynchronous break **destroys** any Copper program the debuggee had.
-  It answers the plan's open question 5b (a Copper-caused NMI cannot be distinguished from a
-  CPU-caused one — and a poll-shaped handler does not need to), establishes that the Copper is the
-  **only** periodic NMI source on the machine, and carries the NR `0x02` read-modify-write reset
-  landmine. Read §3 and §7 before starting M2.
+- **@doc/ASYNCHRONOUS-BREAK-DESIGN.md** — M2 (issue #22). Evaluated 2026-08-08 before any code
+  and **built 2026-08-11**; the evaluation's own verdict of "**opt-in**, because the Copper
+  instruction list is write-only and so enabling asynchronous break **destroys** any Copper
+  program the debuggee had" is **superseded and annotated in place**: the debuggee's program
+  installs the two instructions now, so the debugger installs nothing and there is nothing to opt
+  into. Still true and still load-bearing: open question 5b (a Copper-caused NMI cannot be
+  distinguished from a CPU-caused one — and a poll-shaped handler does not need to), the Copper
+  being the **only** periodic NMI source on the machine, the NR `0x02` read-modify-write reset
+  landmine, and — answered while building it — **open question 5**: any live DivMMC automap
+  session blocks every Multiface NMI, poll and M1 button alike, for its whole duration.
+- **@doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md** — the user's half of M2: the 44 bytes a program adds
+  to make itself breakable from DeZog's Pause, what the poll costs (**1288 T-states/frame**,
+  measured, against a plan estimate that was 6-13× low), and the five states in which the break
+  will not fire. Read it before answering "why does Pause do nothing" — the first of the five is
+  that this is a **WiFi-mode feature in practice**, and the second is that esxDOS file I/O
+  suppresses it.
 - **@KNOWN-ISSUES.md** — faults that are real, reproduced, understood and deliberately **WONTFIX**,
   each with what causes it, what does *not*, what to do about it, and what would reopen it. Read it
   before investigating odd behaviour on hardware: two of the states it describes look exactly like

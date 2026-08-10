@@ -5,6 +5,199 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-11 — M2: the PROGRAM installs the Copper list, so the debugger destroys nothing, and asynchronous break stops being opt-in
+
+**Built, issue #22, milestone M2 — the headline functional advance over upstream
+dezogif, and the only "impossible → yes" row in the plan's delta table.** A
+freely running debuggee is now stopped by `CMD_PAUSE` from the PC, with no
+button press and no breakpoint. **Bench W8**, and nothing anywhere in this
+project had ever done it.
+
+**THE DESIGN CHANGED BEFORE ANY CODE, AND IT IS THE USER'S CALL (2026-08-10):
+THE USER'S PROGRAM INSTALLS THE TWO COPPER INSTRUCTIONS, NOT THE DEBUGGER.**
+Their framing: if you do not use the Copper, add them at the start of your
+program; if you do, add them to your own list; either way you get PC-initiated
+break, and you compile it out for release.
+
+**That collapses the design doc's largest cost.**
+`doc/ASYNCHRONOUS-BREAK-DESIGN.md` assumed the *debugger* installed the list and
+spent its §3.1 on the consequence — the list is **write-only** (`data_a_o =>
+open` on both instruction RAMs, `zxnext.vhd:3959-3976`, `:3980-3998`; no read
+decode for NR `0x60`/`0x63`, `:6286-6287`), so installing ours **destroys** the
+debuggee's irrecoverably, which is the whole reason the evaluation's verdict was
+"opt-in". With the program owning it, **nothing is destroyed, §4.4 disappears
+entirely, and there is no switch to design**: the debugger installs nothing, so
+a program that never installs a list never raises a software NMI and the feature
+costs it literally zero. What was the doc's "escape hatch" is now the primary
+route.
+
+**The cost of the trade, stated rather than discovered: a non-cooperating
+program gets no asynchronous break at all**, and the debugger cannot install one
+for it, because it cannot read what it would be overwriting. **Measured install
+cost: 44 bytes**, or 28 if you trust NextZXOS to have left NR `0x06` bit 3 set,
+which it does (2026-08-04).
+
+**`prgm_state` IS THE ARMING QUESTION, AND IT NEEDS NO NEW STATE.** The poll
+path pages `MAIN_BANK` in, checks two bytes of the magic number — the safety
+gate, without which a machine that never ran the debugger but whose program
+raises a software MF NMI would have a garbage bank **CALLed** — and then reads
+`prgm_state` straight out of the bank the magic has just proved is ours. Exact,
+where an MF RAM flag would have been a guess that a soft reset could leave
+stale, and it is what makes T4's verdict survive (below).
+
+**AND BECAUSE OF IT THE POLL NEVER TOUCHES THE CLOCK.** The button path speeds
+the machine to 28 MHz before it decides anything; the poll decides first and
+speeds up only on the break. The plan worried that a speed change 50 times a
+second is "a different kind of perturbation from stolen cycles"; that worry is
+simply gone.
+
+**T4 IS NOT INVERTED, AND THE ISSUE SAYS IT MUST BE.** Issue #22's task 2 reads
+*"invert bench T4 in the same change"*, and that instruction rests on the cause
+check accepting a software cause **unconditionally**. It does not: with no
+debugger image in `MAIN_BANK`, T4's software NMI is still declined, so T4's
+verdict is still **correct** and inverting it would make it assert a takeover
+that must not happen. Its verdict stands and only its rationale moved. What
+replaces the coverage the inversion would have bought is **T9** — a Copper list
+firing while the stub is *stopped*, so the new code runs ~50 times a second for
+a whole run, asserting both that the machine comes back unchanged and that the
+stub still answers its keyboard afterwards.
+
+**THE DEFECT M2 WOULD HAVE MADE DANGEROUS, AND FIXING IT COST −4 BYTES.**
+`nmi66h`'s cause check selected NR `0x02` **before** the instruction that
+claimed to save the debuggee's `IO_NEXTREG_REG` latch, so the saved value was
+always `REG_RESET` — MEMORY.md 2026-08-10, issue #37's discovery 2, filed there
+as harmless. It is harmless at one button press, because it needs the press to
+land between a debuggee's `out (c),reg` and its following `out (c),value`. **At
+50 NMIs a second it stops being unlikely and becomes a recurring silent
+corruption of the debuggee.** The latch is read once at the top now and restored
+on every returning path.
+
+**THE POLL BREAKS ON ANY BYTE, DELIBERATELY.** `transport_poll_traffic` is an
+O(1) check — `esp_rx_remaining`, `esp_hold_len`, the UART status bit — and
+explicitly **not** `transport_byte_available`, whose WiFi form can spend ~100 ms
+in `esp_sync_ipd`. 100 ms inside an NMI 50 times a second is not "slow", it
+changes what the poll is. **Accepted cost**: an unsolicited `<id>,CONNECT` /
+`<id>,CLOSED` causes a break nobody asked for. Precedent: `cmd_loop`'s own
+`transport_wait_rx` already ends on any byte from the module.
+
+**AND A SECOND, SMALLER COST NOBODY HAD NAMED, found in review**: that status
+read clears the **sticky** RX overflow and framing bits (`serial/uart.vhd:530-539`),
+so an overflow occurring while `PRGM_RUNNING` is extinguished by the next poll
+before anything can report it. A lost **diagnostic**, not a lost guarantee — the
+byte loss still surfaces as a desync or a timeout — and the `prgm_state`-first
+ordering fixes only the *race*, not this.
+
+**THE BREAK PATH MUST NOT DRAIN.** `mf_nmi_button_pressed` calls
+`transport_drain` — discard everything until 100 ms of quiet — which is right
+for a button press and would have **eaten the `CMD_PAUSE` that caused the
+break**, leaving DeZog blocked for ever on a response that never came. One MF
+RAM byte, set by the poll and cleared by the break, skips it. Break reason stays
+`MANUAL_BREAK`: DZRP has only `NO_REASON` / `MANUAL_BREAK` / `BREAKPOINT_HIT`
+(`src/breakpoints.asm:18-20`), so inventing a fourth would mean inventing a
+protocol. `cmd_pause` is **untouched** — `send_ntf_pause` sets `PRGM_STOPPED` on
+the break path, so the transition is recorded where the transition happens and
+issue #8's refusal to write it in the handler still holds.
+
+**THE PER-FRAME COST IS MEASURED, AND THE PLAN'S ESTIMATE WAS 6-13× LOW.**
+`make measure-poll-cost`, two builds one assembler constant apart, HL differenced
+across nine frames so start-up and snapshot overhead cancel, bit-identical over
+three runs, and it **refuses to report** rather than lie if the counter wrapped:
+
+| | |
+|---|---|
+| poll, per frame, nothing arriving | **1288 T-states** |
+| of a frame at **28 MHz** | **0.230%** — measured, clock read off NR `0x07` |
+| of a frame at **3.5 MHz** | **1.84%** — arithmetic, and marked as such |
+
+Plan §10 and Appendix A carried "~100-200 T-states/frame (≈0.3%)" as an estimate
+nobody had measured; both are annotated in place. **The first figure was
+contaminated and was re-taken**: the fixture predated the `--inject` HALTED-flag
+finding below, so its first NMI returned a byte late. 0.233% → 0.230%. That the
+numbers barely moved is itself corroboration — a *single* one-off late return is
+exactly what should cost that little.
+
+**OPEN QUESTION 5 IS ANSWERED, AND THE ANSWER IS A LIMITATION NOBODY KNEW.**
+`zxnext.vhd:2107` accepts a Multiface NMI only while `divmmc_nmi_hold = '0'`, and
+that is DivMMC's `o_disable_nmi <= automap or button_nmi`
+(`device/divmmc.vhd:150`), asserted for the **whole** time `automap_held` is set
+(`:148`). So **any live DivMMC automap session blocks every Multiface NMI, the
+poll and the M1 button alike, for its whole duration** — not merely the DivMMC
+NMI menu, but any esxDOS file I/O, any dot command, any `RST 8` trap window.
+Requests are dropped rather than queued (`:2095-2116`), so each lost poll retries
+next frame; a program inside a long esxDOS call cannot be paused until it comes
+out, and **nothing in software can see it happen** — `nmi_mf` never latches, so
+`nmi66h` never runs. The mirror case: a DivMMC drive-button press landing inside
+our handler is dropped (`:2109`). Memory state is not at risk in either
+direction: `sram_pre_override <= "000"` while `mf_mem_en = '1'` (`:3029-3036`,
+`:3137`) and `divmmc_retn_seen <= z80_retn_seen_28 and not mf_is_active`
+(`:4111`), so our own exit RETN is deliberately not seen by DivMMC as its own.
+
+**Three more VHDL facts that were assumed and are now cited.** The Multiface
+pages out on **any** RETN, from a generic ED-45 decoder unrelated to NMI
+bookkeeping (`device/im2_control.vhd:236` → `zxnext.vhd:4287` →
+`device/multiface.vhd:137-148`, `:170-184`) — so our exit is upstream's exit.
+Re-arming for the next frame is therefore **automatic**, and clearing the NR
+`0x02` cause latch buys something else entirely: **cause-reporting correctness
+for the NEXT NMI**, since `nmi_gen_nr_mf` is a write-event pulse (`:3829-3832`)
+and a stale bit 3 would send a genuine **button** press down the poll path. (My
+own brief told the implementer it was needed to prevent an NMI storm. That was
+wrong and was corrected before it reached a source comment.) And NR `0x57` reads
+the live `MMU7` (`:6080-6081` against `:2959`) while the Multiface overlay is
+gated entirely on `cpu_a(15 downto 14) = "00"` (`:3029-3036`), so the slot-7
+manoeuvre cannot be disturbed by it.
+
+**Rejected.** Inverting T4 (above); an MF RAM "armed" flag instead of
+`prgm_state` (a soft reset leaves RAM intact, so a stale flag would have let the
+poll CALL into a bank NextZXOS was using — issue #26's family); calling
+`transport_byte_available` from the NMI (~100 ms, 50 times a second); parsing
+`+IPD` inside the NMI to avoid breaking on an unsolicited line (the same cost);
+inventing a fourth DZRP break reason; writing `prgm_state` in `cmd_pause` (issue
+#8's reason still holds); and putting the poll's decision code in `mf_rom.asm`
+where a byte can cost thirty-two rather than in `mf.asm` where it costs one.
+
+**Cost: BOTH ROMs move, which is correct — `mf_rom.asm` and `mf.asm` are common
+code.** The MF ROM half took **three 16-byte `ALIGN` steps**, 320 → 368
+(`0x140` → `0x170`), so `ROM_MAGIC_ADDR` moves down by the same 48, `0xFEA0` →
+**`0xFE70`** — which keeps the identity block's **file offset at `0x1FE0`**, the
+permanent contract `tools/mfselect/mfselect.c` parses, and `main.asm`'s `ASSERT`
+enforces exactly that relationship. `main_end` UART `0xF2BF` → **`0xF2EE`**,
+WiFi `0xFD4E` → **`0xFD98`**; free to the identity block **2946 / 216**. Pinned,
+`build/*.bin` deleted first: UART `7244738e…` → `e1d698f6…`, WiFi `423ce505…` →
+`78effce4…`. **This changes a ROM, so the merge carries a `make bump`.**
+
+**THE TWO BENCHES THAT READ THE IDENTITY BLOCK WERE THE ONES NOBODY HAD RUN**,
+and moving `ROM_MAGIC_ADDR` is exactly the change that would break them silently
+— `ERRORS.md` records a misplaced-identity data-loss bug. The independent
+reviewer ran them: **`test-mfselect` 10/10** and **`test-mfinstall` 9/9**, plus
+every WiFi bench, to confirm no probe ROM overflows the reduced budget:
+`test-client-status` 8/8, `test-no-hang` 4/4, `test-baud` 5/5, `test-cipsto`
+4/4, `test-slot-recovery` 9/9, `test-wifi-assoc` 8/8, `test-ip-boundary` 2/2,
+`test-tx-patience` 3/3, `test-screen-agreement`, `test-esp` 5/5 — fifteen
+benches, every one green first time. Gates: `make test` **9/9**,
+`test-dzrp-stub` **23/23 conformance with W1-W8, exit 0**, `test-unit` 5/5, both
+variants `check-reproducible`.
+
+**NOT COVERED, and none of it is hidden.** **Hardware — nothing in M2 has been
+near a real Next**, and this project has twice been caught by jnext sitting on
+the safe side of reality. **DeZog itself has never driven it**: W8 speaks DZRP
+directly, so what a real client does with an `NTF_PAUSE` that arrives *before*
+its own `CMD_PAUSE` response is reasoned from CSpect's plugin and not observed.
+**UART mode**: the poll is transport-agnostic and the serial build hands the joy
+ports back on resume, re-pointing UART0's RX at the ESP pin, so no PC byte can
+land while a debuggee runs — asynchronous break is a **WiFi-mode feature in
+practice**, which is the plan's open question 7 answered in the negative by
+inspection rather than by measurement. **The DivMMC suppression above** is read
+from the VHDL and staged by no run. **T9 does not discriminate the latch
+restore** — the control was built and watched to pass, because the poll's own
+`.save_slot7_page_in` leaves port `0x243B` selecting exactly the register the
+fixture reads — and it never breaks in. **W8 does not press M1 against a running
+debuggee**, does not cover the UART build, and no run makes the ESP emit an
+unsolicited line while a debuggee runs, which is the "break on any byte" cost
+above. **The RX-overflow extinction** is unobserved. And issue #22's **task 6**
+(asynchronous break in UART mode) ships nothing and is hardware-only.
+
+---
+
 ## 2026-08-11 — M2's two blockers were a check reading the wrong field and an emulator flag nobody clears; the Next was innocent both times
 
 **Measured, and both findings of 2026-08-10 are RETRACTED.** M2's asynchronous

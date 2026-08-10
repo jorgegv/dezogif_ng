@@ -1091,8 +1091,15 @@ TRAMPOLINE = tuple(range(0x0000, 0x0008)) + tuple(range(0x0066, 0x0074))
 TRAMPOLINE_ADJACENT = (0x0008, 0x0065, 0x0074)
 
 
-def _runs(xs):
-    """Consecutive addresses as ranges, so a verdict can name a set briefly."""
+def _runs(xs, cap=8):
+    """Consecutive addresses as ranges, so a verdict can name a set briefly.
+
+    CAPPED, because the caller's detail line has a twenty-word budget and this
+    is the only part of it whose length depends on data. Every guard shaped like
+    a range test yields one or two runs; a contrived scattered refusal could
+    yield twelve and push the line over. The overflow is counted rather than
+    dropped, so the reader still knows the set was bigger than what is named.
+    """
     out, i, xs = [], 0, sorted(xs)
     while i < len(xs):
         j = i
@@ -1101,11 +1108,13 @@ def _runs(xs):
         out.append("0x%04X" % xs[i] if i == j
                    else "0x%04X-0x%04X" % (xs[i], xs[j]))
         i = j + 1
+    if len(out) > cap:
+        return " ".join(out[:cap]) + " and %d more" % (len(out) - cap)
     return " ".join(out)
 
 
 def chk_rom_breakpoint_spares_trampoline(d):
-    """A breakpoint must be refused on the trampoline AND NOWHERE ELSE.
+    """The trampoline is refused, and the bytes on either side of it are not.
 
     THIS CHECK ONLY EXISTS BECAUSE C19 PASSES. While writes into ROM space were
     discarded, a breakpoint aimed at the trampoline was harmless; the moment

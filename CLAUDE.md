@@ -493,7 +493,7 @@ strongest:
    taken: a version constraining only `0x0000` and `0x0066` passed green against a guard planting
    `RST 0` at `0x0001-0x0007`. Shown red four ways — unfixed → Precondition; no guard, guard too
    narrow, and guard too wide → three different C21 reds. **Measured over the wire, not read**:
-   refusal set `0x0000-0x0007 0x0066-0x0073`, and `0x0052` now stops on its breakpoint. Restores are deliberately **unguarded**: a
+   refusal set `0x0000-0x0007 0x0066-0x0073`, and `0x0052` now stops on its breakpoint.
    **`cmd_restore_mem` is guarded too**, and the first version was not: a client put its own byte on
    `0x0000`/`0x0066` through it — C18's defect one command along. `bp_hits_trampoline` is a pure
    function of the address, so guarding a restore can never strand a legitimate un-patch.

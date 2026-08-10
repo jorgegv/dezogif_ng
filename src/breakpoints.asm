@@ -310,10 +310,16 @@ clear_tmp_breakpoint:
     jp restore_swap_slot
 
 .normal:
-    ; Restore opcode. UNGUARDED, deliberately: putting a byte back can only
-    ; ever undo a write set_tmp_breakpoint was allowed to make, and a
-    ; breakpoint that can be set but not removed would leave an RST 0 in the
-    ; Alt ROM for the rest of the session — worse than not setting it.
+    ; Restore opcode. UNGUARDED, and the reason is WHO CHOSE THE ADDRESS: DE
+    ; comes from tmp_breakpoint_X.bp_address, which only set_tmp_breakpoint.store
+    ; writes and only on the path where bp_hits_trampoline already passed, so a
+    ; trampoline address cannot get in here. cmd_restore_mem IS guarded, because
+    ; there the address and the byte are both the client's.
+    ;
+    ; An earlier version justified this with "a breakpoint that can be set but
+    ; not removed would leave an RST 0 in the Alt ROM" — an argument that does
+    ; not survive the guard's own existence, since bp_hits_trampoline is a pure
+    ; function of the address and can never refuse a legitimate un-patch.
     dec hl
     ld a,(hl)
     ex de,hl

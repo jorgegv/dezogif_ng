@@ -189,8 +189,22 @@ review to find.** `esp_query_address` writes `ESP_LINK_NO_ADDRESS` on **entry** 
 clears it only on success, and `esp_check_address` called it unconditionally — so a
 bring-up that had ended at `.no_bringup` with `ESP_LINK_FAILED` was overwritten at
 the **first** tick, and **permanently**: only `transport_init` sets FAILED again,
-and `esp_recover` cannot fire on that path because neither `esp_wait_string`'s
-timeout nor `esp_send_raw` reaches `rxtx_error`. A machine whose ESP is absent,
+and `esp_recover` cannot fire in that state, which takes five consecutive faults
+through `rxtx_error`.
+
+*(**The mechanism first given for that was wrong twice, and the reviewer caught
+it.** It said *"neither `esp_wait_string`'s timeout nor `esp_send_raw` reaches
+`rxtx_error`"*. **`esp_send_raw` plainly does** — `jp tx_timeout`, which is
+`jr rxtx_error` — and the enumeration also omitted `esp_try_read_raw`'s
+`.rx_overflow` arm, which `esp_wait_string` reads through. Both are real paths.
+What holds is the different claim that they cannot **fire** here: the TX FIFO
+always drains, because `esp_uart_set_rate` writes `00011000b` to `0x163B` and
+`uart_tx.vhd:180` leaves `S_IDLE` on `i_Tx_en = '1' and (i_cts_n = '0' or
+i_frame(5) = '0')`, so the shifter starts whatever CTS does; and nothing arrives
+to overflow the 512-byte RX FIFO, because the premise of the state is that no
+module is answering. Verified at the VHDL and at our own frame write before being
+written down. **The permanence itself was never in doubt — it was measured at
+frame 40000**, thirteen periods in.)* A machine whose ESP is absent,
 disabled or not answering at 115200 would stop saying so after one minute and start
 telling a correctly set-up user to go and run `wifi2.bas`. `doc/WIFI-SETUP.md`
 documents those two screens as *the* user diagnostic and the 2026-08-05 entry below
@@ -206,7 +220,8 @@ Measured one build apart, base identity pinned by hash, `jnext` with no `--esp`:
 Guarded at the top of `esp_check_address`, so the routine owns its precondition;
 there is nothing to gain by asking either, since no module is answering and no
 listener exists for a recovered address to reach. **Bench check D7**, red against
-the unguarded build with D1-D6 all still green.
+the unguarded build with D1-D6 **and D8** all still green, so it isolates the guard
+and nothing else.
 
 **MY FIRST ATTEMPT TO REPRODUCE IT DENIED IT, and the reason is this project's own
 oldest lesson.** The implementation was already committed, so
@@ -242,14 +257,27 @@ socket the stub closed, not a command eaten: the shape is the idle sweep's
 between the client's connect and a sweep these runs deliberately set to fire every
 10 emulated seconds. **`main` was 2 of 2 green** on the same check.
 
-**It is probably not this change and that is reasoning, not a measurement.** In
-those runs `ESP_IDLE_SWEEP_SECS` is 10 (500 frames) while `ESP_ADDR_CHECK_SECS` is
-the shipped 60 (3000 frames), so at the moment the client connects — a few seconds
-in — the address check cannot yet have fired, and the two counters are independent.
-**Not proven pre-existing**: that needs it reproduced on `main`, and two green runs
-there are not that. Recorded rather than tuned, because adjusting a race until it is
-green is weakening a check to make it pass — and S6 already has a history of exactly
-this kind of timing sensitivity, recorded at the 2026-08-09 entry.
+**IT IS PROVEN PRE-EXISTING AND THIS BRANCH IS EXONERATED BY MEASUREMENT**, which is
+better than the hedge this paragraph first carried (*"probably not this change, and
+that is reasoning, not a measurement"*). The reviewer staged the race deterministically
+against three `IDLE_SWEEP=10` ROMs — `main`, this branch, and this branch with
+`ADDR_CHECK=0` — and got **60 CLOSED of 60, identical on all three**, with the
+attribution straight out of jnext's log on the **base** ROM: `accepted as cid 2` …
+`closed by the guest (AT+CIPCLOSE=2)`.
+
+**The mechanism is #24's idle sweep closing a socket that has been accepted but has
+not yet delivered a parsed `+IPD`.** `esp_sync_ipd` is the only thing that re-arms the
+sweep and resets its timer, and a bare TCP connect never reaches it — so a client that
+connects and does not speak within one sweep period is hung up on by the stub. Present
+since build `00.18`. Filed as
+**[#40](https://github.com/jorgegv/dezogif_ng/issues/40)**, and framed there as a
+question for #24's *design* rather than simply a bug in it: should an accepted-but-silent
+connection restart the idle timer the way a parsed `+IPD` does, at the cost of letting a
+genuinely leaked socket hold its slot one period longer?
+
+**Recorded rather than tuned**, and that part stands unchanged: adjusting a race until
+it passes is weakening a check to make it pass. S6 already has a history of exactly this
+kind of timing sensitivity, recorded at the 2026-08-09 entry.
 
 **Rejected.** Re-asking from `show_ui` (re-entered on every redraw, so an AT round trip
 would be paid every time somebody pressed "B" — the half of `transport_init`'s old

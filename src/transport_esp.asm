@@ -4082,9 +4082,28 @@ esp_check_address:
     ; success, so calling it unconditionally overwrites ESP_LINK_FAILED with
     ; ESP_LINK_NO_ADDRESS at the first tick — and PERMANENTLY, because the only
     ; thing that sets FAILED again is transport_init, reachable from an M1 or
-    ; Symbol Shift re-init or from esp_recover, and esp_recover cannot fire here:
-    ; neither esp_wait_string's timeout (`ret c`) nor esp_send_raw reaches
-    ; rxtx_error. So a machine whose ESP is absent, disabled or not answering at
+    ; Symbol Shift re-init or from esp_recover — and esp_recover cannot fire in
+    ; this state, which takes five consecutive faults through rxtx_error.
+    ;
+    ; NOT because nothing here CAN reach rxtx_error: an earlier version of this
+    ; said "neither esp_wait_string's timeout nor esp_send_raw reaches it", and
+    ; esp_send_raw plainly does — `jp tx_timeout`, which is `jr rxtx_error`
+    ; — as does esp_try_read_raw's .rx_overflow arm, which esp_wait_string reads
+    ; through. Both are real paths and the enumeration was wrong twice.
+    ;
+    ; They cannot FIRE here, which is a different claim and the one that holds.
+    ; The TX FIFO always drains: esp_uart_set_rate writes 00011000b to 0x163B, so
+    ; bit 5 is clear, and uart_tx.vhd:180 leaves S_IDLE on
+    ; `i_Tx_en = '1' and (i_cts_n = '0' or i_frame(5) = '0')` — the shifter starts
+    ; whatever CTS does, so esp_send_try never runs out its bound. And nothing
+    ; arrives to overflow the 512-byte RX FIFO, because the premise of this state
+    ; is that no module is answering. Only esp_wait_string's own timeout is left,
+    ; and that is a bare `ret c` which counts nothing.
+    ;
+    ; The PERMANENCE was measured rather than deduced from any of that: at frame
+    ; 40000, thirteen query periods in, the unguarded build was still wrong.
+    ;
+    ; So a machine whose ESP is absent, disabled or not answering at
     ; 115200 would stop saying so after one minute and start telling a correctly
     ; set-up user to go and run wifi2.bas. Measured, one build apart, with no
     ; --esp: main keeps "ESP-01 setup failed" at frames 3000, 9000 and 40000; the

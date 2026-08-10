@@ -96,9 +96,12 @@
 # TIMING IS IN FRAMES AND NEVER IN WALL CLOCK, which is the mistake this project
 # has been caught by before (W6's SECOND_NMI_FRAMES). Every edge is a
 # --esp-delayed-*-frames option and every verdict is a --delayed-screenshot at a
-# frame, so the schedule is exact whatever speed the emulator runs at. The one
-# wall-clock wait is D6's client, and it waits for the SCREENSHOT FILE to appear
-# rather than for a duration — an event jnext itself produces at the frame D1's
+# frame, so the schedule is exact whatever speed the emulator runs at. NO VERDICT
+# HERE IS TAKEN ON WALL CLOCK. Two waits are wall-clock and neither decides
+# anything: D8's `sleep 2` before it arms, which settles past bring-up's AT+CIFSR
+# window and is a precondition rather than a measurement; and D6's client, which
+# waits for the SCREENSHOT FILE to appear rather than for a duration — an event
+# jnext itself produces at the frame D1's
 # verdict is taken, so the client provably cannot perturb that verdict by
 # arriving early with a CMD_INIT that would stop the stub's own idle clock.
 #
@@ -143,9 +146,17 @@
 #     claim.
 #   * how long a real re-association takes, which is what decides whether 60
 #     seconds is the right period. Unmeasured anywhere.
-#   * the outage arriving while a DZRP SESSION is open. The stub deliberately
-#     does not re-query then (esp_check_address's session guard), so there is
-#     nothing to check; what a user sees in that case is unchanged.
+#   * the outage arriving while a DZRP SESSION is open — and this is the case the
+#     fix is MOST LIKELY to meet in the field, not a corner. esp_session_valid is
+#     cleared only by CMD_CLOSE or a matching <id>,CLOSED, and a mid-session
+#     association loss produces neither, so the session guard holds the re-query
+#     off AFTERWARDS too: the user walks to the Next and finds the old address
+#     still on the screen, until the module's own AT+CIPSTO reap at 1800 s
+#     produces an <id>,CLOSED — if it announces one, which KNOWN-ISSUES.md #2
+#     records as unverified. That is the guard working, not a hole in it (asking
+#     on suspicion is what #24 forbids), but nothing here checks it and an
+#     earlier version of this line called it "nothing to check; what a user sees
+#     in that case is unchanged", which understates it.
 #   * UART mode, which has no association to lose and gets none of this.
 #
 # The check ids are D1-D8. The plan's Appendix B.4 numbers three WORKFLOW STEPS

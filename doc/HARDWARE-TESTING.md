@@ -1326,7 +1326,7 @@ because `H6 CLEAN` would otherwise be read as *no error was ever raised*.
 
 ---
 
-## The AP went away and came back — measured 2026-08-09, on a real Next
+## The AP went away and came back — measured 2026-08-09, on a real Next, build NOT CAPTURED
 
 **This run is the whole evidence for issue #32 not building half of itself**, and until this
 branch it was cited five times across the tree and recorded **nowhere in this repository** — only
@@ -1336,10 +1336,20 @@ document as the home for anything read off a real Next, so it belongs here.
 **Method.** The access point was powered **down for five minutes and back up**, with the stub
 already up and listening, and nothing done to the Next at any point — no M1 press, no reset.
 
+**THE BUILD NUMBER WAS NOT CAPTURED**, and every other entry in this document carries one. It is
+not recoverable: the run is recorded only in [jnext#246](https://github.com/jorgegv/jnext/issues/246),
+which does not state it. **Read the 15 of 15 below against that**, because the entry directly above
+this one reports **18 of 18** on the same date — the two reconcile because the conformance suite
+was 15 checks at build `00.17` and earlier, and 18 from `00.19`, so this run is `≤ 00.17`. That
+inference is the best available and is **not** a reading off the machine. It is exactly the lesson
+the `00.16`/`00.19` entry above was written to teach: **read the banner before interpreting a
+hardware run** — the build number is the first line of the stub's own screen, free to read, and
+nobody read it.
+
 | | measured |
 |---|---|
 | does the `AT+CIPSERVER` listener **survive** a de-association and re-association? | **yes** — a full `make test-hardware` passed **6 of 6 with 15 of 15 conformance** afterwards, so the stub was still listening on 11000 and serving |
-| does the station address survive? | **yes in that run** — the Next answered a ping and the bench on the same IP. The DHCP lease held across five minutes |
+| does the station address survive? | **yes in that run** — `make test-hardware NEXT_IP=<ip>` passed afterwards, so the bench dialled that same address and was answered. The DHCP lease held across five minutes |
 | does the guest see anything go wrong? | **no** — the stub's screen did not change and it raised no error at all |
 
 **Tier: `reported on hardware`** — one machine, one reporter, no re-runnable artefact.

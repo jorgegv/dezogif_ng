@@ -895,7 +895,11 @@ strongest:
    **D7 GUARDS THIS FIX AGAINST RECREATING THE DEFECT IT REMOVES.** `esp_query_address` writes
    `ESP_LINK_NO_ADDRESS` on **entry** and clears it only on success, so an unguarded re-query
    overwrites `ESP_LINK_FAILED` at the first tick — and **permanently**, since only
-   `transport_init` sets it again and `esp_recover` cannot fire on that path. A machine whose ESP
+   `transport_init` sets it again and `esp_recover` cannot fire in that state — not because nothing
+   there reaches `rxtx_error` (`esp_send_raw` does, via `tx_timeout`), but because neither path can
+   **fire**: the TX FIFO always drains with flow control off (`uart_tx.vhd:180`), and nothing
+   arrives to overflow the RX FIFO when no module is answering. **Measured at frame 40000**, not
+   deduced. A machine whose ESP
    is absent, disabled or not answering at 115200 would stop saying so after a minute and start
    telling a correctly set-up user to run `wifi2.bas`. Those two screens are `doc/WIFI-SETUP.md`'s
    user diagnostic. Measured one build apart with the base pinned by hash: `main` keeps *"setup
@@ -949,13 +953,22 @@ Two things the shortening may **never** touch, because they are interface rather
 
 - **The check id.** `T1`-`T8`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W6`, `C1`-`C21`, `B1`-`B2`,
   `P1`-`P3`, `N1`-`N8`, `G1`-`G2`, `I1`-`I9`, `S1`-`S7`, `K1`-`K4`, `R0`-`R5`, `L1`-`L5`, `D1`-`D8`,
-  `H1`-`H5` are cited
+  `H1`-`H6` are cited
   by every
   document and
   issue, and two things match on
   them: `run-dzrp-stub.sh`'s W3 greps `^FAIL  C10 `, and `test/hardware-check.py` takes the code
   from field 2 of every `FAIL` line. Shorten the prose after the id; never the id, and never
   renumber.
+  **THREE RANGES THIS LIST DOES NOT CARRY, and one of them is a real collision** — noted rather
+  than resolved, because deciding it is somebody's call and not a documentation edit.
+  `A0`-`A6` (`test/slot-ceiling-probe.py`), `B0`-`B5` (`test/vanished-peer-probe.py`) and
+  `V1`-`V2` (`test/run-probes-jnext.sh`) are all absent, and **`B0`-`B5` collides with
+  `run-ip-boundary.sh`'s own `B1`/`B2`** — two different checks answering to one id, in a register
+  this section calls interface. All pre-existing. The list has now gone stale in three places in
+  two review rounds (`N1`-`N6`, `S1`-`S3`, `H1`-`H5`), which is *the enumeration is a grep, not a
+  memory* turned on the register itself: **check it against what the benches print, not against
+  what this line says.**
 - **A clause a reviewer put there to stop the line overclaiming.** Some of these lines are long
   precisely because an earlier version said more than the run had shown. Where the clause still
   fits it stays on the line — `test-no-hang`'s N4 says the *mechanism* fired and calls it "not a

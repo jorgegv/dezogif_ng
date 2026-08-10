@@ -522,8 +522,12 @@ strongest:
    property the issue is about: MMU slot 5 is borrowed to put `MAIN_BANK` at `0xA000`-`0xBFFF`, so
    `0xBF80` is the same physical byte **below** `0xE000`, i.e. reached by `memory_loop`'s *phase 2*
    rather than the swap window the verdict depends on. Slot 5 and not slot 4, since slot 4 is where
-   the fixture, the marker area and `BIG_MEM_ADDR` live; `cmd_init` resets slots 1-6 outright, so a
-   botched restore self-heals at the next check. Survival is asserted **in band** — the read-back is
+   the fixture, the marker area and `BIG_MEM_ADDR` live — C17 *does* span slot 5, so the argument is
+   ordering: it has finished, the borrow only reads, and no later check reads that region. **The
+   restore is asserted, not assumed**: C23 opens with one `CMD_GET_REGISTERS` **before its own
+   `CMD_INIT`** (which would erase the evidence) and refuses if slot 5 still holds `MAIN_BANK` —
+   without it a failed restore is invisible, since the next borrow reads `was` as `MAIN_BANK` and
+   still reports correct before/after values. Survival is asserted **in band** — the read-back is
    an exchange the stub has to serve *after* the offending write. **Two checks and not one**, because
    the two handlers carry separate copies of the decision, so a fix to either alone must still leave
    a red naming the other. The probe address is `0xFF80`, **above the SAVEBIN image itself**

@@ -472,12 +472,40 @@ so `CMD_READ_MEM` reaches it through `memory_loop`'s **phase 2**, the direct pat
 window the verdict depends on. Read before and after, and it must not have changed. This is judged
 **first**, because it is the direct statement of harm and is deterministic.
 
-**Slot 5 and not slot 4**, deliberately: slot 4 is `0x8000`-`0x9FFF`, where this suite's fixture
-(`DBG_CODE`), its marker area (`DBG_MARK`) and `BIG_MEM_ADDR` all live, so a restore that went wrong
-there would be maximally damaging — and would be *this issue's own defect, self-inflicted*. Nothing
-in the suite uses `0xA000`-`0xBFFF`. The explicit restore is belt and braces in any case: `cmd_init`
-resets MMU slots 1-6 outright (`commands.asm`), and every check opens a fresh connection and sends
-`CMD_INIT` first.
+**Slot 5 and not slot 4**, and the argument is about **ordering** as much as about which addresses
+matter. Slot 4 is `0x8000`-`0x9FFF`, where this suite's fixture (`DBG_CODE`), its marker area
+(`DBG_MARK`) and `BIG_MEM_ADDR` all live, so a restore that went wrong there would be maximally
+damaging — and would be *this issue's own defect, self-inflicted*. Slot 5 is named by no check.
+
+It is **not** untouched, though, and an earlier version of this section said "nothing in the suite
+uses `0xA000`-`0xBFFF`", which is **false**: **C17 writes 16384 bytes from `0x8000`** and therefore
+spans it — its own docstring says so, *"it spans TWO slots … `memory_loop`'s banking is what carries
+it across `0xA000`"*. What makes it harmless is the order and the access: C17 has finished long
+before C22 runs, the borrow only ever **reads** through the slot and puts it back, and no check after
+C22/C23 reads that region.
+
+The explicit restore is belt and braces in any case, and the reason is narrow enough to be worth
+stating exactly rather than generally: `cmd_init` resets MMU slots 1-6 outright (`commands.asm`), and
+**the only checks that run after C22 and C23 are C18 and C15**, both of which send a well-formed
+`CMD_INIT` as their first command. That is **not** true of the suite at large — C2's `CMD_INIT` is
+deliberately over-declared, so `cmd_init` blocks in `.inner` and never reaches the slot reset, and
+C13/C14 send none at all — so the general form of that sentence was wrong too. The narrow claim is
+the one the safety argument needs and the one that holds.
+
+**And the restore is now asserted rather than assumed.** Nothing observed it: a restore that silently
+failed would leave the next `_peek_main_bank` reading `was` as `MAIN_BANK`, putting `MAIN_BANK` back,
+and still reporting a correct before/after pair — while C18's and C15's `CMD_INIT` tidied up behind
+it. So the borrow would go on working and the machine would quietly carry the debugger's own bank at
+`0xA000` for the rest of the run. **C23 opens with one `CMD_GET_REGISTERS`, before its own
+`CMD_INIT`** — which is the whole of why it works, since `cmd_init` would erase the evidence — and
+refuses to proceed if slot 5 still holds `MAIN_BANK`. It is a **precondition**, not the subject: it
+reports that the instrument left the machine as it found it. Measured on a fresh connection after
+C22 had borrowed and returned the slot: **slot 5 reads bank 5**.
+
+Its scope, said rather than hidden: it observes the borrow made by the check *before* it, which in
+the default order is C22, the two being adjacent. Under `--only C23` there was no borrow and it is
+vacuously satisfied. C23's own borrow is the last one and nothing standing looks at it — harmless
+for the reason above, since only C18 and C15 follow.
 
 C22 has a **third** observation for free: `CMD_SET_BREAKPOINTS` replies with the opcode the remote
 *found*, which on the swap path is the seed. It is judged **last** because it is the weakest — a

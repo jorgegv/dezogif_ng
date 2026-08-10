@@ -69,8 +69,34 @@ physical byte** as `0xFF80` but **below `0xE000`**, i.e. reached through
 before and after; it must not have changed. Judged **first**, being the direct
 statement of harm. **Slot 5 and not slot 4**: slot 4 is `0x8000`-`0x9FFF`, where
 the fixture, the marker area and `BIG_MEM_ADDR` live, so a botched restore there
-would be **this issue's own defect, self-inflicted**. Belt and braces anyway —
-`cmd_init` resets MMU slots 1-6 outright and every check sends one first.
+would be **this issue's own defect, self-inflicted**. Slot 5 is named by no
+check — though **C17 does span it**, writing 16384 bytes from `0x8000`, which is
+why the argument is about ORDERING: C17 has finished, the borrow only READS
+through the slot, and no later check reads that region. Belt and braces anyway,
+in the narrow form that is actually true: `cmd_init` resets MMU slots 1-6
+outright and **the only checks after C22/C23 are C18 and C15**, both of which
+send a well-formed `CMD_INIT` first.
+
+*(Two sentences here were wrong and are corrected rather than quietly dropped:
+"nothing in this suite uses `0xA000`-`0xBFFF`" — C17's own docstring says it
+spans two slots — and "every check sends one first", which C2's deliberately
+over-declared `CMD_INIT` falsifies, since `cmd_init` then blocks in `.inner` and
+never reaches the slot reset, as do C13/C14, which send none at all. **Both were
+the sentence justifying a safety property**, which is the worst place for a
+convenient generalisation.)*
+
+**AND THE RESTORE IS ASSERTED NOW, NOT ASSUMED.** Nothing observed it, and a
+failed restore is invisible in every direction: the next `_peek_main_bank` reads
+`was` as `MAIN_BANK`, puts `MAIN_BANK` back, still reports a correct
+before/after pair, and C18's and C15's `CMD_INIT` tidy up behind it — leaving
+the machine carrying the debugger's own bank at `0xA000` for the rest of the
+run. **C23 opens with one `CMD_GET_REGISTERS` BEFORE its own `CMD_INIT`**, which
+is the whole of why it works, and refuses if slot 5 still holds `MAIN_BANK`. A
+**precondition**, not the subject. Measured: slot 5 reads bank 5 on a fresh
+connection after C22 borrowed and returned it. It observes the *previous*
+check's borrow, so it is vacuous under `--only C23` and does not cover C23's own
+— stated rather than hidden. **A property evidenced only by a scratch probe is a
+property nobody will notice breaking**, which is why this stopped being one.
 
 **TWO CHECKS AND NOT ONE**, because the two handlers carry **separate copies**
 of the decision: a fix to either alone must still leave a red naming the other.

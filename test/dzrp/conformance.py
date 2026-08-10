@@ -1232,8 +1232,15 @@ SLOT7_ADDR = 0xFF80
 SLOT7_SEED = 0x5A       # seeded into the DEBUGGEE's bank. Not BP_OPCODE.
 SLOT7_VALUE = 0xA5      # what CMD_RESTORE_MEM is asked to write. Not the seed.
 
-# constants.asm: the bank the debugger executes from, and the one thing the
-# debuggee's slot 7 must not be for these checks to discriminate at all.
+# constants.asm:15 — the bank the debugger executes from. A second rendering of
+# a value in the Z80 source with nothing keeping the two in step, which is the
+# practice BP_OPCODE and TRAMPOLINE already follow here.
+#
+# IT NOW GATES TWO THINGS, so a stale value fails in two ways at once and both
+# are silent: _peek_main_bank would page in the WRONG bank, whose byte cannot be
+# touched by the handler either, giving a happily-equal before/after; and
+# _seed_slot7's "the debuggee's slot 7 must not be the debugger's own" refusal
+# would stop discriminating. Both directions turn a real defect green.
 MAIN_BANK = 94
 
 # THE SECOND VIEW OF THE SAME PHYSICAL BYTE, and it is what makes the checks
@@ -1249,13 +1256,28 @@ MAIN_BANK = 94
 # depends on. Two routes, one byte, and the checks assert the debugger's own
 # bank was NOT written.
 #
-# SLOT 5 AND NOT SLOT 4, deliberately. Slot 4 is 0x8000-0x9FFF, where this
-# suite's fixture (DBG_CODE), its marker area (DBG_MARK) and BIG_MEM_ADDR all
-# live, so a restore that went wrong there would be maximally damaging — and it
-# would be this issue's own defect, self-inflicted. Nothing in this suite uses
-# 0xA000-0xBFFF. The explicit restore below is belt and braces in any case:
-# cmd_init resets MMU slots 1-6 outright (commands.asm), and every check opens
-# a fresh connection and sends CMD_INIT before anything else.
+# SLOT 5 AND NOT SLOT 4, and the argument is about ORDERING as much as about
+# which addresses matter. Slot 4 is 0x8000-0x9FFF, where this suite's fixture
+# (DBG_CODE), its marker area (DBG_MARK) and BIG_MEM_ADDR all live, so a restore
+# that went wrong there would be maximally damaging — and would be this issue's
+# own defect, self-inflicted. Slot 5 is named by no check.
+#
+# It is not untouched, though, and an earlier version of this comment said
+# "nothing in this suite uses 0xA000-0xBFFF", which is FALSE: C17 writes 16384
+# bytes from 0x8000 and therefore spans it — its own docstring says so, "it
+# spans TWO slots ... memory_loop's banking is what carries it across 0xA000".
+# What makes that harmless is the order and the access: C17 has finished long
+# before C22 runs, the borrow below only ever READS through the slot and puts it
+# back, and no check after C22/C23 reads that region.
+#
+# The explicit restore is belt and braces in any case, and the reason is narrow
+# enough to be worth stating exactly rather than generally: cmd_init resets MMU
+# slots 1-6 outright (commands.asm), and the only checks that run after C22 and
+# C23 are C18 and C15, both of which send a well-formed CMD_INIT as their first
+# command. (That is NOT true of the suite at large — C2's CMD_INIT is
+# deliberately over-declared, so cmd_init blocks in .inner and never reaches the
+# slot reset, and C13/C14 send none at all. The narrow claim is the one the
+# safety argument needs and the one that holds.)
 PROBE_SLOT = 5
 PROBE_ADDR = PROBE_SLOT * 0x2000 + (SLOT7_ADDR & 0x1FFF)
 
@@ -1265,6 +1287,8 @@ def _peek_main_bank(d):
 
     The slot is put back from what CMD_GET_REGISTERS reported for it, which for
     slots 0-6 is read LIVE from the MMU rather than from the stub's bookkeeping.
+    That the restore really happens is asserted by _probe_slot_returned, not
+    assumed here.
     """
     body = talk(d, dzrp.CMD_GET_REGISTERS)
     if len(body) < 37:
@@ -1276,6 +1300,43 @@ def _peek_main_bank(d):
         return _read_mem(d, PROBE_ADDR, 1)[0]
     finally:
         talk(d, dzrp.CMD_SET_SLOT, bytes([PROBE_SLOT, was]))
+
+
+def _probe_slot_returned(d):
+    """Did the check before this one give MMU slot PROBE_SLOT back?
+
+    NOTHING ELSE OBSERVES THAT, and a failed restore is invisible in every
+    direction that matters: the next _peek_main_bank would read `was` as
+    MAIN_BANK, put MAIN_BANK back, and still report a correct before/after
+    pair, while C18's and C15's CMD_INIT tidied the slot up behind it. So the
+    borrow would go on working and the machine would quietly be left with the
+    debugger's own bank mapped at 0xA000 for the rest of the run. A property
+    evidenced only by a scratch probe is a property nobody will notice breaking.
+
+    IT MUST RUN BEFORE THIS CHECK'S OWN CMD_INIT, which is the whole of why it
+    works: cmd_init resets MMU slots 1-6 outright (commands.asm), so one sent
+    first would erase the evidence. CMD_GET_REGISTERS reports slots 0-6 live
+    from the MMU and resets nothing — the same property _remote_still_answers
+    already relies on.
+
+    IT IS A PRECONDITION AND NOT THE SUBJECT: what it reports is that the
+    instrument left the machine as it found it, which says nothing about the
+    64K address form either way.
+
+    Scope, said rather than hidden. It observes the borrow made by the check
+    BEFORE this one — C22, in the default order, where the two are adjacent.
+    Under `--only C23` there was no borrow and this is vacuously satisfied.
+    C23's own borrow is the last one and nothing standing looks at it; what
+    makes that harmless is that only C18 and C15 follow, and both send a
+    well-formed CMD_INIT first.
+    """
+    body = talk(d, dzrp.CMD_GET_REGISTERS)
+    if len(body) < 37:
+        raise Precondition("the register block is %d bytes, too short for the "
+                           "slot list" % len(body))
+    if body[29 + PROBE_SLOT] == MAIN_BANK:
+        raise Precondition("MMU slot %d still holds bank %d: the borrow was not "
+                           "given back" % (PROBE_SLOT, MAIN_BANK))
 
 
 def _slot7(d):
@@ -1411,7 +1472,12 @@ def chk_slot7_restore_uses_swap_window(d):
     place of the breakpoint. There is no reply to corroborate them with —
     CMD_RESTORE_MEM answers Length=1 and carries no payload — so this one has
     two observations where C22 has three.
+
+    IT ALSO CARRIES THE ONLY STANDING CHECK ON THE INSTRUMENT ITSELF: whether
+    C22 gave MMU slot PROBE_SLOT back. That has to happen before this check's
+    own CMD_INIT, which would erase the evidence — see _probe_slot_returned.
     """
+    _probe_slot_returned(d)
     talk(d, dzrp.CMD_INIT, dzrp.init_payload())
     original = _seed_slot7(d)
 

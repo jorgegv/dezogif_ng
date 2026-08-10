@@ -5,6 +5,132 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-11 — M2's two blockers were a check reading the wrong field and an emulator flag nobody clears; the Next was innocent both times
+
+**Measured, and both findings of 2026-08-10 are RETRACTED.** M2's asynchronous
+break had one standing red (**W8**) and one "pre-existing, cause unresolved"
+defect written into three files. Neither is a defect in this stub, in upstream's
+handler, or in the Next. **`make test-dzrp-stub` is 23/23 with W1-W8 and
+`make test` is 9/9.**
+
+**THE HEADLINE IS THAT BOTH WRONG DIAGNOSES WERE BUILT ON HONEST NUMBERS.**
+Nothing was mis-measured. `0x0000` really was in the notification and the loop
+really did derail. Each number was then attached to the wrong thing, and neither
+error is visible by reading the code that produced it.
+
+### 1. W8's `PC 0x0000` — the check was reading the breakpoint address
+
+`NTF_PAUSE`'s payload is `[id][reason][bp_addr_lo][bp_addr_hi][bank+1][string]`
+(`src/message.asm:342-362`), and `bp_addr` is the address of the **breakpoint
+that stopped the program**. `mf_nmi_button_pressed` passes `ld hl,0`
+(`src/mf.asm:169`) because a manual break — button or poll — has none. So those
+two bytes are `0x0000` **by design, on every remote, for every asynchronous
+break**. W8 asserted they were the PC.
+
+**THE DISPROOF WAS ALREADY IN THIS FILE, IN A HARDWARE CAPTURE.** MEMORY.md
+2026-08-05 records a real M1 press on a real Next: `payload=01 01 00 00 00 00`,
+with the PC arriving separately as `CMD_GET_REGISTERS` → `0x801C`. The emulator
+produced a byte-identical notification. A check written against that capture
+could not have been wrong; the capture was two screens up in the file the check's
+own docstring cites.
+
+**Measured on the same run that reported the red**: `CMD_GET_REGISTERS` returns
+**PC `0x802D`, SP `0x9F00`** — the fixture's spin and the fixture's own stack.
+The stub was right the whole time.
+
+**AND IT CLOSES A GAP THIS FILE HAS CARRIED SINCE 2026-08-05.** `backup.pc` on
+this path can only be `save_nmi_return_address`'s, NR `0xC0` reads back `0x0A`
+so bit 3 is set, and C10 sets `PC` itself — so this is **the first check
+anywhere, emulator or hardware, to exercise that routine's STACKLESS branch and
+show it correct**. The 2026-08-05 entry's "which branch ran is NOT established"
+is closed in the emulator; the hardware half still is not, because a real press
+would still be satisfied by either branch.
+
+**THE TRAP THAT PRODUCED THE WRONG DIAGNOSIS IS REAL AND IS NOW NAMED IN THE
+CHECK.** NR `0xC2`/`0xC3` read back *after* a break always hold a **debugger**
+address, because the poll keeps firing against the stopped debugger and every
+acknowledge overwrites the pair (`zxnext.vhd:2054-2070` latches on any NMI from
+any source). The previous session read that, saw a debugger address, and took it
+as corroboration. It is not evidence about what the latch held at the break —
+and it looks exactly like evidence. The only readable trace of that is
+`backup.pc`.
+
+**Shown red two ways**, both scratch ROMs in their own worktree, one instruction
+each: a stackless branch that reports zero gives **`stopped at PC 0x0000, not
+the spin at 0x802D`** — the old symptom reproduced from a genuinely broken
+stub — and `ld hl,0x1234` in place of `ld hl,0` gives *"the notification named
+breakpoint 0x1234 where a manual break has none"*. The second control exists
+because the `bp_addr == 0` assertion is new and would otherwise be unproven.
+
+### 2. "A software NMI does not reliably return" — it is jnext's `--inject`
+
+`Emulator::inject_binary` (`src/core/emulator.cpp:6683-6726`) sets `PC`, `SP`,
+`IFF1` and `IFF2` and **never clears the CPU's HALTED flag**. NextZXOS idles in a
+`halt`, so an injected program inherits `halted = 1`, and a DI'd program can
+never clear it — FUSE clears that flag only in an interrupt or NMI acknowledge.
+The **first** NMI then takes jnext's `z80.halted ? pc + 1 : pc` branch
+(`src/cpu/z80_cpu.cpp:636`) and captures the interrupted PC **plus one**.
+
+So **exactly one** return, the first, landed a byte late. Sixteen NOPs were wide
+enough to absorb it. *"18132 iterations across ~400 NMIs untouched"* was not
+padding suppressing a recurring fault; it was a program surviving a single
+one-off — which is why the padded and unpadded loops disagreed so violently and
+why no third measurement was ever taken.
+
+**Proved by removal, on `main`'s own ROM**, one three-byte prologue apart:
+
+| fixture | first four NMI PCs | verdict |
+|---|---|---|
+| `di`, `jr $` at 0x9000 | `9000 9003 9004 9005` | derails on the FIRST NMI |
+| **`ei : halt : di`**, same loop | `9000 9000 9000 9000` | **402 of 402 exact** |
+
+**And the latch was read directly rather than inferred**: a reporter that reads
+NR `0xC2`/`0xC3` and encodes each byte as a jump into a HALT field — so jnext's
+own `NMI at PC=` log names the value — returned **`0x9001` for an interrupted PC
+of `0x9000`**. Exactly +1.
+
+**THE STACKLESS ENABLE MAKES NO DIFFERENCE, WHICH IS WHAT RULES THE STACKLESS
+MACHINERY OUT RATHER THAN ARGUING IT OUT.** With NR `0xC0` bit 3 **cleared** by
+the fixture — nothing in `src/` ever clears it, so this needed a probe — the NMI
+pushes onto the program's own stack and the RETN pops it, and the derail is
+byte-identical: `9000 9003 9004 9005`. A fault common to both paths cannot be in
+the substitution.
+
+**W8's OWN FIXTURE WAS NEVER AFFECTED, AND THAT WAS MEASURED, NOT ASSUMED.** It
+is written with `CMD_WRITE_MEM` and started by `CMD_CONTINUE`, not by
+`--inject`, and the M1 button NMI that brought the debugger up had already
+cleared `halted`. With jnext's CPU log raised, the debuggee sat at **`0x802D`
+for 489 consecutive NMIs** and then broke — no derail anywhere. So the two
+findings were never one defect, which is the question this session opened with.
+
+**Rejected.** Keeping the NOP padding "to be safe" (a workaround whose stated
+reason is false is worse than none: it teaches the next reader the machine is
+unreliable in a way it is not); softening W8 to accept `0x0000` (it was never
+the PC, so that would assert nothing); patching jnext (not ours — the report is
+written for the user to file, with this project as the demonstrated consumer);
+and leaving W8 as a documented standing red, which is what the previous session
+proposed and which precedent (C2 under #7, C12 under #8) would have supported —
+those two were genuine defects in the stub, and this was a defect in the check.
+
+**Cost: test and documentation only.** `git diff --name-only main..HEAD -- src/`
+is unchanged by this work — no `src/` file was touched, no ROM byte moves for
+it, and the ROM-moving half of the branch is M2 itself. The bump is M2's, not
+this correction's.
+
+**NOT COVERED, and none of it is hidden.** **Hardware** — nothing here has run
+on a Next, and the stackless-branch result is the emulator's. **A real ESP-01**,
+as ever. **The `--inject` defect is still there** and every other `--inject`
+fixture in this tree runs with `halted` set; it bites only a program whose first
+NMI must return exactly, so `nmi_trigger.asm` and `copper_nmi.asm` (which never
+return) are unaffected — reasoned from what they do, not measured. **The
+`0xC2`/`0xC3` pair is still overwritten by the poll while the debugger is
+stopped**, which is inherent to a poll and not a defect; W8 prints it with that
+said. And **W8 still does not press M1 against a running debuggee**, so the
+button half of `save_nmi_return_address` remains covered only by the 2026-08-05
+hardware run.
+
+---
+
 ## 2026-08-10 — The press-while-stopped defect's other two bytes, and a check for a thing DZRP cannot see
 
 **Built, issue #37**, which is issue #26's defect two and eleven instructions

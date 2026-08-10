@@ -778,18 +778,25 @@ fi
 # is not, so a bench sampling the border at one frame cannot catch a good moment
 # of a broken run.
 #
-# A PRE-EXISTING DEFECT SITS UNDERNEATH THIS AND THE FIXTURE IS PADDED AROUND IT.
-# Measured 2026-08-10 on `main`'s OWN ROM as well as on M2's: a software
-# Multiface NMI, taken repeatedly and returned from, does not reliably put the
-# CPU back on the instruction it interrupted. A tight loop of one-byte
-# instructions derails within about two NMIs — `xor a` / `jr nz` takes the branch
-# — while the same loop with eight NOPs either side runs 18132 iterations across
-# ~400 NMIs untouched, with registers, flags, SP and PC all intact in a snapshot.
-# It is NOT M2's: `main`'s decline path reproduces it identically, and nothing in
-# this project had ever returned from a software NMI more than once, so it could
-# not have been seen before. Whether the cause is upstream's handler or jnext's
-# NMI model is UNRESOLVED. The fixture is padded so that T9 measures the leak it
-# exists to measure rather than measuring that; see copper_poll.asm.
+# WHAT SAT UNDERNEATH THIS WAS A DEFECT IN THE HARNESS, NOT IN THE MACHINE, AND
+# THE FIRST DIAGNOSIS OF IT WAS WRONG. It was recorded on 2026-08-10 as "a
+# software Multiface NMI does not reliably put the CPU back on the instruction it
+# interrupted", pre-existing, cause unresolved, and this fixture was padded with
+# sixteen NOPs around it.
+#
+# It is jnext's `--inject`. `Emulator::inject_binary` (src/core/emulator.cpp:6683)
+# sets PC, SP and IFF1/IFF2 and never clears the CPU's HALTED flag; NextZXOS idles
+# in a `halt`, so an injected program starts with `halted = 1` and, running DI'd,
+# has no way to clear it. The first NMI then takes jnext's
+# `z80.halted ? pc+1 : pc` branch (src/cpu/z80_cpu.cpp:636) and captures the
+# interrupted PC PLUS ONE — so exactly ONE return, the first, lands a byte late,
+# and sixteen NOPs were simply wide enough to absorb it.
+#
+# Measured 2026-08-11 by removal, on `main`'s own ROM: with `ei : halt : di` in
+# the fixture and NO padding, a `jr $` under this Copper list is returned to
+# 402 times out of 402; without it, the same loop derails on its first NMI. The
+# padding is gone. Nothing about the stub, upstream's handler or the Next's NMI
+# path was ever implicated — see copper_poll.asm, and MEMORY.md 2026-08-11.
 #
 # THREE RUNS, AND EACH ANSWERS SOMETHING THE OTHERS CANNOT:
 #

@@ -73,6 +73,11 @@
 #          run 8 is the CONTROL: identical up to the pause, which is withheld,
 #          and nothing may come back — without it a green W8 is not evidence that
 #          the PAUSE caused the break. Same argument as W3 for C10.
+#          THE VERDICT IS CMD_GET_REGISTERS, NOT THE NOTIFICATION. NTF_PAUSE
+#          carries the address of the BREAKPOINT that stopped the program, which
+#          a manual break does not have (mf.asm passes `ld hl,0`), so those bytes
+#          are 0x0000 by design on every remote. Asserting they were the PC is
+#          what made this a standing red for a day; see pause-running.py.
 #
 #     W7   THE SAME PRESS LEAVES backup.speed AND backup.io_next_reg ALONE
 #          (issue #37) — the same defect two bytes along, saved two and eleven
@@ -944,11 +949,6 @@ else
     elif [ "$w8c_ok" -eq 0 ]; then
         fail "W8 control: $w8c_why"
     elif [ "$w8_ok" -eq 0 ]; then
-        # STANDING RED as of 2026-08-10, and the detail line says which half.
-        # The break itself works; the ADDRESS the notification reports does not.
-        # Left red rather than softened, exactly as C2 was until issue #7 and
-        # C12 until issue #8: weakening a check to make a target exit 0 is the
-        # one thing this project's testing culture refuses.
         fail "W8 $(printf '%s' "$w8_out" | sed -n 's/^RESULT pause BAD //p' | head -1)"
     else
         pass "W8 CMD_PAUSE stops a freely running debuggee and the stub serves on"

@@ -441,25 +441,34 @@ strongest:
    a live DeZog session at the machine, and the user declined (2026-08-07). Unlike T7's, whose
    subject *was* confirmed on a Next, this defect's whole evidence is this emulator check — so read
    "issue #26 is fixed on hardware" as covering the decline and **not** the press-while-stopped.
-   **W8 IS MILESTONE M2's ACCEPTANCE CRITERION AND IT IS A STANDING RED.** A freely running
-   debuggee is stopped from the PC — the thing dezogif has never been able to do, and which nothing
-   in this project had ever shown. The debuggee installs the two Copper instructions itself, is
-   resumed with **no temporary breakpoint** (so nothing the debugger planted can bring it back),
-   left running a whole second, and then sent `CMD_PAUSE`. Its own run 8 is the **control**,
-   `PAUSE_RUNNING_CONTROL=0` to disable: identical up to the pause, which is withheld, and nothing
-   may come back — W3's argument, and without it a green W8 would not say the *pause* caused the
-   break rather than the debuggee stopping by itself or never running.
-   **What is demonstrated**: the break happens, the `NTF_PAUSE` carries `MANUAL_BREAK`, `CMD_PAUSE`
-   is answered with the specified Length=1 response, the stub serves on afterwards, and the control
-   is silent. **What is RED**: the notification reports **PC 0x0000** instead of the debuggee's
-   address. `save_nmi_return_address` takes the stackless branch (NR 0xC0 bit 3 set, read back as
-   0x0A) and reads NR 0xC2/0xC3, which `zxnext.vhd:2060-2063` latches on any NMI acknowledge — and
-   gets zero. Left red rather than softened, exactly as C2 was until issue #7 and C12 until #8: a
-   client told the wrong PC shows the wrong source line, and a `CMD_CONTINUE` from a `backup.pc` of
-   0 is issue #39's recipe. **Nothing in this project has ever exercised that branch in an emulator
-   before** (C10 sets `PC` itself), and in the same run NR 0xC3C2 reads a *debugger* address
-   afterwards, because the poll keeps firing while the debugger is stopped and every acknowledge
-   overwrites the pair. Cause unresolved — stub, upstream or jnext.
+   **W8 IS MILESTONE M2's ACCEPTANCE CRITERION.** A freely running debuggee is stopped from the
+   PC — the thing dezogif has never been able to do, and which nothing in this project had ever
+   shown. The debuggee installs the two Copper instructions itself, is resumed with **no temporary
+   breakpoint** (so nothing the debugger planted can bring it back), left running a whole second,
+   and then sent `CMD_PAUSE`. Its own run 8 is the **control**, `PAUSE_RUNNING_CONTROL=0` to
+   disable: identical up to the pause, which is withheld, and nothing may come back — W3's
+   argument, and without it a green W8 would not say the *pause* caused the break rather than the
+   debuggee stopping by itself or never running.
+   **THE VERDICT IS `CMD_GET_REGISTERS`, NOT THE NOTIFICATION, AND READING IT FROM THE WRONG PLACE
+   IS WHAT MADE THIS A STANDING RED FOR A DAY.** `NTF_PAUSE`'s payload is
+   `[id][reason][bp_addr][bank+1][string]` (`src/message.asm:342-362`) and `bp_addr` is the address
+   of the **breakpoint** that stopped the program; `mf_nmi_button_pressed` passes `ld hl,0`
+   (`src/mf.asm:169`), because a manual break — button or poll — has none. So those two bytes are
+   `0x0000` by design on every remote, which the 2026-08-05 hardware capture of a real M1 press
+   recorded verbatim (`payload=01 01 00 00 00 00`, with the PC arriving separately as
+   `CMD_GET_REGISTERS` → `0x801C`). The first version of W8 asserted that field was the PC, reported
+   `PC 0x0000`, and the number was **honest and about the wrong field**. It now reads the PC where
+   the PC is, asserts `bp_addr` is zero as a check in its own right, and asserts `SP` — which is
+   what says the stackless NMI pushed nothing onto the debuggee's stack.
+   **SO IT IS THE FIRST CHECK ANYWHERE TO EXERCISE `save_nmi_return_address`'s STACKLESS BRANCH.**
+   `backup.pc` on this path can only be that routine's, NR `0xC0` is read back to show bit 3 set,
+   and C10 sets `PC` itself — so MEMORY.md 2026-08-05's "which branch ran is NOT established"
+   is closed in the emulator. Measured: `PC=0x802D SP=0x9F00`, the spin and the fixture's own stack.
+   **NR `0xC2`/`0xC3` are printed and must NEVER be judged**: the poll keeps firing against the
+   stopped debugger and every acknowledge overwrites the pair, so a healthy stub always shows a
+   *debugger* address there. Shown red two ways — a ROM whose stackless branch reports zero
+   (`PC 0x0000`, i.e. the old symptom reproduced from a genuinely broken stub) and one that puts
+   `0x1234` in the breakpoint field.
    **W7 RIDES ON W6's PRESS AND IS THE SAME DEFECT TWO BYTES ALONG** (issue #37): the entry path
    saved the clock speed and the `IO_NEXTREG_REG` latch into `backup.*` on every press too, two and
    eleven instructions after the slot-7 byte #26 fixed, so a press while stopped handed the debuggee

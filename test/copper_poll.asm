@@ -95,6 +95,25 @@ start:
     ; No maskable interrupts: NextZXOS's own ISR would page banks under us and
     ; the verdict below would be about that rather than about the poll. The NMI
     ; is unaffected — that is the whole point of it.
+    ;
+    ; BUT ONE MASKABLE INTERRUPT IS LET THROUGH FIRST, AND IT IS NOT OPTIONAL —
+    ; it works around a defect in jnext's `--inject`, measured 2026-08-11.
+    ; `Emulator::inject_binary` (src/core/emulator.cpp:6683-6726) sets PC, SP and
+    ; IFF1/IFF2 and does NOT clear the CPU's HALTED flag. NextZXOS idles in a
+    ; `halt`, so an injected program inherits `halted = 1`, and nothing in a
+    ; DI'd program can clear it: FUSE clears it only in an interrupt or NMI
+    ; acknowledge. The FIRST NMI then takes the `z80.halted ? pc+1 : pc` branch
+    ; (src/cpu/z80_cpu.cpp:636) and latches the interrupted PC PLUS ONE, so that
+    ; one NMI returns a byte late and a tight loop is derailed by it.
+    ;
+    ; `ei : halt : di` costs three bytes and removes it at the source: the ROM's
+    ; own 50 Hz interrupt clears the flag, and the NMI is exact from then on.
+    ; MEASURED BY REMOVAL, on `main`'s ROM and with nothing else changed: without
+    ; this, a `jr $` derails on its first NMI; with it, 402 of 402 NMIs return to
+    ; the same address. It must come BEFORE slot 7 is repointed below, because
+    ; the ROM's interrupt handler pushes and NextZXOS's stack is up there.
+    ei
+    halt
     di
 
     ; --- NR 0x06 |= bit 3 : without this every MF NMI source is gated off ---
@@ -131,37 +150,26 @@ start:
     out (c),a
     ld bc,TBBLUE_REGISTER_ACCESS
 
-; THE NOPS ARE NOT PADDING FOR ITS OWN SAKE — THEY WORK AROUND A SEPARATE,
-; PRE-EXISTING DEFECT THAT WOULD OTHERWISE SWAMP THIS ONE, AND IT MUST NOT BE
-; MISTAKEN FOR SOMETHING M2 INTRODUCED.
+; THIS LOOP USED TO BE PADDED WITH SIXTEEN NOPS, AND THE REASON GIVEN FOR THEM
+; WAS WRONG. It said a software Multiface NMI "does not always put the CPU back
+; on the instruction it interrupted", pre-existing and unresolved, so the loop
+; was padded around it. What was really happening is the `--inject` HALTED-flag
+; defect described at the top of this file: exactly ONE NMI — the first — returned
+; a byte late, and sixteen NOPs were wide enough to absorb it. It was never
+; recurring, and it was never the stub's.
 ;
-; Measured 2026-08-10, and reproduced on `main`'s OWN ROM as well as on M2's: a
-; software Multiface NMI, taken repeatedly and returned from, does not always
-; put the CPU back on the instruction it interrupted. Within about two NMIs a
-; tight loop of one-byte instructions derails — a `xor a` / `jr nz` pair takes
-; the branch — while the SAME loop with eight NOPs either side of the pair runs
-; 18132 iterations across ~400 NMIs untouched. Registers, flags, SP and PC are
-; all intact in a snapshot afterwards, which is what says the fault is WHERE the
-; return lands rather than what it carries.
-;
-; It is not this fixture's subject and it is not M2's: `main`'s decline path
-; reproduces it identically, and nothing in this project had ever returned from
-; a software NMI more than once before, so nobody could have seen it. Whether
-; the cause is upstream's handler or jnext's NMI model is unresolved — see the
-; NOT COVERED notes at T9 in test/run-headless.sh.
-;
-; So the loop is padded, deliberately and with this said out loud, so that T9
-; can measure the leak it exists to measure instead of measuring that.
+; Measured 2026-08-11 by removal, which is the only thing that could have told
+; the two apart: with `ei : halt : di` above and NO padding, a `jr $` under the
+; same Copper list is returned to exactly 402 times out of 402 on `main`'s own
+; ROM. The padding is gone rather than kept "to be safe", because a workaround
+; whose stated reason is false is worse than no workaround: it teaches the next
+; reader that the machine is unreliable in a way it is not.
 .loop:
-    nop : nop : nop : nop : nop : nop : nop : nop
-
     ; ONE READ. PROBE_BANK back means MMU slot 7 was restored; anything else
     ; means it was not, and the screenshot plus this file say which.
     in a,(c)
     cp PROBE_BANK
     jr nz,.fail
-
-    nop : nop : nop : nop : nop : nop : nop : nop
 
     ld a,BORDER_OK
     out (BORDER),a

@@ -5,6 +5,101 @@ attempting similar logic.
 
 ---
 
+## An honest number about the wrong field, and a flag the harness forgot to clear
+
+**Two wrong diagnoses in one day, from two correct measurements.** Both blocked
+milestone M2, both were written up as defects in the machine, and neither was.
+Filed together because the shape is one shape: **a reading was taken correctly
+and then attached to the wrong thing**, and in each case the code that produced
+the reading looks right when you read it.
+
+### 1. The check read the breakpoint address and called it the PC
+
+**Symptom.** Bench W8 — stop a freely running debuggee with `CMD_PAUSE` —
+reported `PC 0x0000, expected the spin at 0x802D`. Everything else about the run
+was green: the break happened, `MANUAL_BREAK` came back, `CMD_PAUSE` was
+answered, the stub served on, the control was silent. It was recorded as a
+standing red with the cause unresolved between "the stub, upstream, or jnext",
+and a paragraph of `zxnext.vhd` citations was written under it.
+
+**Cause.** `NTF_PAUSE`'s payload is
+`[id][reason][bp_addr_lo][bp_addr_hi][bank+1][string]`, and `bp_addr` is the
+address of the **breakpoint** that stopped the program. A manual break has none,
+so `mf_nmi_button_pressed` passes `ld hl,0`. Those two bytes are `0x0000` by
+design. **The `0x0000` was real, and it was not the PC.** The PC was in
+`CMD_GET_REGISTERS` all along, reading `0x802D` — correct — on the very run that
+reported the red.
+
+**What should have caught it, and did not.** This repository already contained
+the disproof, as a *hardware* capture of a real M1 press: `payload=01 01 00 00
+00 00`, with the PC quoted separately from `CMD_GET_REGISTERS` as `0x801C`. The
+emulator's notification was byte-identical to it. The check's own docstring cited
+that MEMORY.md entry for a different claim.
+
+**Lesson.** When a field comes back zero and a defect is inferred, **check what
+the field IS before checking what wrote it** — the protocol's own definition,
+and any existing capture of a known-good remote. A payload offset is a claim, and
+an unverified one is the cheapest possible way to invent a bug. The tell here was
+available and unweighed: **every other check in the suite that wants a PC asks
+`CMD_GET_REGISTERS`**, and this was the only one that did not.
+
+**And the corroboration was manufactured by the instrument.** The same run
+printed NR `0xC2`/`0xC3` — the NMI return-address latch — holding a *debugger*
+address, which was read as supporting evidence. It cannot be: the poll fires
+~50 times a second against the **stopped** debugger and every acknowledge
+overwrites the pair, so a perfectly healthy stub always reads that. It is the
+stale-fake-peer entry below in a new organ — a reading of the instrument's own
+footprint, taken for a reading of the subject.
+
+### 2. The emulator's `--inject` leaves the CPU HALTED, so the first NMI returns +1
+
+**Symptom.** Under a Copper list raising a Multiface NMI every frame, a tight
+loop derailed within about two NMIs, while the same loop padded with eight NOPs
+either side ran 18132 iterations across ~400 NMIs untouched. Reproduced on
+`main`'s own ROM, so it was written up as pre-existing, "a software NMI does not
+reliably return to the instruction it interrupted", cause unresolved between
+upstream's handler and jnext's NMI model, in three files.
+
+**Cause.** jnext's `Emulator::inject_binary` sets `PC`, `SP`, `IFF1` and `IFF2`
+and **never clears the CPU's HALTED flag**. NextZXOS idles in a `halt`, so an
+injected fixture starts with `halted = 1`, and a DI'd program cannot clear it —
+FUSE clears that flag only in an interrupt or NMI acknowledge. The **first** NMI
+then takes `z80.halted ? pc + 1 : pc` and captures the interrupted PC **plus
+one**. Exactly one return lands a byte late; sixteen NOPs absorb it.
+
+**What made it look recurring.** Two data points, a padded loop and an unpadded
+one, with nothing in between. "Derails within two NMIs" and "survives 400" are
+both true of a **single** one-off event, and neither measurement can tell a
+one-off from a rate. **Two extreme readings are not a rate**; that needs a
+count, and the count was available for free — jnext logs the PC of every NMI
+acknowledge at `cpu=debug`, and the sequence `9000 9003 9004 9005 …` says "one
+bad return, then exact" at a glance.
+
+**How it was settled, and both halves were needed.** By **removal**: `ei : halt
+: di` in the fixture (one maskable interrupt clears the flag) took a `jr $` from
+derailing on its first NMI to **402 of 402 exact**, one three-byte prologue
+apart. And by **reading the disputed value instead of inferring it**: a probe
+that reads NR `0xC2`/`0xC3` and encodes each byte as a jump into a HALT field —
+so the emulator's own NMI log names the number — returned `0x9001` for an
+interrupted PC of `0x9000`.
+
+**A control that mattered more than it looked.** Clearing NR `0xC0` bit 3, so the
+NMI pushes onto the program's own stack instead of the latch, gave a
+**byte-identical** derail. Nothing in `src/` ever clears that bit, so it needed a
+probe to reach — and it is what rules the stackless machinery out rather than
+arguing it out. **When two mechanisms could produce a symptom, find the input
+that separates them, even if no shipped code ever produces it** — the same move
+`test-ip-boundary` and `test-baud` make with a build constant.
+
+**Lesson about the harness.** A fixture injected into a running machine inherits
+whatever CPU state the injector did not think to set, and `halted` is invisible
+in every register dump. When an emulator-hosted fixture behaves impossibly, **ask
+what the harness handed it** before concluding anything about the guest — and
+prefer a fixture that establishes its own starting state to one that trusts the
+loader's.
+
+---
+
 ## A stale peer on the port answered, and the instrument blessed its number
 
 **THE TRANSFERABLE PART FIRST, because the mechanism is ordinary and the outcome

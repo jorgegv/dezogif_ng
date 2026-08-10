@@ -37,13 +37,40 @@ THE SEQUENCE, and why each step is the one it is:
                              wall clock, so that "it was still running" is not
                              a claim about a millisecond.
     CMD_PAUSE                the click.
-    NTF_PAUSE                the verdict: it must arrive, carry MANUAL_BREAK,
-                             and name a PC inside the fixture's spin.
+    NTF_PAUSE                it must arrive and carry MANUAL_BREAK.
+    CMD_GET_REGISTERS        THE VERDICT: PC must be the fixture's spin and SP
+                             its own stack. See below — the PC is NOT in the
+                             notification, and reading it from there is what
+                             made this check a standing red for a day.
     the Length=1 response    CMD_PAUSE's own answer, which the specification
                              requires and which issue #8 fixed. Read AFTER the
                              notification, because the stub sends the
                              notification first — see below.
     one further command      the stub must still be serving afterwards.
+
+WHERE THE PC IS, AND WHERE IT IS NOT. `NTF_PAUSE`'s payload is
+`[id][reason][bp_addr_lo][bp_addr_hi][bank+1][reason string]`
+(src/message.asm:342-362), and `bp_addr` is the address of the BREAKPOINT that
+caused the stop. `mf_nmi_button_pressed` passes `ld hl,0` (src/mf.asm:169),
+because a manual break — button or poll — has no breakpoint. So those two bytes
+are 0x0000 by design, on every remote, for every asynchronous break, and the
+2026-08-05 hardware capture of a real M1 press recorded exactly that:
+`payload=01 01 00 00 00 00`, with the PC arriving separately as `CMD_GET_REGISTERS`
+→ 0x801C (MEMORY.md). The PC comes from `backup.pc`, which
+`save_nmi_return_address` writes.
+
+So this check reads the PC where the PC is. It ALSO asserts that `bp_addr` is
+zero, which is not decoration: a stub that reported a break as though a
+breakpoint had caused it would be lying to the client about why it stopped, and
+nothing else here would see it.
+
+AND THE PC IS THE ONE THING THAT EXERCISES THE STACKLESS-NMI LATCH. `backup.pc`
+on this path can only come from `save_nmi_return_address`, whose stackless
+branch reads NR 0xC2/0xC3 — the pair `zxnext.vhd:2054-2070` latches at every NMI
+acknowledge. MEMORY.md 2026-08-05 records that nothing anywhere had ever
+distinguished that branch from the stack one: C10 sets `PC` itself, and the
+hardware manual break of that evening could have come back correct either way.
+Here NR 0xC0 is read back and printed, so a green verdict says WHICH branch ran.
 
 WHY MANUAL_BREAK AND NOT A NEW REASON. BREAK_REASON has three values —
 NO_REASON, MANUAL_BREAK, BREAKPOINT_HIT (src/breakpoints.asm:18-20) — and DZRP
@@ -84,7 +111,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from dzrp import (CMD_CONTINUE, CMD_GET_TBBLUE_REG, CMD_INIT,  # noqa: E402
+from dzrp import (CMD_CONTINUE, CMD_GET_REGISTERS,  # noqa: E402
+                  CMD_GET_TBBLUE_REG, CMD_INIT,
                   CMD_PAUSE, CMD_READ_MEM, CMD_SET_REGISTER, CMD_WRITE_MEM,
                   Dzrp, NTF_PAUSE, Timeout, init_payload, open_remote)
 
@@ -225,46 +253,61 @@ def main():
         return 0
 
     reason = ntf[1]
-    addr = int.from_bytes(ntf[2:4], "little")
+    bp_addr = int.from_bytes(ntf[2:4], "little")
 
     # DIAGNOSTIC, not a verdict: which branch of save_nmi_return_address was
-    # entitled to run, and what the hardware captured. NR 0xC0 bit 3 is the
-    # stackless-NMI enable and NR 0xC2/0xC3 are the return address the NMI
-    # acknowledge latches (zxnext.vhd:2052-2068). MEMORY.md 2026-08-05 records
-    # that nothing anywhere had ever distinguished those two branches.
+    # ENTITLED to run. NR 0xC0 bit 3 is the stackless-NMI enable, so with it set
+    # the PC checked below can only have come from NR 0xC2/0xC3.
+    #
+    # NR 0xC2/0xC3 ARE PRINTED AND MUST NOT BE JUDGED, and that trap is worth
+    # naming because it cost this check a day. By the time anything can ask, the
+    # poll has fired many times against the STOPPED debugger and every
+    # acknowledge overwrites the pair (zxnext.vhd:2054-2070 latches it on any
+    # NMI, from any source). So what is read here is a DEBUGGER address, always,
+    # on a perfectly healthy stub. The only readable trace of what the latch held
+    # at the break is backup.pc, which is what CMD_GET_REGISTERS returns.
     try:
         c0 = d.command(CMD_GET_TBBLUE_REG, bytes([0xC0]))[0]
         c2 = d.command(CMD_GET_TBBLUE_REG, bytes([0xC2]))[0]
         c3 = d.command(CMD_GET_TBBLUE_REG, bytes([0xC3]))[0]
-        print("STATE NR 0xC0=0x%02X (stackless %s), NR 0xC3C2=0x%02X%02X"
-              % (c0, "on" if c0 & 0x08 else "OFF", c3, c2))
+        print("STATE NR 0xC0=0x%02X (stackless %s); NR 0xC3C2=0x%02X%02X is the "
+              "LAST poll's, not the break's" % (c0, "on" if c0 & 0x08 else "OFF", c3, c2))
+        stackless = bool(c0 & 0x08)
     except Exception as exc:
         print("STATE could not be read: %s" % exc)
+        stackless = None
 
     if reason != BREAK_MANUAL:
         problems.append("break reason %d, expected %d (MANUAL_BREAK)" % (reason, BREAK_MANUAL))
-    if addr != SPIN:
-        # A STANDING RED AS OF 2026-08-10, AND IT IS NOT "THE BREAK DID NOT
-        # HAPPEN". Everything else here passes: CMD_PAUSE is answered, an
-        # NTF_PAUSE arrives carrying MANUAL_BREAK, the stub serves on, and the
-        # control shows nothing comes back without the pause. What is wrong is
-        # the ADDRESS the notification reports.
-        #
-        # save_nmi_return_address takes the stackless branch (NR 0xC0 bit 3 is
-        # set — printed above) and reads NR 0xC2/0xC3, which zxnext.vhd:2060-2063
-        # says the NMI acknowledge latches for ANY NMI source. It reads 0x0000.
-        # Measured, and left as a red rather than softened: a client told the
-        # wrong PC is shown the wrong source line, and a CMD_CONTINUE from a
-        # backup.pc of 0 is issue #39's recipe.
-        #
-        # Whether the fault is the stub's, upstream's or jnext's is UNRESOLVED —
-        # note that nothing in this project has ever exercised this branch in an
-        # emulator before (MEMORY.md 2026-08-05: C10 sets PC itself), and that
-        # the same run shows NR 0xC3C2 holding a DEBUGGER address afterwards,
-        # because the poll keeps firing while the debugger is stopped and every
-        # acknowledge overwrites the pair.
-        problems.append("PC 0x%04X, expected the spin at 0x%04X — the break happened, "
-                        "the reported address did not" % (addr, SPIN))
+
+    # A manual break has no breakpoint, so mf_nmi_button_pressed passes zero
+    # (src/mf.asm:169). A remote that put something else there would be telling
+    # the client a breakpoint stopped the program when none did.
+    if bp_addr != 0:
+        problems.append("the notification named breakpoint 0x%04X where a manual break has none"
+                        % bp_addr)
+
+    # THE VERDICT. backup.pc on this path is save_nmi_return_address's and
+    # nothing else's — the only other writer needs an RST 0 from a breakpoint,
+    # and none was planted. SP is checked with it because the stackless NMI must
+    # not have pushed anything onto the debuggee's stack; a non-stackless entry
+    # that was mis-accounted would show up here as SP two bytes low.
+    try:
+        regs = d.command(CMD_GET_REGISTERS)
+    except (Timeout, OSError) as exc:
+        problems.append("CMD_GET_REGISTERS after the break failed (%s)" % type(exc).__name__)
+        regs = b""
+    if len(regs) >= 4:
+        pc = int.from_bytes(regs[0:2], "little")
+        sp = int.from_bytes(regs[2:4], "little")
+        print("STATE PC=0x%04X SP=0x%04X (spin 0x%04X, stack 0x%04X)"
+              % (pc, sp, SPIN, DBG_STACK))
+        if pc != SPIN:
+            problems.append("stopped at PC 0x%04X, not the spin at 0x%04X" % (pc, SPIN))
+        if sp != DBG_STACK:
+            problems.append("SP 0x%04X, not the fixture's 0x%04X" % (sp, DBG_STACK))
+    elif regs:
+        problems.append("CMD_GET_REGISTERS returned %d bytes" % len(regs))
 
     # Still serving? An exchange AFTER the break, which is what says the stub
     # came back into cmd_loop rather than merely having emitted a notification.
@@ -273,11 +316,17 @@ def main():
     except (Timeout, OSError) as exc:
         problems.append("the stub stopped serving after the break (%s)" % type(exc).__name__)
 
+    # The join can exceed the ~20-word verdict budget, deliberately and for
+    # C10's and C11's reason: these are INDEPENDENT faults — a wrong PC, a
+    # corrupted SP, a break reason that is not MANUAL_BREAK, a breakpoint
+    # address a manual break cannot have — and a badly broken asynchronous
+    # break is exactly the thing that fails on several axes at once. Each
+    # single-cause detail above is inside the budget.
     if problems:
         print("RESULT pause BAD %s" % "; ".join(problems))
     else:
-        print("RESULT pause OK stopped at 0x%04X, reason %d (MANUAL_BREAK), still serving"
-              % (addr, reason))
+        print("RESULT pause OK stopped the spin at 0x%04X, %s NMI, still serving"
+              % (SPIN, "stackless" if stackless else "stacked"))
     return 0
 
 

@@ -69,31 +69,55 @@ two prohibitions still hold for #8's own reasons — the break is caused by the 
 time `cmd_loop` reads command 7 the machine is already stopped and `send_ntf_pause` has already set
 `prgm_state`.
 
-### TWO THINGS ARE MEASURED AND UNRESOLVED, AND NEITHER MAY BE READ PAST
+### TWO THINGS WERE RECORDED HERE AS MEASURED AND UNRESOLVED. BOTH WERE WRONG, AND HOW THEY WERE WRONG IS WORTH MORE THAN EITHER
 
-**1. THE REPORTED PC IS WRONG, AND BENCH CHECK W8 IS A STANDING RED BECAUSE OF IT.** A freely running
-debuggee really is stopped by `CMD_PAUSE` — the notification arrives, carries `MANUAL_BREAK`, the
-command is answered, the stub serves on, and the control shows nothing comes back without the pause.
-But the address the notification reports is **0x0000** instead of the debuggee's PC.
-`save_nmi_return_address` takes the stackless branch (NR 0xC0 bit 3 is set, read back as 0x0A) and
-reads NR 0xC2/0xC3, which `zxnext.vhd:2060-2063` latches on **any** NMI acknowledge. It reads zero.
-A client told the wrong PC shows the wrong source line, and a `CMD_CONTINUE` from a `backup.pc` of 0
-is issue #39's recipe. Left red rather than softened, as C2 was until issue #7 and C12 until #8.
+They are kept, struck, rather than deleted: this section was the handover a reader would have acted
+on, and both were confident, specific, and reproduced. Neither was a defect in the Next, in
+upstream's handler, or in this stub. Settled 2026-08-11; MEMORY.md carries the runs.
 
-Two facts that bear on it and are not yet a diagnosis: **nothing in this project has ever exercised
-that branch in an emulator** (MEMORY.md 2026-08-05 — C10 sets `PC` itself), and in the same run
-NR 0xC3C2 reads a **debugger** address afterwards, because the poll keeps firing while the debugger
-is stopped and every acknowledge overwrites the pair.
+**1. ~~THE REPORTED PC IS WRONG, AND BENCH CHECK W8 IS A STANDING RED BECAUSE OF IT.~~ THE CHECK WAS
+READING THE WRONG FIELD.** The run was described correctly — the notification arrives, carries
+`MANUAL_BREAK`, the command is answered, the stub serves on, the control is silent — and the
+conclusion drawn from `0x0000` was not. `NTF_PAUSE`'s payload is
+`[id][reason][bp_addr_lo][bp_addr_hi][bank+1][string]` (`src/message.asm:342-362`), and `bp_addr` is
+the address of the **breakpoint** that stopped the program. `mf_nmi_button_pressed` passes
+`ld hl,0` (`src/mf.asm:169`) because a manual break has no breakpoint. So those two bytes are
+`0x0000` by design, on every remote, for every asynchronous break — and the 2026-08-05 hardware
+capture of a real M1 press in this repository records exactly that (`payload=01 01 00 00 00 00`,
+with the PC arriving separately as `CMD_GET_REGISTERS` → `0x801C`). The `0x0000` was an honest
+reading of a field that is not the PC.
 
-**2. A SOFTWARE NMI DOES NOT RELIABLY RETURN TO THE INSTRUCTION IT INTERRUPTED — AND THIS IS
-PRE-EXISTING, NOT M2's.** Measured 2026-08-10 and reproduced on `main`'s own ROM as well as on M2's:
-a tight loop of one-byte instructions derails within about two NMIs — `xor a` / `jr nz` takes the
-branch — while the same loop with eight NOPs either side runs 18132 iterations across ~400 NMIs
-untouched, with registers, flags, SP and PC all intact in a snapshot afterwards. The control is
-clean: the same Copper writing NR 0x02 with bit 3 **clear** (so no NMI) leaves the loop green.
-Nothing in this project had ever returned from a software NMI more than once, so it could not have
-been seen before. Whether the cause is upstream's handler or jnext's NMI model is unresolved; T9's
-fixture is padded around it and says so.
+**Measured, on the same run that reported the red**: `CMD_GET_REGISTERS` returns **PC `0x802D`,
+SP `0x9F00`** — the fixture's spin and the fixture's own stack. And `save_nmi_return_address` took
+its **stackless** branch (NR `0xC0` = `0x0A`), so the PC came out of NR `0xC2`/`0xC3`. That closes
+MEMORY.md 2026-08-05's standing gap: *which* branch of that routine runs had never been
+distinguished anywhere, and now is, in the emulator.
+
+**The trap that produced the wrong diagnosis is still there and is now named in the check**: NR
+`0xC2`/`0xC3` read back *after* a break always hold a **debugger** address, because the poll keeps
+firing against the stopped debugger and every acknowledge overwrites the pair. That is not evidence
+about what the latch held at the break, and it reads exactly like evidence.
+
+**2. ~~A SOFTWARE NMI DOES NOT RELIABLY RETURN TO THE INSTRUCTION IT INTERRUPTED.~~ IT DOES. THE
+DERAIL WAS AN ARTEFACT OF `--inject`.** jnext's `Emulator::inject_binary`
+(`src/core/emulator.cpp:6683-6726`) sets PC, SP and IFF1/IFF2 and **never clears the CPU's HALTED
+flag**. NextZXOS idles in a `halt`, so an injected program inherits `halted = 1`; running DI'd it
+can never clear it, because FUSE clears that flag only in an interrupt or NMI acknowledge. The
+**first** NMI then takes jnext's `z80.halted ? pc + 1 : pc` branch
+(`src/cpu/z80_cpu.cpp:636`) and captures the interrupted PC **plus one**.
+
+So exactly one return — the first — landed a byte late, and eight NOPs either side were simply wide
+enough to absorb it. The "18132 iterations across ~400 NMIs untouched" was not the padding
+suppressing a recurring fault; it was the program surviving a single one-off.
+
+**Proved by removal**, on `main`'s own ROM, one three-byte prologue apart and nothing else changed:
+with `ei : halt : di` (one maskable interrupt clears the flag) a `jr $` under this Copper list is
+returned to **402 times out of 402**; without it, the same loop derails on its first NMI and the
+latch reads `0x9001` for an interrupted PC of `0x9000`. The **stackless enable makes no difference**
+— with NR `0xC0` bit 3 cleared, so that the NMI pushes onto the program's own stack, the derail is
+byte-identical, which is what rules the stackless machinery out rather than arguing it out.
+T9's fixture carries the prologue and no padding. The `--inject` defect is jnext's and is written up
+for filing; nothing here depends on it being fixed.
 
 ### A LIMITATION NOBODY HAD WRITTEN DOWN, AND IT ANSWERS THE PLAN'S OPEN QUESTION 5
 

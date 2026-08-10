@@ -15,8 +15,9 @@ no network at all.
 |---|---|
 | **Does not** join a network | It never sends `AT+CWJAP`, never asks for an SSID, never asks for a password |
 | **Does not** store credentials | There is no SSID or passphrase anywhere in the ROM, the build, or this repository |
-| **Does** check | On bring-up it asks the module for its address (`AT+CIFSR`) and shows it |
+| **Does** check | It asks the module for its address (`AT+CIFSR`) and shows it — at bring-up, and **again about once a minute** while it is idle with no debug session (issue #32) |
 | **Does** fail loudly | With no address, it says so on screen rather than hanging or showing a connect string with nothing behind it |
+| **Does** keep up | If the Next drops off the WiFi, or comes up before the router does, the screen **corrects itself** within about a minute — no M1 press needed |
 
 The address it shows is the one to put in your `launch.json` (Appendix B.5 of the
 [project plan](ZXNEXT-REMOTE-DEBUG-STUB.md)).
@@ -36,6 +37,15 @@ The left is "the module answered but has nothing to give out" — this page's su
 "the AT chain did not complete", which is a fault below WiFi: the module is absent, disabled, or
 not answering at 115200. `0.0.0.0` counts as no address, because an unassociated module reports
 exactly that and a connect string with `0.0.0.0` in it is worse than none.
+
+**The left screen corrects itself and the right one never changes**, which since issue #32 is a
+guarded property rather than a happy accident. The re-query runs about once a minute, so a Next
+that was switched on before its router stops saying "no address" once one arrives, without an M1
+press. But it is **skipped entirely** when the right-hand screen is up: there is no module to ask,
+and letting the re-query run would have overwritten *"ESP-01 setup failed"* with *"No WiFi
+address"* at the first tick — permanently — telling somebody with an unplugged ESP to go and run
+a WiFi wizard. Bench check **D7** is what holds that, and it was shown red against a build without
+the guard.
 
 ---
 

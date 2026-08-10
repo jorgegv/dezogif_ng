@@ -1323,3 +1323,48 @@ because `H6 CLEAN` would otherwise be read as *no error was ever raised*.
 - **The smallest payload that triggers the pre-fix walk** — 8193 against this run's 12288 — and
   whether the pre-fix hang reproduces at 115200.
 - **One machine, one ESP-01, one reporter.**
+
+---
+
+## The AP went away and came back — measured 2026-08-09, on a real Next
+
+**This run is the whole evidence for issue #32 not building half of itself**, and until this
+branch it was cited five times across the tree and recorded **nowhere in this repository** — only
+in [jnext#246](https://github.com/jorgegv/jnext/issues/246). `KNOWN-ISSUES.md` designates this
+document as the home for anything read off a real Next, so it belongs here.
+
+**Method.** The access point was powered **down for five minutes and back up**, with the stub
+already up and listening, and nothing done to the Next at any point — no M1 press, no reset.
+
+| | measured |
+|---|---|
+| does the `AT+CIPSERVER` listener **survive** a de-association and re-association? | **yes** — a full `make test-hardware` passed **6 of 6 with 15 of 15 conformance** afterwards, so the stub was still listening on 11000 and serving |
+| does the station address survive? | **yes in that run** — the Next answered a ping and the bench on the same IP. The DHCP lease held across five minutes |
+| does the guest see anything go wrong? | **no** — the stub's screen did not change and it raised no error at all |
+
+**Tier: `reported on hardware`** — one machine, one reporter, no re-runnable artefact.
+
+### What this run does NOT establish, and issue #32 rests on the distinction
+
+- **The de-association itself was never observed.** Five minutes without beacons will make an
+  ESP8266 declare the AP lost, but **nothing read `AT+CWJAP?` or `AT+CIFSR` during the outage**.
+  What was measured is the state on the far side of it.
+- **The address CHANGING across an outage was not seen** — the lease held. jnext#247 records that
+  it has never been observed on an ESP-01 at all; the emulator models it because whether a DHCP
+  address can move across a reconnection is a property of *networks* rather than of ESP-AT
+  firmware. **Every one of bench check D1's greens is against that model and not against a
+  module.**
+- **Therefore whether a real module keeps ACCEPTING after its address changes is unknown.** If it
+  does not, issue #32's second half — re-acquisition — is owed for exactly that case, and the
+  screen would advertise a new address nothing is listening on: a better-disguised lie than the
+  one #32 removes. **This is the first thing to check the next time an AP can be power-cycled.**
+- **`make test-wifi-assoc` cannot corroborate any of it.** jnext's own `--help` for
+  `--esp-delayed-disassociate-frames` says *"Nothing else changes: open connections keep running
+  and no `WIFI DISCONNECT` is sent"*, so a probe finding the listener alive across an emulated
+  outage restates the emulator's design decision. Bench check **D6** guards a **stub-side**
+  regression only — a fix that retired the listener and rebuilt it — and can never guard a
+  module-side one.
+- **The unsolicited `WIFI DISCONNECT` / `WIFI CONNECTED` / `WIFI GOT IP` lines** were not looked
+  for. Nothing here has ever seen them, which is why the stub polls rather than watching.
+- **How long a real re-association takes** is unmeasured, and that is the number that would decide
+  whether `ESP_ADDR_CHECK_SECS` at 60 s is the right period.

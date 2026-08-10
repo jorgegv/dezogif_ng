@@ -812,12 +812,24 @@ ESP_IDLE_SWEEP_TICKS:   equ ESP_IDLE_SWEEP_SECS * 50
 ; whose first command lands inside that window loses it, which is issue #10's
 ; residual turned from a once-per-bring-up window into a recurring one.
 ;
-; THAT COST IS SMALLER THAN ONE THIS TRANSPORT ALREADY SHIPS, which is the
-; argument for accepting it rather than a hope. esp_idle_tick's own sweep sends
-; five AT+CIPCLOSE lines and drains each answer with transport_drain, which
-; reads with raw `in` and hands the bytes to NOBODY — a strictly wider window,
-; on the same idle path, every ESP_IDLE_SWEEP_SECS. One scan a minute is less
-; exposure than five drains every five.
+; WHAT MAKES THAT ACCEPTABLE IS THE WIDTH OF EACH EVENT, not how often it comes
+; round. A scan reads only until it matches — the module answers AT+CIFSR at
+; once — so the window is the handful of milliseconds the reply takes, against a
+; period of sixty seconds: on the order of 0.01% of the time, and only while no
+; DZRP session is open. It is the same KIND of window esp_idle_tick's own sweep
+; already opens, and a narrower one: that sweep drains each of five AT+CIPCLOSE
+; answers with transport_drain, which reads with raw `in`, hands the bytes to
+; NOBODY, and does not stop until 100 ms of quiet.
+;
+; AN EARLIER VERSION ARGUED THIS ON FREQUENCY AND HAD IT BACKWARDS, saying the
+; sweep costs "five drains every ESP_IDLE_SWEEP_SECS" so that one scan a minute
+; was the cheaper. The sweep runs ONCE PER IDLE PERIOD, not once per period for
+; ever — esp_idle_armed, cleared when it runs and re-armed only by esp_sync_ipd
+; — which this file says thirty lines above at esp_idle_armed and which bench
+; check S5 measures. So on a quiet machine the sweep costs five drains IN TOTAL
+; and this costs one scan a minute for ever, which is the opposite comparison.
+; The conclusion survives on per-event width; the arithmetic it was first given
+; did not.
 ;
 ; AND THE GUARD KEEPS IT AWAY FROM A LIVE SESSION ENTIRELY. See
 ; esp_check_address: nothing is asked while esp_session_valid is set, so a
@@ -825,6 +837,24 @@ ESP_IDLE_SWEEP_TICKS:   equ ESP_IDLE_SWEEP_SECS * 50
 ; session — can never have a command eaten by this. What remains exposed is the
 ; gap between a socket being accepted and its first command arriving, which is
 ; measured in milliseconds against a period measured in minutes.
+;
+; THE SAME GUARD SILENCES THE CHECK ON WHAT MAY BE ITS COMMONEST REAL TRIGGER,
+; and that is the exact shape #24 documents for its own sweep — "the sweep cannot
+; fire for KNOWN-ISSUES.md #19's own headline case". esp_session_valid is cleared
+; by exactly two things: CMD_CLOSE, and the module reporting <id>,CLOSED for that
+; session's connection. A mid-session association loss produces NEITHER — that is
+; what "the WiFi went away" means. So: DeZog attached, the router reboots, the
+; WiFi returns on a new DHCP address, and the user walks to the Next to find out
+; where to reconnect — and finds the old address still on the screen, because the
+; gate never cleared and no tick was ever counted. It stays that way until the
+; module's own AT+CIPSTO reap at 1800 s produces an <id>,CLOSED, IF it announces
+; one at all, which KNOWN-ISSUES.md #2 records as unverified. Possibly for ever.
+;
+; THAT IS THE GUARD WORKING AND MUST NOT BE "FIXED" by dropping it: asking while
+; a session looks open is close-on-suspicion, which #24's acceptance criteria
+; forbid, and a DeZog session parked at a breakpoint is silent and healthy. What
+; the re-query reaches is every other shape — no session yet, or one that ended
+; cleanly — and an M1 press reaches the rest.
  IFNDEF ESP_ADDR_CHECK_SECS
 ESP_ADDR_CHECK_SECS:    equ 60
  ENDIF
@@ -1993,7 +2023,14 @@ esp_close_all_links:
 ; once and wrong for one that repeats. The session guard leads now because it is
 ; the one both timers share, and the sweep's own armed test has moved down to
 ; where the sweep is counted. Both are side-effect-free early returns, so the
-; sweep behaves exactly as it did.
+; sweep's behaviour is unchanged in every way that can be observed.
+;
+; NOT quite "exactly as it did", which is what this said first. esp_idle_line is
+; now sampled while the sweep is DISARMED, where the armed test used to return
+; ahead of it — so the edge state stays current across an idle period instead of
+; going stale, which can move the very first tick after re-arming by at most one
+; frame in ESP_IDLE_SWEEP_TICKS (15000), and in the direction of more accuracy
+; rather than less. Bench checks S5 and S6 are unmoved by it, measured.
 ;
 ; Changes:
 ;  AF, BC, DE, HL — see TRANSPORT_IDLE_TICK for why those and no others.
@@ -3938,8 +3975,21 @@ esp_query_address:
 
     ; Swallow the rest of the answer — the STAMAC line and the OK — so a later
     ; scan does not have to step over it. A timeout here is not a failure: the
-    ; address is already in hand, and main_bank_entry falls into drain_main,
-    ; which discards anything still on the wire.
+    ; address is already in hand.
+    ;
+    ; WHAT HAPPENS TO ANY REMAINDER DEPENDS ON THE CALLER, and this comment used
+    ; to give only the bring-up one. From transport_init, main_bank_entry falls
+    ; into drain_main, which discards whatever is still on the wire. From
+    ; esp_check_address (issue #32) nothing drains: the idle loop simply carries
+    ; on, so a leftover STAMAC line is met by the next transport_byte_available,
+    ; which fails to parse it as a +IPD header and gives up on its own budget —
+    ; up to ~100 ms of wasted poll on an idle debugger, no fault raised and no
+    ; client affected. Benign, but it is the caller's business rather than a
+    ; property of this routine.
+    ;
+    ; The EARLY returns above leave more than this one does — the whole tail from
+    ; wherever they gave up — and are reached only when the module is already
+    ; misbehaving, so the same paragraph covers them.
     ld hl,esp_str_ok
     jp esp_wait_string_hold
 
@@ -3963,15 +4013,30 @@ esp_query_address:
 ; esp_connect_address from whatever the module now answers, so "detect that the
 ; address has gone" and "advertise the new one when it comes back" are the same
 ; instruction. What the issue called re-ACQUISITION — picking the listener back
-; up — turns out not to be needed at all: measured on a real Next across a
-; five-minute AP outage, the AT+CIPSERVER listener SURVIVES a de-association and
-; re-association, with a full hardware bench passing 6/6 afterwards and no M1
-; press or reset in between (jnext#246, reported on hardware). The emulated
-; module behaves the same way, measured here before any of this was written: a
-; TCP connection could be made throughout the outage and an already-open DZRP
-; session went on answering across both edges. So a "fix" that retired the
-; listener and rebuilt it would be a REGRESSION against measured behaviour, and
-; bench check D6 is what would catch one.
+; up — is not built, and the evidence for that rests on ONE observation: on a
+; real Next across a five-minute AP outage the AT+CIPSERVER listener SURVIVED a
+; de-association and re-association, with a full hardware bench passing 6/6
+; afterwards and no M1 press or reset in between. See doc/HARDWARE-TESTING.md;
+; tier `reported on hardware` — one machine, one reporter, no re-runnable
+; artefact.
+;
+; THE EMULATOR CANNOT CORROBORATE THAT, and an earlier version of this comment
+; offered it as though it could. jnext's own --help for
+; --esp-delayed-disassociate-frames says "Nothing else changes: open connections
+; keep running and no WIFI DISCONNECT is sent", so a probe finding the listener
+; alive across the outage RESTATES a design decision of the emulator's and could
+; not have come out any other way. It is not a second data point.
+;
+; So bench check D6 guards a STUB-SIDE regression only — a fix that retired the
+; listener and rebuilt it — and can never guard a module-side one.
+;
+; AND THE CASE D1 IS BUILT AROUND HAS NO HARDWARE EVIDENCE ON EITHER HALF. The
+; hardware run was A -> down -> A; whether a real module keeps ACCEPTING after
+; its address CHANGES is unobserved, and jnext#247 records that an address
+; changing across an outage has never been seen on an ESP-01 at all. If it does
+; not, re-acquisition is owed for exactly that case, and the screen would then
+; advertise a new address nothing is listening on — a better-disguised lie than
+; the one this removes. That is the first thing to check on real hardware.
 ;
 ; WHY IT IS NOT CALLED FROM show_ui, which is where a reader will look for it
 ; first: show_ui is re-entered on every redraw — the border key, CMD_CLOSE, any
@@ -4052,6 +4117,16 @@ esp_check_address:
     ; reaches the screen at the next full repaint. The actionable words are on
     ; rows 6 and 7 in any case — "No WiFi address. Set the Next up first: run
     ; wifi2.bas" — and those are repainted below.
+    ;
+    ; AND IT IS NEVER CLEARED WHEN THE ADDRESS COMES BACK, deliberately. The OK
+    ; path below falls straight to .paint, so after a lost-and-regained address
+    ; rows 6/7 advertise the new one while the error area still reads "No WiFi
+    ; address" until something else clears it — cmd_init does, on the next
+    ; session. That is what the area is FOR: it is labelled "Last Error" and
+    ; reports history, not live status, which is exactly why it must not be
+    ; cleared on somebody else's behalf — the value standing there may be a TX
+    ; Timeout this routine never wrote. The two rows are the live statement and
+    ; they are the ones repainted.
     ld a,(esp_link_state)
     or a
     jr z,.paint
@@ -4135,7 +4210,9 @@ esp_check_address:
 ; Draws WiFi mode's status block, where UART mode draws its joy-port selection.
 ; Called from show_ui; see the data above.
 ;
-; Two independent things: the LINK (rows 6-7, decided once during bring-up) and
+; Two independent things: the LINK (rows 6-7, decided at bring-up and revisited
+; from the idle path since issue #32 — see esp_check_address, which calls
+; esp_put_status_block below to repaint exactly these two rows) and
 ; the SESSION (row 8, from CMD_INIT/CMD_CLOSE). They are drawn from separate
 ; tables because they answer separate questions — "where do I connect" and "did
 ; anyone" — and neither state constrains the other. Both strings begin with

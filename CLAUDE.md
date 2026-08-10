@@ -867,8 +867,9 @@ strongest:
    (five `make test-hardware` runs at 15/15, and the bring-up probe shown to fire), and the probe
    this bench calls dead code **has now executed there**. See `doc/HARDWARE-TESTING.md`.
 4n. **`make test-wifi-assoc`** — the Next losing and regaining its WiFi association (issue #32),
-   5 headless jnext runs, 6 checks, and the **ninth** build seam — the only member of the family
-   whose *shipped* value needs no moving to be watchable, since 60 seconds is 3000 frames.
+   7 headless jnext runs, 8 checks, and the **ninth** build seam — one of the few whose *shipped*
+   value needs no moving to be watchable, since 60 seconds is 3000 frames (`ESP_LINK_IDS` is
+   another: its shipped 5 is exactly what S1/S2 measure).
    `AT+CIFSR` was asked exactly **once**, at the end of `transport_init`, so `Connect at
    <ip>:11000` was decided at bring-up and never revisited: a Next that dropped off the WiFi went
    on naming an address that no longer reached it, and one switched on before its router was ready
@@ -888,7 +889,24 @@ strongest:
    must keep the stale address; **D3** the address goes and stays gone, so the screen must change
    to the *"no address"* block rather than merely to a different number — a different branch and a
    different string; **D4** that control; **D5** it goes and comes back **unchanged**, the case a
-   real Next produced; **D6** the stub still answers `CMD_INIT` afterwards.
+   real Next produced; **D6** the stub still answers `CMD_INIT` afterwards; **D7** with **no `--esp` at all** the
+   *"ESP-01 setup failed"* screen must **not** be downgraded to *"No WiFi address"*; **D8** the
+   timed repaint gives **MMU slot 1** back to the client.
+   **D7 GUARDS THIS FIX AGAINST RECREATING THE DEFECT IT REMOVES.** `esp_query_address` writes
+   `ESP_LINK_NO_ADDRESS` on **entry** and clears it only on success, so an unguarded re-query
+   overwrites `ESP_LINK_FAILED` at the first tick — and **permanently**, since only
+   `transport_init` sets it again and `esp_recover` cannot fire on that path. A machine whose ESP
+   is absent, disabled or not answering at 115200 would stop saying so after a minute and start
+   telling a correctly set-up user to run `wifi2.bas`. Those two screens are `doc/WIFI-SETUP.md`'s
+   user diagnostic. Measured one build apart with the base pinned by hash: `main` keeps *"setup
+   failed"* at frames 3000, 9000 and 40000; the unguarded build says *"No WiFi address"* from 9000
+   on. It is the cheapest run here — no `--esp`, so no listener, so not through `start_run` — and
+   **no other check can see it**, since every other run has a module.
+   **D8 is N7's class one painter along**: since #31 the glyphs come from ROM, so `text.font_map`
+   pages ROM into **slot 1, which has no backup anywhere**, and this is a new *autonomous* painter
+   that maps it on a **timer**. Stageable only because `CMD_SET_SLOT` does **not** set
+   `esp_session_valid` — so the slot can be armed with the session gate left clear — and judged
+   over the socket, since `cmd_get_registers` reads slots 0-6 live from the MMU.
    **D5 CANNOT DISCRIMINATE ON ITS OWN AND THAT IS MEASURED, NOT ARGUED**: against the pre-fix ROM
    this bench reports D1 and D3 red and **D5 green**, because the address a stub cached at bring-up
    is the address the module ends up back on. What gives D5 a subject is D3 — the two runs are
@@ -930,7 +948,7 @@ read once; a document can be revised, cited and diffed.
 Two things the shortening may **never** touch, because they are interface rather than prose:
 
 - **The check id.** `T1`-`T8`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W6`, `C1`-`C21`, `B1`-`B2`,
-  `P1`-`P3`, `N1`-`N6`, `G1`-`G2`, `I1`-`I9`, `S1`-`S3`, `K1`-`K4`, `R0`-`R5`, `L1`-`L5`, `D1`-`D6`,
+  `P1`-`P3`, `N1`-`N8`, `G1`-`G2`, `I1`-`I9`, `S1`-`S7`, `K1`-`K4`, `R0`-`R5`, `L1`-`L5`, `D1`-`D8`,
   `H1`-`H5` are cited
   by every
   document and

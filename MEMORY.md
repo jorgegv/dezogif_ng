@@ -25,18 +25,41 @@ recomposes `esp_connect_address`, so "notice the address has gone" and "advertis
 the new one when it returns" are the same instruction. `esp_check_address` is a
 call to it from the idle path plus a repaint.
 
-**SO THE ISSUE'S SECOND HALF — RE-ACQUISITION — DOES NOT NEED BUILDING, and that
-is measured rather than assumed.** The issue's split was (1) detect and report,
+**SO THE ISSUE'S SECOND HALF — RE-ACQUISITION — IS NOT BUILT, AND THE EVIDENCE FOR
+THAT IS ONE OBSERVATION, not two.** The issue's split was (1) detect and report,
 (2) pick the listener back up. The `AT+CIPSERVER` listener **survives** a
-de-association and re-association: a real Next did (jnext#246, `reported on
-hardware` — a five-minute AP outage, then a full 6/6 hardware bench with no M1
-press and no reset), and so does the emulated module, **probed here before any Z80
-was written** — a new TCP connection was accepted and an **already-open DZRP
-session answered `CMD_LOOPBACK` across both edges**, on all 14 samples. A fix that
-retired the listener and rebuilt it would therefore be a **regression against
-measured behaviour**, which is what bench check D6 exists to catch. The same probe
-is what demonstrated the defect: the screen read `Connect at 192.168.1.50:11000`
-on every sample, long after the module had moved to `192.168.1.77`.
+de-association and re-association: a real Next did — a five-minute AP outage, then
+a full 6/6 hardware bench with 15/15 conformance, no M1 press and no reset. It is
+recorded in `doc/HARDWARE-TESTING.md` (added by this branch, because it was cited
+five times and lived nowhere in this repository), tier **`reported on hardware`** —
+one machine, one reporter, no re-runnable artefact.
+
+**THE EMULATOR CANNOT CORROBORATE IT, AND AN EARLIER VERSION OF THIS ENTRY OFFERED
+IT AS THOUGH IT COULD.** jnext's own `--help` for
+`--esp-delayed-disassociate-frames` says: *"Nothing else changes: open connections
+keep running and no `WIFI DISCONNECT` is sent."* So the probe's finding — a new TCP
+connection accepted and an already-open DZRP session answering `CMD_LOOPBACK`
+across both edges, on all 14 samples — **restates a design decision of the
+emulator's** and could not have come out any other way. It is not a second data
+point, and the bench header said so correctly while this file and the source
+comment did not: two renderings of one fact with the careful one in the bench,
+which is the tell this file records under 2026-08-06.
+
+**Corollary: bench check D6 guards a STUB-SIDE regression only** — a fix that
+retired the listener and rebuilt it — and can never guard a module-side one.
+
+**AND THE CHANGED-ADDRESS CASE, WHICH IS WHAT D1 IS BUILT AROUND, HAS NO HARDWARE
+EVIDENCE ON EITHER HALF.** The hardware run was `A → down → A`: the DHCP lease
+held. Whether a real module keeps **accepting** after its address **changes** is
+unobserved, and jnext#247's own text records that an address changing across an
+outage has never been seen on an ESP-01 at all. **If it does not, re-acquisition is
+owed for exactly that case** — and the screen would then advertise a new address
+nothing is listening on, which is a *better-disguised* lie than the one being
+fixed. That is the first thing to check when this reaches hardware.
+
+The same probe is what demonstrated the defect, and that half is not tautological:
+the screen read `Connect at 192.168.1.50:11000` on every sample, long after the
+module had moved to `192.168.1.77`.
 
 **IT POLLS BECAUSE THERE IS NOTHING TO WATCH.** A real module puts unsolicited
 `WIFI DISCONNECT` / `WIFI CONNECTED` / `WIFI GOT IP` lines on the wire at these
@@ -57,17 +80,56 @@ is the wait for `+CIFSR:STAIP,"` — a scan whose pattern begins with `+`, which
 `esp_wait_string_hold`'s rule is one of only **two** scans in this transport that
 **cannot** capture an inbound frame instead of destroying it. So a client whose
 first command lands inside it loses that command: issue #10's residual, turned from
-a once-per-bring-up window into a recurring one. Against that, `esp_idle_tick`'s
-existing sweep sends **five** `AT+CIPCLOSE` lines and drains each answer with
-`transport_drain`, which reads with raw `in` and hands the bytes to **nobody** — a
-strictly wider window, on the same idle path, every five minutes. One scan a minute
-is less exposure than five drains every five.
+a once-per-bring-up window into a recurring one.
+
+**WHAT MAKES THAT ACCEPTABLE IS THE WIDTH OF EACH EVENT, NOT HOW OFTEN IT COMES
+ROUND.** A scan reads only until it matches and the module answers `AT+CIFSR` at
+once, so the window is the few milliseconds of the reply against a sixty-second
+period — of the order of **0.01% of the time**, and only while no DZRP session is
+open. It is the same *kind* of window `esp_idle_tick`'s sweep already opens and a
+narrower one: that sweep drains each of five `AT+CIPCLOSE` answers with
+`transport_drain`, which reads with raw `in`, hands the bytes to **nobody**, and
+does not stop until 100 ms of quiet.
+
+*(**CORRECTED IN REVIEW, and the first version had the comparison backwards.** It
+argued on frequency — "five drains every `ESP_IDLE_SWEEP_SECS`" against "one scan a
+minute" — and the sweep does **not** run every period. It runs **once per idle
+period**, gated by `esp_idle_armed`, which this file already says at the 2026-08-09
+entry and which bench check **S5** measures in as many words. So on a quiet machine
+the sweep costs five drains **in total** and this costs one scan a minute **for
+ever**: the opposite of what was claimed. The conclusion survives on per-event
+width, which is the argument that was not made; the arithmetic it was first given
+was simply wrong, and the file that disproved it was this one.)*
 
 **THE SESSION GUARD IS SHARED WITH #24's SWEEP, and it is the same requirement
 twice**: nothing is asked while `esp_session_valid` is set, so a DZRP session parked
 at a breakpoint — silent and healthy — can never have an AT command put in front of
 the reply it is waiting for. What remains exposed is the gap between a socket being
 accepted and its first command arriving, milliseconds against a period of minutes.
+
+**AND THAT SAME GUARD SILENCES THE CHECK ON WHAT MAY BE ITS COMMONEST REAL
+TRIGGER — the mirror image of the limitation #24 documented at length for its own
+sweep, and it must be carried over rather than left to be rediscovered.**
+`esp_session_valid` is cleared by exactly two things: `CMD_CLOSE`, and the module
+reporting `<id>,CLOSED` for that session's connection. **A mid-session association
+loss produces neither** — that is what "the WiFi went away" means. So the sequence
+this fix is most likely to meet in the field is the one it cannot act on: DeZog
+attached, the router reboots, the WiFi returns on a **new** DHCP address, and the
+user walks to the Next to find out where to reconnect — and finds the **old**
+address still on the screen, because the gate never cleared and not one tick was
+ever counted. It stays that way until the module's own `AT+CIPSTO` reap at 1800 s
+produces an `<id>,CLOSED` — **if** it announces one, which `KNOWN-ISSUES.md` #2
+records as unverified. Possibly for ever.
+
+**That is the guard working, not a hole in it**, and it must not be "fixed" by
+dropping it: asking while a session looks open is the close-on-suspicion #24's
+acceptance criteria forbid, and a session parked at a breakpoint is silent and
+healthy. What the re-query reaches is every other shape — no session yet, or one
+that ended cleanly — and an M1 press reaches the rest. An earlier version of this
+entry filed the case under NOT COVERED as "the outage arriving while a session is
+open … what a user sees there is unchanged", which **understates it**: the damage
+is *afterwards*, and the outage is precisely what prevents the session ending
+cleanly.
 
 **THE COUNTER IS DELIBERATELY NOT RESET BY INBOUND TRAFFIC, where the sweep's is.**
 That is a difference and not an oversight: the sweep is about **peers**, so traffic
@@ -107,14 +169,62 @@ tidying.** The sweep's "already done this period" test used to come first as the
 cheapest question — but it also stopped the frame edge being sampled **at all** once
 the sweep had fired, which is fine for a timer that runs once and wrong for one that
 repeats. The session guard leads now because both timers share it; both remaining
-tests are side-effect-free early returns, so the sweep behaves exactly as it did.
+tests are side-effect-free early returns, so the sweep's behaviour is unchanged in
+every way that can be observed. **Not quite "exactly as it did"**, which is what
+this said first: `esp_idle_line` is now sampled while the sweep is *disarmed*,
+where the armed test used to return ahead of it, so the edge state stays current
+instead of going stale — worth at most one frame in 15000 on the first tick after
+re-arming, and in the direction of more accuracy rather than less. S5 and S6 are
+unmoved by it, measured.
 
-**Evidence: `make test-wifi-assoc`, 5 runs, 6 checks, 6/6 — and RED-FIRST
+**Evidence: `make test-wifi-assoc`, 7 runs, 8 checks, 8/8 — and RED-FIRST
 reproduced independently** against the pre-fix ROM: **D1 and D3 red, D5 GREEN**. D5's
 green there is the whole argument for its own existence: a stub that has never heard
 of an association passes it, because the address cached at bring-up is the address the
 module ends up back on. **D5 on its own is worth nothing**, and D3 is what gives it a
 subject — the two runs are identical up to `$UP_FRAMES`, where D3's shot is taken.
+
+**THE FIRST VERSION OF THIS RECREATED THE DEFECT IN A DIFFERENT STATE, and it took
+review to find.** `esp_query_address` writes `ESP_LINK_NO_ADDRESS` on **entry** and
+clears it only on success, and `esp_check_address` called it unconditionally — so a
+bring-up that had ended at `.no_bringup` with `ESP_LINK_FAILED` was overwritten at
+the **first** tick, and **permanently**: only `transport_init` sets FAILED again,
+and `esp_recover` cannot fire on that path because neither `esp_wait_string`'s
+timeout nor `esp_send_raw` reaches `rxtx_error`. A machine whose ESP is absent,
+disabled or not answering at 115200 would stop saying so after one minute and start
+telling a correctly set-up user to go and run `wifi2.bas`. `doc/WIFI-SETUP.md`
+documents those two screens as *the* user diagnostic and the 2026-08-05 entry below
+records them as a deliberate pair.
+
+Measured one build apart, base identity pinned by hash, `jnext` with no `--esp`:
+
+| ROM | f3000 | f9000 | f40000 |
+|---|---|---|---|
+| `main` `62110de0` | setup failed | **setup failed** | **setup failed** |
+| unguarded `d01dd06a` | setup failed | **No WiFi address** | **No WiFi address** |
+
+Guarded at the top of `esp_check_address`, so the routine owns its precondition;
+there is nothing to gain by asking either, since no module is answering and no
+listener exists for a recovered address to reach. **Bench check D7**, red against
+the unguarded build with D1-D6 all still green.
+
+**MY FIRST ATTEMPT TO REPRODUCE IT DENIED IT, and the reason is this project's own
+oldest lesson.** The implementation was already committed, so
+`git stash push -- src/transport_esp.asm` stashed **nothing** and both columns of my
+"one variable apart" comparison were **the same ROM** — which duly showed `main`
+flipping too, and I nearly reported the reviewer's blocker as unreproducible. The
+base is now built in **its own worktree at `main`** and checked by hash before use.
+[[ERRORS.md]]'s *"prove which file ran"*, paid again, in the one place where getting
+it wrong would have rejected a correct finding.
+
+**AND D8 CLOSES THE COVERAGE GAP THAT ARGUMENT LEFT.** `esp_check_address` is a new
+**autonomous** painter that maps MMU slots 1 and 2 on a **timer**, and slot 1 has no
+backup anywhere — `slot_backup` holds 0 and 7 only — so a paint that forgot to
+restore it would report the wrong bank to DeZog *and* hand the wrong bank to the
+debuggee, silently: issue #26 one slot along. The code reads correct, one balanced
+path, but that is reasoning where a measurement is cheap. It is stageable **only**
+because `CMD_SET_SLOT` does not set `esp_session_valid`, so the slot can be armed
+with the session gate left clear and the tick still fires.
 
 **`--esp-ip-address-after` (jnext#247) IS LOAD-BEARING AND NOT A CONVENIENCE.** With
 jnext#246 alone the only stageable sequence is `A → 0.0.0.0 → A`, on the far side of
@@ -152,8 +262,7 @@ observed on an ESP-01 at all**: it is inferred from how DHCP works, not measured
 unsolicited `WIFI *` lines. Whether a **real** module's listener survives — measured
 once, one machine, no re-runnable artefact. **How long a real re-association takes**,
 which is the number that would decide whether 60 seconds is right, and which is
-unmeasured anywhere. The outage arriving **while a DZRP session is open**, which the
-session guard deliberately skips, so what a user sees there is unchanged. And the
+unmeasured anywhere. And the
 `AT+CIFSR` **timeout** arm above, which no run here produces.
 
 ---

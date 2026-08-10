@@ -864,14 +864,16 @@ test-slot-recovery:
 # constant away — the ninth seam of the family, and the only member whose
 # shipped value needed no moving.
 #
-# It binds no host TCP port for its verdicts (they are screenshots read back as
-# text) but D6 opens one connection, so it is not part of `make test`. It says
+# It binds a host TCP port — every run but D7's passes --esp --esp-listen-address
+# and the harness polls 11000 to know the stub is up — so it is not part of
+# `make test`. (An earlier version of this said it binds none "but D6 opens one
+# connection", which reached the right conclusion by the wrong route.) It says
 # NOTHING about real hardware: every association fact in it is modelled by the
 # emulator, told what to do by this bench's own command line, and jnext#247
 # records that an address CHANGING across an outage has never been observed on
 # an ESP-01 at all. See test/run-wifi-assoc.sh.
 #
-# Run the WiFi-association bench (5 jnext runs, 6 checks; not part of `make test`)
+# Run the WiFi-association bench (7 jnext runs, 8 checks; not part of `make test`)
 test-wifi-assoc:
 	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
 	@$(MAKE) --no-print-directory TRANSPORT=wifi ADDR_CHECK=0 mf-rom

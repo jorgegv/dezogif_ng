@@ -2,7 +2,7 @@
 #
 # The Next losing and regaining its WiFi association — issue #32.
 #
-# Invoked by `make test-wifi-assoc`. Six headless jnext runs with the WiFi ROM
+# Invoked by `make test-wifi-assoc`. Seven headless jnext runs with the WiFi ROM
 # installed as the Multiface ROM and an emulated M1 button press. Each takes the
 # module off its network at a chosen frame, some put it back, and every verdict
 # is the stub's OWN CONNECT BLOCK — screen rows 6 and 7 — READ BACK AS TEXT.
@@ -14,6 +14,7 @@
 #   D5  it goes and COMES BACK unchanged     ->  rows 6/7 advertise it again
 #   D6  the stub still serves DZRP afterwards
 #   D7  with NO ESP at all, the "setup failed" screen is NOT downgraded
+#   D8  the timed repaint gives MMU slot 1 back to the client
 #
 # THE DEFECT. AT+CIFSR is asked exactly ONCE, as the last step of
 # transport_init, so esp_link_state and the `Connect at <ip>:11000` line are
@@ -73,12 +74,18 @@
 # D6 IS THE PROPERTY A "FIX" COULD EASILY BREAK. Hardware says the happy path is
 # that NOTHING breaks — a real Next survived a five-minute AP outage with its
 # AT+CIPSERVER listener intact and answered a full 6/6 hardware bench afterwards
-# with no M1 press and no reset (jnext#246, reported on hardware). The same is
-# true of the emulated module, measured here before any Z80 was written: a TCP
-# connection could be made throughout the outage and an ALREADY-OPEN DZRP
-# session went on answering CMD_LOOPBACK across both edges. So a fix that tore
-# the listener down and rebuilt it would be a REGRESSION against measured
-# behaviour, and D6 is what would catch it.
+# with no M1 press and no reset. See doc/HARDWARE-TESTING.md; one machine, one
+# reporter, no re-runnable artefact. So a fix that tore the listener down and
+# rebuilt it would be a REGRESSION against that, and D6 is what would catch it.
+#
+# BUT D6 CAN ONLY EVER CATCH A STUB-SIDE ONE, and the emulator cannot corroborate
+# the hardware run at all. jnext's own --help for
+# --esp-delayed-disassociate-frames says "Nothing else changes: open connections
+# keep running and no WIFI DISCONNECT is sent" — so a probe finding the listener
+# alive across an emulated outage RESTATES a design decision of the emulator's
+# and could not have come out otherwise. Whether a real module keeps ACCEPTING
+# after its address CHANGES is unobserved on either side; see the hardware
+# document, which says what is owed if it turns out not to.
 #
 # THE SUBJECT IS THE SHIPPED ROM, not a probe build, which is unusual here and
 # is deliberate: ESP_ADDR_CHECK_SECS is 60 seconds, and 60 emulated seconds is
@@ -141,7 +148,7 @@
 #     nothing to check; what a user sees in that case is unchanged.
 #   * UART mode, which has no association to lose and gets none of this.
 #
-# The check ids are D1-D7. The plan's Appendix B.4 numbers three WORKFLOW STEPS
+# The check ids are D1-D8. The plan's Appendix B.4 numbers three WORKFLOW STEPS
 # D1-D3; those are not check ids, nothing greps them, and no script matches on
 # them. The ids here are interface — run-*.sh and hardware-check.py match on
 # field 2 of a FAIL line — so they are never renumbered.
@@ -622,6 +629,94 @@ else
         pass "D7 with no ESP the screen still reports a failed setup, not a missing address"
     else
         fail "D7 the failed-setup diagnosis was overwritten: $got"
+    fi
+fi
+stop_all
+
+# ---------------------------------------------------------------------------
+# D8 — the re-query's painter gives MMU slot 1 back.
+#
+# N7's class, one painter along. Since issue #31 the glyphs are read from the
+# ROM rather than copied, so text.font_map pages ROM into MMU slot 1 and
+# font_unmap puts back what was there. SLOT 1 HAS NO BACKUP ANYWHERE —
+# slot_backup holds slots 0 and 7 only — so a paint that forgot to restore it
+# would report the wrong bank to DeZog through cmd_get_registers AND hand the
+# wrong bank to the debuggee on its next CMD_CONTINUE, silently. That is issue
+# #26 one slot along, and esp_check_address is a new autonomous painter that
+# maps slot 1 (and, for issue #28's reason, slot 2) on a TIMER.
+#
+# The code reads correct — one path out, balanced, every faultable call before
+# the push — but that is reasoning where a measurement is cheap, so here is the
+# measurement.
+#
+# HOW IT IS STAGEABLE AT ALL: CMD_SET_SLOT does not set esp_session_valid, only
+# CMD_INIT does. So a client can retarget the slot and STILL leave the session
+# gate clear, which is what lets the idle tick fire at all. No CMD_INIT is sent
+# at either end — cmd_init writes ROM_BANK into slot 1 itself, which is the very
+# value a failure produces, so it would mask the answer.
+#
+# It is judged over the SOCKET, not off the screen: cmd_get_registers reads
+# slots 0-6 live out of the MMU, so there is no shadow copy to hide a clobber.
+# The wait is anchored on the screenshot FILE, as D6's is, so it is frames and
+# not wall clock — by SHOT_FRAMES many query periods have elapsed.
+# ---------------------------------------------------------------------------
+log "--- D8: the re-query's painter must give MMU slot 1 back ---"
+shot=$OUT/screenshots/wifi-assoc-slot1.png
+runlog=$OUT/wifi-assoc-slot1.log
+SLOT1_BANK=62
+if ! start_run "$ROM" "$runlog" "$shot" "$SHOT_FRAMES" "$UP_FRAMES" "$IP_AFTER"; then
+    fail "D8 the stub never listened, so the slot could not be armed"
+else
+    # SETTLE BEFORE ARMING, and this is not belt and braces — it was measured.
+    # The listener exists as soon as AT+CIPSERVER is accepted, but transport_init
+    # then sends AT+CIFSR, and esp_query_address's scan for `+CIFSR:STAIP,"`
+    # begins with '+' and so CANNOT capture an inbound frame instead of eating
+    # it. A client that connects in that window loses its first command — issue
+    # #10's residual — and the first version of D8 duly reported "CMD_SET_SLOT
+    # did not take: slot 1 reads ERR Timeout" against a ROM that was fine. Every
+    # other run here connects only after its screenshot, so this is the one place
+    # in this bench that races bring-up. run-tx-patience.sh settles for the same
+    # reason and records the same measurement.
+    sleep 2
+    armed=$(python3 - <<PY
+import sys
+sys.path.insert(0, "$(dirname "$0")/dzrp")
+import dzrp
+try:
+    t = dzrp.TcpTransport("127.0.0.1", $PORT, 20.0)
+    d = dzrp.Dzrp(t, start_byte="none", base_timeout=20.0)
+    d.command(dzrp.CMD_SET_SLOT, bytes([1, $SLOT1_BANK]))
+    body = d.command(dzrp.CMD_GET_REGISTERS)
+    print(body[29 + 1] if len(body) == 37 else "BADLEN")
+    t.close()
+except Exception as e:
+    print("ERR %s" % type(e).__name__)
+PY
+)
+    if [ "$armed" != "$SLOT1_BANK" ]; then
+        fail "D8 precondition: CMD_SET_SLOT did not take, slot 1 reads $armed"
+    elif ! await_shot "$shot"; then
+        fail "D8 no screenshot: the run ended before frame $SHOT_FRAMES"
+    else
+        after=$(python3 - <<PY
+import sys
+sys.path.insert(0, "$(dirname "$0")/dzrp")
+import dzrp
+try:
+    t = dzrp.TcpTransport("127.0.0.1", $PORT, 20.0)
+    d = dzrp.Dzrp(t, start_byte="none", base_timeout=20.0)
+    body = d.command(dzrp.CMD_GET_REGISTERS)          # no CMD_INIT, deliberately
+    print(body[29 + 1] if len(body) == 37 else "BADLEN")
+    t.close()
+except Exception as e:
+    print("ERR %s" % type(e).__name__)
+PY
+)
+        if [ "$after" = "$SLOT1_BANK" ]; then
+            pass "D8 the timed repaint gave MMU slot 1 back: still bank $after"
+        else
+            fail "D8 the timed repaint left slot 1 as $after, armed at $SLOT1_BANK"
+        fi
     fi
 fi
 stop_all

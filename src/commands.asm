@@ -900,10 +900,20 @@ cmd_set_breakpoints:
     jr .next
 
 .normal:
-    ; Get memory
+    ; Refuse the debugger's own trampoline (see bp_hits_trampoline). The opcode
+    ; found there is still reported, so the client is told what was at the
+    ; address and simply gets no breakpoint — which is what it got before this
+    ; write was able to land at all.
+    call bp_hits_trampoline
+    ; Get memory. AFTER the guard, which uses A, and before the write, which
+    ; makes the real ROM serve reads.
     ld a,(hl)	; LOGPOINT [CMD] BP=${HL:hex}h, ${HL}
+    jr c,.next
     ; Set breakpoint
-    ld (hl),BP_INSTRUCTION
+    push af	; The opcode .next sends back
+    ld a,BP_INSTRUCTION
+    call write_debuggee_byte
+    pop af
 
 .next:
     ; Send memory
@@ -982,8 +992,11 @@ cmd_restore_mem:
 .normal:
     ; Get value
     call transport_read_byte
-    ; Set memory
-    ld (hl),a
+    ; Set memory. UNGUARDED, for cmd_set_breakpoints' own sake: this is how a
+    ; breakpoint is REMOVED, and a set that cannot be undone is worse than one
+    ; that never happened. The byte written is the one the stub itself reported
+    ; when the breakpoint went in.
+    call write_debuggee_byte
 
 .next:
     ; Next address

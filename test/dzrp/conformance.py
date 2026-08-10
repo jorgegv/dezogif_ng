@@ -1070,6 +1070,60 @@ def chk_rom_breakpoint_fires(d):
                   "the control" % addr)
 
 
+# The two blocks copy_modify_altrom patches into the Alt ROM: 8 bytes at 0x0000
+# (the RST 0 entry and the return path) and 14 at 0x0066 (dbg_enter). They are
+# the only reason an RST 0 reaches the debugger at all, so a breakpoint must
+# never be planted on them. Taken from src/breakpoints.asm's own DISP blocks.
+TRAMPOLINE = (0x0000, 0x0066)
+
+
+def chk_rom_breakpoint_spares_trampoline(d):
+    """A breakpoint must NOT be planted on the debugger's own trampoline.
+
+    THIS CHECK ONLY EXISTS BECAUSE C19 PASSES. While writes into ROM space were
+    discarded, a breakpoint aimed at the trampoline was harmless; the moment
+    they land, an RST 0 over dbg_enter's first byte makes every breakpoint
+    re-enter itself and walk the stack down through memory. The guard and the
+    writability fix are therefore one change, and this is the half that says
+    the guard is there rather than assumed.
+
+    THE CONTROL IS A PRECONDITION AND IT IS THE WHOLE POINT. On a remote where
+    ROM writes are discarded, the trampoline is untouched for the wrong reason
+    and every assertion below holds vacuously — so an ordinary ROM address goes
+    in the same command and must have taken the breakpoint. Without that, this
+    check passes against exactly the ROM it was written to distinguish from.
+    """
+    talk(d, dzrp.CMD_INIT, dzrp.init_payload())
+
+    slot0 = _slot0(d)
+    if slot0 != ROM_BANK:
+        raise Precondition("MMU slot 0 holds bank %d, not the ROM: the "
+                           "trampoline is not mapped" % slot0)
+
+    addrs = TRAMPOLINE + (ROM_BP_ADDR,)
+    before = [talk(d, dzrp.CMD_READ_MEM, b"\x00" + _w(a) + _w(1))[0] for a in addrs]
+    old = _set_bps(d, addrs)
+    after = [talk(d, dzrp.CMD_READ_MEM, b"\x00" + _w(a) + _w(1))[0] for a in addrs]
+    _restore_bps(d, ((ROM_BP_ADDR, before[-1]),))
+
+    if after[-1] != BP_OPCODE:
+        raise Precondition("the ROM control at 0x%04X did not take a breakpoint, "
+                           "so nothing here is proven" % ROM_BP_ADDR)
+    hit = ["0x%04X" % a for a, b, n in zip(addrs, before, after)
+           if a in TRAMPOLINE and n != b]
+    if hit:
+        return FAIL, "a breakpoint was planted on the debugger's trampoline at %s" \
+            % ", ".join(hit)
+    # The client is still told what was there, so it is not lied to about the
+    # address; it simply gets no breakpoint.
+    wrong = [a for a, b, o in zip(addrs, before, old) if a in TRAMPOLINE and o != b]
+    if wrong:
+        return FAIL, ("the refused address 0x%04X was reported as the wrong "
+                      "opcode" % wrong[0])
+    return PASS, ("the trampoline at 0x0000 and 0x0066 was spared while ordinary "
+                  "ROM took one")
+
+
 # One byte over would be the boundary and is not what this asks. C5's 8192 holds
 # the boundary; this asks whether a frame that is decisively too big is SURVIVED,
 # and a size well past the window is what makes the unfixed failure unambiguous
@@ -1304,6 +1358,12 @@ CHECKS = [
      chk_rom_breakpoint_lands, "SET_BREAKPOINTS"),
     ("C20 a breakpoint in ROM space stops the debuggee",
      chk_rom_breakpoint_fires, "CONTINUE"),
+    # C21 IS ONLY MEANINGFUL WHILE C19 PASSES, and it says so itself: its
+    # control is an ordinary ROM address that must have taken a breakpoint in
+    # the same command, so against a remote where ROM writes are discarded it
+    # reports a Precondition rather than a vacuous green.
+    ("C21 a breakpoint spares the debugger's own trampoline",
+     chk_rom_breakpoint_spares_trampoline, "SET_BREAKPOINTS"),
     # C18 IS SECOND-TO-LAST, and for a weaker version of C15's reason. Our stub
     # answers an oversize frame by reporting on its own screen and going to
     # drain_main, which re-initialises the debugger — so anything below it would

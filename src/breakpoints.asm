@@ -310,13 +310,102 @@ clear_tmp_breakpoint:
     jp restore_swap_slot
 
 .normal:
-    ; Restore opcode
+    ; Restore opcode. UNGUARDED, deliberately: putting a byte back can only
+    ; ever undo a write set_tmp_breakpoint was allowed to make, and a
+    ; breakpoint that can be set but not removed would leave an RST 0 in the
+    ; Alt ROM for the rest of the session — worse than not setting it.
     dec hl
     ld a,(hl)
-    ld (de),a
+    ex de,hl
+    call write_debuggee_byte
+    ex de,hl
     ; Clear breakpoint
     xor a
     ldi (hl),a : ldi (hl),a : ld (hl),a
+    ret
+
+
+;===========================================================================
+; Writes one byte at HL with ROM space made writable for the duration.
+;
+; WHY THIS EXISTS (issue #27). A breakpoint is a byte patched into memory, and
+; 0x0000-0x3FFF on a stopped Next is NOT writable: copy_modify_altrom leaves
+; NR 0x8C at ALTROM_ENABLED for the whole session, which serves READS from the
+; patched Alt ROM and DISCARDS writes — see constants.asm for the decode. So
+; the RST 0 never reached memory, and the stub reported success because no
+; breakpoint path reads back what it wrote. Every breakpoint anywhere ROM was
+; mapped was silently dropped; the report that opened the issue was only the
+; case where DeZog happened to put one first.
+;
+; The write lands IN THE ALT ROM, which is the image the debuggee executes, so
+; patching it is what makes the breakpoint fire.
+;
+; READS MUST NOT BE TAKEN IN THIS STATE, and that is why this writes only. With
+; bit 6 set it is the REAL, unpatched ROM that serves reads, so an opcode read
+; here would be the wrong byte to keep for un-patching — at 0x0000 and 0x0066
+; it would be the original ROM's rather than our own trampoline's. Every caller
+; already reads the opcode before calling this, which is the order that works.
+;
+; It is a no-op wherever ROM is not mapped: an MMU RAM page in slot 0 or 1 wins
+; the decode outright (zxnext.vhd:3042) and NR 0x8C has no bearing on the
+; access, so a caller does not have to know which kind of memory it is writing.
+;
+; Parameters:
+;   A  = byte to write
+;   HL = address
+; Changes:
+;   NA
+;===========================================================================
+write_debuggee_byte:
+    nextreg REG_ALTROM,ALTROM_WRITABLE
+    ld (hl),a
+    nextreg REG_ALTROM,ALTROM_ENABLED
+    ret
+
+
+;===========================================================================
+; Is HL inside the debugger's own trampoline?
+;
+; THIS GUARD IS A PRECONDITION OF write_debuggee_byte EXISTING, not an
+; independent nicety. copy_modify_altrom patches two blocks into the Alt ROM —
+; 8 bytes at 0x0000 (the RST 0 entry and the return path) and 14 at 0x0066
+; (dbg_enter) — and they are the only reason an RST 0 reaches the debugger at
+; all. While ROM writes were discarded, a breakpoint aimed at them was
+; harmless; the moment they land, an RST 0 written over dbg_enter's first byte
+; makes every breakpoint re-enter itself, walking the stack down through memory.
+; That is the mechanism the original report guessed at, and making the write
+; work is exactly what would create it.
+;
+; The bounds are taken from the labels copy_modify_altrom itself copies with,
+; so they cannot drift from the blocks they describe.
+;
+; A refused breakpoint is simply not planted, which leaves the caller doing
+; what it did before this change: nothing reached memory then either. So this
+; preserves today's behaviour for the trampoline and changes it everywhere else.
+;
+; Parameters:
+;   HL = the address a breakpoint is wanted at
+; Returns:
+;   C  = refuse, it is ours
+;   NC = ordinary memory
+; Changes:
+;   AF
+;===========================================================================
+TRAMPOLINE_0000_END:	EQU copy_rom_start_0000h_code_end-copy_rom_start_0000h_code
+
+bp_hits_trampoline:
+    ld a,h
+    or a
+    ret nz	; Above 0x00FF: NC, and nothing below is reached
+    ld a,l
+    cp TRAMPOLINE_0000_END		; 0x0000-0x0007, the RST 0 entry
+    jr c,.hit
+    cp copy_rom_start_0066h_code	; 0x0066
+    ret c	; 0x0008-0x0065: ordinary ROM
+    cp copy_rom_start_0066h_code_end	; 0x0074
+    ret nc	; 0x0074 upwards: ordinary ROM
+.hit:
+    scf
     ret
 
 
@@ -370,13 +459,22 @@ set_tmp_breakpoint:
     jp restore_swap_slot
 
 .normal:
-    ; Get opcode
+    ; Refuse the debugger's own trampoline. Nothing is stored, so the address
+    ; stays 0 and clear_tmp_breakpoint will correctly do nothing with it.
+    call bp_hits_trampoline
+    ret c
+
+    ; Get opcode. BEFORE the write, because write_debuggee_byte makes the real
+    ; ROM serve reads for the duration.
     ld a,(hl)
     cp BP_INSTRUCTION
     ret z	; Do nothing if already a breakpoint set
 
     ; Set BP
-    ld (hl),BP_INSTRUCTION ; LOGPOINT [BP] set_tmp_breakpoint @${HL:hex} (${HL})
+    push af	; The opcode .store is about to keep
+    ld a,BP_INSTRUCTION ; LOGPOINT [BP] set_tmp_breakpoint @${HL:hex} (${HL})
+    call write_debuggee_byte
+    pop af
 
 .store:
     ; Store to 'opcode'

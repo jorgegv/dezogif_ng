@@ -464,19 +464,36 @@ strongest:
    The **id** is interface, not prose: `run-dzrp-stub.sh`'s
    W3 greps `^FAIL  C10 ` and `hardware-check.py` takes the code from field 2 of every `FAIL` line.
    **Result 2026-08-05: W1-W5 pass, 15 passed / 0 failed of 15 — the target exits 0.**
-   **C19 AND C20 ARE A STANDING RED, AND THEY ARE ISSUE #27**: a DZRP breakpoint is a byte patched
-   into memory, and `0x0000-0x3FFF` on a stopped Next is **not writable** — `sram_pre_rdonly <= not
-   (nr_8c_altrom_en and nr_8c_altrom_rw)` (`zxnext.vhd:3056`) gates the SRAM cycle at `:3154`, and
-   `src/altrom.asm:55` leaves NR `0x8C` at `10000000b` (bit 7 set, **bit 6 clear**) for the whole
-   session. So the `RST 0` is discarded and the stub reports success, because no breakpoint path
-   reads back what it wrote. **C19 is the mechanism** — the byte does not land — **and C20 is the
-   consequence** — the breakpoint never fires. Each carries its own RAM control **in the same run**,
+   **C19-C21 ARE ISSUE #27: EVERY BREAKPOINT ANYWHERE ROM WAS MAPPED WAS SILENTLY DISCARDED.** A
+   DZRP breakpoint is a byte patched into memory, and `0x0000-0x3FFF` on a stopped Next is **not
+   writable** — `sram_pre_rdonly <= not (nr_8c_altrom_en and nr_8c_altrom_rw)` (`zxnext.vhd:3056`)
+   gates the SRAM cycle at `:3154`, and `copy_modify_altrom` leaves NR `0x8C` at `ALTROM_ENABLED`
+   (bit 7 set, **bit 6 clear**) for the whole session, which serves reads from the patched Alt ROM
+   and discards writes. So the `RST 0` never arrived and the stub reported success, because no
+   breakpoint path reads back what it wrote. Upstream's, in both ROMs, since the fork. **C19 is the
+   mechanism** (the byte does not land), **C20 the consequence** (the breakpoint never fires), and
+   **C21 the guard the fix required** (see below). Each carries its own control **in the same run**,
    because a breakpoint that does not fire is otherwise indistinguishable from a resume that never
-   worked. Measured: `0x1234` reads back `0xED` after a `CMD_SET_BREAKPOINTS` that took at `0x8000`,
-   and a debuggee that `call`s a ROM `RET` runs straight through to the RAM control. Until #27 is
-   fixed **`make test-dzrp-stub` exits 1 at 18 passed / 2 failed of 20**, exactly as C2 stood red
-   until issue #7 and C12 until #8. See `doc/DZRP-TESTING.md`.
-   **The suite is 20 since C19-C20 landed, and was 18 since C16-C18**; the 2026-08-05 figure is left as the measurement it was
+   worked — the confound that wrecked the one attempt to test this at the machine. Measured red:
+   `0x1234` read back `0xED` after a `CMD_SET_BREAKPOINTS` that took at `0x8000`, and a debuggee
+   that `call`ed a ROM `RET` ran straight through to the RAM control.
+   **THE FIX AND ITS GUARD ARE ONE CHANGE AND NEITHER MAY LAND ALONE.** `write_debuggee_byte` sets
+   bit 6 for the write alone, which lands it in the Alt ROM — the image the debuggee executes.
+   Reads must **not** be taken in that state: with bit 6 set the *real, unpatched* ROM serves reads
+   (`:3078`), so the opcode kept for un-patching is read before the call, as every caller already
+   did. But making writes land turns the original report's other mechanism from impossible into
+   live: `copy_modify_altrom` patches 8 bytes at `0x0000` and 14 at `0x0066`, and an `RST 0` over
+   `dbg_enter` makes every breakpoint re-enter itself. So `bp_hits_trampoline` refuses those 22
+   bytes — leaving them behaving exactly as they did before, since nothing reached them then
+   either — and **C21's control is an ordinary ROM address that must have taken a breakpoint in the
+   same command**, so against an unfixed ROM it reports a Precondition instead of a vacuous green.
+   Shown red both ways: unfixed → C19/C20 red and C21 Precondition; fix present, guard removed →
+   C19/C20 green and **C21 red naming both blocks**. Restores are deliberately **unguarded**: a
+   breakpoint that can be set and not removed leaves an `RST 0` in the Alt ROM for the session.
+   **NOT covered**: `CMD_WRITE_MEM` into ROM space is still discarded (`memory_loop`'s per-byte path
+   is the receive path the baud ceiling is about, so it is deliberately not bracketed), and none of
+   this has run on hardware. See `doc/DZRP-TESTING.md`.
+   **The suite is 21 since C19-C21 landed, and was 18 since C16-C18**; the 2026-08-05 figure is left as the measurement it was
    rather than restated, and the hardware run of 2026-08-08 that reports 15 of 15 was also taken at
    the suite's size then. **C16-C18 HAVE now run on hardware — 2026-08-09, build `00.19`, 18 of 18
    with the whole bench at 6 of 6.** And C18 carries the strongest evidence in this project's

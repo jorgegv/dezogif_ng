@@ -5,6 +5,152 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-10 — Every breakpoint anywhere ROM was mapped was silently discarded, and fixing it arms the other mechanism
+
+**Built, issue #27.** Breakpoint writes into `0x0000-0x3FFF` now land, and the
+debugger's own trampoline is refused. Checks **C19**, **C20** and **C21**, all
+shown red first.
+
+**THE DEFECT IS UPSTREAM'S, IN BOTH ROMS, SINCE THE FORK, AND IT IS NOT THE ONE
+THE ISSUE WAS OPENED FOR.** A DZRP breakpoint is a byte patched into memory.
+`copy_modify_altrom` leaves NR `0x8C` at `10000000b` for the whole debug session
+— bit 7 set so the patched Alt ROM **serves reads**, bit 6 clear — and the
+ROM-serving branch of the slot 0/1 decode computes `sram_pre_rdonly <= not
+(nr_8c_altrom_en and nr_8c_altrom_rw)` (`zxnext.vhd:3056`), which gates the
+physical SRAM cycle at `:3154`. So **the `RST 0` never reached memory at all**,
+and every breakpoint path reported success because **none of them reads back what
+it wrote**. Nothing is mismapped and nothing is corrupted; the byte is simply
+discarded. The trampoline breakpoint the issue was filed about is one instance of
+a defect covering three quarters of the address space.
+
+**MEASURED BEFORE ANYTHING WAS WRITTEN, AND THAT IS THE WHOLE POINT OF THIS
+BRANCH.** This issue had already cost **two retracted mechanisms**, each
+plausible, internally consistent, traced through real code, and wrong. So the
+first action was a probe, not a third story:
+
+| | measured, first run |
+|---|---|
+| `CMD_SET_BREAKPOINTS` at `0x1234` | reads back `0xED` — **discarded** |
+| the same command at `0x0066` | reads back `0xF5` — **discarded** (and that `0xF5` is `dbg_enter`'s `push af`, so the Alt ROM really is serving reads) |
+| the same command at `0x8000` | reads back `0xC7` — **landed** |
+| MMU slot 0 during `cmd_loop` | **255**, the ROM |
+
+**C20 IS THE HALF THAT MATTERS TO A USER AND ITS FIXTURE IS THE PART WORTH
+COPYING.** "The breakpoint did not fire" and "the resume never worked" are the
+same observation, and that confound is what wrecked the one attempt to test this
+at the machine. Rather than waiting out a timeout, the ROM address it uses is one
+whose byte is `0xC9` — a `RET` — **found by reading the machine** rather than
+hardcoded, and the debuggee `call`s it. A landed breakpoint stops there; a
+discarded one returns and falls through to a RAM trap one instruction later.
+**Both outcomes are positive observations**, an `NTF_PAUSE` arrives either way,
+and a *silence* becomes a third outcome meaning the resume failed. Measured red:
+*"the ROM breakpoint at 0x0280 never fired; the RAM control did"*.
+
+**THE FIX ARMS THE ORIGINAL REPORT'S OTHER MECHANISM, SO THE GUARD IS NOT
+OPTIONAL.** `write_debuggee_byte` sets bit 6 for the write alone, landing it in
+the Alt ROM — the image the debuggee executes, which is why C20 then goes green.
+But `copy_modify_altrom` patches 8 bytes at `0x0000` and 14 at `0x0066` into that
+same image, and they are the only reason an `RST 0` reaches the debugger at all.
+While writes were discarded a breakpoint aimed at them was harmless; the moment
+they land, an `RST 0` over `dbg_enter`'s first byte makes every breakpoint
+re-enter itself and walk the stack down through memory. **That is mechanism A
+from the original report — impossible today, live the moment mechanism B is
+fixed.** `bp_hits_trampoline` refuses those 22 bytes, with bounds taken from the
+labels `copy_modify_altrom` itself copies with so they cannot drift.
+
+**READS MUST NOT BE TAKEN WITH BIT 6 SET, and it is the trap in this fix.** The
+two settings are complementary rather than a level and a flag (`:3078`): with bit
+6 set it is the **real, unpatched ROM** that serves reads. So an opcode read in
+that state would be the wrong byte to keep for un-patching — at `0x0000` and
+`0x0066` it would be the original ROM's rather than our own trampoline's. Every
+caller already read the opcode before writing, which is the order that works, and
+the helper writes only.
+
+**RESTORES ARE DELIBERATELY UNGUARDED.** Putting a byte back can only undo a
+write that was allowed, and a breakpoint that can be **set and not removed**
+leaves an `RST 0` in the Alt ROM for the rest of the session — worse than never
+setting it. That is also why `cmd_restore_mem` had to move with
+`cmd_set_breakpoints` rather than after it.
+
+**A REFUSED BREAKPOINT IS SILENT, AND THIS IS THE ONE JUDGEMENT CALL HERE.** DZRP
+has no "cannot place a breakpoint there" response, and a reply of the wrong length
+desynchronises everything after it — the argument that already governs
+`error_payload_too_big`. But the decisive reason is narrower and is about
+behaviour rather than protocol: **refusing leaves the trampoline behaving exactly
+as it does today**, since nothing reached it then either. So this change moves the
+rest of ROM and moves the trampoline not at all, which is the smallest claim the
+fix can make. Issues #8 and #9 call silence a defect where a real client
+legitimately sends the command; this is not that — it needs the debuggee's PC to
+be inside the stub's own trampoline, which only happens when the session is
+already broken.
+
+**Evidence: `make test-dzrp-stub` 21/21 with W1-W6, exit 0**, and every check
+shown red first — **in both directions for C21**, which is the half a degenerate
+control cannot reach:
+
+| ROM | C19 | C20 | C21 |
+|---|---|---|---|
+| before the fix | FAIL | FAIL | **PRECONDITION**, not a vacuous green |
+| fix present, **guard removed** | PASS | PASS | **FAIL** — *planted on the trampoline at 0x0000, 0x0066* |
+| as merged | PASS | PASS | PASS |
+
+The middle row is the one worth having. `ERRORS.md` records that a control which
+only collapses two cases together proves only that direction, and C21's control —
+an ordinary ROM address that must take a breakpoint in the same command — is what
+stops it passing against exactly the ROM it was written to distinguish from.
+
+**Rejected.** Bracketing `memory_loop`'s inner write instead, which would fix
+`CMD_WRITE_MEM` into ROM as well (it is the **per-byte receive path** whose cost
+brackets the UART ceiling at 470-610 T-states — two `nextreg`s per byte on a
+16 KB transfer, for a case DeZog does not exercise); a read-modify-write of NR
+`0x8C` rather than the two literals (`copy_modify_altrom` has always written
+these exact values, and naming them in `constants.asm` and using them in both
+places is one rendering rather than two); guarding the restore paths (above);
+fixing issue #27's third strand here (below); and leaving the reproduction with
+no fix, which was the fallback if the mechanism had not been demonstrable —
+it was, on the first probe ROM.
+
+**Cost: +51 bytes in BOTH ROMs, which is correct for common code.** `main_end`
+UART 0xF25B → **0xF28E**, WiFi 0xFC72 → **0xFCA5**, leaving **507** free to the
+identity block. Pinned: UART `ab06656e…` → `4ee1a593…`, WiFi `d500eea0…` →
+`016b6bec…`. **The UART byte-identity gate breaks by design** —
+`breakpoints.asm`, `commands.asm`, `constants.asm` and `altrom.asm` are all
+common code — as it did for #7, #8, #9, #12, #20 and #31. **This changes a ROM,
+so the merge carries a `make bump`.**
+
+**NOT COVERED, and none of it is hidden.**
+
+* **THE HANG DOES NOT REPRODUCE IN THE EMULATOR, AND ISSUE #27'S THIRD STRAND IS
+  UNTOUCHED.** `CMD_CONTINUE` from the uninitialised `backup.pc`/`backup.sp` was
+  driven both ways the issue reports — a step with breakpoints at `0x0002`/`0x0066`,
+  and a plain Continue with none — and jnext **never wedges**: it answers an
+  `NTF_PAUSE` in ~0.02 s, reason 2, at `0x6417`, and a fresh client is served
+  immediately. Ten successive steps reach the identical fixed point every time.
+  So the *tens of seconds of unresponsiveness* the user saw is **not reproducible
+  here**, nothing was measured about what ends it, and **no mechanism is offered**
+  — this issue has already cost two. The garbage the resume executes depends
+  entirely on what is in memory, which is exactly what differs between a booted
+  NextZXOS under jnext and the user's machine.
+* **Hardware.** Nothing here has run on a Next. Every emulator result rests on
+  jnext modelling NR `0x8C` bit 6, which it demonstrably does — the write lands
+  and the byte is then *fetched* by the CPU, which is the full round trip — but
+  that is jnext's model of `zxnext.vhd:3056`, not silicon.
+* **`CMD_WRITE_MEM` into ROM space is still silently discarded**, and so is
+  `write_debugged_prgm_mem` if a debuggee's SP points there. Same defect class,
+  deliberately out of scope (above), and no check covers it.
+* **A SECOND, SEPARATE UPSTREAM DEFECT WAS FOUND AND NOT FIXED.**
+  `cmd_set_breakpoints.handle_64k_address` does `cp HIGH MAIN_ADDR` with **A = 0**
+  — the bank+1 byte it has just tested — instead of `ld a,h` first, so the
+  comparison always carries and a 64K address is *always* taken as `.normal`.
+  `set_tmp_breakpoint` gets this right. A plain 64K breakpoint at `0xE000` or
+  above therefore writes directly into whatever slot 7 holds, which while the
+  debugger is stopped is `MAIN_BANK` — the debugger itself. Unreachable from
+  DeZog, which sends long addresses, and **unchanged by this branch** since it is
+  not a ROM write. Filing it is the manager's call.
+* **The refusal's user-facing behaviour** is exercised by nothing but C21: no
+  real client sends a breakpoint at the trampoline, and what DeZog does about
+  getting no breakpoint there is unknown.
+
 ## 2026-08-10 — The NMI decline arm gets a check, and the obvious version of it passes the bug
 
 **Built, issue #36.** Bench check **T8** in `make test`: the M1 button pressed

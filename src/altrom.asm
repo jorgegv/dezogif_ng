@@ -41,7 +41,7 @@ copy_modify_altrom:
     ld a,ROM_BANK
     call modify_bank
     ; Enable AltRom and make it writable
-    nextreg REG_ALTROM,11000000b
+    nextreg REG_ALTROM,ALTROM_WRITABLE
     nextreg REG_MMU,ROM_BANK
     nextreg REG_MMU+1,ROM_BANK
     ; Copy modified ROM in SWAP_SLOT to AltROM:
@@ -52,7 +52,7 @@ copy_modify_altrom:
     MEMCOPY 0x2000, SWAP_ADDR, 0x2000
     MEMCLEAR SWAP_ADDR, 0x2000  ; Clear src
     ; Enable AltRom
-    nextreg REG_ALTROM,10000000b
+    nextreg REG_ALTROM,ALTROM_ENABLED
     ret
 
 ;===========================================================================

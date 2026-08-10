@@ -307,8 +307,9 @@ running it, so the shell kills itself — this cost two aborted commands before 
 | C18 | an oversize payload is declined and **the remote goes on serving** — see `MEMORY.md` |
 | C19 | **a breakpoint in ROM space is written to memory** — and can be taken out again — see below |
 | C20 | **a breakpoint in ROM space stops the debuggee** — see below |
+| C21 | **a breakpoint spares the debugger's own trampoline**, which C19 makes reachable — see below |
 
-### C19 and C20: breakpoints where ROM is mapped (issue #27)
+### C19, C20 and C21: breakpoints where ROM is mapped (issue #27)
 
 **A DZRP breakpoint is a byte patched into memory**, and `0x0000-0x3FFF` on a stopped Next is not
 writable. Every fixture in this suite lives at `0x8000` in a RAM bank, so until these two checks
@@ -342,6 +343,40 @@ it: if the breakpoint landed the `RST 0` runs and the debugger is entered there;
 the `RET` runs and control falls through to a `nop` one instruction later, which is the control.
 An `NTF_PAUSE` arrives either way and its address says which happened — so a *silence* is a third
 outcome again, and means the resume itself failed rather than the breakpoint.
+
+#### C21, and why the fix could not land without it
+
+**Making the write work is what creates the danger C21 guards.** `copy_modify_altrom` patches two
+blocks into the Alt ROM — 8 bytes at `0x0000` (the `RST 0` entry and the return path) and 14 at
+`0x0066` (`dbg_enter`) — and they are the only reason an `RST 0` reaches the debugger at all. While
+ROM writes were discarded a breakpoint aimed at them was harmless; the moment they land, an `RST 0`
+written over `dbg_enter`'s first byte makes every breakpoint re-enter itself and walk the stack down
+through memory. **That is the mechanism the original report guessed at, and it is a consequence of
+the fix rather than of the bug** — so `bp_hits_trampoline` refuses those 22 bytes, and the two
+halves are one change.
+
+A refused breakpoint is simply not planted. The client is still told what opcode was at the address,
+so it is not lied to; it just gets no breakpoint — **which is exactly what it got before the write
+was able to land at all**, so the trampoline's behaviour is unchanged and only the rest of ROM moves.
+
+**Restores are deliberately UNGUARDED**, in both `clear_tmp_breakpoint` and `cmd_restore_mem`.
+Putting a byte back can only undo a write that was allowed in the first place, and a breakpoint that
+can be set but not removed would leave an `RST 0` in the Alt ROM for the rest of the session — worse
+than never setting it.
+
+**C21's control is a precondition, and that is the whole point.** On a remote where ROM writes are
+discarded the trampoline is untouched *for the wrong reason*, and every assertion in C21 holds
+vacuously — so an ordinary ROM address goes in the same `CMD_SET_BREAKPOINTS` and must have taken
+the breakpoint. Shown red both ways rather than only the easy one:
+
+| ROM under test | C19 | C20 | C21 |
+|---|---|---|---|
+| before the fix | FAIL, `0x1234` still reads `0xED` | FAIL, the RAM control fired instead | **PRECONDITION** — not a vacuous green |
+| fix present, **guard removed** | PASS | PASS | **FAIL** — *a breakpoint was planted on the debugger's trampoline at 0x0000, 0x0066* |
+| as merged | PASS | PASS | PASS |
+
+The middle row is the one that matters: a control that only collapses the two cases together proves
+only that direction, which `ERRORS.md` records under "these two differ is not this one is right".
 
 ### A verdict line is one sentence; this file is where the reasoning is
 

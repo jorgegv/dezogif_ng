@@ -456,6 +456,34 @@ TRANSPORT_WAIT_RX_SECONDS:  equ 5
  ENDIF
 
 
+; The two NR 0x8C (REG_ALTROM) settings this program uses, named because since
+; issue #27 they are needed in two places rather than one.
+;
+; THEY ARE COMPLEMENTARY, NOT A LEVEL AND A FLAG, and that is the whole reason
+; the breakpoint paths have to move between them. In the ROM-serving branch of
+; the slot 0/1 decode the FPGA computes
+;
+;     sram_pre_rdonly <= not (nr_8c_altrom_en and nr_8c_altrom_rw)
+;
+; (zxnext.vhd:3056, bits 7 and 6) and sram_pre_rdonly is what gates the physical
+; SRAM cycle (:3154). The Alt ROM is then substituted for reads OR for writes,
+; never both (:3078):
+;
+;   ALTROM_ENABLED   reads come from the patched Alt ROM;  writes are DISCARDED
+;   ALTROM_WRITABLE  reads come from the REAL, unpatched ROM;  writes LAND
+;
+; copy_modify_altrom relies on exactly that: with ALTROM_WRITABLE its LDIR from
+; 0x0000 to 0x0000 reads the real ROM and writes the Alt ROM in one instruction.
+; It then leaves ALTROM_ENABLED for the rest of the session, which is why a
+; breakpoint written into ROM space used to vanish (issue #27).
+;
+; Bits 5:0 are left clear by both, as copy_modify_altrom has always done. Bit 5
+; is text.asm's ROM1 lock, which is set and restored around a paint and is never
+; asserted while a command handler runs.
+ALTROM_ENABLED:		equ 10000000b
+ALTROM_WRITABLE:	equ 11000000b
+
+
 ; Program states
 PRGM_IDLE:		equ 1	; Waiting for a new program (at program start and after CMD_CLOSE)
 PRGM_LOADING:	equ 2	; After CMD_INIT until the first CMD_CONTINUE

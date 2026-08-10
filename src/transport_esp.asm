@@ -3457,6 +3457,63 @@ transport_byte_available:
 
 
 ;===========================================================================
+; THE O(1) HALF OF THE ABOVE, for the asynchronous-break poll — issue #22.
+;
+; transport_byte_available is not usable from mf_nmi_poll and the reason is one
+; line of it: `call esp_sync_ipd`, which scans for a `+IPD` header and can spend
+; a whole ESP_RX_WAIT pass — ~100 ms at 28 MHz — before giving up. That is fine
+; in main_loop, where it is bounded and paid only when the module has spoken. It
+; is not fine inside an NMI that fires 50 times a second while the debuggee runs:
+; the debuggee would lose ~100 ms per frame and the poll would starve itself.
+;
+; So this is the same three questions with the scan removed:
+;   - is a chunk still owed from a frame already parsed?
+;   - is a captured frame held, waiting to be served as the next command?
+;   - is the module saying anything at all?
+;
+; WHAT IT GIVES UP BY NOT SCANNING is the ability to tell a DZRP command from
+; one of the module's unsolicited `<id>,CONNECT` / `<id>,CLOSED` lines, so such
+; a line breaks a running debuggee in. Argued at mf_nmi_poll, where the
+; alternative — parsing inside the NMI — is worse.
+;
+; NO HL, DELIBERATELY, so that DE and HL can be left entirely alone: the byte
+; pairs are read a byte at a time rather than through `ld hl,(nn)`. The caller's
+; HL and DE belong to the interrupted debuggee.
+;
+; IT CANNOT CONSUME. The two counters are only read, and 0x133B is the UART's
+; STATUS register — the data register is 0x143B — so the byte it reports is
+; still in the FIFO for cmd_loop. It does clear the RX overflow and framing
+; flags (serial/uart.vhd:536-539); mf_nmi_poll's ordering is what keeps that
+; away from the debugger's own reads.
+;
+; Returns:
+;   NZ = there is something for us
+;   Z  = the link is quiet
+; Changes:
+;   AF   (BC, DE and HL are preserved — see transport.asm)
+;===========================================================================
+transport_poll_traffic:
+    ld a,(esp_rx_remaining)
+    or a
+    ret nz
+    ld a,(esp_rx_remaining+1)
+    or a
+    ret nz
+
+    ld a,(esp_hold_len)
+    or a
+    ret nz
+    ld a,(esp_hold_len+1)
+    or a
+    ret nz
+
+    ld a,HIGH UART_TX
+    in a,(LOW UART_TX)
+    bit UART_RX_FIFO_EMPTY,a
+    ret
+
+
+;===========================================================================
 ; Waits until a DZRP byte is available and returns it.
 ; A timeout is not returned to the caller — see esp_read_raw.
 ; Returns:

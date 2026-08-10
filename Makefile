@@ -362,6 +362,7 @@ UT_ASM      = $(SRC)/unit_tests/unit_tests.asm
 UT_HL_ASM   = $(SRC)/unit_tests/headless/ut_headless.asm
 TRIGGER_ASM = $(TEST)/nmi_trigger.asm
 COPPER_ASM  = $(TEST)/copper_nmi.asm
+POLL_ASM    = $(TEST)/copper_poll.asm
 ESP_ASM     = $(TEST)/esp_server.asm
 MFSELECT_C  = $(TOOLS)/mfselect/mfselect.c
 MFINSTALL_C = $(TOOLS)/mfinstall/mfinstall.c
@@ -399,6 +400,7 @@ UT_HL_BIN   = $(OUT)/ut-headless.nex
 UT_HL_GEN   = $(OUT)/ut_headless/ut_table.asm
 TRIGGER_BIN = $(OUT)/nmi_trigger.bin
 COPPER_BIN  = $(OUT)/copper_nmi.bin
+POLL_BIN    = $(OUT)/copper_poll.bin
 ESP_BIN     = $(OUT)/esp_server.bin
 
 # mfselect's deployables: the utility, and a checksum for each ROM it can
@@ -667,10 +669,11 @@ mfinstall: $(MFINSTALL_DOT) mfselect
 # src/unit_tests/ are a separate body of code that `make unit-tests` assembles
 # and nothing here executes.
 #
-# Boot a Next in jnext and judge screenshots — 8 checks, no VS Code, no hardware
-test: $(ROM) $(TRIGGER_BIN) $(COPPER_BIN)
+# Boot a Next in jnext and judge screenshots — 9 checks, no VS Code, no hardware
+test: $(ROM) $(TRIGGER_BIN) $(COPPER_BIN) $(POLL_BIN)
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" ROM="$(ROM)" \
-	 TRIGGER_BIN="$(TRIGGER_BIN)" COPPER_BIN="$(COPPER_BIN)" $(TEST)/run-headless.sh
+	 TRIGGER_BIN="$(TRIGGER_BIN)" COPPER_BIN="$(COPPER_BIN)" \
+	 POLL_BIN="$(POLL_BIN)" $(TEST)/run-headless.sh
 
 # The Z80 unit tests, at last runnable without VS Code (issue #3). Kept OUT of
 # `make test` deliberately, and not for the usual reason — this one has no
@@ -1254,6 +1257,9 @@ $(TRIGGER_BIN): $(TRIGGER_ASM) Makefile | $(OUT)
 
 $(COPPER_BIN): $(COPPER_ASM) Makefile | $(OUT)
 	$(SJASMPLUS) -DCOPPER_NMI_BIN=\"$@\" $(COPPER_ASM)
+
+$(POLL_BIN): $(POLL_ASM) Makefile | $(OUT)
+	$(SJASMPLUS) -DCOPPER_POLL_BIN=\"$@\" $(POLL_ASM)
 
 $(ESP_BIN): $(ESP_ASM) Makefile | $(OUT)
 	$(SJASMPLUS) -DESP_SERVER_BIN=\"$@\" $(ESP_ASM)

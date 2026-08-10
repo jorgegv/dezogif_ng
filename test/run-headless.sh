@@ -11,9 +11,10 @@
 #   T2  installing our enNextMf.rom does not perturb the NextZXOS boot
 #   T3  CONTROL: the software-NMI fixture really does fire the Multiface NMI,
 #       demonstrated against the SD image's own (stock) Multiface ROM
-#   T4  our stub declines that NMI, because it is not a button press — which
-#       is what upstream's nmi66h is written to do. See the note at T4; M2
-#       has to invert this one.
+#   T4  our stub declines that NMI at a machine where no debugger has ever been
+#       started. Since M2 that is a SERVED cause that correctly declines, not a
+#       filtered-out one — the verdict is unchanged and the reason is not. See
+#       the note at T4, which records why M2 did NOT invert it.
 #   T5  the COPPER can raise the Multiface NMI on its own, at a chosen raster
 #       line, with no CPU involvement — the mechanism M2's asynchronous break
 #       is built on. Shown against the stock MF ROM for the same reason as T3:
@@ -31,6 +32,11 @@
 #       guards. T8 is the other one HERE that presses twice, without a reset.
 #   T8  a second M1 press with NO reset is DECLINED, and the stub is still
 #       alive afterwards (issue #36). T7's other arm — see the note at T8.
+#   T9  THE ASYNCHRONOUS-BREAK POLL, ~50 times a second (issue #22, M2). A
+#       Copper list installed by the DEBUGGED PROGRAM raises the Multiface NMI
+#       every frame, and the stub's new software-cause path must give the
+#       machine back untouched every time — and must still be alive at the end.
+#       See the note at T9.
 #
 # T3 is not decoration. Without it a broken fixture would make T4 look like a
 # stub bug (or, worse, a change in T4's screen would look like a pass). If T3
@@ -47,9 +53,19 @@
 # T4 AND T6 ARE NOT ALTERNATIVES, and an earlier note here said T6 would
 # "replace" T4. It does not. They test different NMI causes against the same
 # cause check in nmi66h: T6 sends a cause it accepts (the button), T4 a cause
-# it rejects (a software NR 0x02 write). Keeping both is what makes T4 a
-# regression check M2 has to invert deliberately, rather than one that quietly
-# disappears the day the button check arrives.
+# it rejects (a software NR 0x02 write).
+#
+# M2 DID NOT INVERT T4, AND THE ISSUE SAID IT WOULD. That instruction — carried
+# here, in CLAUDE.md and in the plan since the fork — rested on an assumption
+# about the shape of the fix: that teaching nmi66h to accept a software cause
+# would make it TAKE OVER on one. It does not. The poll path accepts the cause
+# and then declines unless BOTH our image is in MAIN_BANK and a debuggee is
+# running, and in T4's run no debugger has ever been started, so the magic check
+# fails and the screen is left alone. T4's verdict is therefore unchanged and
+# still correct; what changed is the reason, which is now "the software cause is
+# SERVED and correctly declines" rather than "the software cause is filtered
+# out". Inverting it would have made it assert a takeover that must not happen.
+# Where the software cause being served IS asserted is T9.
 #
 # Every run uses identical frame counts so the two screenshots being compared
 # are at the same point in the FLASH attribute cycle; otherwise "the screen
@@ -62,6 +78,7 @@
 #   ROM          our enNextMf.rom
 #   TRIGGER_BIN  assembled test/nmi_trigger.asm
 #   COPPER_BIN   assembled test/copper_nmi.asm
+#   POLL_BIN     assembled test/copper_poll.asm
 
 set -euo pipefail
 
@@ -71,6 +88,7 @@ OUT=${OUT:-build}
 ROM=${ROM:-$OUT/enNextMf.rom}
 TRIGGER_BIN=${TRIGGER_BIN:-$OUT/nmi_trigger.bin}
 COPPER_BIN=${COPPER_BIN:-$OUT/copper_nmi.bin}
+POLL_BIN=${POLL_BIN:-$OUT/copper_poll.bin}
 
 # Frame budget. The Next needs ~900 frames to reach the NextZXOS welcome
 # screen; the fixture is injected there and the screen is captured 150 frames
@@ -118,6 +136,22 @@ NORESET_NMI_FRAME=${NORESET_NMI_FRAME:-1200}   # the second press — no reset b
 NORESET_KEY_FRAME=${NORESET_KEY_FRAME:-1300}   # "B", 100 frames after that press
 NORESET_SHOT_FRAMES=1466 # = SHOT_FRAMES + 13*32
 NORESET_EXIT_FRAMES=1526
+
+# T9's choreography (issue #22). The debugged program installs a Copper list
+# that raises the Multiface NMI EVERY FRAME, so the stub's poll path runs
+# thousands of times in one run and any leak it makes is repeated rather than
+# rare. The fixture goes in EARLY — before the M1 press, so the polls are
+# already hammering the machine while no debugger exists at all — and its own
+# run 12 never presses the button, which is what puts the poll's magic-mismatch
+# decline against code that CARES about MMU slot 7.
+#
+# Run 13 reuses T8's schedule exactly (BOOT_FRAMES / NORESET_JOY_FRAME /
+# NORESET_KEY_FRAME / NORESET_SHOT_FRAMES) so that its screenshot can be
+# compared with press1-ours.png BYTE FOR BYTE. That comparison is then a
+# one-variable one: the Copper list, and nothing else.
+POLL_INJECT_FRAME=800    # the list is running well before the button press
+POLL_SHOT_FRAMES=1200    # ~8 emulated seconds of polling, ~400 NMIs
+POLL_EXIT_FRAMES=1260
 
 # Wall-clock guard per emulator run. Headless runs above take ~6s.
 RUN_TIMEOUT=120
@@ -197,6 +231,7 @@ die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [ -f "$ROM" ]        || die "ROM not built: $ROM (run 'make mf-rom')"
 [ -f "$TRIGGER_BIN" ]|| die "NMI fixture not built: $TRIGGER_BIN (run 'make test')"
 [ -f "$COPPER_BIN" ] || die "Copper fixture not built: $COPPER_BIN (run 'make test')"
+[ -f "$POLL_BIN" ]   || die "poll fixture not built: $POLL_BIN (run 'make test')"
 command -v mcopy >/dev/null || die "mtools (mcopy) is required to install the ROM into the SD image"
 
 # T6 needs a headless M1 button press, which arrived in jnext 0.99.118. Checked
@@ -256,6 +291,10 @@ print('%d,%d,%d' % seen.pop())
 # `out (BORDER),a` carries no bright bit, so the border can only ever be one of
 # the eight non-bright colours. Same values as run-no-hang.sh's N1/N2.
 BORDER_BLACK=0,0,0
+# T9's fixture speaks in these two: green while the poll is giving the machine
+# back untouched, red — latched — the first time it is not. See copper_poll.asm.
+BORDER_GREEN=0,182,0
+BORDER_RED=182,0,0
 
 # What the stub's own screen says, and both strings are drawn by ui.asm from
 # data_const.asm. The joy-port line is T8's discriminator; the key line is the
@@ -404,7 +443,44 @@ run_noreset() {
     [ -s "$shot" ] || die "no screenshot written: $shot"
 }
 
-log "== running the bench (10 headless runs, ~90s)"
+# T9's runs (issue #22). The poll fixture is injected early and left running;
+# the button and the keys are optional, so one function serves all three.
+#
+# run_poll <image> <screenshot> [button-and-keys]
+run_poll() {
+    local image=$1 shot=$2 keys=${3:-}
+    local -a args=(
+        --headless --machine next
+        --sdcard "$image"
+        --rtc "2026-01-01 12:00:00"
+        --inject "$POLL_BIN" --inject-org 8000 --inject-pc 8000
+        --inject-delay "$POLL_INJECT_FRAME"
+    )
+    if [ -n "$keys" ]; then
+        # T8's schedule, exactly, so run 13's screenshot is comparable with
+        # press1-ours.png byte for byte.
+        args+=(--delayed-nmi-frames "$BOOT_FRAMES" nmi
+               --delayed-keypress-frames "$NORESET_JOY_FRAME" 3
+               --delayed-keypress-frames "$NORESET_KEY_FRAME" b
+               --delayed-screenshot "$shot"
+               --delayed-screenshot-frames "$NORESET_SHOT_FRAMES"
+               --delayed-automatic-exit-frames "$NORESET_EXIT_FRAMES")
+    else
+        args+=(--delayed-screenshot "$shot"
+               --delayed-screenshot-frames "$POLL_SHOT_FRAMES"
+               --delayed-automatic-exit-frames "$POLL_EXIT_FRAMES")
+    fi
+    rm -f "$shot"
+    current_image=$image
+    local rc=0
+    timeout "$RUN_TIMEOUT" "$JNEXT" "${args[@]}" >/dev/null 2>&1 || rc=$?
+    bench_await_departure "$image"
+    current_image=""
+    [ "$rc" -eq 0 ] || die "jnext poll run failed or timed out (image=$image shot=$shot)"
+    [ -s "$shot" ] || die "no screenshot written: $shot"
+}
+
+log "== running the bench (13 headless runs, ~2min)"
 run "$sd_stock" "$SHOTS/boot-stock.png"
 run "$sd_ours"  "$SHOTS/boot-ours.png"
 run "$sd_stock" "$SHOTS/nmi-stock.png" "$TRIGGER_BIN"
@@ -415,6 +491,9 @@ run_reset "$SHOTS/reset-ours.png"      "$SHOTS/reset-ours.log"
 run_reset "$SHOTS/second-nmi-ours.png" "$SHOTS/second-nmi-ours.log" second
 run_noreset "$SHOTS/press1-ours.png" "$SHOTS/press1-ours.log"
 run_noreset "$SHOTS/press2-ours.png" "$SHOTS/press2-ours.log" second
+run_poll "$sd_stock" "$SHOTS/poll-stock.png"
+run_poll "$sd_ours"  "$SHOTS/poll-nodbg.png"
+run_poll "$sd_ours"  "$SHOTS/poll-stub.png" keys
 
 # --- assertions ------------------------------------------------------------
 
@@ -684,10 +763,106 @@ else
     pass "T8 a second M1 press with no reset is declined and the stub is still alive (border $sub_border)"
 fi
 
+# T9 — THE ASYNCHRONOUS-BREAK POLL, running ~50 times a second. Issue #22, M2.
+#
+# This is the first check anywhere that executes the software-cause path in
+# nmi66h, and it executes it about 400 times per run rather than once, which is
+# the point: everything the poll touches it must put back, and a leak that is
+# survivable once is fatal fifty times a second.
+#
+# THE FIXTURE IS THE DETECTOR, because a healthy poll is by design INVISIBLE and
+# there is nothing about one to photograph. test/copper_poll.asm installs the
+# two Copper instructions — in the DEBUGGED PROGRAM, which is where M2 decided
+# they belong — puts a known bank in MMU slot 7 and spins reading NR 0x57 back.
+# Green while every reading is the probe bank; red, LATCHED, the first time one
+# is not, so a bench sampling the border at one frame cannot catch a good moment
+# of a broken run.
+#
+# A PRE-EXISTING DEFECT SITS UNDERNEATH THIS AND THE FIXTURE IS PADDED AROUND IT.
+# Measured 2026-08-10 on `main`'s OWN ROM as well as on M2's: a software
+# Multiface NMI, taken repeatedly and returned from, does not reliably put the
+# CPU back on the instruction it interrupted. A tight loop of one-byte
+# instructions derails within about two NMIs — `xor a` / `jr nz` takes the branch
+# — while the same loop with eight NOPs either side runs 18132 iterations across
+# ~400 NMIs untouched, with registers, flags, SP and PC all intact in a snapshot.
+# It is NOT M2's: `main`'s decline path reproduces it identically, and nothing in
+# this project had ever returned from a software NMI more than once, so it could
+# not have been seen before. Whether the cause is upstream's handler or jnext's
+# NMI model is UNRESOLVED. The fixture is padded so that T9 measures the leak it
+# exists to measure rather than measuring that; see copper_poll.asm.
+#
+# THREE RUNS, AND EACH ANSWERS SOMETHING THE OTHERS CANNOT:
+#
+#   11  poll-stock   THE PRECONDITION, and it is here for exactly T3's reason.
+#                    The same fixture against the SD image's own Multiface ROM
+#                    must produce a takeover, which is what says the Copper list
+#                    really raises the NMI in this run. Without it, a fixture
+#                    that installed nothing would leave the border green and
+#                    runs 12 and 13 would pass having polled nothing at all.
+#   12  poll-nodbg   THE TRANSPARENCY VERDICT. No button is pressed, so no
+#                    debugger ever exists: every poll pages MAIN_BANK in, finds
+#                    somebody else's bytes where the magic should be, and has to
+#                    decline AND PUT SLOT 7 BACK. That is issue #26's defect on
+#                    a 50 Hz timer, and this is the only run in which the
+#                    interrupted program cares what slot 7 holds — in run 13 the
+#                    debugger is executing and slot 7 is legitimately MAIN_BANK,
+#                    so a missing restore there would be invisible.
+#   13  poll-stub    THE LIVENESS VERDICT. The stub is brought up and then
+#                    polled thousands of times while STOPPED, which is the
+#                    prgm_state decline. Judged two ways at once, because
+#                    "nothing changed" is also what a wedged machine looks like
+#                    (T8's lesson): the screen must be byte-identical to T8's
+#                    one-press run, and the border must be BLACK, which only a
+#                    stub that reached main_loop and polled "B" can produce.
+#
+# BYTE-IDENTITY IS AVAILABLE HERE BECAUSE RUN 13 USES T8'S SCHEDULE UNCHANGED —
+# same boot frame, same "3", same "B", same shot frame — so the pair differ only
+# by the Copper list. It is the broad net the two named verdicts are not: an
+# error painted in the stub's red area, a corrupted line, anything at all the
+# ~400 polls might have disturbed.
+#
+# WHAT T9 DOES NOT COVER, and it is worth being exact.
+#
+#   * IT NEVER BREAKS IN. No client is attached, so transport_poll_traffic
+#     answers "quiet" every time and the break half of mf_nmi_poll is not
+#     executed here at all — that is W8, in make test-dzrp-stub.
+#   * IT DOES NOT DISCRIMINATE THE prgm_state TEST, because with no traffic a
+#     build that omitted it would decline anyway.
+#   * IT DOES NOT COVER THE NextREG SELECT LATCH RESTORE, and that was found by
+#     building the red-first and watching it come out GREEN. The poll's own
+#     .save_slot7_page_in writes port 0x243B with 0x57, so a build with the
+#     restore deleted leaves the latch selecting exactly the register this
+#     fixture reads. Nothing here covers it; W7 covers the button path's
+#     equivalent byte and the poll path's has no check.
+#   * THE MIS-RETURN ABOVE IS WORKED AROUND, NOT MEASURED. A check for it would
+#     be a check on `main`'s behaviour as much as on M2's.
+#
+# What it IS shown red against is a build with the slot-7 restore removed: run 12
+# goes red at the border. Measured, with the shipped ROM green three times.
+poll_stock_pct=$(diff_pct "$SHOTS/boot-stock.png" "$SHOTS/poll-stock.png")
+poll_nodbg_border=$(border_rgb "$SHOTS/poll-nodbg.png" || true)
+poll_stub_border=$(border_rgb "$SHOTS/poll-stub.png" || true)
+poll_stub_pct=$(diff_pct "$SHOTS/press1-ours.png" "$SHOTS/poll-stub.png")
+if ! took_over "$poll_stock_pct"; then
+    fail "T9 PRECONDITION: the poll fixture's Copper list raised no NMI ($poll_stock_pct% on the stock ROM)"
+elif [ -z "$poll_nodbg_border" ] || [ -z "$poll_stub_border" ]; then
+    fail "T9 harness: a screenshot's border could not be read, so nothing was judged"
+elif [ "$poll_nodbg_border" = "$BORDER_RED" ]; then
+    fail "T9 the poll did not give MMU slot 7 back to the interrupted program (issue #26 on a timer)"
+elif [ "$poll_nodbg_border" != "$BORDER_GREEN" ]; then
+    fail "T9 harness: the fixture never ran (border $poll_nodbg_border, wanted green), so nothing was judged"
+elif [ "$poll_stub_border" != "$BORDER_BLACK" ]; then
+    fail "T9 the stub is WEDGED after being polled while stopped: border $poll_stub_border, so 'B' was never polled"
+elif ! cmp -s "$SHOTS/press1-ours.png" "$SHOTS/poll-stub.png"; then
+    fail "T9 polling the stopped stub changed its screen ($poll_stub_pct% of pixels): see poll-stub.png"
+else
+    pass "T9 a Copper poll every frame leaves slot 7 alone and the stopped stub untouched and alive"
+fi
+
 log ""
 # Derived, not hardcoded: the summary said "5/5" for a while after a sixth
 # check was added, which is a small lie in exactly the place a reader trusts.
-checks=8
+checks=9
 if [ "$failures" -eq 0 ]; then
     verdict="$checks/$checks checks passed"
 else

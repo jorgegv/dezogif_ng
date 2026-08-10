@@ -2,7 +2,7 @@
 #
 # The DZRP conformance suite, pointed at OUR OWN STUB.
 #
-# Invoked by `make test-dzrp-stub`. Six headless jnext runs with the WiFi ROM
+# Invoked by `make test-dzrp-stub`. Eight headless jnext runs with the WiFi ROM
 # installed as the Multiface ROM and an emulated M1 button press to bring the
 # debugger up, with a TCP client talking to the emulated ESP-01.
 #
@@ -64,6 +64,16 @@
 #          bank it found on every press, and while the debugger executes that
 #          bank is its own — so the next CMD_CONTINUE would have paged the
 #          debugger into the debuggee's slot 7.
+#   run 7
+#     W8   A FREELY RUNNING DEBUGGEE IS STOPPED FROM THE PC — milestone M2's
+#          acceptance criterion, and the thing dezogif has never been able to do.
+#          The debuggee installs a two-instruction Copper list itself, is resumed
+#          with NO temporary breakpoint (so nothing the debugger planted can
+#          bring it back), left running, and then paused with CMD_PAUSE. Its own
+#          run 8 is the CONTROL: identical up to the pause, which is withheld,
+#          and nothing may come back — without it a green W8 is not evidence that
+#          the PAUSE caused the break. Same argument as W3 for C10.
+#
 #     W7   THE SAME PRESS LEAVES backup.speed AND backup.io_next_reg ALONE
 #          (issue #37) — the same defect two bytes along, saved two and eleven
 #          instructions later by the same path, so a press while stopped handed
@@ -170,6 +180,7 @@ ORPHAN=$(dirname "$0")/dzrp/orphan-notify.py
 QUEUED=$(dirname "$0")/dzrp/queued-commands.py
 SPLIT=$(dirname "$0")/dzrp/split-command.py
 NMI_STOPPED=$(dirname "$0")/dzrp/nmi-while-stopped.py
+PAUSE_RUNNING=$(dirname "$0")/dzrp/pause-running.py
 
 # W6's second M1 press, in frames after the first.
 #
@@ -244,6 +255,7 @@ label_addr() {
 [ -f "$QUEUED" ]     || die "W4 fixture not found: $QUEUED"
 [ -f "$SPLIT" ]      || die "W5 fixture not found: $SPLIT"
 [ -f "$NMI_STOPPED" ]|| die "W6/W7 fixture not found: $NMI_STOPPED"
+[ -f "$PAUSE_RUNNING" ] || die "W8 fixture not found: $PAUSE_RUNNING"
 [ -f "$LIST" ]       || die "label table not found: $LIST (W7 needs it to locate its bytes)"
 BACKUP_SPEED_ADDR=$(label_addr "$LIST" backup.speed) \
     || die "no backup.speed in $LIST — W7 cannot locate the byte it judges"
@@ -304,12 +316,16 @@ jlog3=$OUT/dzrp-stub-w3.log
 jlog4=$OUT/dzrp-stub-w4.log
 jlog5=$OUT/dzrp-stub-w5.log
 jlog6=$OUT/dzrp-stub-w6.log
+jlog8=$OUT/dzrp-stub-w8.log
+jlog8c=$OUT/dzrp-stub-w8c.log
 shot=$OUT/screenshots/dzrp-stub.png
 shot2=$OUT/screenshots/dzrp-stub-w2.png
 shot3=$OUT/screenshots/dzrp-stub-w3.png
 shot4=$OUT/screenshots/dzrp-stub-w4.png
 shot5=$OUT/screenshots/dzrp-stub-w5.png
 shot6=$OUT/screenshots/dzrp-stub-w6.png
+shot8=$OUT/screenshots/dzrp-stub-w8.png
+shot8c=$OUT/screenshots/dzrp-stub-w8c.png
 
 jnext_pid=""
 cleanup() {
@@ -854,14 +870,100 @@ EOF
 fi
 
 # ===========================================================================
+# Runs 7 and 8 — W8: a FREELY RUNNING debuggee is stopped from the PC
+#
+# MILESTONE M2'S ACCEPTANCE CRITERION. Everything this suite has ever shown
+# about a resume comes back through a temporary breakpoint the client planted in
+# advance (C10, C11): the debuggee stops because it ran into something the
+# DEBUGGER put there. Here nothing was planted — the fixture spins in `jr $` —
+# and the only thing that can stop it is an asynchronous break. Before M2 the
+# answer was a finger on the M1 button, which is dezogif's headline limitation.
+#
+# THE DEBUGGED PROGRAM INSTALLS THE COPPER LIST, WHICH IS THE DESIGN AND NOT A
+# CONVENIENCE OF THE FIXTURE. The Copper's instruction list is write-only, so a
+# debugger that installed its own could never restore what it destroyed; a
+# program that carries the two instructions itself keeps its Copper program and
+# compiles them out for release. See test/dzrp/pause-running.py and
+# doc/ASYNCHRONOUS-BREAK-DESIGN.md.
+#
+# RUN 8 IS THE CONTROL AND IT IS NOT OPTIONAL, for W3's reason exactly: without
+# it, a notification arriving after a CMD_PAUSE is not evidence that the PAUSE
+# caused it. The same client runs with the pause withheld and NOTHING may come
+# back — which also excludes "the debuggee stopped by itself" and "the debuggee
+# never ran". Re-runnable rather than a story about a scratch tree:
+# PAUSE_RUNNING_CONTROL=0 turns it off, and W8's own run is unchanged.
+# ===========================================================================
+
+PAUSE_RUNNING_CONTROL=${PAUSE_RUNNING_CONTROL:-1}
+
+log ""
+log "== run 7: a freely running debuggee, stopped from the PC (M2)"
+
+if ! start_stub "$jlog8" "$shot8"; then
+    fail "W8 the stub never listened on 127.0.0.1:$PORT for the pause run"
+else
+    set +e
+    w8_out=$(DZRP_PORT="$PORT" DZRP_TIMEOUT="$DZRP_TIMEOUT" python3 "$PAUSE_RUNNING" 2>&1)
+    w8_rc=$?
+    set -e
+    stop_stub
+    printf '%s\n' "$w8_out" | sed 's/^/  | /'
+
+    w8_connects=$(grep -c "accepted as cid" "$jlog8" || true)
+    w8_ok=$(printf '%s' "$w8_out" | grep -c '^RESULT pause OK ' || true)
+    w8_lines=$(printf '%s' "$w8_out" | grep -c '^RESULT pause ' || true)
+
+    # The control's own run, and its verdict is folded into W8's: a green
+    # subject with a red control means nothing was demonstrated.
+    w8c_ok=1
+    w8c_why=""
+    if [ "$PAUSE_RUNNING_CONTROL" -ne 0 ]; then
+        log ""
+        log "== run 8: the same, with the CMD_PAUSE withheld (control)"
+        if ! start_stub "$jlog8c" "$shot8c"; then
+            w8c_ok=0
+            w8c_why="the stub never listened for the control run"
+        else
+            set +e
+            w8c_out=$(W8_NO_PAUSE=1 DZRP_PORT="$PORT" DZRP_TIMEOUT="$CONTROL_TIMEOUT" \
+                python3 "$PAUSE_RUNNING" 2>&1)
+            set -e
+            stop_stub
+            printf '%s\n' "$w8c_out" | sed 's/^/  | /'
+            if [ "$(printf '%s' "$w8c_out" | grep -c '^RESULT pause OK control')" -eq 0 ]; then
+                w8c_ok=0
+                w8c_why="something came back with no CMD_PAUSE sent, so W8's break is not the pause"
+            fi
+        fi
+    fi
+
+    if [ "$w8_connects" -gt 4 ]; then
+        fail "W8 CONTAMINATED: $w8_connects connections in $jlog8 where this fixture makes 1"
+    elif [ "$w8_rc" -ne 0 ] || [ "$w8_lines" -eq 0 ]; then
+        fail "W8 precondition: the client rendered no verdict, so nothing was judged"
+    elif [ "$w8c_ok" -eq 0 ]; then
+        fail "W8 control: $w8c_why"
+    elif [ "$w8_ok" -eq 0 ]; then
+        # STANDING RED as of 2026-08-10, and the detail line says which half.
+        # The break itself works; the ADDRESS the notification reports does not.
+        # Left red rather than softened, exactly as C2 was until issue #7 and
+        # C12 until issue #8: weakening a check to make a target exit 0 is the
+        # one thing this project's testing culture refuses.
+        fail "W8 $(printf '%s' "$w8_out" | sed -n 's/^RESULT pause BAD //p' | head -1)"
+    else
+        pass "W8 CMD_PAUSE stops a freely running debuggee and the stub serves on"
+    fi
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 
 log ""
 if [ "$failures" -ne 0 ]; then
     log "Diagnosis:"
-    log "  jnext logs:   $jlog  $jlog2  $jlog3  $jlog4  $jlog5  $jlog6"
-    log "  screenshots:  $shot  $shot2  $shot3  $shot4  $shot5  $shot6"
+    log "  jnext logs:   $jlog  $jlog2  $jlog3  $jlog4  $jlog5  $jlog6  $jlog8  $jlog8c"
+    log "  screenshots:  $shot  $shot2  $shot3  $shot4  $shot5  $shot6  $shot8  $shot8c"
 fi
 
 exit "$((failures > 0 ? 1 : 0))"

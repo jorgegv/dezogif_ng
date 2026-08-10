@@ -73,9 +73,9 @@ BUILD_TIME16: equ BUILD_TIME & 0xFFFF
 ; in this file that cannot drift as the code grows. Anything measured from the
 ; start would move the first time something above it changed size.
 ;
-;   ROM file offset 0x1FE0 .. 0x1FFF   =   address 0xFEA0 .. 0xFEBF
-;   (the image is mf_nmi.bin, 0x140 bytes, followed by main.bin from 0xE000,
-;    so offset = 0x140 + address - 0xE000)
+;   ROM file offset 0x1FE0 .. 0x1FFF   =   address 0xFE70 .. 0xFE8F
+;   (the image is mf_nmi.bin, 0x170 bytes, followed by main.bin from 0xE000,
+;    so offset = 0x170 + address - 0xE000)
 ;
 ; THE FILE OFFSET IS THE CONTRACT — NOT THIS ADDRESS. Its only value is being
 ; at the same place in the FILE in every release we have ever shipped and will
@@ -88,6 +88,14 @@ BUILD_TIME16: equ BUILD_TIME & 0xFFFF
 ; that relationship, so getting it wrong is a build error and never a silently
 ; misplaced block. Probed 2026-08-08: +16 with this moved builds clean, the ROM
 ; stays 8192 bytes and the block still reads at 0x1FE0.
+;
+; AND M2 HAS NOW MOVED IT, three steps at once: nmi66h's software-cause poll took
+; mf_nmi.bin from 0x140 to 0x170, so this went from 0xFEA0 to 0xFE70 (issue #22).
+; The file offset is unchanged at 0x1FE0, which is the whole point — mfselect
+; reads the file and never the address. The cost is the one the comment above
+; describes and it is paid TWICE: 48 bytes of this half as well as 48 of the MF
+; ROM half, because the image ends at 0xE000 + 0x2000 - MF.main_prg_copy and
+; main_end's ceiling comes down with it. The two halves share one budget.
 ;
 ; An earlier version of this comment said "NEVER MOVE THIS", which was wrong
 ; and sat directly above the constant that M2's entry path may have to move.
@@ -111,7 +119,7 @@ BUILD_TIME16: equ BUILD_TIME & 0xFFFF
 ; This field's format is a contract with tools/mfselect/mfselect.c; the dot is
 ; a rendering applied where a person reads the number, and putting it in the
 ; stored form would give the same value two spellings to drift between.
-ROM_MAGIC_ADDR:     equ MAIN_ADDR + 0x1EA0  ; 0xFEA0 = ROM offset 0x1FE0
+ROM_MAGIC_ADDR:     equ MAIN_ADDR + 0x1E70  ; 0xFE70 = ROM offset 0x1FE0
 ROM_MAGIC_SIZE:     equ 32                  ; reserved; the string is 20 bytes
 
 ; Which transport this ROM was assembled against, and THE assembly-time switch

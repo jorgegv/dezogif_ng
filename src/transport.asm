@@ -16,12 +16,33 @@
 ;     transport_flush               block until everything queued has gone out
 ;     transport_drain               discard anything pending (100ms quiet)
 ;     transport_drain_with_timeout  same, DE = timeout
+;     transport_poll_traffic        NZ = the link has something for us. O(1),
+;                                   AF-only, and called from inside an NMI —
+;                                   see below
 ;
 ;   A read or write that times out does NOT return to its caller. It jumps to
 ;   the implementation's timeout handler, which stores an error and re-enters
 ;   the main loop via drain_main. Every caller above already depends on that —
 ;   none of them check for a timeout — so a second implementation has to
 ;   preserve it rather than returning an error code.
+;
+;   transport_poll_traffic IS NOT A CHEAPER transport_byte_available, AND THE
+;   DIFFERENCE IS ITS WHOLE JUSTIFICATION. It is called by mf.asm's mf_nmi_poll,
+;   from inside the NMI the asynchronous break raises ~50 times a second while
+;   the DEBUGGEE is running (issue #22), so it is bound by three things the
+;   ordinary poll is not:
+;
+;     * O(1), ALWAYS. It may read status registers and its own variables and
+;       nothing else. It must never scan, parse or wait — esp_sync_ipd can spend
+;       ~100 ms, and 100 ms inside an NMI fifty times a second is not a poll.
+;     * AF ONLY. BC, DE and HL belong to the interrupted debuggee. (BC is on the
+;       MF stack at the call site, but the contract is stated at its narrowest so
+;       a future caller cannot be surprised.)
+;     * IT MAY NOT CONSUME. A byte it reported must still be there for cmd_loop.
+;
+;   The cost of those bounds is that it answers "is there a byte", not "is there
+;   a command", so an ESP module's unsolicited line reads as traffic. That is a
+;   decision with a user-visible consequence and it is argued at mf_nmi_poll.
 ;
 ;   Lifecycle (called at the points where the debugger takes and gives back
 ;   the machine)

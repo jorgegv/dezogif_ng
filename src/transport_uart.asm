@@ -316,12 +316,28 @@ transport_wait_rx:
 
 ;===========================================================================
 ; Checks if a byte is available at the UART.
+;
+; ONE ROUTINE UNDER TWO NAMES, AND THE SECOND COSTS NOTHING. Over a cable there
+; is no framing above the byte stream and no module putting unsolicited lines on
+; the wire, so "is a byte waiting" already satisfies every bound the NMI poll
+; imposes on transport_poll_traffic (transport.asm): one status read, AF only,
+; and it does not pop the RX FIFO — reading 0x133B is the STATUS register, where
+; 0x143B is the data one. The ESP build cannot share them, because its
+; transport_byte_available scans.
+;
+; It does clear the RX overflow and framing flags on every read
+; (serial/uart.vhd:536-539, `uart0_tx_rd_fe`). That is pre-existing here — the
+; idle loop already reads this register continuously — and mf_nmi_poll asks its
+; prgm_state question first so that this is never touched while the debugger is
+; using the link itself.
+;
 ; Returns:
 ;   NZ = Byte available
 ;   Z = No byte available
 ; Changes:
 ;   AF
 ;===========================================================================
+transport_poll_traffic:
 transport_byte_available:
     ld a,HIGH UART_TX
     in a,(LOW UART_TX)

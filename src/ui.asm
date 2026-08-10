@@ -140,14 +140,76 @@ wait_on_key_release:
 
 
 ;===========================================================================
+; Puts the display file under 0x4000 for the duration of a paint, and remembers
+; what was there — issue #28.
+;
+; show_ui writes the whole screen area through 0x4000, opening with a MEMCLEAR
+; of SCREEN_SIZE, and 0x4000 is the display file ONLY while MMU slot 2 says so.
+; `CMD_SET_SLOT 2,<bank>` is an ordinary DZRP command — a client inspecting a
+; bank — and cmd_set_slot writes the MMU register directly for every slot but 7,
+; telling this file nothing. So any later redraw (the "B" key through
+; main_redraw, a CMD_CLOSE through `jp main`, or any drain_main) cleared 8 KB of
+; the CLIENT'S bank instead of the screen. Permanently: only slot_backup.slot0
+; and .slot7 are ever saved, so no per-bank backup exists to put it back, and
+; the debuggee is handed the wreckage on its next CMD_CONTINUE. Upstream's, and
+; in both builds.
+;
+; IT FORCES AND RESTORES RATHER THAN CHECKING AND ABANDONING, which is the other
+; shape and is what esp_refresh_client_line does one row along. Abandoning is
+; right there: that painter keeps a single line current, and skipping it costs a
+; stale row until the next full repaint. It is wrong here, because show_ui IS
+; the debugger's screen — a "B" press or a CMD_CLOSE that drew nothing would
+; leave the machine showing whatever happened to be on it, and `last_error`
+; would go unreported in the one place a user is told to look. Forcing also ends
+; a second, older defect for free: an M1 press against a debuggee whose own slot
+; 2 was not the screen used to paint the UI into that debuggee's memory and
+; leave the display untouched, which reads as a stub that did not come up.
+;
+; NR 0x52 READS BACK the live MMU2 (zxnext.vhd:6059-6081, returning the same
+; MMUn that decodes CPU addresses at :2952-2964; slot 2's decode is untouched by
+; the Multiface and config-mode overrides, which are scoped to slots 0/1 at
+; :3029-3066). So the original goes back exactly and no caller has to be told
+; anything — which is what keeps this out of commands.asm, whose hard rule is
+; that it must not be able to tell which transport it was assembled against, and
+; away from the enumeration hazard a macro at every `nextreg REG_MMU...` site
+; would carry (see esp_refresh_client_line, which rejected exactly that).
+;
+; THE BACKUP IS A BYTE IN MEMORY AND NOT THE STACK, for font_map's reason: this
+; sits either side of a `call` and must not be under the return address. One
+; save area is enough because show_ui does not nest.
+; Changed registers:
+;   AF, BC
+;===========================================================================
+screen_map:
+    ld a,REG_MMU+2
+    call read_tbblue_reg
+    ld (screen_map_backup),a
+    nextreg REG_MMU+2,SCREEN_BANK
+    ret
+
+
+;===========================================================================
+; Puts back exactly what screen_map found.
+; Changed registers:
+;   AF
+;===========================================================================
+screen_unmap:
+    ld a,(screen_map_backup)
+    nextreg REG_MMU+2,a
+    ret
+
+
+;===========================================================================
 ; Switches to ULA mode and shows the intro text.
 ; Displaying which keys can be used to change the joy port.
 ;===========================================================================
-; A SHELL, AND THE SHELL IS THE POINT. Since issue #31 the glyphs are read live
-; from the ROM rather than from a copy in this bank, so painting needs the window
-; text.font_map opens — and needs it given back, because MMU slot 1 has no backup
-; anywhere and is what cmd_get_registers reports and what the debuggee resumes
-; with.
+; A SHELL, AND THE SHELL IS THE POINT. Painting needs two windows that are not
+; the debugger's to keep: MMU slot 2, so that 0x4000 is the screen (issue #28,
+; screen_map above), and MMU slot 1, so that the glyphs can be read out of the
+; ROM since issue #31 stopped copying them into this bank (text.font_map).
+; NEITHER SLOT HAS A BACKUP ANYWHERE — slot_backup holds slots 0 and 7 only — so
+; the MMU register is itself the debuggee's storage for both, and each is what
+; cmd_get_registers reports and what the debuggee resumes with.
 ;
 ; IT IS A SHELL RATHER THAN A PROLOGUE AND EPILOGUE INSIDE THE BODY because the
 ; body has TWO exits: an early `ret z` when there is no error to report, and a
@@ -156,9 +218,11 @@ wait_on_key_release:
 ; ("Enumerating a control flow's exits by reading the ones you expected").
 ; Wrapping a `call` cannot miss an exit that has not been thought of.
 show_ui:
+    call screen_map
     call text.font_map
     call show_ui_body
-    jp text.font_unmap
+    call text.font_unmap
+    jp screen_unmap
 
 
 show_ui_body:

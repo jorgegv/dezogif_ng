@@ -1170,6 +1170,18 @@ esp_ui_shown:       defb 0
 ; number drift apart. What is actually wanted is "the window still points where
 ; it pointed when the row was drawn", and that is answerable without knowing
 ; which bank it was.
+;
+; SINCE ISSUE #28 THE VALUE IS ALWAYS SCREEN_BANK, AND THE GUARD IS STRONGER FOR
+; IT. show_ui now maps the display file under 0x4000 itself and puts back what
+; was there (ui.asm's screen_map), and this byte is read inside that window — so
+; what is recorded is the screen's bank, and the comparison below has become "is
+; 0x4000 the screen RIGHT NOW" instead of "has the mapping moved since I drew".
+; The second was the weaker question, and it had a case: an M1 press against a
+; debuggee whose own slot 2 was not the screen used to record the DEBUGGEE's
+; bank here, after which a redraw would match it and XOR the session line into
+; the program being debugged. Nothing else about this changes — the capture is
+; kept for the reason above, and `cp SCREEN_BANK` would now tie this file to
+; show_ui's choice of window as well as to the number.
 esp_ui_bank:        defb 0
 
 ; Which state's string is currently ON the row. Not the same question as
@@ -3915,11 +3927,19 @@ esp_put_client_line:
 ; and "Clearing a flag in the obvious routine, which one caller bypasses". A
 ; register read cannot be forgotten by the next person to add an MMU write.
 ;
-; WHAT IS NOT FIXED HERE, and it is not this routine's: show_ui itself has the
-; same hazard and is older. `check_key_border`'s "B" reaches main_redraw with
-; slot 2 wherever CMD_SET_SLOT left it, and its MEMCLEAR then wipes 8K of that
-; bank. It is in common code, it needs a human at the machine, and it is
-; reported rather than fixed on a branch scoped to issue #23.
+; WHAT WAS NOT FIXED HERE HAS SINCE BEEN FIXED THERE — issue #28. show_ui had
+; the same hazard and was older and larger: it opens with a MEMCLEAR of the
+; whole screen area, so through a retargeted slot 2 it wiped 8K of that bank
+; rather than one row of it. It was reported rather than fixed on a branch
+; scoped to issue #23, and #28 closed it the other way round — ui.asm's
+; screen_map FORCES the window and restores it, because show_ui is the
+; debugger's own screen and abandoning a repaint of that would leave the machine
+; showing nothing. Abandoning is still right here, for the reason above: one
+; stale row until the next full repaint costs nothing.
+;
+; (That paragraph also said the defect "needs a human at the machine". It did
+; not: `jp main` from cmd_close reaches the same main_redraw, and DeZog sends
+; CMD_CLOSE on every Shift+F5. Bench N8 uses that, and no key is pressed.)
 ;
 ; THE OLD LINE IS ERASED BY DRAWING IT AGAIN, and that is not a trick to be
 ; clever with: text.asm's ula.print_char XORs its glyph onto the screen

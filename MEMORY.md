@@ -5,6 +5,156 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-10 — The debugger's own screen was drawn through whatever window the client last asked for
+
+**Built, issue #28.** `show_ui` maps the display file under `0x4000` for the
+duration of a paint and puts back what was there — `ui.asm`'s `screen_map` /
+`screen_unmap`, plus `SCREEN_BANK` in `constants.asm`. Bench check **N8**, shown
+red first.
+
+**THE DEFECT IS AN 8 KB WIPE OF A CLIENT-CHOSEN BANK, IT IS UPSTREAM'S, IT IS IN
+BOTH ROMS, AND NOBODY HAS TO BE AT THE MACHINE.** `show_ui_body` opens with
+`MEMCLEAR SCREEN, SCREEN_SIZE` and then fills 1248 more bytes of attributes
+before it prints a character — all through `0x4000`, which is the display file
+**only while MMU slot 2 says so**. `CMD_SET_SLOT 2,<bank>` is an ordinary DZRP
+command a client sends to look at a bank, and `cmd_set_slot` writes the MMU
+register directly for every slot but 7, telling the UI nothing. Nothing backs a
+bank up — `slot_backup` holds slots 0 and 7 — so the write is permanent and the
+debuggee is handed the wreckage on its next `CMD_CONTINUE`.
+
+**THE ISSUE SAYS IT NEEDS "SOMEONE PRESSING B AT THE MACHINE". IT DOES NOT, AND
+THAT IS THE FINDING RATHER THAN THE FIX.** `check_key_border` reaches
+`main_redraw`, and so does `jp main` from **`cmd_close`** — which is what
+DeZog's `CSpectRemote.disconnect()` sends on every Shift+F5 — and so does
+`drain_main`, on any RX timeout. `show_ui` sits below all three. The keypress is
+the *rarest* of the triggers, not the only one.
+
+**AND THE BENCH HAS BEEN WATCHING IT HAPPEN SINCE #23 WITHOUT SAYING SO.** N6's
+third outcome is `WIPED`, worded as *"show_ui's MEMCLEAR reached that bank, so
+this run reached drain_main and tested nothing"* — a precondition failure. That
+sentence describes this defect firing. It was correct as a statement about
+**N6's** subject and it meant the check could never be the one to report it.
+
+**FORCE AND RESTORE, NOT CHECK AND ABANDON, and the two are right in different
+places rather than one being better.** `esp_refresh_client_line` (issue #23)
+reads NR `0x52` back and **abandons** a redraw whose window has moved. That is
+right there: it keeps one row current, and skipping it costs a stale row until
+the next full repaint. It is wrong for `show_ui`, which **is** the debugger's
+screen — a "B" press or a `CMD_CLOSE` that drew nothing would leave the machine
+showing whatever happened to be on it, and `last_error` unreported in the one
+place a user is told to look. So this forces the window and puts the original
+back, which leaves debuggee-visible state identical and needs no caller to be
+told anything.
+
+**IT ALSO CLOSES AN OLDER AND LARGER CASE FOR FREE, WHICH THE ISSUE DOES NOT
+MENTION.** An M1 press against a debuggee whose own slot 2 was not the screen
+used to paint the UI **into that debuggee's memory** and leave the display
+untouched — which from the outside reads as a stub that failed to come up. That
+needs no `CMD_SET_SLOT` at all, only a program that banks at `0x4000`. It is not
+staged by any run here; it falls out of forcing the window.
+
+**THE MECHANISM IS A REGISTER READ, WHICH IS WHAT KEEPS IT OUT OF COMMON CODE'S
+WAY.** NR `0x52` reads back the live MMU2 (`zxnext.vhd:6059-6081`, returning the
+same `MMUn` that decodes CPU addresses at `:2952-2964`; slot 2's decode is
+untouched by the Multiface and config-mode overrides, which are scoped to slots
+0/1 at `:3029-3066`). Same mechanism `send_ntf_pause` and #23 already use. The
+alternative — a macro invoked from `cmd_set_slot` — was rejected by #23 for two
+reasons that both still apply: it puts state into `commands.asm`, which
+CLAUDE.md's hard rule says must not be able to tell which transport it was
+assembled against, and it is correct only while an enumeration of **forty**
+`nextreg REG_MMU...` sites stays correct.
+
+**`SCREEN_BANK` IS A VHDL FACT AND NOT A COPY OF `cmd_init`'s 10.** An MMU value
+of `0x0A`/`0x0B` is bank 5 (`zxnext.vhd:2961`), and `show_ui_body`'s own
+`nextreg REG_DISPLAY_CONTROL,0` is what makes bank 5 the *displayed* one, since
+NR `0x69` bit 6 drives port `0x7FFD` bit 3 (`:3658-3660`), the shadow-screen
+select (`:3768`). So `show_ui` already forced the ULA onto bank 5 and this
+forces the CPU's window onto the same place. `cmd_init`'s 10 agrees and says
+something else — it is restoring the ZX128 default layout.
+
+**A PREDICTION IN THIS FILE SAID THIS COULD NOT BE DONE, AND IT IS ANNOTATED
+RATHER THAN REWRITTEN.** The 2026-08-09 issue-#31 entry rejects "forcing slot 2
+in `show_ui`" because *"`esp_ui_bank` would always record the forced bank, so
+`esp_refresh_client_line` would always abandon and N5/N6 would go red"*. The
+first clause is true and the consequence does not follow: the refresh compares
+that byte against NR `0x52` **at refresh time**, i.e. against what
+`screen_unmap` put back, and in the ordinary case both are 10. Measured, not
+argued — **N5, N6 and N7 all green in the same run as N8**. See the annotation
+in place.
+
+**AND THE GUARD IT WAS FEARED TO BREAK IS STRONGER NOW.** `esp_ui_bank` is read
+inside the forced window, so it always holds `SCREEN_BANK`, and the comparison
+has become *"is `0x4000` the screen right now"* instead of *"has the mapping
+moved since I drew"*. The second was the weaker question and it had the same
+case as above: an M1 press against a banked debuggee used to record the
+**debuggee's** bank there, after which a redraw would match it and XOR the
+session line into the program being debugged.
+
+**Evidence: `make test-client-status`, 8 runs, 8 checks, N8 shown red first.**
+
+| | ROM | verdict |
+|---|---|---|
+| **red** | `main`'s | `SHOW_UI CORRUPT bank 60 overwritten: 2040 of 2048 bytes changed, first at 0x4800` — **7 of 8** |
+| **green** | as built | `SHOW_UI OK bank 60 unchanged across 2048 bytes from 0x4800` — **8 of 8** |
+
+**N8'S TRIGGER IS `CMD_CLOSE` AND NOT THE "B" KEY THE ISSUE NAMES**, which is a
+deliberate departure. Same routine either way, but a client ordering its own
+commands over a socket carries **no margin at all**, where `--delayed-keypress`
+is scheduled in emulated **frames** against a client counting wall clock — W6's
+mismatch, and N5's own `IDLE_WAIT` is documented as still being a margin rather
+than a proof. The cost is stated rather than hidden: nothing here presses a key,
+so `check_key_border`'s `jp z,main_redraw` is uncovered.
+
+**THE PRECONDITION IS N3's ORDERING PROOF REUSED**, not invented: `cmd_close`
+answers **before** it reaches `show_ui`, so its own response proves nothing, and
+only a reply to a *further* command shows the repaint happened. And the
+read-back deliberately does **not** re-issue `CMD_SET_SLOT`, which is what makes
+N8 cover the restore half too — a `show_ui` that forced the window and forgot to
+put it back would leave `0x4000` addressing the screen, and the probe read would
+catch it. Slot 2 is read out of `CMD_GET_REGISTERS` first so that "left the
+window forced" and "wrote through the client's bank" are two verdicts.
+
+**Rejected.** *Check and abandon*, `esp_refresh_client_line`'s shape — cheaper
+by ~10 bytes and already precedented here, and it makes a "B" press or a
+`CMD_CLOSE` after any `CMD_SET_SLOT 2` draw **nothing at all**, which is a
+different defect wearing a politer hat and would hide `last_error` in the only
+place it is displayed. *Forcing slot 2 and not restoring it* — that is issue #26
+one slot along and #31's own hazard: `cmd_get_registers` reports slots 0-6 live
+from the MMU, so DeZog would be told the wrong bank and the debuggee would
+resume with it. *A macro from `cmd_set_slot`* — above, and #23's reasons.
+*Putting `SCREEN_BANK` in `zx/zx.inc` beside `SCREEN`* — that file is upstream's
+and this is a Next MMU fact, so it went in our own `constants.asm`. *Changing
+`cmd_init` to use it* — the two numbers agree and say different things, and
+conflating them is what this project refuses. *Making
+`esp_refresh_client_line` force the window too* — #23 decided abandoning is
+right there and the reasoning holds; out of scope.
+
+**Cost: +27 bytes in BOTH ROMs, which is correct for common code.** `main_end`
+UART `0xF296` → **`0xF2B1`**, WiFi `0xFCAD` → **`0xFCC8`** — 3055 and **472**
+bytes free to the identity block. Pinned: UART `49a1f363…` → `34af567a…`, WiFi
+`f8786a14…` → `808dbc60…`, with `build/*.bin` deleted before each build.
+**The UART byte-identity gate is EXPECTED to break here** — `ui.asm`,
+`constants.asm` and `data.asm` are all common code — as it did for #7, #8, #9,
+#12, #20, #27 and #31. **The two variants moving by exactly the same 27 bytes is
+what says `transport_esp.asm`'s change was comments only**, which is the claim
+that would otherwise have to be taken on inspection. **This changes a ROM, so
+the merge carries a `make bump`.**
+
+**NOT COVERED, and none of it is hidden.** **The "B" key**, above — no run here
+presses one, so `check_key_border`'s own jump to `main_redraw` is unguarded.
+**`drain_main`'s path to the same `show_ui`**, which is how this most often
+fires in the field and which no check stages deliberately — N6's `WIPED` outcome
+is the nearest thing and it is worded as a precondition. **The debuggee-banked
+case** the fix closes for free: nothing stages an M1 press against a program
+holding a non-screen bank in slot 2, so that improvement is reasoned from the
+code and not measured. **The shadow screen**: `SCREEN_BANK` is right because
+`show_ui` clears NR `0x69` bit 6 in the same routine, which is read from the
+VHDL and not from a run — no bench here boots a guest using bank 7. **Real
+hardware**: nothing here has run on a Next, as with every bench in this
+repository.
+
+---
+
 ## 2026-08-10 — Every breakpoint anywhere ROM was mapped was silently discarded, and fixing it arms the other mechanism
 
 **Built, issue #27.** Breakpoint writes into `0x0000-0x3FFF` now land, and the
@@ -1073,6 +1223,21 @@ same change**, which was offered and is wrong: forcing slot 2 in `show_ui` would
 make `esp_ui_bank` always record the forced bank, so `esp_refresh_client_line`
 would always abandon and N5/N6 would go red. #28 needs a design that accounts for
 #23 and stays its own issue.
+
+*(**CORRECTED 2026-08-10 — THE CONCLUSION HELD AND THE REASON WAS FALSE, WHICH IS
+THE WORSE HALF TO GET WRONG in the file every session is told to read first.**
+#28 was built by doing exactly this, and `make test-client-status` came back
+**8 of 8 with N5, N6 AND N7 GREEN**. The first clause is right — `esp_ui_bank`
+does now always record the forced bank — and "would always abandon" simply does
+not follow from it. The refresh compares that byte against **NR `0x52` read at
+refresh time**, i.e. against the value `screen_unmap` put back, and in the
+ordinary case those are the same number: `cmd_init` writes bank 10 into slot 2
+and `SCREEN_BANK` **is** 10. What the guard does after the change is abandon
+exactly when slot 2 has been moved off the screen — which is when it must, and
+is N6. The prediction was never run; three emulator runs settle it either way,
+and this file carries "where a claim is mechanical, mechanise the check" under
+four other names. The **verdict** — that #28 stays its own issue — is untouched,
+and was right for a different reason: it moves both ROMs.)*
 
 **Cost: UART `main_end` 0xF200 → 0xF21F, WiFi 0xFB49 → 0xFB6E** — the guards are
 ~37 bytes against 768 recovered. **Both ROMs move, by design**: `text.asm`,

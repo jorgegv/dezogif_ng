@@ -172,6 +172,11 @@ font_address:   defw    ROM_START+ROM_SIZE-ROM_FONT_SIZE-0x20*8
 ; nest: show_ui does not call esp_refresh_client_line and vice versa.
 font_map_backup:    defb 0, 0
 
+; What MMU slot 2 held when show_ui started, so screen_unmap can put it back —
+; issue #28. See ui.asm's screen_map, and font_map_backup above for why it is a
+; byte here rather than the stack and why one save area is enough.
+screen_map_backup:  defb 0
+
 
 ;===========================================================================
 ; Used by: mf_rom.asm

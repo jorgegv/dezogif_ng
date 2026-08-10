@@ -566,9 +566,9 @@ strongest:
    `TX_PASSES`, which is what attributes the lost reply to the two waits the fix scopes. Not part
    of `make test`: it binds a host TCP port. **It says nothing about a real ESP-01** — the value 10
    is a judgement call, and only H3/H5 on hardware can settle it.
-4g. **`make test-client-status`** — WiFi mode's session line (issues #14 and #23), 6 headless jnext
-   runs, and the **only bench here that reads the screen back as TEXT** rather than comparing it with
-   another picture. **N1** a client connects over TCP and says nothing: the line must still read
+4g. **`make test-client-status`** — WiFi mode's session line (issues #14, #23 and #28), 8 headless
+   jnext runs, and the **only bench here that reads the screen back as TEXT** rather than comparing
+   it with another picture. **N1** a client connects over TCP and says nothing: the line must still read
    `No debug session yet.`, because the line reports a DZRP session and a socket is not one — that
    is the honesty check, not a baseline. **N2** after `CMD_INIT` it reads `Session opened
    - CMD_INIT`; **N3** after `CMD_CLOSE` it reads `Session closed - CMD_CLOSE`, with the client
@@ -588,7 +588,7 @@ strongest:
    area to be **clean**, which a run through `drain_main` could not be, since it carries
    `RX Timeout`. Without that line the two runs would exercise one path and claim two.
    Shown red first: N4 and N5 both red against `main`'s ROM, N1-N3 green in the same run.
-   **N6 is the only check here judged over the SOCKET rather than off the screen, and it is about
+   **N6, N7 and N8 are judged over the SOCKET rather than off the screen, and all three are about
    memory rather than text.** N5's repaint is autonomous and network-triggered, and it writes at
    `0x4000` — which is the display file only while the debugger's own **MMU slot 2** is mapped
    there. `CMD_SET_SLOT 2,<bank>` is an ordinary DZRP command that retargets it, so N6 is N5 with
@@ -602,6 +602,29 @@ strongest:
    N6 was 32 bytes at `0x4800` and passed against that same ROM** — scanline 0 is the one scanline
    two text strings cannot differ on, because the top row of essentially every ZX glyph is blank.
    Measured against the font, not reasoned.
+   **N7 is the same question one slot along** (issue #31): the glyphs are read from the ROM now, so
+   `text.font_map` pages ROM into **slot 1** for the duration of a paint, and slot 1 has no backup
+   anywhere either — it is read back with `CMD_GET_REGISTERS`, which reports slots 0-6 live from
+   the MMU.
+   **N8 IS THE SAME DEFECT IN `show_ui` ITSELF, AND IT IS THE BIG ONE** (issue #28). N6's painter
+   writes one row; `show_ui` opens with `MEMCLEAR SCREEN, SCREEN_SIZE` and then fills 1248 more
+   bytes of attributes before it prints a character, so through a retargeted slot 2 that is **8 KB**
+   of the client's bank destroyed rather than 96 bytes of it. Upstream's, in **both** builds, and
+   the fix is the opposite shape to N6's: `show_ui` **forces** the window and restores it
+   (`ui.asm`'s `screen_map`), because abandoning the debugger's own screen would leave the machine
+   showing whatever was there and `last_error` unreported. **Its trigger is `CMD_CLOSE`, not the
+   "B" key issue #28 names** — the same `main_redraw` either way, but a client ordering its own
+   commands over a socket carries **no margin at all**, where an injected keypress is scheduled in
+   emulated frames against a client counting wall clock (W6's mismatch, and N5's `IDLE_WAIT` is
+   still a margin). That also **widens** the defect the issue describes: `CMD_CLOSE` is what DeZog
+   sends on every Shift+F5 and `drain_main` reaches the same `show_ui` on any RX timeout, so nobody
+   need be at the machine — which is what N6's `WIPED` outcome has been quietly reporting as
+   "tested nothing" all along. The precondition is `N3`'s ordering proof reused: `cmd_close`
+   answers **before** `show_ui`, so only a reply to a *further* command shows the repaint happened.
+   Slot 2 is read back **before** the bank so "left the window forced" and "wrote through the
+   client's bank" are two verdicts and not one. **Shown red first**, against `main`'s ROM:
+   `2040 of 2048 bytes changed, first at 0x4800`. **What it does not cover** is
+   `check_key_border`'s own `jp z,main_redraw` — nothing here presses a key.
    **Why not a cross-run comparison**: the two interesting states are adjacent lines of similar
    length, so **swapping them** is the obvious bug and is exactly what sailed through mfselect's
    first M9 (ERRORS.md). `cell-diff.py`'s answer there — find the correct glyphs elsewhere in the

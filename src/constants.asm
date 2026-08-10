@@ -30,6 +30,21 @@ SWAP_ADDR:      EQU SWAP_SLOT*0x2000
 ; error_payload_too_big.
 SWAP_SIZE:      EQU 0x2000
 
+; The 8K page the ULA display file lives in, i.e. what MMU slot 2 has to hold
+; for SCREEN..COLOR_SCREEN+0x300 to be the picture rather than somebody's data.
+; Used by ui.asm's screen_map — issue #28.
+;
+; A FACT ABOUT THE MACHINE, NOT A COPY OF cmd_init's 10. The two agree and say
+; different things: cmd_init writes 10 and 11 into slots 2 and 3 to put the
+; ZX128 default layout back (banks 10/11/4/5/0/1), where this is "where the
+; picture is". Both halves are the VHDL's: an MMU value of 0x0A or 0x0B is
+; bank 5 (zxnext.vhd:2961), and show_ui_body's own `nextreg
+; REG_DISPLAY_CONTROL,0` is what makes bank 5 the displayed one, since NR 0x69
+; bit 6 drives port 0x7FFD bit 3 (:3658-3660) which is the shadow-screen select
+; (:3768). So show_ui already forces the ULA onto bank 5; this forces the CPU's
+; window onto the same place.
+SCREEN_BANK:    EQU 10
+
 ; Use the build time
 BUILD_TIME16: equ BUILD_TIME & 0xFFFF
 ; DISPLAY "BUILD_TIME: ", BTIME

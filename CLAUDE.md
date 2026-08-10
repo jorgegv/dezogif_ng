@@ -279,7 +279,7 @@ strongest:
      — `--delayed-nmi` counts frames and a client counts wall clock — so it stays a human's job.
    - T7 a second M1 press after a **soft reset** re-initialises the debugger instead of
      declining (issue #26). **The only check that presses the button twice WITH A RESET BETWEEN**
-     — T8 is the other one that presses twice — which is why five
+     — T8 is the other one in `make test` that presses twice — which is why five
      years of upstream and every earlier bench missed the defect it guards: the NMI dispatch
      read "magic number and build time match, no debuggee running" as "the debugger is
      executing" and declined — an inference a soft reset falsifies, since RAM survives one and

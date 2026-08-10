@@ -28,7 +28,7 @@
 #       instead of declining (issue #26) — see the note at T7. The only check
 #       here that presses the button twice WITH A RESET BETWEEN, which is why
 #       five years of upstream and every earlier bench missed the defect it
-#       guards. T8 is the other one that presses twice, without a reset.
+#       guards. T8 is the other one HERE that presses twice, without a reset.
 #   T8  a second M1 press with NO reset is DECLINED, and the stub is still
 #       alive afterwards (issue #36). T7's other arm — see the note at T8.
 #

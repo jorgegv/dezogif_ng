@@ -5,6 +5,104 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-10 — A 64K address above 0xE000 wrote into the running debugger, and no input here had ever been that address
+
+**Built, issue #38.** `cmd_set_breakpoints` and `cmd_restore_mem` judge the
+64K address form on **`H`** now, not on the bank byte. `ld a,h`, twice.
+
+**THE DEFECT IS C18'S FAMILY ONE COMMAND ALONG: A CLIENT-CONTROLLED WRITE OVER
+THE BANK THE DEBUGGER EXECUTES FROM.** Both handlers decide whether a 64K-form
+address needs the swap window with `cp HIGH MAIN_ADDR` — and ran it with `A`
+still holding the **bank+1** byte, which on that path is **zero by
+definition**: it is what the branch above tested. So the comparison was always
+`0 < 0xE0`, `.normal` always won, and an address at `0xE000` or above took the
+direct write into `MAIN_SLOT`, i.e. `MAIN_BANK`. At a client-chosen offset,
+and in `cmd_restore_mem` with a **client-chosen byte**. Upstream's, in both
+ROMs since the fork.
+
+**IT SURVIVED BECAUSE NOTHING HAD EVER SENT THAT INPUT, and that is the whole
+lesson rather than the arithmetic.** DeZog sends long addresses. C19 and C21
+*do* send the 64K form — `_set_bps` always has — but only at `0x1234` and
+`0x8000`, where the direct branch is the **correct** one. So a green suite was
+green by construction, exactly as it was for the swap-window bound until C16/C17
+pushed 8 KB (MEMORY.md 2026-08-09). **A bound no test DATA can reach is a bound
+with no test**, one organ along from [[ERRORS.md]]'s "a bound the emulator can
+never reach".
+
+**THE POPULATION IS FIVE SITES AND THE ENUMERATION IS MECHANICAL**, which is
+what says there is no third. This boundary has exactly two spellings in the
+tree — `cp HIGH MAIN_ADDR` and `cp MAIN_SLOT*0x20` — so `grep -rn MAIN_ADDR
+src/` plus `grep -rn 'MAIN_SLOT\*0x20' src/` is exhaustive:
+`cmd_set_breakpoints` and `cmd_restore_mem` (both broken, `A` untouched);
+`clear_tmp_breakpoint` (`ld a,d`, address in `DE`); `set_tmp_breakpoint`
+(`ld a,h`); `memory_loop` (`ld a,h`). The fix matches the three that were
+already right rather than inventing a fourth idiom.
+
+**THE CHECK'S VERDICT IS A POSITIVE OBSERVATION, NOT A WAIT TO SEE WHETHER THE
+STUB DIES**, and that is the decision here. A one-byte write into the running
+debugger may or may not be fatal depending on where it lands, so "it crashed"
+is a weak and flaky signal. Instead: seed the debuggee's slot-7 bank at the
+probe address through `CMD_WRITE_MEM`, drive the handler, read the address back
+through `memory_loop`'s own — correct — swap window. **The written byte** means
+it went where asked; **the seed** means it went to `MAIN_BANK`, which is the
+only other place a 64K address at `0xE000+` can land; anything else is a third
+thing. Survival is asserted **in band**, because the read-back is an exchange
+the stub must serve *after* the offending write.
+
+**TWO CHECKS AND NOT ONE**, because the two handlers carry **separate copies**
+of the decision: a fix to either alone must still leave a red naming the other.
+
+**THE PROBE ADDRESS IS `0xFF80` AND EVERY PART OF THAT IS CHOSEN.** In
+`MAIN_SLOT`, or there is no wrong branch to take; **above any byte the debugger
+occupies in `MAIN_BANK`** — only `main_end-MAIN_ADDR` bytes are copied there
+(`mf_rom.asm`'s `MEMCOPY`), `main.asm` bounds `main_end` by `ROM_MAGIC_ADDR`,
+and that block ends at `0xFEB4` and only ever moves **down** — so a defective
+stub writes into **dead space**, the red is a repeatable reading rather than a
+crash, and every check below still runs; and not `0xFFFF`, so nothing rests on
+the last byte of a bank.
+
+**Shown red first, twice, byte-identically, and the red is the PRECISE branch**
+— *"0xFF80 is untouched: the RST 0 went to the debugger's own bank"* and
+*"…the byte went to…"* — with **21 of 23 green in the same runs**, which is also
+what says the mis-routed write really is inert.
+
+**Rejected.** C18's shape alone, survival on a fresh connection (it would pass
+on a write that landed harmlessly in dead space — which is exactly what this
+one does, so it would have been a green check that could not fail); one check
+covering both handlers (a red would not say which); using `CMD_RESTORE_MEM` to
+put the seed back in C22 (it is C23's subject and carries the same defect, so
+on a red remote the restore would go to the wrong bank); aiming at a *live*
+part of `MAIN_BANK` to make the red louder (it makes the red a crash, i.e.
+flaky, and poisons C18 and C15 below).
+
+**Cost: +2 bytes in BOTH ROMs, which is correct for common code.** `main_end`
+UART `0xF2B1` → `0xF2B3`, WiFi `0xFD2F` → `0xFD31` (**367** free to the
+identity block). Pinned, with `build/*.bin` deleted first: UART `ff40b145…` →
+`48629b22…`, WiFi `51ffc339…` → `536e8ae0…`. **The UART byte-identity gate
+breaks deliberately**, as for #7, #8, #9, #12, #20, #27 and #28 —
+`commands.asm` is shared. Proved to be the whole of it by symbol table: **973
+symbols before and after, none added, none removed**, 776 unmoved, 6 at +1 and
+191 at +2 — two one-byte insertions and nothing else. **This changes a ROM, so
+the merge carries a `make bump`.**
+
+**Regression: `test-dzrp-stub` 23/23 with W1-W6 and exit 0, `make test` 8/8,
+`test-unit` 5/5, both variants `check-reproducible`.**
+
+**NOT COVERED, and none of it is hidden.** **`memory_loop` is a shared
+dependency** of the seed and of the verdict: were it broken the same way the
+seed would round-trip through `MAIN_BANK` and both checks would pass against a
+defective remote. Nothing observable from a socket separates those; what rules
+it out is the source and the enumeration, not the run. **Hardware** — neither
+check has run on a Next, and the defect has never been observed anywhere but
+here. **The UART build's half**: `commands.asm` is shared and the fix reaches
+both ROMs, but nothing has ever driven the serial transport with a DZRP client,
+so that half is predicted and not run — which is also true of the defect. **What
+a 64K breakpoint above `0xE000` destroyed in practice** on a real machine, which
+depends on where in `MAIN_BANK` it fell and which nothing here reproduces: the
+probe deliberately aims at dead space.
+
+---
+
 ## 2026-08-10 — The screen stops advertising an address the module has lost; and re-acquisition turned out not to exist
 
 **Built, issue #32** — M3's headline item, *"reconnect after WiFi drop"*, which

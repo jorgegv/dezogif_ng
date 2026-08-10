@@ -308,6 +308,8 @@ running it, so the shell kills itself — this cost two aborted commands before 
 | C19 | **a breakpoint in ROM space is written to memory** — and can be taken out again — see below |
 | C20 | **a breakpoint in ROM space stops the debuggee** — see below |
 | C21 | **a breakpoint spares the debugger's own trampoline**, which C19 makes reachable — see below |
+| C22 | **a 64K-form breakpoint above `0xE000` reaches the debuggee's bank**, not the debugger's — see below |
+| C23 | the same for `CMD_RESTORE_MEM`, whose byte is the client's as well as its address — see below |
 
 ### C19, C20 and C21: breakpoints where ROM is mapped (issue #27)
 
@@ -408,6 +410,101 @@ REFUSED : 0x0000-0x0007 0x0066-0x0073
 ```
 
 Re-measure it that way after any change to the guard. Reading the code is what missed the defect.
+
+### C22 and C23: the 64K address form, at an address in the debugger's own slot (issue #38)
+
+**DZRP gives an address two forms and this suite had only ever sent the second one low.**
+`CMD_SET_BREAKPOINTS` and `CMD_RESTORE_MEM` each carry a 16-bit address plus a **bank+1** byte:
+non-zero names a bank outright; zero means "the 64K address as the debuggee currently sees it". The
+stub answers the second form by asking whether the address is at or above `0xE000`, because that
+range is `MAIN_SLOT` — where the debugger itself is executing — so reaching the *debuggee's* memory
+there means paging its bank into the swap window at `0xC000` first.
+
+**Both handlers made that decision on the wrong register.** The `cp HIGH MAIN_ADDR` ran with `A`
+still holding the bank+1 byte, which on that path is **zero by definition** — it is what the branch
+above tested — so the comparison was always `0 < 0xE0` and the direct-write branch always won. A
+64K-form address at `0xE000` or above therefore wrote into `MAIN_BANK`: the bank the debugger is
+running out of, at a **client-chosen offset**, and in `cmd_restore_mem` with a **client-chosen
+byte**. That is C18's family one command along, and it is upstream's, in both ROMs, since the fork.
+
+**It survived because nothing had ever sent that input.** DeZog sends long addresses. C19 and C21
+*do* send the 64K form — `_set_bps` has always used it — but only at `0x1234` and `0x8000`, where
+the direct branch is the **correct** one. So the defect lived in the one input nobody sent, and a
+green suite stayed green by construction. It was found by reading, by the independent reviewer of
+issue #27, and the second site by grepping for the pattern rather than trusting the first was alone.
+
+**The population is five sites and the enumeration is mechanical.** `MAIN_ADDR` has exactly two
+spellings of this boundary in the tree — `cp HIGH MAIN_ADDR` and `cp MAIN_SLOT*0x20` — and
+`grep -rn 'MAIN_ADDR' src/` plus `grep -rn 'MAIN_SLOT\*0x20' src/` finds every one:
+
+| site | loaded before the `cp` | |
+|---|---|---|
+| `commands.asm` `cmd_set_breakpoints.handle_64k_address` | nothing — `A` is the bank byte | **was broken** |
+| `commands.asm` `cmd_restore_mem.handle_64k_address` | nothing — `A` is the bank byte | **was broken** |
+| `breakpoints.asm` `clear_tmp_breakpoint` | `ld a,d` — the address is in `DE` | correct |
+| `breakpoints.asm` `set_tmp_breakpoint` | `ld a,h` | correct |
+| `backup.asm` `memory_loop` | `ld a,h` | correct |
+
+The fix is `ld a,h`, twice, matching the three that already got it right rather than inventing a
+fourth idiom.
+
+#### The verdict is a positive observation, not a wait to see whether the stub dies
+
+A one-byte write into the running debugger may or may not be fatal depending on where it lands, so
+"it crashed" is a weak and flaky signal for this defect. Instead: seed the debuggee's slot-7 bank at
+the probe address through `CMD_WRITE_MEM`, drive the handler, and read the address back through
+`memory_loop`'s own — correct — swap window. **Three outcomes, and each says a different thing:**
+
+| the read-back | |
+|---|---|
+| the written byte (`RST 0`, or C23's value) | the write went where the client asked |
+| **the seed** | it went somewhere else, and the only other place a 64K address at `0xE000+` can land is `MAIN_BANK` — **the defect** |
+| anything else | a third thing, reported as a third thing |
+
+C22 has a **second, independent** observation of the same routing for free: `CMD_SET_BREAKPOINTS`
+replies with the opcode the remote *found*, which on the swap path is the seed. It is judged after
+the read-back because it is the weaker of the two — a defective remote reads an uninitialised byte
+out of `MAIN_BANK` and could match the seed one time in 256 — where the read-back is deterministic
+whichever branch ran.
+
+**Survival is asserted in band** rather than on a fresh connection as C18 does: the read-back is
+itself an exchange the remote must serve *after* the offending write.
+
+#### Two checks, and a probe address chosen so the red is a reading
+
+**Two and not one**, because the two handlers carry **separate copies** of the decision: a fix to
+either alone must still leave a red naming the other. A single check covering both would go red
+either way and would not say which.
+
+The probe address is **`0xFF80`**, and every part of that is chosen. It is in `MAIN_SLOT`, or there
+is no wrong branch to take. It is **above any byte the debugger occupies in `MAIN_BANK`** — only
+`main_end-MAIN_ADDR` bytes are ever copied into that bank (`mf_rom.asm`'s `MEMCOPY`), `main.asm`
+`ASSERT`s `main_end <= ROM_MAGIC_ADDR`, and the identity block ends at `0xFEB4`, which only ever
+moves **down** as the MF ROM half grows — so a defective remote writes into **dead space**, the red
+is a repeatable reading rather than a crash somewhere in the debugger's own code, and every check
+below it still runs. And it is not `0xFFFF`, so nothing rests on the last byte of a bank.
+
+Shown red first, and the red is the *precise* branch rather than a timeout:
+
+```
+FAIL  C22 ... — 0xFF80 is untouched: the RST 0 went to the debugger's own bank
+FAIL  C23 ... — 0xFF80 is untouched: the byte went to the debugger's own bank
+```
+
+byte-identical across two full runs, with all 21 other checks green in the same runs — which is
+also what says the mis-routed write really is inert.
+
+#### What C22 and C23 do NOT establish
+
+**`memory_loop` is a shared dependency of the seed and of the verdict.** Were it broken the same
+way, the seed would round-trip through `MAIN_BANK` and both checks would pass against a defective
+remote. Nothing observable from a socket separates those; what rules it out is the source
+(`backup.asm:325`, `ld a,h` before the compare), enumerated above, and **not** this run. The
+`slot7 == MAIN_BANK` precondition covers the other vacuous case — if the debuggee's slot 7 held the
+debugger's own bank, both branches would write one place and no observation could tell them apart.
+
+**Neither has run on hardware**, and the defect has never been observed anywhere but here: it is
+traced from the source and now measured in the emulator.
 
 ### A verdict line is one sentence; this file is where the reasoning is
 

@@ -501,7 +501,30 @@ strongest:
    **NOT covered**: `CMD_WRITE_MEM` into ROM space is still discarded (`memory_loop`'s per-byte path
    is the receive path the baud ceiling is about, so it is deliberately not bracketed), and none of
    this has run on hardware. See `doc/DZRP-TESTING.md`.
-   **The suite is 21 since C19-C21 landed, and was 18 since C16-C18**; the 2026-08-05 figure is left as the measurement it was
+   **C22 AND C23 ARE THE 64K ADDRESS FORM AT AN ADDRESS IN THE DEBUGGER'S OWN SLOT** (issue #38).
+   `cmd_set_breakpoints` and `cmd_restore_mem` decide whether a 64K-form address needs the swap
+   window by comparing against `0xE000` — and did it **with `A` still holding the bank+1 byte**,
+   which on that path is zero by definition, so the test was always `0 < 0xE0` and the direct write
+   always won. An address at `0xE000` or above therefore landed in `MAIN_BANK`, the bank the
+   debugger executes from, at a client-chosen offset and — in `cmd_restore_mem` — with a
+   client-chosen byte. Upstream's, in both ROMs since the fork; **C18's family, one command along**.
+   It survived because **nothing had ever sent that input**: DeZog uses long addresses, and C19/C21
+   send the 64K form only at `0x1234` and `0x8000`, where the direct branch is the *correct* one.
+   The verdict is a **positive three-outcome read-back**, not a wait to see whether the stub dies —
+   a one-byte write into the running debugger may or may not be fatal, so "it crashed" would be a
+   weak and flaky signal. The debuggee's slot-7 bank is seeded through `CMD_WRITE_MEM`, the handler
+   is driven, and the address is read back through `memory_loop`'s own (correct) swap window: the
+   written byte means the write went where it was asked, **the seed means it went to `MAIN_BANK`**,
+   anything else is a third thing. Survival is asserted **in band** — the read-back is an exchange
+   the stub has to serve *after* the offending write. **Two checks and not one**, because the two
+   handlers carry separate copies of the decision, so a fix to either alone must still leave a red
+   naming the other. The probe address is `0xFF80`, **above `main_end` in both variants** and above
+   `ROM_MAGIC_ADDR`, which only ever moves down — so a defective stub writes into dead space and the
+   red is a repeatable reading. Shown red first, twice, byte-identically: *"0xFF80 is untouched"*.
+   **NOT covered**: `memory_loop` is a shared dependency of the seed and the verdict, so a
+   `memory_loop` broken the same way would make both pass vacuously — what rules that out is the
+   source (`backup.asm:325`), enumerated, and not the run; and none of this has run on hardware.
+   **The suite is 23 since C22-C23 landed, was 21 since C19-C21, and 18 since C16-C18**; the 2026-08-05 figure is left as the measurement it was
    rather than restated, and the hardware run of 2026-08-08 that reports 15 of 15 was also taken at
    the suite's size then. **C16-C18 HAVE now run on hardware — 2026-08-09, build `00.19`, 18 of 18
    with the whole bench at 6 of 6.** And C18 carries the strongest evidence in this project's
@@ -951,7 +974,7 @@ read once; a document can be revised, cited and diffed.
 
 Two things the shortening may **never** touch, because they are interface rather than prose:
 
-- **The check id.** `T1`-`T8`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W6`, `C1`-`C21`, `B1`-`B2`,
+- **The check id.** `T1`-`T8`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W6`, `C1`-`C23`, `B1`-`B2`,
   `P1`-`P3`, `N1`-`N8`, `G1`-`G2`, `I1`-`I9`, `S1`-`S7`, `K1`-`K4`, `R0`-`R5`, `L1`-`L5`, `D1`-`D8`,
   `H1`-`H6` are cited
   by every

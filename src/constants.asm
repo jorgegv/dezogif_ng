@@ -42,7 +42,13 @@ SWAP_SIZE:      EQU 0x2000
 ; REG_DISPLAY_CONTROL,0` is what makes bank 5 the displayed one, since NR 0x69
 ; bit 6 drives port 0x7FFD bit 3 (:3658-3660) which is the shadow-screen select
 ; (:3768). So show_ui already forces the ULA onto bank 5; this forces the CPU's
-; window onto the same place.
+; window onto the same place. Corroborated from a third direction: MMU2's own
+; reset value is X"0A" (:4612).
+;
+; NOTE that no check here asserts this NUMBER. Bench N8 would pass a build with
+; SCREEN_BANK=11 — the client's bank is spared either way — so what covers the
+; value is N1-N5 in the same bench, which read row 8 of the screen back as TEXT
+; and would find it blank if the window pointed at the wrong half.
 SCREEN_BANK:    EQU 10
 
 ; Use the build time

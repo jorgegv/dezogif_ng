@@ -12,10 +12,13 @@ duration of a paint and puts back what was there — `ui.asm`'s `screen_map` /
 `screen_unmap`, plus `SCREEN_BANK` in `constants.asm`. Bench check **N8**, shown
 red first.
 
-**THE DEFECT IS AN 8 KB WIPE OF A CLIENT-CHOSEN BANK, IT IS UPSTREAM'S, IT IS IN
-BOTH ROMS, AND NOBODY HAS TO BE AT THE MACHINE.** `show_ui_body` opens with
-`MEMCLEAR SCREEN, SCREEN_SIZE` and then fills 1248 more bytes of attributes
-before it prints a character — all through `0x4000`, which is the display file
+**THE DEFECT IS A 7392-BYTE WIPE OF A CLIENT-CHOSEN BANK, IT IS UPSTREAM'S, IT
+IS IN BOTH ROMS, AND NOBODY HAS TO BE AT THE MACHINE.** `show_ui_body` opens
+with `MEMCLEAR SCREEN, SCREEN_SIZE` — 6144 bytes — and then fills **1248** more
+with attributes before it prints a character: `0x4000`-`0x5CDF`, **7392 bytes**,
+plus the glyphs drawn inside that range. (The *slot* is 8 KB and the write is
+not, which the issue and the first version of this entry both said. Corrected
+rather than propagated.) All of it through `0x4000`, which is the display file
 **only while MMU slot 2 says so**. `CMD_SET_SLOT 2,<bank>` is an ordinary DZRP
 command a client sends to look at a bank, and `cmd_set_slot` writes the MMU
 register directly for every slot but 7, telling the UI nothing. Nothing backs a
@@ -29,11 +32,19 @@ DeZog's `CSpectRemote.disconnect()` sends on every Shift+F5 — and so does
 `drain_main`, on any RX timeout. `show_ui` sits below all three. The keypress is
 the *rarest* of the triggers, not the only one.
 
-**AND THE BENCH HAS BEEN WATCHING IT HAPPEN SINCE #23 WITHOUT SAYING SO.** N6's
+**AND #23 WROTE THIS DEFECT DOWN AS AN OUTCOME WITHOUT RECOGNISING IT.** N6's
 third outcome is `WIPED`, worded as *"show_ui's MEMCLEAR reached that bank, so
 this run reached drain_main and tested nothing"* — a precondition failure. That
 sentence describes this defect firing. It was correct as a statement about
 **N6's** subject and it meant the check could never be the one to report it.
+
+**BUT IT HAS NEVER FIRED AND CANNOT, WHICH AN EARLIER VERSION OF THIS ENTRY GOT
+WRONG** by saying N6 had been "quietly reporting" it all along. `WIPED` requires
+`after == bytes(2048)` exactly, and any run that reaches `show_ui` also draws
+glyphs into character rows 8-15 — which is precisely the probe's
+`0x4800`-`0x4FFF`. So the outcome would be `CORRUPT`, and N6 would blame the
+**refresh** for `show_ui`'s damage. Measured, not argued: this branch's own red
+against `main`'s ROM reports `overwritten`, never `zeroed`.
 
 **FORCE AND RESTORE, NOT CHECK AND ABANDON, and the two are right in different
 places rather than one being better.** `esp_refresh_client_line` (issue #23)
@@ -78,9 +89,17 @@ in `show_ui`" because *"`esp_ui_bank` would always record the forced bank, so
 `esp_refresh_client_line` would always abandon and N5/N6 would go red"*. The
 first clause is true and the consequence does not follow: the refresh compares
 that byte against NR `0x52` **at refresh time**, i.e. against what
-`screen_unmap` put back, and in the ordinary case both are 10. Measured, not
-argued — **N5, N6 and N7 all green in the same run as N8**. See the annotation
-in place.
+`screen_unmap` put back, and in the ordinary case both are 10.
+
+**AND THE REFUTATION IS SOUND BY CONSTRUCTION, NOT MERELY BY MEASUREMENT**,
+which is stronger than the first version of this paragraph argued: `esp_ui_bank`
+is now **invariantly** `SCREEN_BANK` — every writer of it runs either inside
+`screen_map`'s window (`show_ui`) or behind a comparison that has just proved
+equality (`esp_refresh_client_line`) — so the guard reduces to "is `0x4000` the
+screen right now", and that abandons **exactly** when the window is elsewhere
+and proceeds **exactly** when it is not. Both directions, from the invariant
+rather than from three runs. The runs agree: **N5, N6 and N7 all green in the
+same run as N8**. See the annotation in place.
 
 **AND THE GUARD IT WAS FEARED TO BREAK IS STRONGER NOW.** `esp_ui_bank` is read
 inside the forced window, so it always holds `SCREEN_BANK`, and the comparison
@@ -135,10 +154,12 @@ bytes free to the identity block. Pinned: UART `49a1f363…` → `34af567a…`, 
 `f8786a14…` → `808dbc60…`, with `build/*.bin` deleted before each build.
 **The UART byte-identity gate is EXPECTED to break here** — `ui.asm`,
 `constants.asm` and `data.asm` are all common code — as it did for #7, #8, #9,
-#12, #20, #27 and #31. **The two variants moving by exactly the same 27 bytes is
-what says `transport_esp.asm`'s change was comments only**, which is the claim
-that would otherwise have to be taken on inspection. **This changes a ROM, so
-the merge carries a `make bump`.**
+#12, #20, #27 and #31. **`transport_esp.asm`'s change is comment-only, and what
+says so is a grep**: its diff has zero changed lines that are not a comment or
+blank. The two variants moving by exactly the same 27 bytes **corroborates**
+that and does not prove it, which an earlier version of this paragraph got
+wrong — equal deltas prove **net-zero**, and a +3/−3 edit gives the same number.
+**This changes a ROM, so the merge carries a `make bump`.**
 
 **Regression: `test-client-status` 8/8, `make test` 8/8 (T8 included),
 `test-dzrp-stub` 21/21 with W1-W6, `test-unit` 5/5, `test-screen-agreement` all
@@ -146,23 +167,64 @@ green (all 49152 pixels agree in both G1 and G2, which is the check that judges
 what `show_ui` actually draws), `test-no-hang` 4/4, and both variants
 `check-reproducible`.**
 
-**NOT COVERED, and none of it is hidden.** **A "B" press with slot 2
-retargeted** — and that is narrower than "the B key", which the first version of
-this paragraph said. `test-no-hang`'s **N2 does press it** and requires the
-border to come back **black**, which can only happen by way of
-`check_key_border` → `main_redraw` → `show_ui` → `main_loop`, so the key path
-runs through the new shell and returns. What no run does is press it while slot
-2 points somewhere else, which is N8's subject reached by the other trigger.
+**NOT COVERED, and none of it is hidden.**
+
+**A "B" PRESS WITH SLOT 2 RETARGETED, AND A POST-PRESS `show_ui` RETURN.** The
+first version of this paragraph claimed more than that from `test-no-hang`'s N2,
+and the claim was false in the direction that overstates coverage — in this
+file, which `CLAUDE.md` designates read-first. It said N2's **black** border
+"can only happen by way of `check_key_border` → `main_redraw` → `show_ui` →
+`main_loop`, so the key path runs through the new shell **and returns**".
+**`check_key_border` writes the black itself** — `xor a` / `out (BORDER),a`,
+`src/ui.asm:83-84` — *before* it returns Z and therefore before `main.asm:231`'s
+`jp z,main_redraw` is taken; and `change_border_color` then returns immediately
+while `slow_border_change` is 0 (`transport_esp.asm:2935-2938`,
+`transport_uart.asm:223-226`), so nothing later disturbs it. **The bench I cited
+says exactly this in its own header** (`test/run-no-hang.sh:49-51`). So the
+black is identical whether the post-press `show_ui` returned or hung, which is
+precisely the half that was claimed.
+
+What N2 does establish, and it is worth having: `jp z,main_redraw` is
+unconditional on the Z `check_key_border` returns, so black says the key was
+polled and therefore that `main_redraw` and the new shell were **entered**; and
+black-rather-than-yellow says `main_loop` was reached at all, which requires the
+**boot** `show_ui` to have returned through the shell. Neither is the
+post-press return, and no run here presses "B" with slot 2 pointing elsewhere.
+
 **`drain_main`'s path to the same `show_ui`**, which is how this most often
-fires in the field and which no check stages deliberately — N6's `WIPED` outcome
-is the nearest thing and it is worded as a precondition. **The debuggee-banked
-case** the fix closes for free: nothing stages an M1 press against a program
-holding a non-screen bank in slot 2, so that improvement is reasoned from the
-code and not measured. **The shadow screen**: `SCREEN_BANK` is right because
-`show_ui` clears NR `0x69` bit 6 in the same routine, which is read from the
-VHDL and not from a run — no bench here boots a guest using bank 7. **Real
-hardware**: nothing here has run on a Next, as with every bench in this
-repository.
+fires in the field and which no check stages deliberately. N6's `WIPED` outcome
+is *not* the nearest thing, and an earlier version of this entry said it was:
+**`WIPED` cannot fire at all**. It needs `after == bytes(2048)` exactly, and any
+run that reaches `show_ui` also draws glyphs into character rows 8-15 — which is
+exactly the probe's `0x4800`-`0x4FFF` — so the outcome is `CORRUPT`. Measured
+rather than argued: this branch's own red reports **`overwritten`**, never
+`zeroed`. The same reasoning makes `close_slot`'s `"zeroed"` sub-label
+unreachable today; it is kept as a cheap discriminator against a future partial
+fix and labelled as unreachable where it is written.
+
+**A TRADE THE FIX MAKES AND THE FIRST VERSION OF THIS ENTRY DID NOT NAME: the
+debugger now destroys BANK 5 unconditionally**, where before it destroyed
+whatever slot 2 happened to hold. It is the right trade — `show_ui_body` already
+forces the ULA onto bank 5 (NR `0x69` bit 6) and `main_redraw` blanks Layer 2,
+so the debugger is taking the display either way — but it is a trade and not a
+free win: a debuggee holding data in bank 5 with slot 2 pointed somewhere else
+used to survive a repaint and now does not. That includes `0x5B00`-`0x5CDF`,
+which `show_ui_body`'s attribute `MEMFILL` overruns into and which is not the
+picture at all.
+
+**`SCREEN_BANK`'s VALUE IS NOT CHECKED BY N8.** A `SCREEN_BANK=11` build would
+pass it — the client's bank is spared either way — so N8 covers the guard and
+not the number. What covers the number is elsewhere in the same bench: N1-N5
+read row 8 back **as text**, which a window pointed at the wrong half would
+leave blank.
+
+**The debuggee-banked case** the fix closes for free: nothing stages an M1 press
+against a program holding a non-screen bank in slot 2, so that improvement is
+reasoned from the code and not measured. **The shadow screen**: `SCREEN_BANK` is
+right because `show_ui` clears NR `0x69` bit 6 in the same routine, which is
+read from the VHDL and not from a run — no bench here boots a guest using bank
+7. **Real hardware**: nothing here has run on a Next, as with every bench in
+this repository.
 
 ---
 
@@ -2039,6 +2101,15 @@ altogether, which removes the writer and with it the case the feature exists for
 common code, it needs a human at the machine, and it is recorded rather than
 fixed on a branch scoped to #23.
 
+*(**FIXED 2026-08-10 by issue #28, and two of the three clauses above were
+wrong.** The write is **7392 bytes**, not 8 KB — `MEMCLEAR`'s 6144 plus the
+attribute `MEMFILL`'s 1248, `0x4000`-`0x5CDF`; 8 KB is the size of the *slot*.
+And it does **not** need a human at the machine: `jp main` from `cmd_close`
+reaches the same `main_redraw`, and `CMD_CLOSE` is what DeZog sends on every
+Shift+F5 — which is the trigger bench N8 uses, with no key pressed. "Common
+code" was right, and is why the fix moves both ROMs. See the entry at the top of
+this file.)*
+
 ### The check, and the reason it was watched to go red twice
 
 **N6**, and it is the only check in that bench judged **over the socket** rather
@@ -2049,6 +2120,16 @@ answer. Its **third** outcome is a precondition rather than a verdict: all-zeros
 means `show_ui`'s `MEMCLEAR` reached that bank, i.e. the run went through
 `drain_main` and never stood in the state under test, which is why the probe
 contains no zero byte.
+
+*(**CORRECTED 2026-08-10, issue #28, and neither correction changes what N6
+does.** The probe is not zero-**free**: `(i*7+1)&0xFF` is `0x00` at i = 73, 329,
+585, 841, 1097, 1353, 1609 and 1865, so **eight** of its 2048 bytes are zero —
+true when this probe was 32 bytes, and lost silently in this same branch when it
+was widened. The outcome test only needs the probe not to be **all** zeros,
+which holds. And the third outcome **cannot arise at all**: any run reaching
+`show_ui` draws glyphs into character rows 8-15, which is exactly the probed
+`0x4800`-`0x4FFF`, so it reports `CORRUPT` — as this branch's own red does,
+`96 of 2048`, and as #28's does, `2040 of 2048 ... overwritten`.)*
 
 **Red-first against this branch's own first commit**, which has the writer and
 not the guard — a re-runnable control rather than a scratch tree: **96 of 2048

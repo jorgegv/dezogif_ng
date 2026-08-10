@@ -76,19 +76,24 @@ running:
     all zeros       show_ui's MEMCLEAR ran, so this run reached drain_main and
                     never tested its subject: a PRECONDITION failure, not a pass
 
-The third is why the pattern contains no zero byte, and why the second
-connection sends no CMD_INIT: cmd_init writes bank 10 back into slot 2, which
-would hide the very thing being read.
+The third is why the pattern is not all zeros, and why the second connection
+sends no CMD_INIT: cmd_init writes bank 10 back into slot 2, which would hide
+the very thing being read. (This said "contains no zero byte" until 2026-08-10
+and that is false — see PROBE below, eight of its 2048 bytes are 0x00. And the
+third outcome cannot in fact arise; see the module docstring's `close-slot`
+section. Neither changes what this check does.)
 
 AND IT COVERS THE WHOLE 2 KB THE ROW CAN REACH, because a narrower probe was
 measured to be blind — see PROBE below. That mistake is the reason this check
 was watched to go red before it was believed.
 
 `close-slot` IS THE SAME QUESTION ASKED OF show_ui ITSELF — issue #28, and the
-larger of the two hazards by three orders of magnitude. esp_refresh_client_line
-draws one row; show_ui opens with `MEMCLEAR SCREEN, SCREEN_SIZE`, so it zeroes
-6144 bytes and then fills 1248 more with attributes before it prints a character.
-Through a retargeted slot 2 that is 8 KB of somebody else's bank, gone.
+larger of the two hazards by two orders of magnitude. esp_refresh_client_line
+draws one row, measured at 96 bytes; show_ui opens with
+`MEMCLEAR SCREEN, SCREEN_SIZE`, so it zeroes 6144 bytes and then fills 1248 more
+with attributes before it prints a character. Through a retargeted slot 2 that
+is 0x4000-0x5CDF — 7392 bytes — of somebody else's bank, gone. (The issue says
+8 KB; that is the size of the SLOT, not of the write.)
 
 ITS TRIGGER IS CMD_CLOSE AND NOT THE "B" KEY, which is the trigger issue #28
 names. Same routine either way — `check_key_border` reaches main_redraw and so
@@ -103,8 +108,11 @@ AND IT SAYS SOMETHING THE "B" KEY CANNOT. Issue #28 records that the defect
 "needs a client that uses CMD_SET_SLOT on slot 2 AND someone pressing B at the
 machine". CMD_CLOSE is what DeZog's CSpectRemote.disconnect() sends on every
 Shift+F5, so no one need be at the machine at all — and drain_main reaches the
-same show_ui on any RX timeout, which is what N6's third outcome has been
-quietly reporting as "tested nothing" all along.
+same show_ui on any RX timeout, which is the wording N6's third outcome already
+uses ("tested nothing") for a state it describes but CANNOT REACH: WIPED needs
+`after == bytes(2048)` exactly, and any run that gets to show_ui also draws
+glyphs into character rows 8-15, which is precisely 0x4800-0x4FFF. So N6 would
+report CORRUPT and blame the refresh for show_ui's damage.
 
 THE PRECONDITION IS THE ONE `close` ALREADY ARGUES FOR, reused rather than
 invented: cmd_close answers BEFORE it reaches show_ui, so its own response
@@ -154,8 +162,16 @@ SETTLE_AFTER = float(os.environ.get("SETTLE_AFTER", "3"))
 #
 # NOT one of the stub's own (TMP_BANK 92, TMP_BANKB 93, MAIN_BANK 94,
 # LOOPBACK_BANK 91, ROM_BANK 0xFF) and not one cmd_init maps (10, 11, 4, 5, 0, 1).
-# NO ZERO BYTE, because all-zeros is a distinct verdict: it means show_ui's
+#
+# NOT ALL ZEROS, because all-zeros is a distinct verdict: it means show_ui's
 # MEMCLEAR reached this bank and the run took the path this check is not about.
+# THIS COMMENT SAID "NO ZERO BYTE" AND THAT IS FALSE — corrected 2026-08-10,
+# issue #28. It was true when the probe was 32 bytes and was lost silently when
+# it was widened to 2048: (i*7+1)&0xFF is zero at i = 73, 329, 585, 841, 1097,
+# 1353, 1609 and 1865, so EIGHT of the 2048 bytes are 0x00. That is the whole of
+# why both reds this pattern has produced report 2040 changed and not 2048. The
+# conclusion survives — the outcome test is `after == bytes(2048)`, and PROBE is
+# not all zeros — but the reason given for it was wrong.
 #
 # IT COVERS 0x4800-0x4FFF, WHICH IS EVERY BYTE A REDRAW OF ROW 8 CAN REACH, and
 # the first version covered 32 of them and was BLIND. Character row 8 starts at
@@ -368,9 +384,14 @@ def close_slot(t, d):
               % (SLOT2_BANK, len(PROBE), PROBE_ADDR))
     else:
         # A digest and not a dump, for vanish_slot's reason: 2 KB of hex buries
-        # every other line of the run. All-zero is called out by name because it
-        # is the MEMCLEAR's own signature and is what identifies show_ui as the
-        # writer rather than some later print.
+        # every other line of the run.
+        #
+        # THE "zeroed" ARM IS UNREACHABLE TODAY and is kept anyway. Character
+        # rows 8-15 land in exactly this probe's 0x4800-0x4FFF, so any run that
+        # reaches show_ui draws glyphs here and the region can never come back
+        # all-zero — both reds this check has produced say "overwritten". What
+        # it would catch is a partial fix that cleared through the window and
+        # then failed to draw, which is cheap to keep and not worth asserting.
         changed = sum(1 for a, b in zip(PROBE, after) if a != b)
         first = next(i for i, (a, b) in enumerate(zip(PROBE, after)) if a != b)
         how = "zeroed" if after == bytes(len(PROBE)) else "overwritten"

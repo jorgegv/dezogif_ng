@@ -148,11 +148,13 @@ wait_on_key_release:
 ; `CMD_SET_SLOT 2,<bank>` is an ordinary DZRP command — a client inspecting a
 ; bank — and cmd_set_slot writes the MMU register directly for every slot but 7,
 ; telling this file nothing. So any later redraw (the "B" key through
-; main_redraw, a CMD_CLOSE through `jp main`, or any drain_main) cleared 8 KB of
-; the CLIENT'S bank instead of the screen. Permanently: only slot_backup.slot0
-; and .slot7 are ever saved, so no per-bank backup exists to put it back, and
-; the debuggee is handed the wreckage on its next CMD_CONTINUE. Upstream's, and
-; in both builds.
+; main_redraw, a CMD_CLOSE through `jp main`, or any drain_main) cleared
+; 0x4000-0x5CDF of the CLIENT'S bank instead of the screen — 6144 bytes of
+; MEMCLEAR plus 1248 of attribute MEMFILL, 7392 in all, plus the glyphs drawn
+; inside it. (Issue #28 says "8 KB"; that is the size of the SLOT, not of the
+; write.) Permanently: only slot_backup.slot0 and .slot7 are ever saved, so no
+; per-bank backup exists to put it back, and the debuggee is handed the wreckage
+; on its next CMD_CONTINUE. Upstream's, and in both builds.
 ;
 ; IT FORCES AND RESTORES RATHER THAN CHECKING AND ABANDONING, which is the other
 ; shape and is what esp_refresh_client_line does one row along. Abandoning is
@@ -173,6 +175,16 @@ wait_on_key_release:
 ; that it must not be able to tell which transport it was assembled against, and
 ; away from the enumeration hazard a macro at every `nextreg REG_MMU...` site
 ; would carry (see esp_refresh_client_line, which rejected exactly that).
+;
+; AND THE FORCE SURVIVES THE FIRST THING show_ui_body DOES, which had to be
+; checked rather than assumed: issue #31 records that a write of NR 0x8E or of
+; ports 0x7FFD/0x1FFD/0xDFFD/0xEFF7 RE-DERIVES the MMU and would silently undo a
+; slot just set, and show_ui_body's very first act is `nextreg
+; REG_DISPLAY_CONTROL,0`, which reaches port_7ffd_reg(3). It is safe because
+; nr_69_we is NOT a term of port_memory_change_dly (zxnext.vhd:3813) — that list
+; is port_7ffd_wr, port_1ffd_wr, port_dffd_wr, port_eff7_wr, nr_8e_we and
+; nr_8f_we_dly, i.e. actual PORT writes and two other registers. So the NextREG
+; route into that bit does not trigger the re-derivation and this force holds.
 ;
 ; THE BACKUP IS A BYTE IN MEMORY AND NOT THE STACK, for font_map's reason: this
 ; sits either side of a `call` and must not be under the return address. One

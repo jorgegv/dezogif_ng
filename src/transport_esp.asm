@@ -3929,8 +3929,8 @@ esp_put_client_line:
 ;
 ; WHAT WAS NOT FIXED HERE HAS SINCE BEEN FIXED THERE — issue #28. show_ui had
 ; the same hazard and was older and larger: it opens with a MEMCLEAR of the
-; whole screen area, so through a retargeted slot 2 it wiped 8K of that bank
-; rather than one row of it. It was reported rather than fixed on a branch
+; whole screen area, so through a retargeted slot 2 it wiped 7392 bytes of that
+; bank rather than one row of it. It was reported rather than fixed on a branch
 ; scoped to issue #23, and #28 closed it the other way round — ui.asm's
 ; screen_map FORCES the window and restores it, because show_ui is the
 ; debugger's own screen and abandoning a repaint of that would leave the machine

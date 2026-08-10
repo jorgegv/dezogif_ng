@@ -708,7 +708,7 @@ test-dzrp-stub:
 # repaint N5 exercises; N7 covers the slot 1 window the glyphs are read through
 # since issue #31; N8 covers show_ui itself, which is the big one — it opens
 # with a MEMCLEAR of the whole screen area, so through a retargeted slot 2 that
-# is 8 KB of the client's bank gone.
+# is 0x4000-0x5CDF — 7392 bytes — of the client's bank gone.
 #
 # Run the client-session status line bench (8 jnext runs; not part of `make test`)
 test-client-status:

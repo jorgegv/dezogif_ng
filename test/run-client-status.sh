@@ -466,8 +466,16 @@ one_run N5 vanish-idle "Session lost - client gone" \
 # ITS THIRD OUTCOME IS A PRECONDITION AND NOT A VERDICT, which is what stops it
 # passing or failing for the wrong reason. An all-zero read means show_ui's
 # MEMCLEAR reached that bank, i.e. the run went through drain_main and never
-# stood in the state being tested — reported as a precondition failure. The
-# probe therefore contains no zero byte. See test/dzrp/session-client.py.
+# stood in the state being tested — reported as a precondition failure.
+#
+# TWO CORRECTIONS TO THAT, both made while fixing issue #28 and neither changing
+# what this check does. The probe does NOT "contain no zero byte", which this
+# comment used to say: eight of its 2048 bytes are 0x00, which is why a red here
+# reports 2040 changed. What the outcome test needs is only that the probe is
+# not ALL zeros, which holds. And WIPED cannot actually fire — any run that
+# reaches show_ui also draws glyphs into character rows 8-15, i.e. into exactly
+# 0x4800-0x4FFF — so this arm would report CORRUPT instead.
+# See test/dzrp/session-client.py.
 # ===========================================================================
 slot_run() {
     local name=$1 why=$2
@@ -580,9 +588,10 @@ slot1_run N7 "a client retargets MMU slot 1, then vanishes"
 # ISSUE #28, AND THE BIG ONE. N6 covers the autonomous painter, which writes one
 # row; this covers show_ui, which opens with `MEMCLEAR SCREEN, SCREEN_SIZE` and
 # then fills 1248 more bytes of attributes before printing anything. Through a
-# slot 2 a client has retargeted with CMD_SET_SLOT that is 8 KB of the client's
-# own bank destroyed, permanently — nothing backs a bank up, only
-# slot_backup.slot0 and .slot7 — and the debuggee gets it back that way.
+# slot 2 a client has retargeted with CMD_SET_SLOT that is 0x4000-0x5CDF, 7392
+# bytes, of the client's own bank destroyed, permanently — nothing backs a bank
+# up, only slot_backup.slot0 and .slot7 — and the debuggee gets it back that
+# way. (Issue #28 says 8 KB; that is the size of the SLOT, not of the write.)
 #
 # THE TRIGGER IS CMD_CLOSE, NOT THE "B" KEY that issue #28 names. It is the same
 # routine: `check_key_border` jumps to main_redraw and cmd_close reaches it

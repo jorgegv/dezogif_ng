@@ -1021,24 +1021,82 @@ read once; a document can be revised, cited and diffed.
 
 Two things the shortening may **never** touch, because they are interface rather than prose:
 
-- **The check id.** `T1`-`T8`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W6`, `C1`-`C23`, `B1`-`B2`,
-  `P1`-`P3`, `N1`-`N8`, `G1`-`G2`, `I1`-`I9`, `S1`-`S7`, `K1`-`K4`, `R0`-`R5`, `L1`-`L5`, `D1`-`D8`,
-  `H1`-`H6` are cited
-  by every
-  document and
-  issue, and two things match on
-  them: `run-dzrp-stub.sh`'s W3 greps `^FAIL  C10 `, and `test/hardware-check.py` takes the code
-  from field 2 of every `FAIL` line. Shorten the prose after the id; never the id, and never
-  renumber.
-  **THREE RANGES THIS LIST DOES NOT CARRY, and one of them is a real collision** — noted rather
-  than resolved, because deciding it is somebody's call and not a documentation edit.
-  `A0`-`A6` (`test/slot-ceiling-probe.py`), `B0`-`B5` (`test/vanished-peer-probe.py`) and
-  `V1`-`V2` (`test/run-probes-jnext.sh`) are all absent, and **`B0`-`B5` collides with
-  `run-ip-boundary.sh`'s own `B1`/`B2`** — two different checks answering to one id, in a register
-  this section calls interface. All pre-existing. The list has now gone stale in three places in
-  two review rounds (`N1`-`N6`, `S1`-`S3`, `H1`-`H5`), which is *the enumeration is a grep, not a
-  memory* turned on the register itself: **check it against what the benches print, not against
-  what this line says.**
+- **The check id.** Every verdict a bench prints carries one, and two things **match** on them:
+  `run-dzrp-stub.sh`'s W3 greps `^FAIL  C10 `, and `test/hardware-check.py` takes the code from
+  field 2 of every `FAIL` line. Shorten the prose after the id; never the id, and never renumber —
+  the reason is below and is stronger than convention.
+
+  **THE REGISTER IS id → THE FILE THAT PRINTS THE LINE**, and that is not always the `run-*.sh`
+  that drives it: **seven of the twenty-two ranges are printed by a Python file**, which is exactly
+  where a target-shaped search looks and finds nothing. Enumerated mechanically from `test/`,
+  2026-08-10.
+
+  | ids | printed by | run it with |
+  |---|---|---|
+  | `T1`-`T8` | `test/run-headless.sh` | `make test` |
+  | `M1`-`M10` | `test/run-mfselect.sh` | `make test-mfselect` |
+  | `E1`-`E4` | `test/esp-echo-client.py` | `make test-esp` |
+  | `U1`-`U5` | `test/run-unit-tests.sh` | `make test-unit` |
+  | `W1`-`W6` | `test/run-dzrp-stub.sh` | `make test-dzrp-stub` |
+  | `C1`-`C23` | `test/dzrp/conformance.py` | `test-dzrp-stub`, `test-dzrp`, `test-hardware` |
+  | `B1`-`B2` | `test/run-ip-boundary.sh` | `make test-ip-boundary` |
+  | `P1`-`P3` | `test/run-tx-patience.sh` | `make test-tx-patience` |
+  | `N1`-`N8` | `test/run-client-status.sh` | `make test-client-status` |
+  | `N1`-`N4` | `test/run-no-hang.sh` | `make test-no-hang` |
+  | `G1`-`G2` | `test/run-screen-agreement.sh` | `make test-screen-agreement` |
+  | `P1`-`P3` | `test/screen-agreement.py` | the same target |
+  | `I1`-`I9` | `test/run-mfinstall.sh` | `make test-mfinstall` |
+  | `S1`-`S9` | `test/run-slot-recovery.sh` | `make test-slot-recovery` |
+  | `K1`-`K4` | `test/run-cipsto.sh` | `make test-cipsto` |
+  | `L1`-`L5` | `test/run-baud.sh` | `make test-baud` |
+  | `D1`-`D8` | `test/run-wifi-assoc.sh` | `make test-wifi-assoc` |
+  | `H1`-`H6` | `test/hardware-check.py` | `make test-hardware` |
+  | `A0`-`A6` | `test/slot-ceiling-probe.py` | `make probe-slots` |
+  | `B0`-`B5` | `test/vanished-peer-probe.py` | `make probe-vanished` |
+  | `R0`-`R5` | `test/idle-drop-probe.py` | `make probe-idle-drop` |
+  | `V1`-`V2` | `test/run-probes-jnext.sh` | `make probe-jnext` |
+
+  Two printed forms the ranges flatten, because a grep for a bare id meets them: **`E4` prints as
+  `E4a` and `E4b`**, two rows for one check; and **`screen-agreement.py`'s `P1`-`P3` are never
+  printed bare** — they carry the run's `G1`/`G2` label as a prefix (`--label`), so the line reads
+  `PASS  G1 P1 …` and field 2 there is the G.
+
+  **THREE IDS MEAN TWO DIFFERENT THINGS EACH, and that is now DECIDED rather than open** (user,
+  2026-08-10): **documentation only.** They are recorded here; nothing is renamed and no printed
+  line changes.
+
+  | one side | the other | how bad |
+  |---|---|---|
+  | `N1`-`N4`, `run-no-hang.sh` — **gate** | `N1`-`N8`, `run-client-status.sh` — **gate** | worst |
+  | `P1`-`P3`, `run-tx-patience.sh` — **gate** | `P1`-`P3`, `screen-agreement.py` — **gate**, G-prefixed | full overlap |
+  | `B1`-`B2`, `run-ip-boundary.sh` — **gate** | `B0`-`B5`, `vanished-peer-probe.py` — **instrument** | mildest |
+
+  `N` is worst because both sides are PASS/FAIL gates over the same four numbers with nothing in
+  the printed line to separate them. `B` is mildest because a probe renders no verdict at all —
+  `MEAS`/`NOTE` rows only, and it prints *"There is no PASS here"* every run — so a `PASS B1` can
+  only be the gate. **`P` is the one that has ALREADY caused the confusion this register exists to
+  prevent**: `screen-agreement.py`'s own docstring has to write *"the injected TX budget that
+  **P2 of the tx-patience bench** uses"* to disambiguate its own neighbour's id.
+
+  **WHY THEY COST NOTHING TODAY, and it is a property of the two consumers rather than of the
+  ids.** Both read **`conformance.py`'s output and nothing else** — W3 greps the C10 control run
+  (`run-dzrp-stub.sh:544`), and `classify()` has exactly one caller, fed by the one
+  `subprocess.Popen` that runs `conformance.py` (`hardware-check.py:444`, `:462`) — so neither
+  ever sees an `N`, `B` or `P` id at all. **The residual risk is HUMAN**: somebody writing "N2 is
+  green" in an issue or a commit message and meaning the other bench. Nothing here catches that.
+
+  **RENAMING WAS CONSIDERED AND REJECTED, which is why the collisions are documented rather than
+  fixed, and it is also the reason for "never renumber".** The ids are cited by number throughout
+  `MEMORY.md`, `doc/` and closed issues, and much of `MEMORY.md` is **deliberately frozen** —
+  those entries record what was measured on the day, and this project's standing rule is that
+  evidence is annotated rather than edited to match a later rendering. A renumbering would
+  therefore either strand every citation or require editing records that must not be edited.
+
+  **AND THE LESSON THIS LIST KEEPS PRODUCING ABOUT ITSELF.** It has gone stale **four times in
+  three review rounds** — `N1`-`N6`, `S1`-`S3`, `H1`-`H5`, and `S1`-`S7` again, which issue #40's
+  S8/S9 falsified on 2026-08-10 without the line moving with them — which is *the enumeration is
+  a grep, not a memory* turned on the register itself: **check it against what the benches print,
+  not against what this table says.**
 - **A clause a reviewer put there to stop the line overclaiming.** Some of these lines are long
   precisely because an earlier version said more than the run had shown. Where the clause still
   fits it stays on the line — `test-no-hang`'s N4 says the *mechanism* fired and calls it "not a

@@ -363,6 +363,7 @@ UT_HL_ASM   = $(SRC)/unit_tests/headless/ut_headless.asm
 TRIGGER_ASM = $(TEST)/nmi_trigger.asm
 COPPER_ASM  = $(TEST)/copper_nmi.asm
 POLL_ASM    = $(TEST)/copper_poll.asm
+COST_ASM    = $(TEST)/copper_cost.asm
 ESP_ASM     = $(TEST)/esp_server.asm
 MFSELECT_C  = $(TOOLS)/mfselect/mfselect.c
 MFINSTALL_C = $(TOOLS)/mfinstall/mfinstall.c
@@ -401,6 +402,8 @@ UT_HL_GEN   = $(OUT)/ut_headless/ut_table.asm
 TRIGGER_BIN = $(OUT)/nmi_trigger.bin
 COPPER_BIN  = $(OUT)/copper_nmi.bin
 POLL_BIN    = $(OUT)/copper_poll.bin
+COST_BIN_ON = $(OUT)/copper_cost_on.bin
+COST_BIN_OFF= $(OUT)/copper_cost_off.bin
 ESP_BIN     = $(OUT)/esp_server.bin
 
 # mfselect's deployables: the utility, and a checksum for each ROM it can
@@ -674,6 +677,12 @@ test: $(ROM) $(TRIGGER_BIN) $(COPPER_BIN) $(POLL_BIN)
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" ROM="$(ROM)" \
 	 TRIGGER_BIN="$(TRIGGER_BIN)" COPPER_BIN="$(COPPER_BIN)" \
 	 POLL_BIN="$(POLL_BIN)" $(TEST)/run-headless.sh
+
+# Measure what the M2 poll costs a running debuggee (4 jnext runs; an instrument, no PASS)
+measure-poll-cost: $(ROM) $(COST_BIN_ON) $(COST_BIN_OFF)
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" ROM="$(ROM)" \
+	 COST_BIN_ON="$(COST_BIN_ON)" COST_BIN_OFF="$(COST_BIN_OFF)" \
+	 $(TEST)/run-poll-cost.sh
 
 # The Z80 unit tests, at last runnable without VS Code (issue #3). Kept OUT of
 # `make test` deliberately, and not for the usual reason — this one has no
@@ -1260,6 +1269,14 @@ $(COPPER_BIN): $(COPPER_ASM) Makefile | $(OUT)
 
 $(POLL_BIN): $(POLL_ASM) Makefile | $(OUT)
 	$(SJASMPLUS) -DCOPPER_POLL_BIN=\"$@\" $(POLL_ASM)
+
+# The cost fixture, twice: the two builds differ in ONE constant, which is what
+# attributes the shortfall between them to the poll and to nothing else.
+$(COST_BIN_ON): $(COST_ASM) Makefile | $(OUT)
+	$(SJASMPLUS) -DCOPPER_COST_BIN=\"$@\" -DCOPPER_ON=1 $(COST_ASM)
+
+$(COST_BIN_OFF): $(COST_ASM) Makefile | $(OUT)
+	$(SJASMPLUS) -DCOPPER_COST_BIN=\"$@\" -DCOPPER_ON=0 $(COST_ASM)
 
 $(ESP_BIN): $(ESP_ASM) Makefile | $(OUT)
 	$(SJASMPLUS) -DESP_SERVER_BIN=\"$@\" $(ESP_ASM)

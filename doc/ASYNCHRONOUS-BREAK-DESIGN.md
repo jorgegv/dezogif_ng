@@ -54,6 +54,24 @@ recurring corruption of the debuggee at 50 Hz. The latch is now read once at the
 restored on every path that returns to the interrupted code. It costs four bytes **less** than the
 version it replaces.
 
+### The poll's costs, in one place
+
+1. **~1288 T-states per frame** — 0.230% at 28 MHz, **1.84% at 3.5 MHz**. Measured; §5.
+2. **A spurious break on any byte the module says**, including its own unsolicited
+   `<id>,CONNECT` / `<id>,CLOSED` lines. Decided; below.
+3. **AN EXTINGUISHED DIAGNOSTIC, and it is not the same thing as (2).** `transport_poll_traffic`
+   reads the UART status register, which clears the **sticky** RX overflow and framing bits
+   (`serial/uart.vhd:530-539`, cleared on the falling edge of a read of 0x133B). `mf_nmi_poll` asks
+   `prgm_state` first, which keeps that away from a *race* with the debugger's own reads — but it
+   does not stop the poll wiping an overflow that happened while the debuggee was **running**, ~50
+   times a second, before anything can report it. So `Last Error: RX Buffer overflow` will in
+   practice never be seen for an overflow during a free run.
+
+   **A lost diagnostic, not a lost guarantee.** The bytes are already gone by the time the flag is
+   set, and their loss still surfaces as a DZRP desynchronisation or a timeout, exactly as it would
+   have. What is lost is being told which fault it was. Nothing covers it and no run stages it.
+4. **The debuggee must carry the two Copper instructions**, or it gets no asynchronous break at all.
+
 ### §4.3's open question is decided: BREAK ON ANY BYTE
 
 `transport_poll_traffic` is O(1) by contract and may not scan, so it cannot tell a `CMD_PAUSE` from
@@ -643,12 +661,49 @@ as stronger than it is. It is **adjacent to, and not a substitute for, the plan'
 5** (does the poll interact badly with esxdos's NMI menu or DivMMC automap?), which remains
 unanswered.
 
-**Cost is an estimate, not a measurement.** The plan's ~100-200 T-states/frame (≈0.3%) is plausible
-for a fast path but has never been measured, and the current entry path is far larger than that. Two
-things make a naive figure misleading: part of the entry runs at the **debuggee's** clock before the
-handler switches to 28 MHz, and the switch itself happens 50 times a second, which is a perturbation
-of a different kind from stolen cycles for anything doing contended-memory or beeper timing.
-**Measuring this belongs in M2, and the poll should be disableable.**
+**MEASURED 2026-08-11, AND THE ESTIMATE WAS 6-13 TIMES TOO LOW.** `make measure-poll-cost`
+(`test/copper_cost.asm`, `test/run-poll-cost.sh`): a fixed-length counting loop, two builds
+differing in **one** assembler constant — the Copper list started or not — with HL snapshotted at
+two frame counts and the difference taken, so the fixture's start-up and the snapshot's overhead
+cancel and the shortfall is attributable to the polls alone.
+
+| | |
+|---|---|
+| loop rate without the poll | 3912.1 iterations/frame |
+| loop rate with it | 3903.1 iterations/frame |
+| **cost** | **0.230% of a frame, ≈1288 T-states per frame** |
+| clock | **28 MHz**, read off the machine (NR 0x07 = 0x33), not assumed |
+
+Bit-identical across three runs. **The 28 MHz is a measurement and the 3.5 MHz figure is
+ARITHMETIC**: the same ~1288 T-states is **1.84%** of a 3.5 MHz frame, because the poll runs at
+whatever clock the debuggee is running at and a 50 Hz frame holds eight times fewer T-states there.
+That is the number a contended-memory, tape or beeper program actually pays.
+
+**So the plan's ~100-200 T-states/frame (≈0.3% at 3.5 MHz) is wrong in both halves** — six to
+thirteen times low in T-states, and its percentage happened to look right only because it was
+quoted against the slow clock while the real cost is a much bigger absolute number. Corrected in
+`doc/ZXNEXT-REMOTE-DEBUG-STUB.md` §10 and Appendix A, annotated rather than rewritten.
+
+**WHAT THE FIGURE DOES NOT COVER.** It is the **decline** path only: no client is attached, so
+every poll answers "quiet" and returns. A poll that breaks in costs the whole entry path, which is
+a much larger number paid once rather than per frame, and nothing measures it. It is jnext rather
+than silicon — legitimate here, because jnext counts the same T-states a Next does, and that is the
+same entitlement the baud ceiling rests on (MEMORY.md 2026-08-09) — but no Next has run any of M2.
+And **the poll is still not disableable**, which the original text below asked for.
+
+The original text follows, for the record.
+
+> **Cost is an estimate, not a measurement.** The plan's ~100-200 T-states/frame (≈0.3%) is plausible
+> for a fast path but has never been measured, and the current entry path is far larger than that. Two
+> things make a naive figure misleading: part of the entry runs at the **debuggee's** clock before the
+> handler switches to 28 MHz, and the switch itself happens 50 times a second, which is a perturbation
+> of a different kind from stolen cycles for anything doing contended-memory or beeper timing.
+> **Measuring this belongs in M2, and the poll should be disableable.**
+
+*(One clause of that is worth keeping rather than filing as superseded: the poll as built **does
+not** switch the clock unless it breaks in — §0 — so the "speed change 50 times a second"
+perturbation it warns about does not arise. What the 1288 T-states buys is stolen cycles and
+nothing else.)*
 
 ---
 
@@ -661,7 +716,8 @@ mis-return, and the DivMMC automap block, none of which has run on hardware eith
 
 - ~~**Nothing here has run.** No M2 code exists.~~ Built 2026-08-10; see §0. Every hardware claim is
   still VHDL rather than silicon, and **no part of M2 has run on a real Next.**
-- **The cost figure is unmeasured**, see §5.
+- ~~**The cost figure is unmeasured**, see §5.~~ **Measured 2026-08-11** — §5. What remains
+  unmeasured is the cost of a poll that BREAKS IN, and anything on hardware.
 - ~~**The unsolicited-line decision in §4.3 is unmade**~~ — made: break on any byte, §0. Its
   user-visible consequence stands and nothing stages it: no run here makes the module emit an
   unsolicited line while a debuggee is running.
@@ -674,6 +730,10 @@ mis-return, and the DivMMC automap block, none of which has run on hardware eith
   that the enumeration in §3.3 is not read as more exhaustive than it is.
 - **No hardware.** Everything about a real Next remains to be seen, and this project has twice been
   caught by jnext sitting on the safe side of reality.
+- **The extinguished RX-overflow diagnostic** (§0, cost 3) is reasoned from the VHDL and from the
+  ordering in `mf_nmi_poll`. No run anywhere produces an overflow while a debuggee is running, so
+  neither the loss nor its harmlessness has been observed.
+- **The cost of a poll that BREAKS IN** — §5 measures the decline path only.
 
 ---
 
@@ -681,8 +741,8 @@ mis-return, and the DivMMC automap block, none of which has run on hardware eith
 
 **ANNOTATED 2026-08-10.** Items 1 and 4 are done. Item 2 was examined and **rejected with a reason**:
 T4's verdict is unchanged because the poll declines at a machine with no debugger (§0). Item 3 is
-struck — the program installs the list (§4.4). Item 5 was **not** done: see §5, the estimate is still
-an estimate. Item 6 changes shape with §0 — what a user needs to be told is how to add the two
+struck — the program installs the list (§4.4). Item 5 **is done**: §5 carries the measurement, and
+`make measure-poll-cost` makes it re-runnable. Item 6 changes shape with §0 — what a user needs to be told is how to add the two
 instructions, not what the debugger will destroy — and the HOWTO is deliberately not written here.
 
 The original recommendation follows for the record.

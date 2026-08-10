@@ -44,6 +44,23 @@
 ;   a command", so an ESP module's unsolicited line reads as traffic. That is a
 ;   decision with a user-visible consequence and it is argued at mf_nmi_poll.
 ;
+;   AND IT COSTS A DIAGNOSTIC, WHICH IS A SECOND COST AND NOT THE SAME ONE.
+;   Reading the UART status register clears the STICKY RX overflow and framing
+;   bits (serial/uart.vhd:530-539 — the flags are cleared on `uart0_tx_rd_fe`,
+;   the falling edge of a read of 0x133B). mf_nmi_poll asks its prgm_state
+;   question first, which keeps this away from a RACE with the debugger's own
+;   reads — but it does NOT stop the poll extinguishing an overflow that
+;   happened while the debuggee was RUNNING. At ~50 reads a second, an overflow
+;   during a free run is very unlikely to survive long enough for anything to
+;   report it, so `Last Error: RX Buffer overflow` will in practice never be
+;   seen for one.
+;
+;   That is a lost DIAGNOSTIC, not a lost correctness guarantee: the bytes are
+;   already gone when the flag is set, and their loss still surfaces — as a DZRP
+;   desynchronisation or a timeout — by exactly the routes it would have anyway.
+;   What is lost is being told WHICH fault it was. Nothing here covers it, and no
+;   run stages an overflow while a debuggee runs.
+;
 ;   Lifecycle (called at the points where the debugger takes and gives back
 ;   the machine)
 ;     transport_init                once, when MAIN is first entered

@@ -326,15 +326,39 @@ strongest:
      "nothing changed" is also what a wedged machine looks like. Run 13 reuses T8's schedule
      unchanged so the pair differ only by the Copper list. Shown red: a build with the slot-7
      restore removed takes run 12 red, against the shipped ROM green three times.
+     **THE POLL'S MEASURED COST IS 0.230% OF A FRAME AT 28 MHz — ≈1288 T-states, and 1.84% of a
+     3.5 MHz frame, which is the number a contended-memory or beeper program pays.** Measured by
+     `make measure-poll-cost`, an instrument rather than a gate: a fixed-length counting loop, two
+     builds one assembler constant apart, HL differenced across nine frames, bit-identical over
+     three runs, with the clock read off the machine (NR 0x07 = 0x33). **That retires plan §10's
+     "~100-200 T-states/frame", which was 6-13 times low**; the 3.5 MHz figure is arithmetic from
+     the 28 MHz measurement, and it covers the DECLINE path only.
+     **AND THE POLL EXTINGUISHES AN RX-OVERFLOW DIAGNOSTIC**: reading the UART status register
+     clears the sticky overflow and framing bits (`serial/uart.vhd:530-539`), so an overflow during
+     a free run is wiped ~50 times a second before anything can report it and
+     `Last Error: RX Buffer overflow` will never be seen for one. A lost *diagnostic*, not a lost
+     guarantee — the byte loss still surfaces as a desync or a timeout. `mf_nmi_poll`'s
+     prgm_state-first ordering fixes the *race* with the debugger's own reads and not this.
      **NOT covered**: it never breaks in (no client, so `transport_poll_traffic` answers "quiet"
      every time — that is W8); it cannot discriminate the `prgm_state` test, since with no traffic
-     a build omitting it would decline anyway; and **it does not cover the NextREG latch restore**,
+     a build omitting it would decline anyway; **nothing stages an RX overflow while a debuggee
+     runs**, so neither the extinction above nor its harmlessness has been observed; and **it does
+     not cover the NextREG latch restore**,
      which was found by building that red-first and watching it come out **green** — the poll's own
      `.save_slot7_page_in` leaves port 0x243B selecting exactly the register the fixture reads.
-     **AND IT IS PADDED AROUND A PRE-EXISTING DEFECT**: a software NMI, taken repeatedly and
+     ~~**AND IT IS PADDED AROUND A PRE-EXISTING DEFECT**: a software NMI, taken repeatedly and
      returned from, does not reliably put the CPU back on the instruction it interrupted —
      reproduced on `main`'s OWN ROM, measured at ~2 NMIs, absorbed by eight NOPs either side of the
-     check. Cause unresolved.
+     check. Cause unresolved.~~ **RETRACTED 2026-08-11, and every clause of it was wrong.** It was
+     **jnext's `--inject`**, which sets PC/SP/IFF1/IFF2 and never clears the CPU's HALTED flag
+     (`src/core/emulator.cpp:6683`); NextZXOS idles in a `halt`, so an injected fixture running DI'd
+     inherits `halted = 1` and can never clear it, and the first NMI alone takes jnext's
+     `z80.halted ? pc+1 : pc` branch (`src/cpu/z80_cpu.cpp:636`) and captures PC **plus one**.
+     Exactly ONE late return, which sixteen NOPs were merely wide enough to hide. **The padding is
+     gone**: the fixture starts `ei : halt : di`, and with no padding at all a `jr $` under this
+     Copper list is returned to **402 times out of 402**. Nothing about the stub, upstream's handler
+     or the Next's NMI path was ever implicated. See `test/copper_poll.asm`, ERRORS.md and
+     MEMORY.md 2026-08-11.
    - T8 a second M1 press with **no reset** is **declined**, and the stub is still alive
      afterwards (issue #36). Two runs differing only in that press, shot at the same frame; the
      screen must be **byte-identical** and the border **black**. Both halves are required,

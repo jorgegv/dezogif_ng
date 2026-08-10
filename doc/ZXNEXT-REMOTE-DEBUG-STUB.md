@@ -278,7 +278,9 @@ Three, in increasing order of value:
 1. **NMI button** — always available, zero cost, manual. What dezogif has.
 2. **Copper-driven periodic NMI** (§3.3) — a Copper list raises NMI at a fixed raster line every
    frame; the stub polls the UART FIFO and returns immediately if there is nothing to do. Costs
-   roughly 100-200 T-states/frame (≈0.3% at 3.5 MHz) — **an estimate nobody has measured**, and
+   roughly 100-200 T-states/frame (≈0.3% at 3.5 MHz) — ~~**an estimate nobody has measured**~~
+   **MEASURED 2026-08-11 AND WRONG: it is ≈1288 T-states/frame, 0.230% of a frame at 28 MHz and
+   1.84% at 3.5 MHz** (`make measure-poll-cost`; see ASYNCHRONOUS-BREAK-DESIGN.md §5) — and
    the current entry path is far larger than it — needs no cooperation from the debuggee's
    interrupt setup, and gives the PC an asynchronous break. **This is the recommended
    mechanism** and the main functional advance over dezogif. It is also **the only one**: the
@@ -995,7 +997,7 @@ reason attached, is fine.
 | **DeZog drives the stub on real hardware: attach, disassemble, registers, memory, single-step, manual break, clean disconnect, reattach** | a logging TCP tap between VS Code and a Next, 2026-08-05, frozen snapshot: `DeZog vv24.18.0` ↔ `dezogif v2.2.1`, 121 `CMD_READ_MEM`, 26 `CMD_GET_REGISTERS`, **22 `CMD_CONTINUE` each answered by an `NTF_PAUSE`** — at `0x8017`, `0x8019`, then `0x801C`, plus one `MANUAL_BREAK` — then `CMD_PAUSE` + `CMD_CLOSE` both answered | **verified** — the last item of M1, and the answer to open question 1 |
 | The stub can be left unable to serve anyone, recovered only by power-cycling | two occurrences in one evening; TCP still accepted (accept latency degraded 83 ms → 389 ms → timeout), no border flicker, screen intact. NOT caused by a clean disconnect — that was measured and is safe | **verified that it happens; the mechanism is a hypothesis** — issue #15, design in #16 |
 | The connect string draws a correct address on hardware | user's own machine, 2026-08-05, at a 15-character address | **reported on hardware** — one machine, one reporter, no re-runnable artefact |
-| NMI poll costs ~100-200 T-states/frame | arithmetic, not measured | **estimate** |
+| ~~NMI poll costs ~100-200 T-states/frame~~ **It costs ≈1288 T-states/frame** — 0.230% of a frame at 28 MHz, and 1.84% of one at 3.5 MHz | `make measure-poll-cost`, 2026-08-11: a fixed-length counting loop, two builds one constant apart, HL differenced across nine frames; bit-identical over three runs. The clock is read off the machine (NR 0x07 = 0x33) | **verified** in jnext — which counts the same T-states a Next does — for the DECLINE path only, and never on hardware. The 3.5 MHz figure is arithmetic from the 28 MHz measurement |
 | CTS/RTR populated on a given board | — | **unverified** |
 | tbblue does not checksum `enNextMf.rom` | inferred from dezogif working | **inferred** |
 | DZRP has no history/trace/replay command | full grep of `design/DeZogProtocol.md` | **verified** |

@@ -866,6 +866,53 @@ strongest:
    ESP-01** — but the rate it defaults to no longer rests on it: 460800 was measured on hardware
    (five `make test-hardware` runs at 15/15, and the bring-up probe shown to fire), and the probe
    this bench calls dead code **has now executed there**. See `doc/HARDWARE-TESTING.md`.
+4n. **`make test-wifi-assoc`** — the Next losing and regaining its WiFi association (issue #32),
+   5 headless jnext runs, 6 checks, and the **ninth** build seam — the only member of the family
+   whose *shipped* value needs no moving to be watchable, since 60 seconds is 3000 frames.
+   `AT+CIFSR` was asked exactly **once**, at the end of `transport_init`, so `Connect at
+   <ip>:11000` was decided at bring-up and never revisited: a Next that dropped off the WiFi went
+   on naming an address that no longer reached it, and one switched on before its router was ready
+   went on telling its owner to run `wifi2.bas` on a machine that was already correct. Both needed
+   an M1 press, and from the PC side both look exactly like #15, #18 and #19.
+   **IT WAS BLOCKED RATHER THAN UNTESTED**: jnext's module used to be permanently associated
+   (`AT+CWJAP?` query-only, no `AT+CWQAP`, `STA_IP` a `static constexpr`), which is ERRORS.md's
+   "a bound the emulator can never reach is a bound with no test" one layer out. **jnext#246**
+   (0.99.148) gave the outage and **jnext#247** (0.99.151) gave the address the right to come back
+   **different** — and the second is load-bearing rather than convenient: with #246 alone the only
+   stageable sequence is `A → 0.0.0.0 → A`, on the far side of which the stub's cached `A` is
+   *correct*, so **every wrong answer agrees with the right one** — mfselect's M9 again.
+   Every verdict is the stub's own connect block, **screen rows 6 and 7, read back as text**
+   (`test/screen-text.py`), with the reader validated inside each image on row 12 first.
+   **D1** the address **moves** across the outage and the screen must name the new one — the
+   discriminating check, and the one #247 exists for; **D2** its control, `ADDR_CHECK=0`, which
+   must keep the stale address; **D3** the address goes and stays gone, so the screen must change
+   to the *"no address"* block rather than merely to a different number — a different branch and a
+   different string; **D4** that control; **D5** it goes and comes back **unchanged**, the case a
+   real Next produced; **D6** the stub still answers `CMD_INIT` afterwards.
+   **D5 CANNOT DISCRIMINATE ON ITS OWN AND THAT IS MEASURED, NOT ARGUED**: against the pre-fix ROM
+   this bench reports D1 and D3 red and **D5 green**, because the address a stub cached at bring-up
+   is the address the module ends up back on. What gives D5 a subject is D3 — the two runs are
+   identical up to `$UP_FRAMES`, which is where D3's screenshot is taken.
+   **D6 IS THE PROPERTY A "FIX" COULD EASILY BREAK.** Hardware says the happy path is that *nothing*
+   breaks: a real Next survived a five-minute AP outage with its `AT+CIPSERVER` listener intact and
+   passed a full 6/6 hardware bench afterwards with no M1 press and no reset (jnext#246, `reported
+   on hardware`). The emulated module agrees — probed before any Z80 was written, a new TCP
+   connection was accepted and an already-open DZRP session answered `CMD_LOOPBACK` across **both**
+   edges. So re-acquisition is **not needed**, and a fix that retired the listener and rebuilt it
+   would be a regression D6 catches. Timing is in **frames** and never wall clock; D6's client waits
+   on the screenshot *file*, so it cannot perturb D1's verdict by arriving early with a `CMD_INIT`
+   that would stop the stub's idle clock.
+   Not part of `make test`: D6 binds a host TCP port. **IT SAYS NOTHING ABOUT REAL HARDWARE, and
+   rather less than most benches here** — every association fact in it is **modelled by the
+   emulator**, told what to do by the bench's own command line, and jnext#247 records that an
+   address **changing** across an outage has **never been observed on an ESP-01 at all**: it is
+   inferred from how DHCP works. What a green run shows is that the stub *notices* a change the
+   emulator was told to make. **Also not covered**: the unsolicited `WIFI DISCONNECT` /
+   `WIFI CONNECTED` / `WIFI GOT IP` lines (jnext models none, so the stub polls rather than
+   watching); whether a *real* module's listener survives (measured once, one machine, no
+   re-runnable artefact); how long a real re-association takes, which is what would decide whether
+   60 seconds is the right period; and the outage arriving **while a DZRP session is open**, which
+   the stub deliberately does not re-query through. See `test/run-wifi-assoc.sh`.
 5. **`build/ut.nex`** — the same tests, **DeZog-driven** (`"unitTests": true` + zsim + the
    `customCode` plugin) in VS Code. Still a manual layer, and still the only way to exercise the
    36 that 4d must skip. `make unit-tests` assembles it; nothing here runs it.
@@ -883,7 +930,8 @@ read once; a document can be revised, cited and diffed.
 Two things the shortening may **never** touch, because they are interface rather than prose:
 
 - **The check id.** `T1`-`T8`, `M1`-`M10`, `E1`-`E4`, `U1`-`U5`, `W1`-`W6`, `C1`-`C21`, `B1`-`B2`,
-  `P1`-`P3`, `N1`-`N6`, `G1`-`G2`, `I1`-`I9`, `S1`-`S3`, `K1`-`K4`, `R0`-`R5`, `L1`-`L5`, `H1`-`H5` are cited
+  `P1`-`P3`, `N1`-`N6`, `G1`-`G2`, `I1`-`I9`, `S1`-`S3`, `K1`-`K4`, `R0`-`R5`, `L1`-`L5`, `D1`-`D6`,
+  `H1`-`H5` are cited
   by every
   document and
   issue, and two things match on

@@ -5,6 +5,159 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-10 — The screen stops advertising an address the module has lost; and re-acquisition turned out not to exist
+
+**Built, issue #32** — M3's headline item, *"reconnect after WiFi drop"*, which
+nothing here had ever handled.
+
+**The defect.** `AT+CIFSR` was asked **exactly once**, as the last step of
+`transport_init`, so `esp_link_state` and `Connect at <ip>:11000` were decided at
+bring-up and never revisited. Two user-visible states followed, and the second is
+the commoner one: a Next that dropped off the WiFi went on naming an address that
+no longer reached it; and a Next switched on **before its router was ready** came
+up with no address and went on saying *"No WiFi address. Set the Next up first:
+run wifi2.bas"* — not merely stale but wrong **advice**, on a machine that was set
+up correctly. The only cure for either was an M1 press.
+
+**ONE CALL DOES BOTH HALVES OF THE ISSUE, AND THAT FELL OUT RATHER THAN BEING
+DESIGNED.** `esp_query_address` already rewrites `esp_link_state` **and**
+recomposes `esp_connect_address`, so "notice the address has gone" and "advertise
+the new one when it returns" are the same instruction. `esp_check_address` is a
+call to it from the idle path plus a repaint.
+
+**SO THE ISSUE'S SECOND HALF — RE-ACQUISITION — DOES NOT NEED BUILDING, and that
+is measured rather than assumed.** The issue's split was (1) detect and report,
+(2) pick the listener back up. The `AT+CIPSERVER` listener **survives** a
+de-association and re-association: a real Next did (jnext#246, `reported on
+hardware` — a five-minute AP outage, then a full 6/6 hardware bench with no M1
+press and no reset), and so does the emulated module, **probed here before any Z80
+was written** — a new TCP connection was accepted and an **already-open DZRP
+session answered `CMD_LOOPBACK` across both edges**, on all 14 samples. A fix that
+retired the listener and rebuilt it would therefore be a **regression against
+measured behaviour**, which is what bench check D6 exists to catch. The same probe
+is what demonstrated the defect: the screen read `Connect at 192.168.1.50:11000`
+on every sample, long after the module had moved to `192.168.1.77`.
+
+**IT POLLS BECAUSE THERE IS NOTHING TO WATCH.** A real module puts unsolicited
+`WIFI DISCONNECT` / `WIFI CONNECTED` / `WIFI GOT IP` lines on the wire at these
+edges, and a stub that watched for them would need no timer at all. Nobody here
+has ever observed those lines, and jnext models none of them — jnext#246 left them
+out **deliberately, for that reason**. A watcher would be Z80 no bench could
+execute, which is issue #19's refused trade. Polling is what can be checked.
+
+**60 SECONDS, bounded from one side only.** It has to be short enough that
+somebody standing at the machine wondering why their debugger will not attach sees
+the screen put itself right while they are still standing there — a minute passes
+that test and five does not. There is no upper constraint worth naming: unlike
+`ESP_IDLE_SWEEP_SECS`, nothing else in the system depends on this number.
+
+**WHAT IT COSTS, AND WHY THAT IS SMALLER THAN SOMETHING ALREADY SHIPPING.** Once a
+minute, one `AT+CIFSR` and its three-line answer. The window that matters inside it
+is the wait for `+CIFSR:STAIP,"` — a scan whose pattern begins with `+`, which by
+`esp_wait_string_hold`'s rule is one of only **two** scans in this transport that
+**cannot** capture an inbound frame instead of destroying it. So a client whose
+first command lands inside it loses that command: issue #10's residual, turned from
+a once-per-bring-up window into a recurring one. Against that, `esp_idle_tick`'s
+existing sweep sends **five** `AT+CIPCLOSE` lines and drains each answer with
+`transport_drain`, which reads with raw `in` and hands the bytes to **nobody** — a
+strictly wider window, on the same idle path, every five minutes. One scan a minute
+is less exposure than five drains every five.
+
+**THE SESSION GUARD IS SHARED WITH #24's SWEEP, and it is the same requirement
+twice**: nothing is asked while `esp_session_valid` is set, so a DZRP session parked
+at a breakpoint — silent and healthy — can never have an AT command put in front of
+the reply it is waiting for. What remains exposed is the gap between a socket being
+accepted and its first command arriving, milliseconds against a period of minutes.
+
+**THE COUNTER IS DELIBERATELY NOT RESET BY INBOUND TRAFFIC, where the sweep's is.**
+That is a difference and not an oversight: the sweep is about **peers**, so traffic
+is evidence about its own subject; this is about the module's **association**, which
+no amount of traffic says anything about. A stub a client visits every thirty
+seconds would otherwise never check at all — and that is a debugger in use, the case
+this matters most to.
+
+**A TIMEOUT LEAVES IT SAYING "NO ADDRESS" FOR ONE PERIOD**, which is a real cost of
+polling and is accepted rather than worked around. `esp_query_address` sets
+`ESP_LINK_NO_ADDRESS` on entry and clears it only on success, so a module that
+simply did not answer inside the read budget flips the screen for one period and the
+next check puts it back. Distinguishing "no answer" from "no address" would need a
+fourth screen state and a wait that can tell silence from a refusal, for a condition
+nothing here has ever produced.
+
+**THE PAINTER FORCES THE SCREEN WINDOW RATHER THAN ABANDONING, which is the OPPOSITE
+of `esp_refresh_client_line` one row along** — issue #28's own argument, pointed the
+other way. `0x4000` is the display file only while MMU slot 2 says so, and
+`CMD_SET_SLOT` lets any client move it. Abandoning is right for the session line: a
+stale row costs nothing until the next repaint. It is **wrong** here, because a
+screen that goes on naming an address that does not work **is** the defect, and a
+painter that declined whenever a client had looked at a bank would leave the machine
+lying for exactly as long as before. `screen_map` reads NR `0x52`, forces, and
+`screen_unmap` restores exactly, so no debuggee-visible state moves.
+
+**IT ERASES BY BLANKING, NOT BY REDRAWING THE OLD STRING.** The XOR trick
+`esp_refresh_client_line` uses needs the bytes that were drawn — and the string drawn
+here ends in the mutable `esp_connect_address` buffer that `esp_query_address` has
+just **overwritten**. XORing "the old line" would XOR the **new** address off a screen
+holding the **old** one and leave neither: visible garbage on the one line that has to
+be readable. A shadow copy would be a second rendering of a buffer another routine
+writes in place, which is how two renderings of one fact drift apart.
+
+**`esp_idle_tick`'s two opening tests SWAPPED ORDER, and that is behaviour rather than
+tidying.** The sweep's "already done this period" test used to come first as the
+cheapest question — but it also stopped the frame edge being sampled **at all** once
+the sweep had fired, which is fine for a timer that runs once and wrong for one that
+repeats. The session guard leads now because both timers share it; both remaining
+tests are side-effect-free early returns, so the sweep behaves exactly as it did.
+
+**Evidence: `make test-wifi-assoc`, 5 runs, 6 checks, 6/6 — and RED-FIRST
+reproduced independently** against the pre-fix ROM: **D1 and D3 red, D5 GREEN**. D5's
+green there is the whole argument for its own existence: a stub that has never heard
+of an association passes it, because the address cached at bring-up is the address the
+module ends up back on. **D5 on its own is worth nothing**, and D3 is what gives it a
+subject — the two runs are identical up to `$UP_FRAMES`, where D3's shot is taken.
+
+**`--esp-ip-address-after` (jnext#247) IS LOAD-BEARING AND NOT A CONVENIENCE.** With
+jnext#246 alone the only stageable sequence is `A → 0.0.0.0 → A`, on the far side of
+which the stub's cached `A` is **correct** — so a check asserting "the screen says A"
+passes against a stub that re-queries and against one that has never heard of the
+outage. Every wrong answer agreeing with the right one is the failure this project has
+shipped three times (mfselect's M9 with swapped labels; N6's scanline-0 probe; #27's
+C21). **D1 discriminates precisely because the address moves.**
+
+**Rejected.** Re-asking from `show_ui` (re-entered on every redraw, so an AT round trip
+would be paid every time somebody pressed "B" — the half of `transport_init`'s old
+comment that was always right; the half that was **wrong** is *"the address cannot
+change while we hold the module"*, and the whole of this issue is that it can);
+watching for the unsolicited `WIFI *` lines (unobserved anywhere, modelled by nothing —
+unexecutable Z80); tearing down and rebuilding the listener (a regression against
+measured behaviour, and D6 would catch it); resetting the counter on inbound traffic
+(it would make a debugger in use the one case never checked); a fourth screen state to
+separate silence from a refusal; and drawing the error area here rather than only
+recording `last_error` (nine rows and a second painter, for words already on rows 6
+and 7 — and it must **never** bury a `TX Timeout` a human still needs, which is why the
+record is guarded on `last_error` being clear).
+
+**Cost: WiFi `main_end` 0xFCC8 → 0xFD29, +97 bytes, 375 free** to the identity block
+(the budget after #28 was 472). **The UART ROM is byte-identical** pinned —
+`b0691ed3…` both sides with `build/*.bin` deleted first — which is what says nothing
+leaked across the transport boundary: `transport_esp.asm` is in the WiFi build only.
+WiFi `62110de0…` → `cb1abf4c…`. **This changes a ROM, so the merge carries a `make
+bump`.**
+
+**NOT COVERED, and none of it is hidden.** **Real hardware — nothing here has run on a
+Next, and this bench says less about one than most.** Every association fact in it is
+**modelled by the emulator**, told what to do by the bench's own command line, and
+jnext#247 records that an address **changing** across an outage has **never been
+observed on an ESP-01 at all**: it is inferred from how DHCP works, not measured. The
+unsolicited `WIFI *` lines. Whether a **real** module's listener survives — measured
+once, one machine, no re-runnable artefact. **How long a real re-association takes**,
+which is the number that would decide whether 60 seconds is right, and which is
+unmeasured anywhere. The outage arriving **while a DZRP session is open**, which the
+session guard deliberately skips, so what a user sees there is unchanged. And the
+`AT+CIFSR` **timeout** arm above, which no run here produces.
+
+---
+
 ## 2026-08-10 — The debugger's own screen was drawn through whatever window the client last asked for
 
 **Built, issue #28.** `show_ui` maps the display file under `0x4000` for the

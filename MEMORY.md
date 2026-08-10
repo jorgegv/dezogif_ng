@@ -97,6 +97,17 @@ press-while-stopped case**, which is W6's and is emulator-only by the user's
 decision (2026-08-07). **The NMI-count precondition itself**, which no knob can
 provoke now that the schedule is checked — the same position T7's is in. **A
 stub that wedges only AFTER the liveness key is polled** would pass both halves.
+**A WiFi ROM**: the discriminator is `uart_joyport_selection`, which with its key
+handler and its row sits under `IF ROM_VARIANT == ROM_VARIANT_UART`. `make test`
+builds the UART ROM and `src/mf_rom.asm` — the routine under test — is common, so
+the coverage claim holds; aiming T8 at the WiFi build would need other state.
+**And the BORDER half is phase-dependent where the byte comparison is not**: a
+wedge freezes the border wherever `change_border_color` left it, and it cycles
+0..7, so roughly one run in eight it freezes on black and the WEDGED branch does
+not fire. Measured: the comparison still goes red, **104 pixels, every one of
+them in row 13**, because the reference's "B" repaints `B = Border off` to `on`
+and the wedged run never does. The border **names** a wedge; the comparison
+**catches** it.
 And **M2's own change**: when `nmi66h` learns to accept a software cause, T4 must
 be inverted deliberately and T8's expectations re-examined in the same change —
 they are about the same routine.

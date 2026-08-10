@@ -20,12 +20,15 @@
 #       our stub declines it, and would decline it whether or not the Copper
 #       worked, so the stub cannot be the thing that demonstrates it.
 #   T6  our stub TAKES OVER on a real M1 button NMI and paints its own screen.
-#       The only check here that proves the stub is alive rather than proving
-#       it correctly ignores something — see the note at T6.
+#       The only check here that proves the stub is alive BY TAKING OVER,
+#       rather than proving it correctly ignores something — see the note at
+#       T6. T8 also judges liveness, and judges it a different way: not that
+#       the stub arrives, but that it is still answering its own keyboard.
 #   T7  a second M1 press after a SOFT RESET re-initialises the debugger
 #       instead of declining (issue #26) — see the note at T7. The only check
-#       here that presses the button twice, which is why five years of
-#       upstream and every earlier bench missed the defect it guards.
+#       here that presses the button twice WITH A RESET BETWEEN, which is why
+#       five years of upstream and every earlier bench missed the defect it
+#       guards. T8 is the other one that presses twice, without a reset.
 #   T8  a second M1 press with NO reset is DECLINED, and the stub is still
 #       alive afterwards (issue #36). T7's other arm — see the note at T8.
 #
@@ -227,9 +230,14 @@ read_row() { python3 "$SCREEN_TEXT" --font "$font" "$1" "$2" 2>/dev/null; }
 # screenshot; it is the ULA that draws it.
 #
 # The same helper as test/run-no-hang.sh's, deliberately duplicated rather than
-# shared: bench-jnext.sh is the shared file and it earns its keep by defining
-# jnext teardown and NOTHING else, and factoring ten lines of pixel sampling out
-# would mean editing a second bench that this change has no business touching.
+# shared, and the reason is the surgical-change rule rather than anything about
+# bench-jnext.sh. That file's "functions and nothing else" invariant is about
+# SOURCING — no `set`, no traps, no top-level state, so it cannot disturb a
+# caller's `set -euo pipefail` or its trap wiring (MEMORY.md, issue #17) — and a
+# pure function like this one would not violate it. What stops the sharing is
+# that it would mean deleting run-no-hang.sh's copy: editing, and then having to
+# re-run, a second bench this change has no business touching. Issue #17's own
+# lesson cuts the other way and is worth weighing if a THIRD copy ever appears.
 border_rgb() {
     python3 -c "
 from PIL import Image
@@ -609,6 +617,22 @@ fi
 # The byte comparison is the broad net that catches everything the two named
 # faults do not: an error painted in the red area, a corrupted line, anything at
 # all the second press might have changed.
+#
+# AND FOR THE WEDGE IT IS THE STRUCTURAL NET, WHICH THE BORDER IS NOT. A wedged
+# stub freezes the border wherever change_border_color last left it, and that
+# cycles 0..7 (transport_uart.asm), so about one run in eight it freezes on
+# BLACK and the WEDGED branch below does not fire. The byte comparison still
+# does, phase-independently: the reference's "B" repaints row 13 from
+# `B = Border off` to `B = Border on` and the wedged run never does, which is
+# 104 pixels, measured, all of them in that one character row. So the border is
+# the branch that NAMES a wedge and the comparison is the one that CATCHES it.
+#
+# T8's discriminator is UART-ONLY, and that is a limit on where this check can be
+# pointed rather than on what it covers. uart_joyport_selection, its key handler
+# and its row all sit under IF ROM_VARIANT == ROM_VARIANT_UART (main.asm:80-83,
+# ui.asm, data_const.asm). `make test` builds the UART ROM and src/mf_rom.asm —
+# the routine under test — is common to both, so the coverage claim holds; but
+# aiming T8 at a WiFi ROM would need different state to move before the press.
 #
 # THE ORDER OF THE THREE EVENTS IS ASSERTED, NOT READ OFF THE CONSTANTS, AND
 # THAT GUARD WAS EARNED. Found while checking that the preconditions fire: with

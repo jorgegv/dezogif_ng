@@ -257,7 +257,9 @@ strongest:
      our stub declines it, and would decline it whether or not the Copper worked.
    - T6 our stub **takes over on a real M1 button NMI** and paints its own screen (~90%
      repainted, against the stock monitor's 91%). **The only check here that proves the stub is
-     alive** rather than proving it correctly ignores something. It exercises Multiface paging,
+     alive BY TAKING OVER**, rather than proving it correctly ignores something — T8 judges
+     liveness too and judges it differently: not that the stub arrives, but that it is still
+     answering its own keyboard afterwards. It exercises Multiface paging,
      the relocation of `MAIN` into a RAM bank at slot 7, `show_ui`, and the core-version check,
      in one run. Needs jnext ≥ 0.99.118 for `--delayed-nmi`; the bench checks for it and says so.
      **Scope limit, do not over-read it: T6 never resumes.** No DZRP client attaches, so
@@ -276,7 +278,8 @@ strongest:
      stack would both give that answer, and nothing read NR `0xC0` back. No bench here can do this
      — `--delayed-nmi` counts frames and a client counts wall clock — so it stays a human's job.
    - T7 a second M1 press after a **soft reset** re-initialises the debugger instead of
-     declining (issue #26). **The only check that presses the button twice**, which is why five
+     declining (issue #26). **The only check that presses the button twice WITH A RESET BETWEEN**
+     — T8 is the other one that presses twice — which is why five
      years of upstream and every earlier bench missed the defect it guards: the NMI dispatch
      read "magic number and build time match, no debuggee running" as "the debugger is
      executing" and declined — an inference a soft reset falsifies, since RAM survives one and
@@ -318,9 +321,16 @@ strongest:
      **40.03%**. **The three event frames are asserted to be in order**, because
      `NORESET_NMI_FRAME=1500` — past the screenshot — came out **8/8 having pressed the button
      after the picture was taken**, which is W6's fail-green window in a new organ. Each frame is
-     overridable so all three preconditions have a re-runnable red. **NOT covered**: the
-     press-while-stopped case, which is W6's; and anything on hardware — both arms *were* seen on
-     a real Next at `00.12`, and T8 does not upgrade that, it makes the emulator half re-runnable.
+     overridable so all three preconditions have a re-runnable red. **The border NAMES a wedge and
+     the byte comparison CATCHES it**: a wedge freezes the border wherever `change_border_color`
+     left it and that cycles 0..7, so about one run in eight it freezes on black — the comparison
+     is phase-independent and still fires, 104 pixels, all in row 13, where the reference's "B"
+     repainted `B = Border off` to `on`. **NOT covered**: the press-while-stopped case, which is
+     W6's; anything on hardware — both arms *were* seen on a real Next at `00.12`, and T8 does not
+     upgrade that, it makes the emulator half re-runnable; and **a WiFi ROM** — the discriminator
+     is `uart_joyport_selection`, which exists only under `IF ROM_VARIANT == ROM_VARIANT_UART`.
+     `make test` builds the UART ROM and `src/mf_rom.asm` is common to both, so the coverage claim
+     holds; pointing T8 at the WiFi build would need different state to move before the press.
    Screen comparison is a **percentage of differing pixels** (`test/screen-diff.py`), not a byte
    compare: NextZXOS idling changes 0.01% of the screen and that once produced a false PASS.
    **T8 is the exception and asserts byte-identity**, which it can because the stub owns the

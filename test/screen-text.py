@@ -19,9 +19,13 @@ reviewer then SWAPPED the two labels — each run showing the other's — and it
 passed again. "These two differ" is not "this one is right".
 
 HOW IT READS. No OCR and no committed reference bitmap: the stub prints with the
-ZX Spectrum ROM font, which main_bank_entry copies out of the paged-in ROM at
-0x3D00 (main.asm:65-70, text.asm's font_address), so the exact bitmap of every
-glyph is available from the ROM file on the SD image the bench already mounts.
+ZX Spectrum ROM font, read LIVE out of the ROM at ROM_FONT = 0x3D00
+(src/utilities.asm:37; text.init points font_address there, and text.font_map is
+what makes the window valid for the duration of a paint), so the exact bitmap of
+every glyph is available from the ROM file on the SD image the bench already
+mounts. Until issue #31 main_bank_entry COPIED those 0x300 bytes into the top of
+MAIN_BANK and font_address pointed at the copy; the address the reader needs is
+the same either way, which is why this tool did not have to change with it.
 ula.print_char XORs the glyph onto a screen show_ui has just cleared, at x
 positions that are multiples of 8, so a cell is a straight 8x8 blit — reversing
 it is a dictionary lookup, not recognition.

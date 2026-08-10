@@ -234,6 +234,23 @@ outage. Every wrong answer agreeing with the right one is the failure this proje
 shipped three times (mfselect's M9 with swapped labels; N6's scanline-0 probe; #27's
 C21). **D1 discriminates precisely because the address moves.**
 
+**ONE FLAKE OBSERVED AND NOT TUNED AWAY.** `test-slot-recovery`'s **S6** failed once
+in **five** branch runs — *"the held session did not behave: the client exited 1"*,
+from a `CMD_INIT` that got **"remote closed the connection"** at 0.0 s. That is a
+socket the stub closed, not a command eaten: the shape is the idle sweep's
+`AT+CIPCLOSE` landing on a connection that had just been accepted, which is a race
+between the client's connect and a sweep these runs deliberately set to fire every
+10 emulated seconds. **`main` was 2 of 2 green** on the same check.
+
+**It is probably not this change and that is reasoning, not a measurement.** In
+those runs `ESP_IDLE_SWEEP_SECS` is 10 (500 frames) while `ESP_ADDR_CHECK_SECS` is
+the shipped 60 (3000 frames), so at the moment the client connects — a few seconds
+in — the address check cannot yet have fired, and the two counters are independent.
+**Not proven pre-existing**: that needs it reproduced on `main`, and two green runs
+there are not that. Recorded rather than tuned, because adjusting a race until it is
+green is weakening a check to make it pass — and S6 already has a history of exactly
+this kind of timing sensitivity, recorded at the 2026-08-09 entry.
+
 **Rejected.** Re-asking from `show_ui` (re-entered on every redraw, so an AT round trip
 would be paid every time somebody pressed "B" — the half of `transport_init`'s old
 comment that was always right; the half that was **wrong** is *"the address cannot
@@ -247,11 +264,12 @@ recording `last_error` (nine rows and a second painter, for words already on row
 and 7 — and it must **never** bury a `TX Timeout` a human still needs, which is why the
 record is guarded on `last_error` being clear).
 
-**Cost: WiFi `main_end` 0xFCC8 → 0xFD29, +97 bytes, 375 free** to the identity block
-(the budget after #28 was 472). **The UART ROM is byte-identical** pinned —
+**Cost: WiFi `main_end` 0xFCC8 → 0xFD2F, +103 bytes, 369 free** to the identity block
+(the budget after #28 was 472); 97 of those are the re-query and 6 are the
+FAILED guard the review's blocker added. **The UART ROM is byte-identical** pinned —
 `b0691ed3…` both sides with `build/*.bin` deleted first — which is what says nothing
 leaked across the transport boundary: `transport_esp.asm` is in the WiFi build only.
-WiFi `62110de0…` → `cb1abf4c…`. **This changes a ROM, so the merge carries a `make
+WiFi `62110de0…` → `e5990104…`. **This changes a ROM, so the merge carries a `make
 bump`.**
 
 **NOT COVERED, and none of it is hidden.** **Real hardware — nothing here has run on a

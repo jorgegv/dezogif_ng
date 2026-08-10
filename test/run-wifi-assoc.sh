@@ -43,7 +43,7 @@
 # name for (mfselect's M9 with swapped labels; N6's scanline-0 probe; ERRORS.md).
 # D1 is the discriminating check precisely BECAUSE the address moves.
 #
-# WHAT THE OTHER FOUR ARE FOR. D3 is a different branch and a different string:
+# WHAT THE OTHERS ARE FOR. D3 is a different branch and a different string:
 # an unassociated module answers 0.0.0.0, which esp_query_address refuses as a
 # host address, so the screen must change to the "no address" block rather than
 # merely to a different number. D5 is the case a REAL Next produced (the address

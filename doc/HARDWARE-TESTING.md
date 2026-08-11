@@ -1330,6 +1330,28 @@ never entered. The feature's whole use case is *resume, think, click Pause*, and
 that is idle TCP time. At the module's default the ceiling is three minutes; at the value the stub
 intends, half an hour.
 
+### AND THE SAME RUN, PAST THE CLIFF — 600 s on `00.21`
+
+`make test-pause-transparency PT_RUN_SECONDS=600`, the run that died at three minutes on `00.20`:
+
+| | |
+|---|---|
+| iterations | **9,400,354** over 600 s — **15,667/s** |
+| polls | **~30,000**, every one of which restored MMU slot 7 and the NextREG select latch |
+| fault code | **0** |
+| PC / SP | `0x8099` (inside the loop) / `0x9F00` (the fixture's own) |
+
+**Three times the previous best**, and the first long free run to survive its own window. This is
+milestone M2's user-facing property measured rather than argued: a debuggee left running for ten
+minutes under a 50 Hz NMI poll, then paused, with nothing disturbed.
+
+**IT ALSO CORROBORATES THE DIAGNOSIS, WHICH WAS NOT ITS JOB.** The 182 s identification rested on a
+loop rate measured once, in a 30-second control on the *previous* build: 15,688/s, giving
+2,856,144 ÷ 15,688 = 182.1 s. This run measures **15,667/s** independently, over twenty times the
+window and on a different build — **0.13% apart**, which puts the same count at 182.3 s. The
+arithmetic that identified the firmware default is therefore not resting on a single short
+measurement.
+
 ### WHY: `AT+CIPSTO` needs a running server, and we sent it one step too early
 
 **Found the same day, and the elimination is worth as much as the answer.** Four suspects, three

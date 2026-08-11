@@ -99,6 +99,19 @@ directly instead: `AT+CIPSTO?` reads back `+CIPSTO:1800` under `.UART` right
 after the set. A lower bound over the wire plus a register read is a stronger
 pair than either alone.
 
+**AND THE RUN THAT FOUND IT NOW SURVIVES ITS OWN WINDOW.**
+`make test-pause-transparency PT_RUN_SECONDS=600` on `00.21`: **9,400,354
+iterations over 600 s, fault 0**, ~30,000 polls, PC in the loop and SP intact —
+where `00.20` was reaped at three minutes. Three times the previous best, and
+M2's user-facing property measured rather than argued.
+
+**It corroborates the diagnosis as a side effect, which was not its job.** The
+182 s identification rested on a loop rate taken once, in a 30-second control on
+the previous build (15,688/s). This run measures **15,667/s** independently, over
+twenty times the window and on a different build — **0.13% apart**, putting the
+same iteration count at 182.3 s against 182.1. The arithmetic that named the
+firmware default does not rest on a single short measurement.
+
 **Cost: WiFi ROM moves, UART byte-identical, so the merge carries a `make
 bump`.** `transport_esp.asm` is in the WiFi build only.
 

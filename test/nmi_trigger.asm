@@ -26,12 +26,26 @@
 ; NR 0x06 reads back (zxnext.vhd:5900), so the enable is a read-modify-write
 ; and leaves the other bits of NR 0x06 alone.
 ;
-; Note what this fixture can and cannot reach today. The NMI *is* delivered —
-; the stock Multiface ROM proves it (bench T3) — but mf_rom.asm's nmi66h then
-; reads NR 0x02, masks 00011100b and returns unless it is zero, i.e. it serves
-; button presses only. NR 0x02 bit 3 reads back as nr_02_generate_mf_nmi
-; (zxnext.vhd:3843-3848), set by this very write, so the stub declines. That
-; is the bench's T4 expectation, and M2's Copper break will hit the same gate.
+; Note what this fixture can and cannot reach. The NMI *is* delivered — the
+; stock Multiface ROM proves it (bench T3) — and the stub nevertheless declines
+; it, which is the bench's T4 expectation.
+;
+; ~~but mf_rom.asm's nmi66h then reads NR 0x02, masks 00011100b and returns
+; unless it is zero, i.e. it serves button presses only ... and M2's Copper
+; break will hit the same gate.~~ SUPERSEDED BY ISSUE #22 (M2), 2026-08-11, and
+; the reason the stub declines is now a different one. nmi66h serves a SOFTWARE
+; cause too: NR 0x02 bit 3 — which reads back as nr_02_generate_mf_nmi
+; (zxnext.vhd:3843-3848) and is set by this very write — takes the asynchronous
+; break's poll path rather than being masked away.
+;
+; What declines THIS fixture is the poll's own safety gate, further along: the
+; poll pages MAIN_BANK in, compares two bytes of the magic number, and requires
+; prgm_state to be PRGM_RUNNING before it will CALL anything there. Nothing has
+; started the debugger in this run, so the magic does not match and the poll
+; restores MMU slot 7 and returns. T4's verdict is therefore unchanged and only
+; its reason moved — see run-headless.sh's T4 notes, and note that inverting T4
+; (which issue #22's own text asked for) would have asserted a takeover that
+; must not happen.
 ;===========================================================================
 
     DEVICE ZXSPECTRUMNEXT

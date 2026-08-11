@@ -129,9 +129,15 @@ T-state count (124, a hard floor rather than a guess), and refuses before it
 looks at the numbers at all; the monotonicity and reading-ceiling tests stay as
 backstops for a fixture that is not what the script thinks it is. Measured: 14
 frames after injection accepted, 15 refused, the reviewer's 30 refused loudly.
-**The published figures were never in doubt** — the shipped window is nine
-frames and clear of any wrap by more than a third — which is exactly what makes
-this a defect in a safety claim rather than in a measurement.
+**The published figures were never in doubt** — the shipped window is clear of a
+wrap by **14707 counts, 22.4% of the 65536**, read off the run's own snapshots
+(`off_first=15620`, `off_last=50829`) rather than estimated, which is exactly
+what makes this a defect in a safety claim rather than in a measurement.
+*(An earlier version of this sentence said "nine frames and clear of any wrap by
+more than a third". The reviewer read the snapshots; it is 22.4%, and the window
+is twelve frames. The conclusion is untouched and the number was invented, which
+is the smaller sin in the worse place — this paragraph's whole subject is a
+claim that was asserted rather than measured.)*
 
 Plan §10 and Appendix A carried "~100-200 T-states/frame (≈0.3%)" as an estimate
 nobody had measured; both are annotated in place. **The first figure was

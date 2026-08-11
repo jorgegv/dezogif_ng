@@ -35,8 +35,23 @@ The program is started when DeZog sends a DZRP continue request.
 
 See [Design.md](doc/legacy/Design.md) for more info.
 
-Lifting the "cannot stop from DeZog" limitation is the point of this fork; the mechanism is a
-Copper-driven periodic NMI, and it is milestone M2 of the plan.
+~~Lifting the "cannot stop from DeZog" limitation is the point of this fork; the mechanism is a
+Copper-driven periodic NMI, and it is milestone M2 of the plan.~~
+
+**IT IS LIFTED, in the WiFi build, since 2026-08-11 — milestone M2, issue #22.** Pause in DeZog
+stops a freely running program, with no button press and no breakpoint (bench check **W8**). The
+mechanism is the Copper-driven periodic NMI above, and the two Copper instructions live in **your
+program**, not in the debugger — 44 bytes, because the Copper's instruction list is write-only and
+a debugger that installed its own could never give you yours back. See
+[doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md](doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md) for the snippet, what
+it costs, and the five states in which the break will not fire.
+
+**The paragraphs above still describe UART (serial) mode exactly**, which has no PC-initiated break
+and will not get one: a serial build hands the joy ports back when it resumes your program, which
+re-points the UART's receive line at the ESP-01 pin, so the PC's cable bytes have nowhere to land
+while the program runs. There, the yellow NMI button is still the only way to stop it.
+
+**None of M2 has run on real hardware.** Every result behind it is the jnext bench's.
 
 
 # Build

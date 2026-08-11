@@ -169,8 +169,9 @@ because that trade is the clearest statement of §1: the two remotes have one ha
 
 ## 10. DECIDED, 2026-08-11: option C, as a PR, and Maziac has asked for it
 
-**BUILT AND VALIDATED ON HARDWARE THE SAME DAY — draft PR
-[maziac/DeZog#186](https://github.com/maziac/DeZog/pull/186).** A breakpoint set
+**BUILT AND VALIDATED ON HARDWARE THE SAME DAY — PR
+[maziac/DeZog#186](https://github.com/maziac/DeZog/pull/186)**, opened as a draft
+and taken out of draft by the user the same evening. A breakpoint set
 in the VS Code editor is verified and **hit**, Continue from it hits it **again,
 repeatedly**, Pause returns control, and `IM` reads `?`. Measured on the user's
 own Next at build `00.22`, core 03.02.01, ESP at 460800.
@@ -261,8 +262,10 @@ copying anyway.
 ### ~~Not started~~ Built
 
 ~~No branch, no `upstream` remote on the fork yet, nothing written.~~ Branch
-`zxnext-socket-transport` on `jorgegv/DeZog`, one commit, `upstream` remote added and level with
-`283d18ef` when it was cut. 7 files, +237 −20. **The installed extension at
+`zxnext-socket-transport` on `jorgegv/DeZog`, `upstream` remote added and level with
+`283d18ef` when it was cut. **One commit and +237 −20 when it was opened; 3 commits and
++263 −17 at 22:13** — the two extra being the dezogif_ng naming and the review's finding.
+The figures are a reading of a live PR at a moment; check it rather than quoting this. **The installed extension at
 `~/.vscode/extensions/maziac.dezog-3.7.4/` has never been modified** and must not be: development
 used VS Code's Extension Development Host against the fork, whose launch args carry
 `--disable-extensions`, so the installed DeZog is inert in that window and cannot be what answered.

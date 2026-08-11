@@ -14,10 +14,18 @@ hits it **again, repeatedly**, Pause returns control, and `IM` reads `?`. Option
 **C** of `doc/DEZOG-BREAKPOINTS-DESIGN.md`, built and driven end to end within
 hours of the entry below being written.
 
-**Draft PR [maziac/DeZog#186](https://github.com/maziac/DeZog/pull/186)**, from
-`jorgegv/DeZog` branch `zxnext-socket-transport`, 7 files, +237 −20, MIT by
+**PR [maziac/DeZog#186](https://github.com/maziac/DeZog/pull/186)**, from
+`jorgegv/DeZog` branch `zxnext-socket-transport`, MIT by
 construction — new TypeScript written from scratch, nothing pasted from this
 GPLv3 tree (plan §6, decided before writing rather than after).
+
+**IT MOVED WHILE THIS ENTRY WAS BEING WRITTEN, so the figures are stamped rather
+than stated.** Opened **as a draft** at `e63786ff`, one commit, 7 files,
+**+237 −20**. The user marked it **ready for review** at 22:02, and two further
+commits followed: `1e8a000c`, naming the ZX Next side precisely (below), and
+`19fb93ae`, the review's finding (below). **At 22:13 it is 3 commits, 7 files,
++263 −17, not a draft.** Anything quoted here is a reading of a live artefact at
+a moment; check it rather than carrying it forward.
 
 **THE REPEAT IS THE RESULT, NOT THE FIRST HIT.** Continuing *from* a breakpoint
 is the hard half of the 13/14 dialect: `sendDzrpCmdContinue` restores the
@@ -83,12 +91,19 @@ the honest form being that whether the pause takes effect is up to the program o
 the ZX Next.
 
 **A test had to move, and it moved deliberately rather than being deleted.**
-`npm test` was **900 passing on upstream/main** (run, not assumed) and is 900 on
-the branch. One existing test, `port obsolete`, **failed correctly** — it encodes
+`npm test` was **900 passing on upstream/main** (run, not assumed) and was 900 at
+`e63786ff` — **901 since `19fb93ae`**, which adds `port needs hostname`. One
+existing test, `port obsolete`, **failed correctly** — it encodes
 the 2.6.0 contract that `port` is rejected. A second, `hostname obsolete`,
 started passing **for a different reason** (the new "not both" rule). Both were
 repurposed — `hostname` as a positive case, `serial and hostname are exclusive`
-as the error — so the count is unchanged and the new contract is what is asserted.
+as the error — so the count was unchanged by that commit and the new contract is
+what is asserted.
+
+*(A word on the load: at ~20 the disassembler's `1000 nodes` case, a 2000 ms
+wall-clock benchmark, times out and the suite reports one failure. It passes in
+~7 s given room. Every count here is with the timeout raised, and that is said
+rather than reported as a bare green.)*
 
 **Rejected.** The §10 base-class extraction (churn, above); a separate
 `zxnextsocket` remote type (it cannot disturb existing users at all, which is a

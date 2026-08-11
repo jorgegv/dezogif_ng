@@ -17,7 +17,9 @@ been since 2026-08-05.** What is here today:
 - **The WiFi transport is built and has run on real hardware.** `make TRANSPORT=wifi` gives a ROM
   that brings the ESP-01 up as a TCP server and speaks DZRP through it. On a real Next, **DeZog
   itself** has attached over WiFi and disassembled, read registers and memory, single-stepped,
-  broken in with the M1 button and reattached — measured at a median **11.2 ms** round trip.
+  broken in with the M1 button and reattached (2026-08-05, median **13.0 ms** round trip). The
+  best measured latency is **11.2 ms**, from the conformance bench's own hardware run three days
+  later — a different session, and not a DeZog one.
 - **PC-initiated break is built**, milestone M2, 2026-08-11 — Pause in DeZog stops a freely
   running program with no button press and no breakpoint. The two Copper instructions that make it
   possible live in **your** program, 44 bytes; see
@@ -131,8 +133,20 @@ requires the write to be blocked — which is what attributes the mechanism to t
 strongest check presses the M1 button straight after an install and requires the stub's own screen,
 with no soft reset. Also not part of `make test`. See [doc/MFINSTALL.md](doc/MFINSTALL.md).
 
-The Z80 unit tests under `src/unit_tests/` are DeZog-driven and need VS Code; they are a manual
-layer.
+~~The Z80 unit tests under `src/unit_tests/` are DeZog-driven and need VS Code; they are a manual
+layer.~~ **Half of that has been untrue since issue #3 (2026-08-04)** and the sweep for this
+commit's own subject is what found it still standing:
+
+~~~
+make test-unit
+~~~
+
+runs **28 of the 64** test cases headlessly in jnext, judged on markers the guest prints — the
+banking and breakpoint code, all of `ut_backup.asm`, `ut_breakpoints.asm` and `ut_utilities.asm`.
+Do not read a green run as "the unit tests pass"; read it as "the 28 that can run, pass". The
+other **36 cannot ever run headlessly**: they need ports invented by `src/simulation/uart.js`, a
+JavaScript peripheral DeZog's zsim loads as `customCode`, and the Z80 cannot trap its own I/O. For
+those, the DeZog-driven layer above is still the only way, and still needs VS Code.
 
 
 # Deployment

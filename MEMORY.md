@@ -5,6 +5,82 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-11 — DeZog's own breakpoints have never worked, and the suite could not have found it
+
+**Measured on the user's own Next, build `00.21`, and it is a fault in the
+product rather than in a check.** A breakpoint placed in the VS Code editor
+sends `CMD_ADD_BREAKPOINT` (**40**); the stub has no entry for it, answers
+**nothing**, and paints `Last Error: Command not supported`. **Issue
+[#41](https://github.com/jorgegv/dezogif_ng/issues/41).**
+
+**THE SYMPTOM IS SILENCE, NOT A FAILURE, WHICH IS THE WORSE HALF.** DeZog waits
+out its `socketTimeout`, logs *"No response received from remote"*, **and
+carries on**. So the red dot sits in the gutter looking normal, the program runs
+straight past it, and the only clues are ~50 s of unexplained stall and an error
+line on a screen nobody is looking at. The prediction written before the run
+said the session would die; it does not, and that correction is the user-facing
+half.
+
+**Both ends, and the split is the whole cause.** `DzrpRemote.setBreakpoint()` →
+`sendDzrpCmdAddBreakpoint()` → `sendDzrpCmd(40, …)`, no try/catch, and
+`CSpectRemote` **does not override it**. The class that maps breakpoints onto
+`CMD_SET_BREAKPOINTS` (13) / `CMD_RESTORE_MEM` (14) is a different subclass of
+the same parent — the **serial** ZX Next remote, which also overrides continue
+to set every breakpoint before resuming and restore every one on the break.
+**The stub implements the `zxnext` scheme, inherited from upstream dezogif,
+while the client we adopted for the socket uses the `cspect` one.** We took the
+`cspect` remote because it is the only released DeZog remote whose hostname is
+configurable (plan §7), and inherited a breakpoint API the stub was never built
+for.
+
+**IT IS THE ONLY HOLE, AND THAT WAS ENUMERATED RATHER THAN HOPED.** Every
+`sendDzrpCmd(<n>` in DeZog 3.7.4's bundle against `cmd_jump_table`: **1-23 are
+all implemented** (18/19 answering zeros by design, #9); **42/43** and **50/51**
+are missing and **unreachable**, because `CSpectRemote.setWatchpoint()`,
+`enableWPMEM()`, `stateSave()` and `stateRestore()` all throw before the wire.
+So the client guards every gap except this one — which is the most ordinary
+action a debugger has.
+
+**WHY NO CHECK COULD HAVE CAUGHT IT, and the third reason is a habit rather than
+a gap.** The conformance suite sends **13/14 because that is what we implement**,
+so it tests the stub against itself — the right shape for a regression gate and
+structurally unable to discover a command the client sends and we do not. No
+bench anywhere runs DeZog, which needs VS Code (the same structural reason 36 of
+the 64 unit tests cannot run headless), so every DeZog fact in this project has
+come from a human at a machine. And **nobody ever diffed the client's emit
+surface against our jump table** — one grep of the shipped extension, which
+would have found this on the day the `cspect` remote was chosen. It belongs in
+the DeZog-upgrade routine.
+
+**Stepping is NOT affected and its hardware verification stands.** Temporary
+breakpoints ride inside `CMD_CONTINUE`'s payload (bp1/bp2) and touch no
+breakpoint command at all: the 2026-08-05 session stepped 22 times on a real
+Next without ever sending 13 or 40. Nor are C19-C21, whose subject is the AltROM
+write path and which are driven by our own client.
+
+**Also affected by the same route**: DeZog's ASSERTION and LOGPOINT features,
+since `enableAssertionBreakpoints()` and `enableLogpoints()` both call
+`sendDzrpCmdAddBreakpoint`, and `CSpectRemote` advertises support for both.
+
+**The evidence is a capture rather than a symptom**, which is what makes the
+attribution safe: `Cmd: 40`, `Data: 149 128 5 0` — address `0x8095`, bank byte
+5, empty condition, i.e. exactly the line the user clicked — then two silences
+totalling ~50 s, then a `CMD_READ_MEM` **answered normally**, so the stub was
+serving throughout. The screen naming `Command not supported` is what separates
+"received and rejected" from "lost on the link".
+
+**No fix is chosen.** Three options are on the table and choosing between them
+is a real decision rather than a patch: implement 40/41 in the stub (needs an
+id → address+opcode table, and a decision about whether to patch at ADD time or
+defer to continue — the latter being *why* 13/14 exist); a DeZog-side remote
+speaking 13/14 over a socket (plan M4, upstream's repo, and the GPLv3-vs-MIT
+constraint); or document it as a limitation. See
+`doc/DEZOG-BREAKPOINTS-DESIGN.md`.
+
+**Cost: no `src/` change and no ROM byte** — this entry is a measurement.
+
+---
+
 ## 2026-08-11 — `AT+CIPSTO` needs a running server, so we had been sending it into an ERROR for six builds
 
 **Built, and the diagnosis is the entry rather than the fix, which is one block

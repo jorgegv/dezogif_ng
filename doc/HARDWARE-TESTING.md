@@ -1366,6 +1366,25 @@ gap cost six builds.
 site — a client connecting inside that one-AT-round-trip window is governed by the default, against
 a default that otherwise applies always.
 
+### CONFIRMED ON THE MACHINE THAT FOUND IT — 2026-08-11, build `00.21`
+
+`make probe-idle-drop NEXT_IP=<ip> PROBE_ARGS="--expect-timeout 1800 --deadline 400"`, the same
+instrument and the same deadline that measured the fault:
+
+| build | silence before the module hung up |
+|---|---|
+| `00.20` | **182.4 s** — and 182.5 s, 182.1 s by iteration count, ~180 s by stopwatch |
+| **`00.21`** | **still connected at 400 s**, error area clean, identity line `dezogif_ng WiFi build 00.21` |
+
+**What that establishes is the CONTRAST, not the value.** The probe says so itself: 400 s is a lower
+bound, and against an expectation of 1800 it is "consistent and confirms nothing". Confirming 1800
+needs `--deadline` past 1980 s — half an hour per run. What is settled is that the ~182 s reap is
+gone on a build one commit away from the one that had it, on the same machine, with the same client.
+
+The value itself is corroborated separately and directly: `AT+CIPSTO?` read back **`+CIPSTO:1800`**
+under `.UART` immediately after the successful set. A lower bound over the wire plus a direct read
+of the register is a stronger pair than either alone.
+
 **THE ELIMINATION MATTERED MORE THAN THE GUESS.** The baud was my strongest hypothesis and it had a
 clean history behind it — the 400 s measurement predates the 460800 default by two builds. Its own
 control killed it in seven minutes. Had it been filed as the cause instead of tested, it would have

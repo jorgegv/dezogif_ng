@@ -89,6 +89,16 @@ accurate edit and a rewrite would be the wrong one); and leaving the 2026-08-09
 command, so it is struck in place, with *what it actually observed* recorded as
 unknown rather than reconciled by invention).
 
+**CONFIRMED ON HARDWARE THE SAME DAY, build `00.21`.** The same probe and the
+same deadline that measured the fault: **still connected at 400 s** where
+`00.20` was dropped at 182.4 s, with the error area clean and the identity line
+reading `00.21`. **That establishes the contrast and not the value** — the probe
+says so itself, 400 s being a lower bound against an expectation of 1800, and
+confirming 1800 would need half an hour per run. The value is corroborated
+directly instead: `AT+CIPSTO?` reads back `+CIPSTO:1800` under `.UART` right
+after the set. A lower bound over the wire plus a register read is a stronger
+pair than either alone.
+
 **Cost: WiFi ROM moves, UART byte-identical, so the merge carries a `make
 bump`.** `transport_esp.asm` is in the WiFi build only.
 

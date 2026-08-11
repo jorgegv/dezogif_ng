@@ -1283,9 +1283,11 @@ Two things the shortening may **never** touch, because they are interface rather
   frames are in that run's log and not in ours — and the precondition arm then reports *"the
   precondition never happened"*, which is **red with a plausible wrong reason**, the worse of the
   two outcomes. Four is exact for that run, not a margin, and a genuine issue-#13 red still makes
-  four; the reasoning is at the assertion. **W5 also keeps its jnext log on failure**, timestamped,
-  because it is the one check here that fails intermittently and both 2026-08-10 failures were
-  overwritten before anyone read them.
+  four; the reasoning is at the assertion. **W5 also keeps its jnext log on EVERY failing arm**,
+  timestamped, because it is the one check here that fails intermittently and both 2026-08-10
+  failures were overwritten before anyone read them. *("Every" is load-bearing and was earned in
+  review: the first version skipped the "the stub never listened" arm, which made this sentence a
+  guarantee the code did not deliver — in the change whose whole subject is unreadable evidence.)*
   **AND ITS COMMONEST RED NOW NAMES ITSELF, from a mechanism OBSERVED rather than inferred**
   (2026-08-11): the trio comes out **15/6/1** instead of 6/15/1 — jnext's `frame_ipd()` emits one
   chunk per quiet moment and scans connections **in cid order**, and the fixture opens B first, so

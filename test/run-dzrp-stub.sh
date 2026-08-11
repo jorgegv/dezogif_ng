@@ -700,8 +700,19 @@ fi
 log ""
 log "== run 5: a command split across frames while another connection speaks"
 
+w5_fail=""
+split_ok=""
 if ! start_stub "$jlog5" "$shot5"; then
-    fail "W5 the stub never listened on 127.0.0.1:$PORT for the split-command run"
+    # THIS ARM KEEPS ITS LOG TOO, and the first version of this change did not
+    # — which made "W5 keeps its log when it fails" a claim the code did not
+    # deliver, in the header comment and in CLAUDE.md, both unqualified. It is
+    # also the arm whose log is most obviously worth reading: the listener never
+    # appeared, and the only record of why is what jnext wrote on its way there.
+    # start_stub's redirection creates the file the instant jnext is forked, so
+    # the copy always succeeds — though an emulator that died before writing
+    # anything leaves it empty, which is itself the answer to "how far did it
+    # get". Measured: staged with a jnext that refuses to start, 0 bytes.
+    w5_fail="W5 the stub never listened on 127.0.0.1:$PORT for the split-command run"
 else
     set +e
     split_out=$(DZRP_PORT="$W5_CLIENT_PORT" DZRP_TIMEOUT="$CONTROL_TIMEOUT" python3 "$SPLIT" 2>&1)
@@ -807,12 +818,20 @@ EOF
     # their own reason into the `  | ` block above and are ambiguous in exactly
     # the way this arm reports.
     #
-    # Measured on the shipped fixture, 2026-08-11: 4, with the run green.
-    w5_fail=""
+    # Measured on the shipped fixture, 2026-08-11: 4, with the run green — and
+    # again on a real, unstaged W5 failure captured the same night, which is
+    # what says four survives the check going red for its own reasons.
+    #
+    # THE DEFICIT ARM DOES NOT SAY "CONTAMINATED", DELIBERATELY, where the
+    # excess arm does. An excess can only be somebody else's client; a deficit
+    # has a second cause — the fixture's own precondition paths, which return
+    # before opening their third connection — and naming a cause we have not
+    # established would be this bench asserting rather than observing. The `  | `
+    # block above carries the fixture's own reason when that is what happened.
     if [ "$s_connects" -gt 8 ]; then
         w5_fail="W5 CONTAMINATED: $s_connects connections in $jlog5 where this fixture makes 3, so this verdict means nothing"
     elif [ "$s_connects" -lt 4 ]; then
-        w5_fail="W5 CONTAMINATED: only $s_connects connections in $jlog5 where this run makes 4, so this verdict means nothing"
+        w5_fail="W5 only $s_connects connections in $jlog5 where this run makes 4, so nothing here was tested"
     elif [ -z "$split_ok" ] && [ -n "$split_collapsed" ]; then
         w5_fail="W5 the race collapsed: the other client's frame was framed first, $split_collapsed ms after the stub last went quiet"
     elif [ -z "$split_ok" ]; then
@@ -820,28 +839,34 @@ EOF
     elif [ "$split_rc" -ne 0 ]; then
         w5_fail="W5 a split command was answered on the wrong connection or from the wrong payload (issue #13)"
     fi
+fi
 
-    # THE FAILING LOG IS KEPT, because $jlog5 is overwritten by the next run of
-    # this bench and W5 is the one check here with a history of failing
-    # intermittently — 1 of 3 on 2026-08-07, 2 of 4 on 2026-08-09, 2 of 2 on
-    # 2026-08-10. Both of those last two were unreadable by the time anyone
-    # looked, and reconstructing them cost 19 emulator runs and ~85 minutes
-    # without reproducing the failure, where the log itself would have answered
-    # it in a minute. This project's own standard is that a red nobody can
-    # re-run is a story about a scratch tree; the bench was doing that to
-    # itself. Timestamped rather than a fixed name, so a second failure does not
-    # erase the first; `make clean` sweeps them with everything else in $OUT.
-    if [ -n "$w5_fail" ]; then
-        fail "$w5_fail"
-        w5_kept=$OUT/dzrp-stub-w5-$(date +%Y%m%dT%H%M%S).log
-        if cp -- "$jlog5" "$w5_kept" 2>/dev/null; then
-            log "  W5 failed: this run's jnext log is kept as $w5_kept"
-        else
-            log "  W5 failed and its jnext log could NOT be kept from $jlog5"
-        fi
+# THE FAILING LOG IS KEPT, WHICHEVER ARM FAILED, because $jlog5 is overwritten
+# by the next run of this bench and W5 is the one check here with a history of
+# failing intermittently — 1 of 3 on 2026-08-07, 2 of 4 on 2026-08-09, 2 of 2 on
+# 2026-08-10. Both of those last two were unreadable by the time anyone looked,
+# and reconstructing them cost 19 emulator runs and ~85 minutes without
+# reproducing the failure, where the log itself would have answered it in a
+# minute. This project's own standard is that a red nobody can re-run is a story
+# about a scratch tree; the bench was doing that to itself.
+#
+# OUTSIDE the start_stub branch on purpose: this block used to sit inside it and
+# so skipped the "never listened" arm, which made the unqualified claim in this
+# file's header — and in CLAUDE.md — one the code did not deliver. Found in
+# review, not by the author.
+#
+# Timestamped rather than a fixed name, so a second failure does not erase the
+# first; `make clean` sweeps them with everything else in $OUT.
+if [ -n "$w5_fail" ]; then
+    fail "$w5_fail"
+    w5_kept=$OUT/dzrp-stub-w5-$(date +%Y%m%dT%H%M%S).log
+    if cp -- "$jlog5" "$w5_kept" 2>/dev/null; then
+        log "  W5 failed: this run's jnext log is kept as $w5_kept"
     else
-        pass "W5 a split command (cid $split_ok) got its own connection and payload, and the other client was answered too"
+        log "  W5 failed and its jnext log could NOT be kept from $jlog5"
     fi
+else
+    pass "W5 a split command (cid $split_ok) got its own connection and payload, and the other client was answered too"
 fi
 
 # ===========================================================================

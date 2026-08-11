@@ -5,6 +5,104 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-12 — W5's red reproduced the moment we stopped hunting it and started preserving it
+
+**Built, test-only, and the finding is worth more than the change.** W5's
+intermittent failure — 1 of 3 on 2026-08-07, 2 of 4 on 2026-08-09, 2 of 2 on
+2026-08-10, then **0 of 19** in the entry below — is diagnosed, and its
+mechanism is **observed** rather than read off jnext's source.
+
+**THE DECISION WAS TO STOP CHASING IT.** The entry below measured the cost of
+the alternative: bounding the rate below 5% needs ~59 runs and below 1% ~299,
+**and it still cannot compare two zeros**. The user's question was whether to
+pursue it any longer; the answer taken was no — make the next red *readable*
+instead, on the grounds that a red W5 has never once said the stub answered on
+the wrong connection. Its failure text is *"the precondition never happened"*,
+which is a bench-staging outcome, so the user-facing risk of leaving it was nil.
+
+**AND THE VERY NEXT RUN PRODUCED IT.** Red-firsting the new deficit arm meant
+running the same staging against the **pre-fix** script, which ignores the new
+seam — so its fixture dialled the stub normally, and **it failed anyway,
+spontaneously**. The log was captured by hand before the next run could
+overwrite it. That is the artefact 19 runs could not obtain, on the second run
+of the evening, obtained by not looking for it.
+
+**THE MECHANISM, MEASURED**: the trio comes out **15/6/1** instead of 6/15/1.
+jnext's `frame_ipd()` emits one chunk per quiet moment and scans connections
+**in cid order**, and `split-command.py` opens B first — so when A's 6-byte
+header and B's 15-byte command are both buffered at one quiet moment, B is
+framed ahead of A's header and there is no split left to see. From the log's own
+timestamps the wire was busy **10 ms**, against the fixture's **8 ms** gap. The
+entry below predicted exactly this from jnext's source and could not stage it;
+it is now a reading. **The budget is that 8 ms gap and not the 100 ms RX
+timeout**, which the entry below already establishes and which every intuition
+about this check got wrong by an order of magnitude.
+
+**Three changes, all in run 5's verdict.** The failing jnext log is kept,
+timestamped. The contamination guard gains its **lower** bound: an excess means
+somebody else's client reached our stub and comes out **green**, the documented
+hazard — a **deficit** means our fixture reached somebody else's listener, and
+the precondition arm then reports *"the precondition never happened"*, which is
+**red with a plausible wrong reason** and inverts the standing rule. And the
+collapse above is named, with its latency printed, because that number is what
+discriminates and counting failures is not.
+
+**FOUR IS EXACT, NOT A MARGIN**, which is what makes the lower bound safe:
+`start_stub`'s port probe makes one (its loop breaks on first success) and
+`connect()` has no retry, so B, A and the fresh client afterwards make three.
+**A genuine issue-#13 red still makes four** — the A and B verdict blocks set
+`failed` and fall through to the third connection; only the fixture's own
+preconditions return early — so the arm cannot mislabel the defect W5 exists to
+catch. Verified against the real flake log, which has 4.
+
+**THE REVIEW REJECTED IT, AND THE FINDING WAS A CLAIM WIDER THAN THE CODE.** The
+log-preservation block sat inside the `else`, so it covered every arm **except**
+`start_stub`'s "the stub never listened" — while this file's own header comment
+and `CLAUDE.md` both said, unqualified, that W5 keeps its log when it fails. In
+the change whose entire subject is evidence nobody can read. Fixed by moving the
+block outside the branch; the reviewer also established that the file always
+exists there, because `start_stub`'s redirection creates it when jnext is forked.
+
+**A second review finding, and it is about honesty rather than function**: the
+deficit arm said `CONTAMINATED`, which asserts external interference. A deficit
+has a second cause — the fixture's own precondition paths — so the arm now
+reports what it observed and leaves the cause to the fixture's own line above
+it. The **excess** arm keeps the word, because an excess can only be somebody
+else's client.
+
+**Rejected.** Raising `DZRP_SPLIT_GAP` so the race stops collapsing — tuning a
+race until it is green is weakening a check to make it pass, and the gap has
+both its edges measured in `split-command.py`; more reproduction runs (the
+arithmetic is in the entry below, and it cannot compare two zeros); making the
+collapse a **pass**, since nothing was tested; and a fixed name for the kept
+log, which would let a second failure erase the first.
+
+**`W5_CLIENT_PORT` is the seam that makes the deficit red re-runnable** — a
+*bench* seam like `SECOND_NMI_FRAMES`, not one of the `IP_MAX` / `RX_WAIT` /
+`LINK_IDS` build-constant family, since no probe ROM is built. It exists for
+their reason: a red nobody can re-run is a story about a scratch tree.
+
+**Cost: no `src/` change, no ROM byte, no `make bump`** — checked mechanically,
+and both ROMs rebuilt pinned and compared byte-for-byte against `main`'s by the
+reviewer. Regression: **16 headless targets green**, serially — `make test`,
+`test-dzrp-stub` (25/25 with W1-W8), `test-unit`, `test-esp`, `test-ip-boundary`,
+`test-tx-patience`, `test-client-status`, `test-no-hang`,
+`test-screen-agreement`, `test-slot-recovery`, `test-cipsto`, `test-baud`,
+`test-wifi-assoc`, `test-mfselect`, `test-mfinstall`, and
+`check-reproducible` in **both** variants.
+
+**NOT COVERED, and none of it is hidden.** **Whether the 2026-08-10 failures
+were this same collapse** — their logs are gone, so the shape is a strong
+inference and not a reading of those runs. **The `00.21`-versus-`00.22` margin
+question is still open** and is deliberately not pursued: the check prints the
+latency on every collapse now, so the numbers will accumulate by themselves.
+**The rate** — one spontaneous failure is not a rate, and this change does not
+make W5 fail less often, only legibly. **Hardware**, as ever: this is jnext
+throughout, and the race is between an emulated module's framing and a Python
+client's `sleep`.
+
+---
+
 ## 2026-08-11 — W5's red did not reproduce in 19 runs, and counting failures is the wrong instrument for it
 
 **Measured, as an instrument rather than a gate**, after W5 failed **2 of 2** on
@@ -92,6 +190,16 @@ n≈10 at 1 ms resolution. **Anything about hardware**: this is jnext throughout
 and the race is between an emulated module's framing and a Python client's
 `sleep`. And **the contamination hypothesis**, which has no evidence behind it at
 all and is written down only so the next failing log is read for it.
+
+*(**ANNOTATED 2026-08-12, and two of these moved.** A W5 failure **did**
+reproduce, spontaneously, on the second run of the next session, and its log was
+captured — so "nothing reproduces it, and the artefact is gone" is true of the
+2-of-2 and no longer true of the check. The **contamination hypothesis was
+staged and confirmed**, twice. What is untouched is the margin question, which is
+still n≈10 at 1 ms resolution and is now left to accumulate by itself rather than
+be hunted. The predicted mechanism in this entry — `frame_ipd()` framing B ahead
+of A's header, giving 15/6/1 — is exactly what the captured log shows, at **10 ms
+against the 8 ms gap**. See the entry above.)*
 
 **Cost: no `src/` change, no ROM byte, no `make bump`.** This is a measurement.
 Re-runnable: `~/tmp/scratchpads/w5-race/` carries `RESULTS.md`, the per-run

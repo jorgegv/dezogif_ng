@@ -28,6 +28,13 @@ reason**, which is worse: a green invites suspicion, a red invites a diagnosis.
 is what happened on any particular run. It is written down so that the next
 failing log is read for `accepted as cid` before anything is concluded from it.
 
+*(**STAGED AND CONFIRMED 2026-08-11**, twice and by two people: the fixture
+pointed at a dead port, and pointed at a **real foreign listener** — the shape
+the hypothesis is actually about. Both give `s_connects=1` and both used to
+report *"the precondition never happened"*. So the deficit really does produce a
+red with a plausible wrong reason. What is still true is the last sentence: read
+the log for `accepted as cid` first. The bench does that itself now.)*
+
 **2. The failing run's log is overwritten by the next run.** W5's
 `build/dzrp-stub-w5.log` is not preserved on failure, so by the time a red is
 noticed the evidence is a run or more behind. Two reported failures on
@@ -42,9 +49,37 @@ would have answered it in a minute. This project's own
 standard is that a red nobody can re-run is a story about a scratch tree; here the
 bench does that to itself.
 
-**Neither is fixed.** Both are cheap — copy the log aside on failure, and compare
+~~**Neither is fixed.** Both are cheap — copy the log aside on failure, and compare
 the connection count against the baseline rather than a ceiling — and both are
-test-only. Deferred deliberately rather than forgotten.
+test-only. Deferred deliberately rather than forgotten.~~
+
+**BOTH ARE FIXED, 2026-08-11, AND THE FIX PAID FOR ITSELF WITHIN THE HOUR.** The
+log is kept, timestamped, on **every** failing arm; the guard has its lower bound
+at an exact 4. And red-firsting the deficit arm meant running the same staging
+against the pre-fix script — which ignores the new seam, so its fixture dialled
+the stub normally — and **it failed anyway, spontaneously**. That log was
+captured by hand before the next run could overwrite it, and it is the artefact
+the 19 runs above could not obtain.
+
+**It settles the mechanism, which until then was read off jnext's source and
+never observed**: the trio comes out **15/6/1** instead of 6/15/1, because
+`frame_ipd()` emits one chunk per quiet moment and scans connections in cid
+order while the fixture opens B first. The wire was busy **10 ms** against the
+fixture's **8 ms** gap. The check names that now, and prints the latency.
+
+**The lesson is the one this file keeps recording, in its cheapest possible
+form.** Nineteen runs hunting a failure produced nothing; preserving the
+evidence produced it on the second run of the next session. **When an
+intermittent failure resists reproduction, stop trying to reproduce it and make
+the next occurrence readable** — the failure will come to you.
+
+**And a lesson about the fix, from the review that rejected it.** The first
+version preserved the log in every arm **except** `start_stub`'s "the stub never
+listened", because the preservation block sat inside the `else`. The header
+comment and `CLAUDE.md` both claimed, unqualified, that W5 keeps its log when it
+fails. A guarantee stated more widely than the code delivers is the defect this
+project treats as disqualifying, and it was in the change whose entire subject
+is evidence nobody can read.
 
 ---
 

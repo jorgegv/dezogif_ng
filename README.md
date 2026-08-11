@@ -24,7 +24,9 @@ been since 2026-08-05.** What is here today:
   running program with no button press and no breakpoint. The two Copper instructions that make it
   possible live in **your** program, 44 bytes; see
   [doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md](doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md), including the five
-  states in which it will not fire. **This is the one part that has NOT run on hardware.**
+  states in which it will not fire. **It has run on a real Next, 2026-08-11** — bench check H7,
+  with its control. What has still never happened is **DeZog itself** driving it: every check of it
+  so far speaks DZRP directly.
 - **Both ROMs go on the SD card together** and are switched from the machine, either from a menu
   (`mfselect`) or from the NextZXOS command line and `AUTOEXEC.BAS` (`.mfinstall`), so choosing
   the serial build for a program that owns the ESP costs a power cycle rather than a PC session.

@@ -570,8 +570,10 @@ apart, so that is refused rather than measured.
 **A `memory_loop` wrong in some way other than routing `0xE000+` to `MAIN_BANK`** — a different
 hazard, and not one these checks are exposed to.
 
-**Neither has run on hardware**, and the defect has never been observed anywhere but here: it is
-traced from the source and now measured in the emulator.
+~~**Neither has run on hardware**~~ — **both did, 2026-08-11, on a real Next**, each reporting its
+64K-form write reaching the debuggee's bank. The **defect** has still never been observed anywhere
+but here: it is traced from the source, measured in the emulator, and what hardware adds is that
+the fixed handlers behave there too.
 
 **The UART build's half is predicted, not run.** `commands.asm` is common code so the fix reaches
 both ROMs, but nothing has ever driven the serial transport with a DZRP client — which is equally

@@ -31,7 +31,13 @@ the two Copper instructions, so the debugger installs nothing, destroys nothing,
 switch. The write-only fact is unchanged and is precisely *why* the program owns the list. See
 @doc/ASYNCHRONOUS-BREAK-DESIGN.md for the design and
 @doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md for what a user has to add to their program (44 bytes) and
-the five states in which the break will not fire. **Nothing in M2 has run on hardware.**
+the five states in which the break will not fire. ~~**Nothing in M2 has run on hardware.**~~
+**IT HAS, 2026-08-11, AND IT PASSED** — bench check **H7** on the user's own Next: a freely
+running debuggee, resumed with no breakpoint, stopped by `CMD_PAUSE` from the PC, with its control
+run silent. `PC` came back at the fixture's spin and `SP` at the fixture's own stack, and NR `0xC0`
+read `0x0A`, so the **stackless** branch of `save_nmi_return_address` is now established on silicon
+rather than in the emulator alone. **What has still never happened is DeZog driving it**: H7 and W8
+both speak DZRP directly.
 
 **It has now run on a real ZX Spectrum Next**, 2026-08-04 — the stub takes the M1 NMI and paints
 its UI on core 03.02.01, and mfselect installed it. That single evening found **two bugs no
@@ -628,8 +634,11 @@ strongest:
    function of the address, so guarding a restore can never strand a legitimate un-patch.
    `clear_tmp_breakpoint` stays unguarded because its address is the stub's, not a client's.
    **NOT covered**: `CMD_WRITE_MEM` into ROM space is still discarded (`memory_loop`'s per-byte path
-   is the receive path the baud ceiling is about, so it is deliberately not bracketed), and none of
-   this has run on hardware. See `doc/DZRP-TESTING.md`.
+   is the receive path the baud ceiling is about, so it is deliberately not bracketed).
+   ~~and none of this has run on hardware~~ — **it has, 2026-08-11, 23 of 23 on a real Next**: C19
+   set and removed a breakpoint at `0x1234` in ROM, C20's debuggee **stopped on the ROM breakpoint
+   at `0x0280`**, and C21 measured the guard's extent there. So the AltROM write path and its
+   trampoline guard are executed code on silicon. See `doc/DZRP-TESTING.md`.
    **C22 AND C23 ARE THE 64K ADDRESS FORM AT AN ADDRESS IN THE DEBUGGER'S OWN SLOT** (issue #38).
    `cmd_set_breakpoints` and `cmd_restore_mem` decide whether a 64K-form address needs the swap
    window by comparing against `0xE000` — and did it **with `A` still holding the bank+1 byte**,
@@ -666,8 +675,10 @@ strongest:
    pin it structurally with 224 bytes of margin. Shown red first, and the red **demonstrates** the
    defect rather than inferring it: *"the debugger's own bank was written: MAIN_BANK 0xFF80 went 0x00
    to 0xC7"*.
-   **NOT covered**: neither check has run on hardware, and the defect has never been observed
-   anywhere but here. What is **no longer** a gap is the `memory_loop` vacuity — see
+   **NOT covered**: ~~neither check has run on hardware~~ — **both did, 2026-08-11**, and each
+   reported its 64K-form write reaching the debuggee's bank on a real Next. The defect itself has
+   still never been observed anywhere but here. What is **no longer** a gap is the `memory_loop`
+   vacuity — see
    `doc/DZRP-TESTING.md`; the second route closes it in-suite, and the red-first pair closed it
    independently.
    **The suite is 23 since C22-C23 landed, was 21 since C19-C21, and 18 since C16-C18**; the 2026-08-05 figure is left as the measurement it was

@@ -5,6 +5,58 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-11 — M2 RUNS ON A REAL NEXT: the PC stops a freely running program, and the stackless branch is finally distinguished on silicon
+
+**Measured, not decided** (user's own Next, 192.168.100.136, 09:41), and it is the
+result this project was built for: **dezogif's headline limitation is lifted on
+the machine it was a limitation of.** `make test-hardware` — **4 passed, 0
+failed, 3 measured of 7**, with **H2 at 23 of 23** and **H7 green with its
+control**.
+
+**H7 IS THE ONE THAT MATTERS.** A debuggee was resumed with **no breakpoint** —
+so nothing the debugger planted could bring it back — left running, and stopped
+by `CMD_PAUSE` from the PC. `PC=0x802D` is the fixture's spin and `SP=0x9F00`
+its own stack, so the stackless NMI pushed nothing. The control run withheld the
+pause and nothing came back.
+
+**FOUR THINGS ONLY SILICON COULD SAY, and every one of them was jnext's word
+until this morning**: that the **Copper** raises a Multiface NMI at 50 Hz on
+real hardware (T5 and T9 are the emulator's, and jnext's Copper model had never
+been checked against a Next); that a real `nmi66h` serves the software cause;
+that slot 7 and the NextREG latch survive it on a real debuggee; and —
+
+**THE STACKLESS BRANCH IS ESTABLISHED ON HARDWARE.** NR `0xC0` read `0x0A`, so
+bit 3 was set and `backup.pc` can only have come from NR `0xC2`/`0xC3`. The
+2026-08-05 entry below records that *which* branch of `save_nmi_return_address`
+ran was **not** established on a Next, because a real M1 press would have given
+the same correct answer either way; 2026-08-11's emulator run closed it in jnext
+only. It is closed on silicon now, and it took the poll to do it — the button
+path still cannot distinguish itself.
+
+**AND IT IS THE FIRST HARDWARE RUN OF C19-C23**, which the 2026-08-09 run at
+build `00.19` predates (that one was 18 of 18). So two more fixes whose entire
+evidence was the emulator are executed code on a Next: **#27** — C20's debuggee
+**stopped on a ROM breakpoint at `0x0280`**, so the AltROM write path works
+there — and **#38**, both handlers driving a 64K-form address above `0xE000`
+into the debuggee's bank rather than the debugger's.
+
+Latency and throughput are consistent with the 460800 runs: median **6.8 ms**
+against 6.6, **20.6 KB/s** against 20.3, H6 clean.
+
+**WHAT IT DOES NOT ESTABLISH, and the first is the whole of what is left.**
+**DeZog has still never driven the asynchronous break** — H7 and W8 both speak
+DZRP directly, so what a real client does with an `NTF_PAUSE` arriving *before*
+its own `CMD_PAUSE` response is still read off CSpect's plugin rather than
+observed. The **long run** is not this: H7's debuggee ran one second, about fifty
+polls. The **poll's cost on a Next** is unmeasured at any clock. And **the build
+number was not captured** — DZRP reports upstream's `dezogif v2.2.1` for every
+ROM we ship — though H7 passing does establish that the installed ROM contains
+M2, since without it there is no poll to serve the NMI at all.
+
+**Cost: no `src/` change and no ROM byte.** This is a measurement, not a change.
+
+---
+
 ## 2026-08-11 — M2: the PROGRAM installs the Copper list, so the debugger destroys nothing, and asynchronous break stops being opt-in
 
 **Built, issue #22, milestone M2 — the headline functional advance over upstream

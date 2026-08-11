@@ -815,7 +815,15 @@ running program, and breakpoints can be set without pressing anything.
 freely running program — bench check **W8** in `make test-dzrp-stub`, which resumes a debuggee with
 **no** temporary breakpoint so that nothing the debugger planted can bring it back, and its own
 control run with the pause withheld. `nmi66h` serves a software Multiface NMI; the decline path
-costs a **measured** ~1288 T-states per frame (`make measure-poll-cost`). Read
+costs a **measured** ~1288 T-states per frame (`make measure-poll-cost`).
+
+**AND IT HAS RUN ON A REAL NEXT, 2026-08-11 — bench check H7, with its control, and it passed.**
+So the milestone's success criterion is met on silicon and not only in the emulator: the Copper
+raises a Multiface NMI at 50 Hz on real hardware, the poll serves it, and `CMD_PAUSE` stops a
+freely running program. NR `0xC0` read `0x0A` at the break, which makes this the first time the
+**stackless** branch of `save_nmi_return_address` has been distinguished on hardware. **DeZog has
+still never driven it** — H7 and W8 both speak DZRP directly, and that is the next real test.
+Read
 [ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md) §0 first, and
 [ASYNCHRONOUS-BREAK-USER-HOWTO.md](ASYNCHRONOUS-BREAK-USER-HOWTO.md) for what a user has to do.
 

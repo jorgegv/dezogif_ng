@@ -719,8 +719,16 @@ in the emulator — bench T9 and W8 — so "nothing here has run" is false. Ever
 survives, and §0 adds three items to it: the reported PC (a standing red), the software-NMI
 mis-return, and the DivMMC automap block, none of which has run on hardware either.
 
-- ~~**Nothing here has run.** No M2 code exists.~~ Built 2026-08-10; see §0. Every hardware claim is
-  still VHDL rather than silicon, and **no part of M2 has run on a real Next.**
+- ~~**Nothing here has run.** No M2 code exists.~~ Built 2026-08-10; see §0.
+  ~~Every hardware claim is still VHDL rather than silicon, and **no part of M2 has run on a real
+  Next.**~~ **IT HAS, 2026-08-11 — bench check H7 on the user's own Next, and it passed with its
+  control.** A freely running debuggee, resumed with no breakpoint, was stopped by `CMD_PAUSE`; the
+  `PC` came back at the fixture's spin and the `SP` at the fixture's own stack. So the Copper really
+  does raise a Multiface NMI at 50 Hz on silicon (T5 and T9 are the emulator's), the poll really
+  does serve the software cause there, and NR `0xC0` read `0x0A` — **the stackless branch of
+  `save_nmi_return_address`, established on hardware** rather than in the emulator alone. What is
+  still VHDL rather than silicon is everything in §0's limitation list, and the poll's per-frame
+  cost has never been measured on a Next at any clock.
 - ~~**The cost figure is unmeasured**, see §5.~~ **Measured 2026-08-11** — §5. What remains
   unmeasured is the cost of a poll that BREAKS IN, and anything on hardware.
 - ~~**The unsolicited-line decision in §4.3 is unmade**~~ — made: break on any byte, §0. Its

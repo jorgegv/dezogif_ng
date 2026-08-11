@@ -1213,6 +1213,60 @@ An earlier draft of this section reported that as "about a third of the estimate
 one-way payload figure against a line rate. It is recorded here because the arithmetic error
 pointed at the wrong optimisation.
 
+## M2 ON SILICON — measured 2026-08-11 09:41, on a real Next
+
+**The asynchronous break works on real hardware.** `make test-hardware NEXT_IP=192.168.100.136`:
+
+    H1  PASS  connected in 43 ms, session opened and closed cleanly
+    H2  PASS  the DZRP conformance suite passed in full — 23 of 23
+    H3  PASS  two simultaneous connections each got their own payload back
+    H4  MEAS  20 samples: min 6.0, median 6.8, max 13.0 ms
+    H5  MEAS  4096 bytes in 0.39 s — 20.6 KB/s round trip, 10.3 KB/s one way
+    H7  PASS  CMD_PAUSE stopped a freely running debuggee, and the control saw nothing
+    H6  MEAS  the error area is CLEAN — 0 bright-red pixels
+    4 passed, 0 failed, 3 measured, 0 skipped of 7
+
+**H7 IS THE RESULT.** dezogif's headline limitation — you cannot pause a running program from the
+PC, you walk over and press the button — is lifted on the machine it was a limitation of. A
+debuggee was resumed with **no breakpoint**, so nothing the debugger planted could bring it back,
+left running, and stopped by a `CMD_PAUSE` from the PC. Its control run withheld the pause and
+nothing came back, which is what says the pause is what stopped it.
+
+**What only this run could establish**, none of which any emulator can:
+
+| | |
+|---|---|
+| the **Copper** raises a Multiface NMI at 50 Hz on silicon | T5 and T9 are jnext's, and jnext's Copper model had never been checked against real hardware |
+| the poll **serves the software cause** on a real `nmi66h` | and declines it correctly the rest of the time, since the machine was otherwise unremarkable |
+| slot 7 and the NextREG latch survive it **on a real debuggee** | `PC=0x802D` (the fixture's spin) and `SP=0x9F00` (the fixture's own stack) |
+| **the stackless branch, distinguished on hardware** | NR `0xC0` read `0x0A`, so bit 3 was set and the PC came from NR `0xC2`/`0xC3`. MEMORY.md 2026-08-05 recorded that *which* branch of `save_nmi_return_address` runs was not established on a Next — the 2026-08-05 M1 press would have given the same answer either way. It is established now |
+
+**IT IS ALSO THE FIRST HARDWARE RUN OF C19-C23**, which the 2026-08-09 run at build `00.19`
+predates — that one was 18 of 18. So two more defects fixed on emulator evidence alone are now
+executed code on silicon:
+
+- **issue #27** — C19 set and removed a breakpoint at `0x1234` in ROM space, **C20's debuggee
+  stopped on the ROM breakpoint at `0x0280`**, and C21 measured the trampoline guard's extent. The
+  AltROM write path works on a real Next.
+- **issue #38** — C22 and C23 each drove a 64K-form address above `0xE000` into the debuggee's
+  bank rather than the debugger's.
+
+**The measurements are consistent with 460800** and with the 2026-08-09 run at `00.16`: median
+6.8 ms against 6.6, and 20.6 KB/s against 20.3. H6 clean.
+
+**WHAT THIS RUN DOES NOT ESTABLISH, and the first item is the important one:**
+
+- **DeZog has still never driven the asynchronous break.** H7 and W8 both speak DZRP directly, so
+  the one thing still taken on trust is what a real client does with an `NTF_PAUSE` that arrives
+  *before* its own `CMD_PAUSE` response — read off CSpect's plugin, never observed. Step 4b.
+- **The poll under a LONG run.** H7's debuggee ran for one second — about fifty polls. Step 4a is
+  the minutes-long version and has not been run on hardware.
+- **The poll's cost on a Next**, at any clock. 1288 T-states is jnext's, and the 3.5 MHz figure is
+  arithmetic from it.
+- **The build number was not captured.** DZRP reports upstream's `dezogif v2.2.1` for every ROM we
+  ship, and only the stub's own screen carries ours. What H7 passing *does* establish is that the
+  installed ROM contains M2, since without it there is no poll to serve the Copper's NMI at all.
+
 ## The suite at its full size — measured 2026-08-08 12:37, on a real Next
 
 The run above was 12 checks because that is the size the suite was that day. C13/C14 (issue #9) and

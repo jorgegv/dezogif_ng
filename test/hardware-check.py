@@ -34,6 +34,10 @@ answers are only interesting on silicon:
   H3  The inbound connection id is read rather than assumed, on real firmware.
   H4  Round-trip latency, MEASURED. The plan called 10-100 ms an "estimate".
   H5  Throughput, MEASURED. The plan called "tens of KB/s" an "estimate".
+  H7  Asynchronous break — a freely running debuggee stopped by CMD_PAUSE, with
+      its control. DELEGATED to pause-running.py, which is bench check W8.
+      Milestone M2's acceptance criterion, and the half of it no emulator can
+      settle: the Copper raising a Multiface NMI has never run on silicon.
 
 H4 and H5 moved two rows of the plan's Appendix A off the "estimate" rung of its
 evidence ladder on 2026-08-05, with these checks' own numbers, and they keep
@@ -129,6 +133,7 @@ import screen  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFORMANCE = os.path.join(HERE, "dzrp", "conformance.py")
+PAUSE_RUNNING = os.path.join(HERE, "dzrp", "pause-running.py")
 
 PASS, FAIL, SKIP, MEASURED = "PASS", "FAIL", "SKIP", "MEAS"
 
@@ -672,6 +677,104 @@ def h3_connection_id(host, port, timeout, results):
 # --------------------------------------------------------------------------
 
 
+# --------------------------------------------------------------------------
+# H7 — asynchronous break, milestone M2's acceptance criterion
+# --------------------------------------------------------------------------
+
+
+def run_pause_client(host, port, timeout, no_pause):
+    """One run of pause-running.py, streamed, with its lines kept for parsing."""
+    env = dict(os.environ)
+    env["DZRP_HOST"] = host
+    env["DZRP_PORT"] = str(port)
+    env["DZRP_TIMEOUT"] = str(timeout)
+    env["W8_NO_PAUSE"] = "1" if no_pause else "0"
+    proc = subprocess.Popen([sys.executable, PAUSE_RUNNING],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, bufsize=1, env=env)
+    lines = []
+    for line in proc.stdout:
+        print("    " + line.rstrip(), flush=True)
+        lines.append(strip_ansi(line.rstrip()))
+    proc.wait()
+    return proc.returncode, lines
+
+
+def pause_verdict(lines):
+    """(ok, detail) from the client's RESULT line, or (None, "") if it rendered none."""
+    for line in lines:
+        if line.startswith("RESULT pause OK"):
+            return True, line[len("RESULT pause OK"):].strip()
+        if line.startswith("RESULT pause BAD"):
+            return False, line[len("RESULT pause BAD"):].strip()
+    return None, ""
+
+
+def h7_async_break(host, port, timeout, results):
+    """A FREELY RUNNING DEBUGGEE IS STOPPED FROM THE PC — on silicon.
+
+    DELEGATED to test/dzrp/pause-running.py, for H2's reason: that client is
+    bench check W8 and owns what M2's acceptance criterion means, so the
+    hardware bench inherits its judgement rather than forming a second one
+    which could drift. It is host-parameterised already, so nothing about it
+    needed changing to point it at a Next.
+
+    WHAT ONLY HARDWARE CAN SETTLE HERE. The Copper raising a Multiface NMI at
+    50 Hz has never run on silicon — T5 and T9 are jnext's — and neither has the
+    poll's restoration of MMU slot 7 and the NextREG select latch on a machine
+    where the debuggee is real. This project has twice been caught by the
+    emulator sitting on the safe side of reality.
+
+    THE CONTROL RUNS FIRST, AND ITS VERDICT IS FOLDED INTO THIS ONE. With
+    --no-pause the client does everything except send CMD_PAUSE, and nothing
+    may come back: without that, a green here would not say the PAUSE caused
+    the break rather than the debuggee stopping by itself or never running.
+    Same argument W3 makes for C10 in the emulator.
+
+    THE ORDER IS NOT ARBITRARY. The control leaves a debuggee running free —
+    it never pauses it — and on hardware there is no "the emulator run ends" to
+    clean that up. What recovers it is the NEXT client's first byte, because
+    the poll breaks in on any traffic; so the real check both recovers the
+    machine and depends on the thing it is testing. A machine where the poll is
+    dead therefore fails the real check rather than passing a vacuous control,
+    which is the direction that fold has to fail in.
+
+    IT RUNS AFTER H3-H6's SUBJECTS AND BEFORE THE TEARDOWN. A stranded debuggee
+    would poison anything that followed, and read_screen_then_close's docstring
+    forbids anything running after it. If this check fails and leaves the Next
+    unresponsive, the M1 button is the recovery — which is exactly the
+    limitation M2 exists to remove, and the reason a red here is worth a
+    hardware evening.
+    """
+    print("\n--- pause-running.py: control, then the check ---", flush=True)
+    rc_control, lines_control = run_pause_client(host, port, timeout, no_pause=True)
+    ok_control, why_control = pause_verdict(lines_control)
+
+    rc_check, lines_check = run_pause_client(host, port, timeout, no_pause=False)
+    ok_check, why_check = pause_verdict(lines_check)
+    print("--- end pause-running.py ---\n", flush=True)
+
+    if ok_control is None:
+        results.add("H7", FAIL, "the control run rendered no verdict (exit %d); "
+                                "nothing was judged" % rc_control)
+        return
+    if ok_check is None:
+        results.add("H7", FAIL, "the check run rendered no verdict (exit %d); the "
+                                "debuggee may still be running — press M1" % rc_check)
+        return
+    if not ok_check:
+        # Deliberately over the ~20-word budget when the client joins several
+        # faults, for C10's and C11's reason: a broken asynchronous break fails
+        # on several independent axes at once and each one is load-bearing.
+        results.add("H7", FAIL, why_check)
+        return
+    if not ok_control:
+        results.add("H7", FAIL, "the break is not the pause's: %s" % why_control)
+        return
+    results.add("H7", PASS, "CMD_PAUSE stopped a freely running debuggee, and the "
+                            "control saw nothing")
+
+
 def read_screen_then_close(host, port, timeout, results):
     """Read the Next's own screen, then send a bare CMD_CLOSE.
 
@@ -825,6 +928,10 @@ def main():
     ap.add_argument("--latency-samples", type=int, default=20)
     ap.add_argument("--throughput-bytes", type=int, default=4096,
                     help="CMD_LOOPBACK payload for H5 (spec caps it at 8192)")
+    ap.add_argument("--skip-async-break", action="store_true",
+                    help="skip H7. It leaves a debuggee running between its two "
+                         "runs, so a machine whose poll is dead needs an M1 press "
+                         "to come back; everything above it is unaffected.")
     ap.add_argument("--skip-conformance", action="store_true",
                     help="skip H2 when it has already been run separately")
     args, extra = ap.parse_known_args()
@@ -836,10 +943,15 @@ def main():
     results = Results()
 
     if not h1_listener(args.host, args.port, args.timeout, results):
-        for tag in ("H2", "H3", "H4", "H5"):
+        # DERIVED, not written down, for the reason in Results' own docstring:
+        # this sentence used to say "four" beside a tuple that a later check
+        # could lengthen without anyone noticing — which is the headless
+        # bench's hardcoded "5/5" in a second costume.
+        skipped = ("H2", "H3", "H4", "H5", "H7")
+        for tag in skipped:
             results.add(tag, SKIP, "nothing was listening; this check was NOT run")
-        print("\nH1 failed, so nothing below it ran. The checks above are not four "
-              "findings — they are one.")
+        print("\nH1 failed, so nothing below it ran. The checks above are not %d "
+              "findings — they are one." % len(skipped))
         print("\nThings to check at the machine, in order: the WiFi ROM (not the UART one) "
               "is installed as the Multiface ROM; the M1 button has been pressed once since "
               "power-on; the Next is associated (doc/WIFI-SETUP.md); the IP is the one passed "
@@ -854,6 +966,16 @@ def main():
     h3_connection_id(args.host, args.port, args.timeout, results)
     h4_latency(args.host, args.port, args.timeout, results, args.latency_samples)
     h5_throughput(args.host, args.port, args.timeout, results, args.throughput_bytes)
+
+    # H7 before the teardown, not after: read_screen_then_close's docstring
+    # forbids anything following it, and a stranded debuggee would poison
+    # whatever ran next. H6's own reading is unharmed — it is a MEASUREMENT
+    # that already expects this bench's many disconnects to have left an
+    # `RX Timeout` behind.
+    if args.skip_async_break:
+        results.add("H7", SKIP, "skipped at the caller's request")
+    else:
+        h7_async_break(args.host, args.port, args.timeout, results)
 
     # Read the screen, then leave the machine saying the session is closed.
     # H3-H5 run AFTER the conformance delegation and each open connections of

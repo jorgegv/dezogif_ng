@@ -8,7 +8,8 @@
         test-unit test-mfselect mfinstall test-mfinstall \
         test-esp test-dzrp test-dzrp-stub test-ip-boundary test-tx-patience \
         test-client-status test-no-hang test-screen-agreement test-wifi-assoc \
-        test-hardware probe-jnext probe-slots probe-vanished probe-idle-drop \
+        test-hardware pause-transparency test-pause-transparency \
+        probe-jnext probe-slots probe-vanished probe-idle-drop \
         read-screen \
         bump bump-major check-reproducible \
         check-reproducible-wifi clean
@@ -364,6 +365,18 @@ TRIGGER_ASM = $(TEST)/nmi_trigger.asm
 COPPER_ASM  = $(TEST)/copper_nmi.asm
 POLL_ASM    = $(TEST)/copper_poll.asm
 COST_ASM    = $(TEST)/copper_cost.asm
+PT_ASM      = $(TEST)/pause_transparency.asm
+
+# Where `test-pause-transparency` points, and for how long it lets the debuggee
+# run. It DEFAULTS rather than refusing the way test-hardware does, because the
+# same client answers against a jnext running the WiFi stub on 127.0.0.1 — which
+# is where it was verified — and NEXT_IP still selects a real machine.
+#
+# Sixty seconds is 3000 polls: long enough that a leak firing once a frame has
+# thousands of chances, short enough to sit through. It is a knob, not a
+# constant: the interesting run is a longer one.
+PT_HOST         ?= $(if $(NEXT_IP),$(NEXT_IP),127.0.0.1)
+PT_RUN_SECONDS  ?= 60
 ESP_ASM     = $(TEST)/esp_server.asm
 MFSELECT_C  = $(TOOLS)/mfselect/mfselect.c
 MFINSTALL_C = $(TOOLS)/mfinstall/mfinstall.c
@@ -404,6 +417,13 @@ COPPER_BIN  = $(OUT)/copper_nmi.bin
 POLL_BIN    = $(OUT)/copper_poll.bin
 COST_BIN_ON = $(OUT)/copper_cost_on.bin
 COST_BIN_OFF= $(OUT)/copper_cost_off.bin
+# One source, two ways of being driven: the .bin is written over DZRP by
+# test/dzrp/pause-transparency.py, the .nex is what DeZog loads so that the
+# Pause BUTTON can be clicked at it. The .sld is what makes the second one
+# source-level rather than an address.
+PT_BIN      = $(OUT)/pause-transparency.bin
+PT_NEX      = $(OUT)/pause-transparency.nex
+PT_SLD      = $(OUT)/pause-transparency.sld
 ESP_BIN     = $(OUT)/esp_server.bin
 
 # mfselect's deployables: the utility, and a checksum for each ROM it can
@@ -1055,6 +1075,34 @@ test-hardware:
 	python3 $(TEST)/hardware-check.py --host "$(NEXT_IP)" $(HW_ARGS)
 
 # ---------------------------------------------------------------------------
+# The asynchronous break under a LONG free run, and the same program for DeZog.
+#
+# W8 — and so the hardware bench's H7 — resumes a debuggee for ONE SECOND. That
+# proves the break works and says almost nothing about the poll being
+# TRANSPARENT: fifty NMIs is not a sample. This runs the same shape for minutes,
+# with a debuggee that checks on every pass whether it was given its machine
+# back, and reads its verdict out after the pause.
+#
+# `pause-transparency` alone builds the .nex and .sld, which is what DeZog needs
+# to load this as an ordinary program and click Pause at it — the one path
+# nothing in this project has exercised, since W8 speaks DZRP directly. See
+# doc/HARDWARE-TESTING.md for the launch.json and the procedure.
+#
+# NOTE the description line must be the LAST `# ` line before the target.
+#
+# Build the transparency fixture: .bin for DZRP, .nex + .sld for DeZog
+pause-transparency: $(PT_BIN) $(PT_NEX) $(PT_SLD)
+	@echo "  $(PT_BIN)   written over DZRP by test-pause-transparency"
+	@echo "  $(PT_NEX)   load this in DeZog and click Pause"
+	@echo "  $(PT_SLD)   so DeZog shows source rather than addresses"
+
+# Run a debuggee free under the poll for minutes, then pause it (NEXT_IP=, PT_RUN_SECONDS=)
+test-pause-transparency: $(PT_BIN)
+	@echo "host $(PT_HOST), $(PT_RUN_SECONDS)s free run"
+	@DZRP_HOST="$(PT_HOST)" PT_RUN_SECONDS="$(PT_RUN_SECONDS)" \
+	    PT_BIN="$(PT_BIN)" python3 $(TEST)/dzrp/pause-transparency.py
+
+# ---------------------------------------------------------------------------
 # ESP-module probes. INSTRUMENTS, NOT GATES.
 #
 # `make test` is a gate: it says whether the thing still works. These targets
@@ -1280,6 +1328,17 @@ $(COST_BIN_OFF): $(COST_ASM) Makefile | $(OUT)
 
 $(ESP_BIN): $(ESP_ASM) Makefile | $(OUT)
 	$(SJASMPLUS) -DESP_SERVER_BIN=\"$@\" $(ESP_ASM)
+
+# The transparency fixture, in one pass: the raw image the DZRP client writes,
+# and the .nex + .sld DeZog loads. The .nex is declared to depend on the .bin
+# rather than sharing a multi-target rule, which make would otherwise run once
+# per target.
+$(PT_BIN): $(PT_ASM) Makefile | $(OUT)
+	$(SJASMPLUS) --fullpath -DPAUSE_TRANSPARENCY_BIN=\"$(PT_BIN)\" \
+	    -DPAUSE_TRANSPARENCY_NEX=\"$(PT_NEX)\" --sld=$(PT_SLD) $(PT_ASM)
+
+$(PT_NEX) $(PT_SLD): $(PT_BIN)
+	@test -f $@
 
 # The deployable ROM is the NMI entry code followed by the debugger image.
 # tbblue.fw loads exactly ROM_SIZE bytes, so a wrong size is a build error

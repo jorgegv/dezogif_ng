@@ -160,6 +160,26 @@ which is not in the display file and which no `CMD_READ_MEM` can ever reach.
 | **H3** | The `+IPD` connection id is **read from the header**, not assumed. **Red on hardware for eight hours on 2026-08-05, for a reason that was not the id** — it failed back-to-back and succeeded with a 1s pause, so it discriminated its own cause. Green since build 000A; see below and issue #11 |
 | **H4** | Round-trip latency, **measured** |
 | **H5** | Throughput, **measured** |
+| **H7** | **Asynchronous break — milestone M2's acceptance criterion.** A freely running debuggee, resumed with no breakpoint, is stopped by `CMD_PAUSE`; plus its control run, in which the pause is withheld and nothing may come back. Delegated to `pause-running.py`, which is bench check W8 |
+
+### H7 is the one check here whose subject has never run on silicon at all
+
+The Copper raising a Multiface NMI at 50 Hz is **jnext's word and nothing else's** — T5 and T9 are
+emulator checks, and so is W8. So is the poll's restoration of MMU slot 7 and the NextREG select
+latch on a machine where the debuggee is real. This project has twice been caught by the emulator
+sitting on the safe side of reality (a connection id of 0, a 15-character address), which is the
+whole reason H7 exists rather than the emulator's green being taken as the answer.
+
+**It runs after H3-H5 and before the teardown**, and the order is not arbitrary. Its control leaves
+a debuggee running free — it never pauses it — and on hardware there is no "the emulator run ends"
+to clean that up. What recovers the machine is the *next* client's first byte, because the poll
+breaks in on any traffic; so the real check both recovers the machine and depends on the thing it
+is testing. A machine whose poll is dead therefore fails the real check rather than passing a
+vacuous control, which is the direction that fold has to fail in.
+
+**If H7 leaves the Next unresponsive, press M1.** That is the recovery, and it is exactly the
+limitation M2 exists to remove — which is why a red here is worth a hardware evening.
+`--skip-async-break` turns it off; everything above it is unaffected either way.
 
 ### H1 carries far more than its one line of code
 
@@ -169,9 +189,11 @@ and `nmi66h` accepted the cause; that `MAIN` is executing from slot 7; that the 
 that UART0 came up at a rate the real module answers at; and that `ATE0`, `AT+CIPMUX=1` and
 `AT+CIPSERVER=1,11000` were all accepted. Every one of those is inherited from emulator runs today.
 
-**If H1 fails, the bench runs nothing else and says so.** Four SKIPs are not four findings, they
-are one. Work through: is the *WiFi* ROM installed; was M1 pressed since power-on; is the Next
-associated; is the IP right; has something else on the machine taken the ESP.
+**If H1 fails, the bench runs nothing else and says so.** The SKIPs below it are not several
+findings, they are one — and the bench derives that count from the list it skips rather than
+writing it out, because a sentence saying "four" beside a tuple is the headless bench's hardcoded
+`5/5` in a second costume. Work through: is the *WiFi* ROM installed; was M1 pressed since
+power-on; is the Next associated; is the IP right; has something else on the machine taken the ESP.
 
 ### H3 was RED on hardware, and is now GREEN — the whole bench passes
 
@@ -301,7 +323,88 @@ done. It landed, so C2 goes green on its own and the entry went with it.
 
 So every failure here is now new on this remote, and is the part worth investigating.
 
-## Step 4b — the module probes (optional, and NOT part of the bench)
+## Step 4a — the poll under a LONG free run
+
+    make test-pause-transparency NEXT_IP=192.168.1.42 PT_RUN_SECONDS=300
+
+H7 runs a debuggee free for **one second**. That proves the break works and says almost nothing
+about the poll being *transparent*: fifty NMIs is not a sample. This runs the same shape for as
+long as you like — 3000 polls a minute — with a debuggee that checks **on every pass** whether it
+was given its machine back, and reads its verdict out after the pause.
+
+The fixture (`test/pause_transparency.asm`) watches the two things the poll path disturbs and must
+restore, and records the first fault with the iteration it landed on:
+
+| | |
+|---|---|
+| **MMU slot 7** | the poll pages `MAIN_BANK` in to reach the debugger's image. Forgetting to page the debuggee's bank back is issue #26 — which hung a real Next — on a 50 Hz timer |
+| **the NextREG select latch** | `nmi66h` selects NR `0x02` for the cause and NR `0x57` to move slot 7. Forgetting is harmless once per button press and a recurring corruption of the debuggee at 50 Hz (issue #37) |
+
+**THE LATCH HALF IS THE ONE T9's FIXTURE CANNOT DO**, and that was measured there rather than
+argued: `copper_poll.asm` watches slot 7 by selecting NR `0x57` and never writing port `0x243B`
+again, so a build with the latch restore *deleted* leaves the latch holding exactly the value it
+wanted, and its red-first came out **green**. This fixture watches NR `0x07` instead — a register
+that is *not* `0x57` — so a poll that loses the latch leaves the watch read returning the probe
+bank. It also refuses to be blind: if the two values collide it says so rather than quietly
+becoming a check of nothing.
+
+Three further things are judged from the PC: a canary in the debuggee's memory that the fixture
+never touches, the PC being inside the fixture, and SP being untouched by the stackless NMI.
+
+**Shown red first, in the emulator, one instruction apart each time:**
+
+| probe ROM | what it reports |
+|---|---|
+| latch restore removed | *the NextREG select latch was not restored at iteration 475 (read 0x1E, expected 0x00)* — `0x1E` is 30, the probe bank, i.e. NR `0x57` left selected |
+| slot-7 restore removed | *MMU slot 7 was not restored at iteration 157 (read 0x5E, expected 0x1E)* — `0x5E` is 94, `MAIN_BANK`: the debugger's own bank, which is issue #26 exactly. It also reports that the debuggee barely ran, because it could not |
+| shipped ROM | *1351881 iterations over 10s, about 500 polls, nothing disturbed* |
+
+## Step 4b — DeZog's own Pause button, which is the test that matters
+
+**Nothing in this project has ever driven the asynchronous break from a real client.** W8 and H7
+speak DZRP directly. The specific thing they cannot exercise: the stub emits the `NTF_PAUSE`
+**before** it answers `CMD_PAUSE`, and what DeZog's `CSpectRemote` does with that ordering is read
+off its source, never observed.
+
+    make pause-transparency
+
+That builds `build/pause-transparency.nex` and its `.sld` — the same program Step 4a drives over
+DZRP, so a break here can be checked the same way. `launch.json`:
+
+```json
+{
+  "type": "dezog",
+  "request": "launch",
+  "remoteType": "cspect",
+  "cspect": { "hostname": "192.168.1.42", "port": 11000 },
+  "sjasmplus": [{ "path": "build/pause-transparency.sld" }],
+  "load": "build/pause-transparency.nex",
+  "rootFolder": "${workspaceFolder}",
+  "topOfStack": "STACK_TOP",
+  "startAutomatically": false
+}
+```
+
+The procedure, and each step is a thing that has not been observed:
+
+1. **F5.** DeZog loads the `.nex` over WiFi and stops at the entry point.
+2. **Continue.** The program installs its Copper list and spins. The bottom-right character cell
+   flickers — that is the debuggee's own liveness, deliberately not the border, because the border
+   is how you will tell the *debugger* is executing again.
+3. **Wait.** A minute is 3000 polls. The machine should be completely unremarkable.
+4. **Click Pause.** The program should stop. Check: the debug toolbar comes back, registers and the
+   call stack populate, `PC` is inside the fixture, and DeZog reports the reason as `Manual break`.
+   **The Next's own screen does not change** — a poll break goes to the debugger's command loop,
+   which does not repaint. What changes on the machine is the border resuming its cycle.
+5. **Look at `0x9000` in DeZog's memory view.** Byte 4 is the fault code and must be **0**; the
+   first four bytes are the iteration count, which should be in the millions.
+6. **Continue, then Pause again.** Once is an event; twice is a feature.
+7. **Shift+F5.** The disconnect sends `CMD_CLOSE`, which the stub must answer.
+
+Reset the machine afterwards: the fixture repoints MMU slot 7 over where NextZXOS's stack lives and
+never returns, which is what makes it a debuggee rather than a program.
+
+## Step 4c — the module probes (optional, and NOT part of the bench)
 
     make probe-jnext                             # FIRST. Always. See below
     make probe-slots      NEXT_IP=192.168.1.42   # probe A

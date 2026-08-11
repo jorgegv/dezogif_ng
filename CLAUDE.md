@@ -1146,7 +1146,16 @@ strongest:
    `customCode` plugin) in VS Code. Still a manual layer, and still the only way to exercise the
    36 that 4d must skip. `make unit-tests` assembles it; nothing here runs it.
 6. **Real hardware** — the only truth for ESP timing, WiFi behaviour and anything the emulator
-   models rather than is.
+   models rather than is. `make test-hardware NEXT_IP=<ip>` is the bench (H1-H7), and **H7 is
+   milestone M2's acceptance criterion on silicon**: it delegates to `pause-running.py`, which is
+   W8, and runs the control first. Two things sit beside it and are not in it —
+   `make test-pause-transparency` runs a debuggee free under the poll for minutes rather than W8's
+   one second, with a fixture that watches MMU slot 7 **and** the NextREG select latch (the half
+   T9's fixture is measured to be unable to see) and was shown red one instruction apart on each;
+   and `make pause-transparency` builds the `.nex` + `.sld` for **DeZog's own Pause button**, which
+   is the one path nothing here has ever driven — W8 and H7 speak DZRP directly, so what a real
+   client does with an `NTF_PAUSE` arriving before its own `CMD_PAUSE` response is still read off
+   CSpect's plugin rather than observed. Procedure in `doc/HARDWARE-TESTING.md` steps 4a and 4b.
 
 **A verdict line is one short sentence; the reasoning lives here and in the script's own header.**
 Every `PASS`/`FAIL` line a bench prints is **at most twenty words** (user, 2026-08-05), across all
@@ -1187,7 +1196,7 @@ Two things the shortening may **never** touch, because they are interface rather
   | `K1`-`K4` | `test/run-cipsto.sh` | `make test-cipsto` |
   | `L1`-`L5` | `test/run-baud.sh` | `make test-baud` |
   | `D1`-`D8` | `test/run-wifi-assoc.sh` | `make test-wifi-assoc` |
-  | `H1`-`H6` | `test/hardware-check.py` | `make test-hardware` |
+  | `H1`-`H7` | `test/hardware-check.py` | `make test-hardware` |
   | `A0`-`A6` | `test/slot-ceiling-probe.py` | `make probe-slots` |
   | `B0`-`B5` | `test/vanished-peer-probe.py` | `make probe-vanished` |
   | `R0`-`R5` | `test/idle-drop-probe.py` | `make probe-idle-drop` |

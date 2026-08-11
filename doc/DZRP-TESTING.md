@@ -310,6 +310,8 @@ running it, so the shell kills itself — this cost two aborted commands before 
 | C21 | **a breakpoint spares the debugger's own trampoline**, which C19 makes reachable — see below |
 | C22 | **a 64K-form breakpoint above `0xE000` reaches the debuggee's bank**, not the debugger's — see below |
 | C23 | the same for `CMD_RESTORE_MEM`, whose byte is the client's as well as its address — see below |
+| C24 | **`CMD_ADD_BREAKPOINT` is answered, and its breakpoint id is honest** — see below |
+| C25 | `CMD_REMOVE_BREAKPOINT` is acknowledged — see below |
 
 ### C19, C20 and C21: breakpoints where ROM is mapped (issue #27)
 
@@ -578,6 +580,53 @@ the fixed handlers behave there too.
 **The UART build's half is predicted, not run.** `commands.asm` is common code so the fix reaches
 both ROMs, but nothing has ever driven the serial transport with a DZRP client — which is equally
 true of the defect.
+
+### C24 and C25: the commands DeZog actually sends for a breakpoint (issue #41)
+
+**DZRP has two breakpoint dialects, and the stub speaks the other one.** `CMD_SET_BREAKPOINTS` (13)
+and `CMD_RESTORE_MEM` (14) — which C19-C23 exercise — are what DeZog's **serial** ZX Next remote
+sends: the client owns the breakpoint list, hands it over before each continue, and takes it back on
+every break. `CMD_ADD_BREAKPOINT` (40) and `CMD_REMOVE_BREAKPOINT` (41) are the other dialect, where
+the **remote** owns the list — and that is what `CSpectRemote` sends, which is the remote this
+project points at the Next because it is the only released one whose hostname is configurable.
+
+**So a breakpoint set in the VS Code editor arrived as a command the stub had no entry for**, fell
+out of the jump table into `cmd_not_supported` and `jp drain_main`, and was answered with **nothing**
+while the debuggee's saved state was re-initialised. Measured on a real Next at build `00.21`: DeZog
+stalls for its `socketTimeout`, logs *"No response received from remote"*, **carries on**, and the
+red dot never fires. Silence, not a failure — the worst shape a defect can take.
+
+**The stub still does not implement breakpoints this way, and is not going to.** It refuses them the
+way the protocol already provides for: a **breakpoint id of 0**, which DeZog reads as "could not set
+it" (`setBreakpoint`'s `e.bpId===0 && (e.longAddress=-1)`) and which its own serial remote uses for
+addresses it will not take. C24 asserts the answer arrives, at `Length=3`; C25 that 41 is
+acknowledged at `Length=1`, as `cmd_pause` is. Both assert the **next command is answered in sync**,
+which is what proves the declared payload was consumed exactly — 40 carries three address bytes plus
+a NUL-terminated condition string, and leaving any of it in the stream would desynchronise
+everything after it (issue #7's rule).
+
+**C24 JUDGES A PAIR, NOT A SINGLE ID, AND THAT IS NOT PEDANTRY.** A strict "the id must be zero"
+assertion would be a knowingly-red check against a **supported** target: CSpect implements 40 and 41
+for real, and `make test-dzrp` points this same suite at it. So C24 sends two breakpoints at
+different addresses and accepts either two zeros — an honest refusal — or two **distinct** non-zero
+ids, a remote that genuinely implements them. The same id twice, or one of each, is a FAIL, because
+DeZog removes a breakpoint by id and by nothing else. What it still cannot catch is a remote
+inventing distinct ids for breakpoints it never sets; no PC-side check can, without watching a
+debuggee fail to stop.
+
+**C24 also requires the error area to be clean**, read back with `test/dzrp/screen.py` and gated on
+the reader validating itself first, because a refusal is expected behaviour rather than a fault: a
+stub that answered correctly and then painted `Last Error: Command not supported` would be reporting
+a defect on a machine with nothing wrong with it. Against a remote that is not this stub the check
+**abstains** and says which abstention it made.
+
+**Shown red four ways**: `main`'s own ROM (C24 no response within 25 s, C25 reporting only that its
+precondition failed); a ROM dispatching 40 and not 41; one answering correctly and then storing the
+error; and one returning a constant non-zero id.
+
+**NOT covered**: hardware — neither check has run on a Next. And the dialect mismatch itself is not
+fixed by any of this, only made honest. The route out is a DeZog-side remote that speaks 13/14 over
+a socket; see `doc/DEZOG-BREAKPOINTS-DESIGN.md`.
 
 ### A verdict line is one sentence; this file is where the reasoning is
 

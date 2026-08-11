@@ -230,7 +230,8 @@ This paragraph used to end "the WiFi build has over a kilobyte of headroom, i.e.
 It had **119 bytes**, because of a 768-byte buffer nothing declared. Issue #31 removed the buffer;
 the figures then were **UART 3201, WiFi 818** free to the identity block.
 
-**SINCE M2 (issue #22) THEY ARE UART 2946 AND WiFi 216**, measured, and the WiFi number is the one
+**SINCE M2 (issue #22) THEY WERE UART 2946 AND WiFi 216, AND SINCE ISSUE #41 THEY ARE UART 2908 AND
+WiFi 178**, measured, and the WiFi number is the one
 to plan against. M2 spent it twice over, which is exactly what this section warns about: 48 bytes of
 the MF ROM half (three `ALIGN` steps) cost 48 bytes of the debugger half as well, because
 `ROM_MAGIC_ADDR` came down with `main_prg_copy`, and the poll's own code in `mf.asm` and the
@@ -684,7 +685,10 @@ strongest:
    vacuity — see
    `doc/DZRP-TESTING.md`; the second route closes it in-suite, and the red-first pair closed it
    independently.
-   **The suite is 23 since C22-C23 landed, was 21 since C19-C21, and 18 since C16-C18**; the 2026-08-05 figure is left as the measurement it was
+   **The suite is 25 since C24-C25 landed (issue #41 — the honest refusal of `CMD_ADD_BREAKPOINT`
+   and `CMD_REMOVE_BREAKPOINT`, which DeZog's `cspect` remote sends whenever a breakpoint is set in
+   the editor and which the stub had answered with SILENCE), was 23 since C22-C23, 21 since
+   C19-C21, and 18 since C16-C18**; the 2026-08-05 figure is left as the measurement it was
    rather than restated, and the hardware run of 2026-08-08 that reports 15 of 15 was also taken at
    the suite's size then. **C16-C18 HAVE now run on hardware — 2026-08-09, build `00.19`, 18 of 18
    with the whole bench at 6 of 6.** And C18 carries the strongest evidence in this project's
@@ -706,8 +710,8 @@ strongest:
    See `doc/DZRP-TESTING.md`. Like `test-esp`, not part of `make test`: it binds a host TCP port.
    **It says nothing about hardware.**
 4d. **`make test-unit`** — the Z80 unit tests under `src/unit_tests/`, headless (issue #3). One
-   jnext run of `build/ut-headless.nex`, 5 checks. **28 of the 64 test cases run; 36 cannot and
-   are reported as `UT-SKIP` on every run.** Those 36 need ports invented by `src/simulation/uart.js`,
+   jnext run of `build/ut-headless.nex`, 5 checks. **28 of the 66 test cases run; 38 cannot and
+   are reported as `UT-SKIP` on every run.** Those 38 need ports invented by `src/simulation/uart.js`,
    a JavaScript peripheral DeZog's zsim loads as `customCode` — the Z80 cannot trap its own I/O,
    so they are unreachable from inside the guest, and a project-specific peripheral does not
    belong in jnext. **Do not read a green run as "the unit tests pass"**; read it as
@@ -1167,7 +1171,7 @@ strongest:
    the stub deliberately does not re-query through. See `test/run-wifi-assoc.sh`.
 5. **`build/ut.nex`** — the same tests, **DeZog-driven** (`"unitTests": true` + zsim + the
    `customCode` plugin) in VS Code. Still a manual layer, and still the only way to exercise the
-   36 that 4d must skip. `make unit-tests` assembles it; nothing here runs it.
+   38 that 4d must skip. `make unit-tests` assembles it; nothing here runs it.
 6. **Real hardware** — the only truth for ESP timing, WiFi behaviour and anything the emulator
    models rather than is. `make test-hardware NEXT_IP=<ip>` is the bench (H1-H7), and **H7 is
    milestone M2's acceptance criterion on silicon**: it delegates to `pause-running.py`, which is
@@ -1206,7 +1210,7 @@ Two things the shortening may **never** touch, because they are interface rather
   | `E1`-`E4` | `test/esp-echo-client.py` | `make test-esp` |
   | `U1`-`U5` | `test/run-unit-tests.sh` | `make test-unit` |
   | `W1`-`W8` | `test/run-dzrp-stub.sh` | `make test-dzrp-stub` |
-  | `C1`-`C23` | `test/dzrp/conformance.py` | `test-dzrp-stub`, `test-dzrp`, `test-hardware` |
+  | `C1`-`C25` | `test/dzrp/conformance.py` | `test-dzrp-stub`, `test-dzrp`, `test-hardware` |
   | `B1`-`B2` | `test/run-ip-boundary.sh` | `make test-ip-boundary` |
   | `P1`-`P3` | `test/run-tx-patience.sh` | `make test-tx-patience` |
   | `N1`-`N8` | `test/run-client-status.sh` | `make test-client-status` |

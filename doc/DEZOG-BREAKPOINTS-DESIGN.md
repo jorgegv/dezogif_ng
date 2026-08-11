@@ -57,6 +57,15 @@ byte. It is why the client that owns this problem solves it that way.)*
 
 ## 4. Option A — answer honestly, implement nothing
 
+**BUILT AND MERGED, 2026-08-11, build `00.22`.** `cmd_add_breakpoint` and `cmd_remove_breakpoint`,
+checks **C24/C25**, shown red four ways. **38 bytes in both ROMs** — the estimate below said 25-40 —
+of which 12 are the dispatch: two `cp`s in `get_cmd_pointer`'s `.not_supported` arm rather than
+extending the jump table to 42 entries, which would have cost 36 bytes with 32 of them filler.
+Free to the identity block is now **UART 2908, WiFi 178**. `UT_get_cmd_pointer` gained the two new
+outcomes and the six neighbours (39, 42, 43, 44, 50, 51) that must still fall through, so an
+off-by-one in either compare is caught headless. The rest of this section is the design as written
+beforehand.
+
 **DZRP already has a way to say "I cannot set a breakpoint there", and we are not using it.**
 DeZog's `sendDzrpCmdAddBreakpoint` reads a **2-byte breakpoint id** from the response, and treats
 **id 0** as refused: `e.bpId===0 && (e.longAddress=-1)`. The serial remote uses exactly this for

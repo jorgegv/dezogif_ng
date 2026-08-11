@@ -1330,10 +1330,46 @@ never entered. The feature's whole use case is *resume, think, click Pause*, and
 that is idle TCP time. At the module's default the ceiling is three minutes; at the value the stub
 intends, half an hour.
 
-**NOT YET ESTABLISHED: why 1800 is not in force.** `make probe-idle-drop NEXT_IP=<ip>
-PROBE_ARGS="--expect-timeout 1800 --deadline 400"` isolates it — no debuggee, just a silent session
-— and `AT+CIPSTO?` under `.UART` at the machine is the authoritative reading. Until one of those is
-taken, the mechanism above is a measurement of *when*, not of *why*.
+### WHY: `AT+CIPSTO` needs a running server, and we sent it one step too early
+
+**Found the same day, and the elimination is worth as much as the answer.** Four suspects, three
+killed by a control:
+
+| suspect | how it died |
+|---|---|
+| M2 / the debuggee | `make probe-idle-drop` from a **cold power cycle**, no debuggee anywhere: 182.5 s |
+| the **baud** — 460800 shipped at `00.16`, and the 400 s measurement predates it | a `BAUD_HIGH=115200` ROM, negotiation compiled out, one constant apart: **182.4 s** |
+| the **value** — 1800 out of range on AT 1.2.0.0 | `.UART`: `AT+CIPSTO=` answers `ERROR` at 900, 240, **180** and 60 alike. 180 is the firmware's own default, so it cannot be out of range |
+| the stub not sending it | the bytes are in the ROM (`AT+CIPSTO=1800\r\n`), and a `CIPSTO_STRICT=1` build stops bring-up exactly there — `ESP-01 setup failed`, with the screen having already reached `460800` |
+
+**And then, in `.UART`, with nothing of ours involved:**
+
+```
+AT+CIPMUX=1            -> OK
+AT+CIPSERVER=1,11000   -> OK
+AT+CIPSTO=1800         -> OK          <- the same command that fails bare
+AT+CIPSTO?             -> +CIPSTO:1800
+```
+
+**The module refuses `AT+CIPSTO=` with no TCP server running**, and `transport_init` sent it between
+`AT+CIPMUX=1` and `AT+CIPSERVER` — deliberately, so that no client could be accepted while the
+180-second default still governed it. Sound in intent, impossible in fact. The refusal is silent
+because that step accepts `ERROR` on purpose, so **the value was never in force from build `00.14`
+to `00.20`** and nothing said so.
+
+**`make test-cipsto` passed 4 of 4 throughout**, because jnext accepts the command in either
+position — filed as [jnext#249](https://github.com/jorgegv/jnext/issues/249). That bench's own
+header already said it "says nothing about a real ESP-01"; this is that caveat collecting, and the
+gap cost six builds.
+
+**Fixed in `00.21`**: the step moves after `AT+CIPSERVER`. What it trades is written at the call
+site — a client connecting inside that one-AT-round-trip window is governed by the default, against
+a default that otherwise applies always.
+
+**THE ELIMINATION MATTERED MORE THAN THE GUESS.** The baud was my strongest hypothesis and it had a
+clean history behind it — the 400 s measurement predates the 460800 default by two builds. Its own
+control killed it in seven minutes. Had it been filed as the cause instead of tested, it would have
+been the third retracted mechanism on this class of fault.
 
 ## The suite at its full size — measured 2026-08-08 12:37, on a real Next
 

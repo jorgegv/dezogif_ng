@@ -255,6 +255,19 @@
 ;    v1.5.4's list of commands that write to flash: the module's 180 is the
 ;    firmware's compiled-in default and not something a previous session left.
 ;
+;    AND IT IS SENT AFTER `AT+CIPSERVER`, WHICH IT WAS NOT UNTIL 2026-08-11.
+;    A module with no server running REFUSES it — measured interactively under
+;    `.UART`, with nothing of ours involved: bare, `AT+CIPSTO=` answers ERROR at
+;    1800, 900, 240, 180 and 60 alike, so it is not the value; after
+;    `AT+CIPMUX=1` and `AT+CIPSERVER=1,11000` the same `AT+CIPSTO=1800` answers
+;    OK and `AT+CIPSTO?` reads back `+CIPSTO:1800`. So from build 00.14, when
+;    this was written, until 00.21 the command was refused on every bring-up and
+;    the refusal was invisible, because the wait below accepts ERROR by design.
+;    The 182-second default governed every session in that window. See the call
+;    site for what the new order trades, and jnext#249: the emulator accepts the
+;    command in either position, which is why `make test-cipsto` was 4 of 4
+;    throughout.
+;
 ;    AND ITS ANSWER IS READ, THOUGH NOT RECORDED. See esp_command_ok_or_error:
 ;    a module too old for the command answers ERROR, which is not a reason to
 ;    refuse to debug, so neither arm fails bring-up. Reading it is what keeps
@@ -4012,9 +4025,43 @@ transport_init:
     call esp_command_ok
     jr c,.no_bringup
 
+    ld hl,esp_cmd_cipserver
+    call esp_command_ok
+    jr c,.no_bringup
+
     ; The module's own idle timeout — issue #24, point 11 in the header, and
-    ; ESP_SERVER_TIMEOUT for the value. BEFORE the listener, so no client can be
-    ; accepted while the firmware's 180-second default still governs it.
+    ; ESP_SERVER_TIMEOUT for the value.
+    ;
+    ; AFTER THE LISTENER, AND THAT ORDER IS THE WHOLE OF IT. This step used to
+    ; come BEFORE `AT+CIPSERVER`, for two reasons that were sound in intent and
+    ; are given up here deliberately: no client could then be accepted while the
+    ; firmware's 180-second default still governed it, and — nothing being
+    ; listening yet — no `<id>,CONNECT` could land inside the wait for this
+    ; command's answer.
+    ;
+    ; IT DOES NOT WORK THERE. `AT+CIPSTO=` is refused by a module with no server
+    ; running, and the refusal is silent because the wait below accepts ERROR on
+    ; purpose — so the value has never been in force since issue #24 shipped it
+    ; at build 00.14. Measured on the user's own Next (AT 1.2.0.0), 2026-08-11,
+    ; interactively under `.UART` and with nothing of ours in the picture:
+    ;
+    ;   AT+CIPSTO=1800                                  -> ERROR
+    ;   AT+CIPSTO=900 / =240 / =180 / =60               -> ERROR   (not the value)
+    ;   AT+CIPMUX=1 ; AT+CIPSERVER=1,11000 ; AT+CIPSTO=1800 -> OK
+    ;   AT+CIPSTO?                                      -> +CIPSTO:1800
+    ;
+    ; What it cost, before anyone thought to type that: a debuggee left running
+    ; under M2's asynchronous break is silent by definition, so the module hung
+    ; up on the session at the default 182 s and its `<id>,CLOSED` then broke the
+    ; debuggee in — three minutes of thinking time, not thirty.
+    ;
+    ; WHAT THE MOVE TRADES, stated rather than discovered later. A client that
+    ; connects between these two commands is governed by the 180-second default
+    ; for the life of that connection; the window is one AT round trip against a
+    ; timeout that otherwise applies always, which is not a close call. And a
+    ; `<id>,CONNECT` can now land inside this wait — esp_read_scan captures an
+    ; inbound frame rather than destroying it (issue #11) and esp_watch_line
+    ; still sees the line, so the exposure is the ordinary one, not issue #10's.
     ;
     ; NEITHER ANSWER STOPS THE CHAIN. A module too old for the command says
     ; ERROR, and the only consequence is that an idle session will still be
@@ -4029,14 +4076,14 @@ transport_init:
  ELSE
     ; The bench seam, never shipped: the refusal treated as a bring-up failure,
     ; which is what the two-pattern wait exists to avoid. See ESP_CIPSTO_STRICT.
+    ;
+    ; SINCE THE MOVE ABOVE, A STRICT FAILURE LEAVES THE LISTENER UP, because
+    ; AT+CIPSERVER has already succeeded by the time this runs. K4 asserts what
+    ; that build does and had to move with it — see test/run-cipsto.sh.
     ld hl,esp_cmd_cipsto
     call esp_command_ok
     jr c,.no_bringup
  ENDIF
-
-    ld hl,esp_cmd_cipserver
-    call esp_command_ok
-    jr c,.no_bringup
 
     ; The address, for the UI. Asked for HERE rather than from show_ui because
     ; show_ui is re-entered on every redraw — the "B" key, CMD_CLOSE, an error

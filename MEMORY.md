@@ -5,6 +5,95 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-11 — `AT+CIPSTO` needs a running server, so we had been sending it into an ERROR for six builds
+
+**Built, and the diagnosis is the entry rather than the fix, which is one block
+moved.** `transport_init` sent `AT+CIPSTO=<n>` between `AT+CIPMUX=1` and
+`AT+CIPSERVER`. **A module with no TCP server running refuses it.** So from
+build `00.14`, where issue #24 introduced it, to `00.20`, the command was
+rejected on every bring-up and the module's 180-second default governed every
+session — and nothing anywhere said so, because that step accepts `ERROR` on
+purpose so a firmware too old for the command still gets a working debugger.
+
+**MEASURED IN `.UART`, WITH NOTHING OF OURS INVOLVED**, on the user's own Next
+(AT 1.2.0.0 / SDK 1.5.4.1):
+
+```
+AT+CIPSTO=1800 / =900 / =240 / =180 / =60          -> ERROR
+AT+CIPMUX=1 ; AT+CIPSERVER=1,11000 ; AT+CIPSTO=1800 -> OK
+AT+CIPSTO?                                          -> +CIPSTO:1800
+```
+
+180 is the firmware's **own default**, so its refusal is what rules the value
+out. The query form works in both states, which is how `+CIPSTO:180` was read
+here on 2026-08-08 in the first place.
+
+**M2 IS WHAT SURFACED IT, AND COULD NOT HAVE FAILED TO.** Before asynchronous
+break nobody left a DZRP session idle while a program ran — there was no way back
+except the button, so the state was never entered. The feature's whole use case
+is *resume, think, click Pause*, and every second of that is idle TCP time. The
+first long free run hit 182 s, and the module's `<id>,CLOSED` then broke the
+debuggee in — which is the "break on any byte" cost the design accepted and
+[[ERRORS.md]]'s sibling document says no run anywhere could stage.
+
+**THE ELIMINATION IS WORTH MORE THAN THE ANSWER, AND THREE OF THE FOUR SUSPECTS
+DIED TO A CONTROL.** M2 itself: `probe-idle-drop` from a cold power cycle with no
+debuggee, 182.5 s. **The baud**: 460800 became the default at `00.16`, two builds
+after the CIPSTO work, so the correlation was clean and it was my strongest
+hypothesis — a `BAUD_HIGH=115200` ROM with the negotiation compiled out gave
+**182.4 s**, one constant apart. The value: four refusals including the default.
+**Had the baud been filed as the cause instead of tested, it would have been the
+third retracted mechanism on this class of fault** (issue #35, issue #39).
+
+**AND THE `.UART` ROUTE WAS ONE I HAD RULED OUT, WRONGLY.** I reasoned that a
+power cycle resets `AT+CIPSTO` to its default, so `.UART` could never report what
+the stub had set — true, and I generalised it from *that* question to the tool.
+Asking whether the module ACCEPTS the set form is unaffected by a reset, and it
+is the decisive question. The user typed it anyway and got the answer in one
+line. **A limitation established for one question is not a limitation of the
+instrument.**
+
+**THE FIX IS THE BLOCK MOVED AFTER `AT+CIPSERVER`, and what it trades is stated
+at the call site rather than discovered later.** A client connecting inside the
+one-AT-round-trip window between them is governed by the 180-second default for
+the life of that connection — against a default that otherwise applies always,
+which is not a close call. And a `<id>,CONNECT` can now land inside that wait:
+`esp_read_scan` captures an inbound frame rather than destroying it (issue #11)
+and `esp_watch_line` still sees the line, so the exposure is the ordinary one and
+not issue #10's.
+
+**K4 HAD TO MOVE WITH IT, IN THE SAME CHANGE.** It asserted that *nothing
+listens* on a `CIPSTO_STRICT=1` build, which was true when the step preceded
+`AT+CIPSERVER`. It no longer is: `.no_bringup` only sets `ESP_LINK_FAILED` and
+does not retire a listener that is already up. The discriminator is now the step
+AFTER — `AT+CIFSR` is reached only if the chain carried on, so its **absence** is
+what pins the abandonment on the strict wait. Left alone it would have gone red
+against a correct fix, which is exactly what `test-baud`'s L3 did when the baud
+default flipped.
+
+**THE EMULATOR COULD NOT HAVE CAUGHT THIS AND ITS BENCH SAID SO.** jnext accepts
+`AT+CIPSTO` in either position, so `make test-cipsto` was 4 of 4 for six builds
+while the value was refused on every real bring-up. Filed as
+[jnext#249](https://github.com/jorgegv/jnext/issues/249) with the transcript, so
+the emulator gains the refusal and the next consumer's bench can catch it at the
+point it is written. `run-cipsto.sh`'s own header already carried "It says
+nothing about a real ESP-01"; that sentence did its job.
+
+**Rejected.** Filing the baud as the cause (it was tested instead, and was
+innocent); `AT+CIPSTO=0` to remove the ceiling (issue #24's recorded reason
+stands — it makes KNOWN-ISSUES.md #19's slot leak permanent); rewriting
+KNOWN-ISSUES.md #19's twenty "thirty minutes" sites (they become **true again**
+at `00.21`, so a dated correction naming the `00.14`-`00.20` window is the
+accurate edit and a rewrite would be the wrong one); and leaving the 2026-08-09
+"400 s, no drop" measurement standing (it is irreconcilable with a refused
+command, so it is struck in place, with *what it actually observed* recorded as
+unknown rather than reconciled by invention).
+
+**Cost: WiFi ROM moves, UART byte-identical, so the merge carries a `make
+bump`.** `transport_esp.asm` is in the WiFi build only.
+
+---
+
 ## 2026-08-11 — M2 RUNS ON A REAL NEXT: the PC stops a freely running program, and the stackless branch is finally distinguished on silicon
 
 **Measured, not decided** (user's own Next, 192.168.100.136, 09:41, build **`00.20`**
@@ -3226,7 +3315,10 @@ produced it.
 
 **Evidence: three hardware runs, recorded in [doc/HARDWARE-TESTING.md].**
 Dropped at **182.5 s** and **181.8 s** with the module's own default governing;
-**survived 400 s** once the stub set 1800. The third is stated as the lower bound
+**survived 400 s** once the stub set 1800 — ~~the third~~ **RETRACTED 2026-08-11,
+see the entry above: the module refuses the command as the stub sends it, so that
+third run cannot be what it was read as, and what it observed is unknown.** The
+third is stated as the lower bound
 it is — it did not measure 1800, it measured "longer than 400" — and **neither
 says whether the module announces a reap**: the 2026-08-09 close was our own
 clean FIN, and the 2026-08-08 reaps were against a build that predates #23's
@@ -3473,10 +3565,29 @@ stale claim, because this is the file every session is told to read first and
 trust. I had the corrected figures in my own report and did not carry them
 here.)*
 
-**IT HAS SINCE RUN ON THE USER'S REAL NEXT, AND THE VALUE IS OBEYED.** This
-branch's ROM held a silent client for **400 s with no drop**, against the
-**182.5 s** and **181.8 s** the shipped ROM was measured at. So `AT+CIPSTO=1800`
-reaches a real ESP-01 and the module honours it — which is the one thing no
+**~~IT HAS SINCE RUN ON THE USER'S REAL NEXT, AND THE VALUE IS OBEYED.~~
+RETRACTED 2026-08-11: THE MODULE REFUSES THE COMMAND AS THIS BUILD SENDS IT, SO
+IT CANNOT HAVE BEEN OBEYED.** `AT+CIPSTO=` is refused by a module with no TCP
+server running, and `transport_init` sends it one step BEFORE `AT+CIPSERVER` —
+measured interactively under `.UART` with nothing of ours involved: `ERROR` at
+1800, 900, 240, 180 and 60 alike, then `OK` after `AT+CIPMUX=1` and
+`AT+CIPSERVER=1,11000`, with `AT+CIPSTO?` reading back `+CIPSTO:1800`. Four
+independent measurements now put the reap at **182 s** on a current build,
+including one from a cold power cycle with no debuggee anywhere near it.
+
+**WHAT THE 400 s RUN ACTUALLY OBSERVED IS UNKNOWN, and saying so is better than
+inventing a reconciliation.** It is irreconcilable with a refused command; no
+build between then and now changed the ordering; and the run left no artefact.
+It is left standing, struck, because this file records what was measured on the
+day — and because a confident hardware measurement that later proves impossible
+is exactly the kind of thing a future session needs to see rather than a tidy
+history. The paragraph below it, which called this a `reported on hardware`
+tier against a `verified` baseline of two re-runnable probe runs, is why the
+retraction was cheap: the two runs that WERE re-runnable are the ones that
+survived.
+
+The original claim follows. ~~So `AT+CIPSTO=1800`
+reaches a real ESP-01 and the module honours it~~ — which is the one thing no
 bench here could establish, since jnext models this command *from* those very
 measurements. **Tier: `reported on hardware`** — one machine, one reporter, no
 re-runnable artefact — against a `verified` baseline of two re-runnable probe

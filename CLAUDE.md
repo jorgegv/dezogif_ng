@@ -917,8 +917,11 @@ strongest:
    every link id with `AT+CIPCLOSE=<id>`. (That read "for the rest of the power-on session" until
    2026-08-08, when the module's `AT+CIPSTO` idle timeout was measured **enforced** on a real Next
    at its 180 s default — so the leak is bounded, not held until the power switch. **The bound is
-   ~180 s on that default and ~1800 s since issue #24 has the stub set it at bring-up**, so on any
-   build from `00.14` it is about thirty minutes rather than three.
+   ~180 s on that default, and ~1800 s only from build `00.21`**: issue #24 set that value at
+   bring-up from `00.14`, but sent `AT+CIPSTO` one step BEFORE `AT+CIPSERVER` and a real module
+   **refuses it with no server running**, silently — so `00.14`-`00.20` were ~180 s too. Measured in
+   `.UART` 2026-08-11; invisible to `make test-cipsto`, which jnext passes in either position
+   (jnext#249).
    `KNOWN-ISSUES.md` #2 and `doc/HARDWARE-TESTING.md` carry the runs. The same clause survived in
    `src/transport_esp.asm`'s `esp_recover` header as a known stale comment, because that change
    deliberately touched no `src/` file; **issue #29 has since corrected it**, comments only and with
@@ -1032,15 +1035,21 @@ strongest:
    perfectly healthy with its border still cycling, and nothing on the Next said anything had
    happened. The stub now sends `AT+CIPSTO=1800` on every bring-up — the value is re-sent because
    the command does not persist to flash — and **reads the answer**, because a module too old for it
-   answers `ERROR` and that is not a reason to refuse to debug.
+   answers `ERROR` and that is not a reason to refuse to debug. **SINCE `00.21` IT IS SENT AFTER
+   `AT+CIPSERVER`, AND UNTIL THEN A REAL MODULE REFUSED IT EVERY TIME** — `AT+CIPSTO=` is rejected
+   with no server running, and the lenient wait swallowed that by design, so the value was never in
+   force on hardware from `00.14` to `00.20` (measured in `.UART`, 2026-08-11).
    **The shipped value cannot be watched to work**: half an hour per run. So `SERVER_TIMEOUT` moves
    it — **K1** at 10 drops the silent client at 10 s, **K2** is the *shipped* ROM over the same
    window and does not, and they differ in that one constant, which is what attributes the ten
    seconds to the value **this ROM sent**. **K3** is the refusal arm, reachable only because a
    value above 7200 is refused: the stub must still listen, serve DZRP and report no fault.
    **K4 is K3's controlled removal** and the second seam, `CIPSTO_STRICT=1`, which assembles that
-   step with `esp_command_ok` — waiting for `OK` alone — after which the refusal abandons bring-up
-   and nothing listens at all.
+   step with `esp_command_ok` — waiting for `OK` alone — after which the refusal abandons bring-up.
+   **Its discriminator MOVED with the `00.21` fix, in the same change**: the step now follows
+   `AT+CIPSERVER`, so the listener is up either way and `.no_bringup` does not retire it. K4 now
+   asserts that `AT+CIFSR` — the step *after* — is never reached. Left alone it would have gone red
+   against a correct fix, which is what `test-baud`'s L3 did when that default moved.
    **Every check asserts its precondition from jnext's own log**, because a ROM that never sent the
    command satisfies K2, K3 and K4 by accident — which is exactly what `main`'s ROM does, and all
    four go red against it. **What it CANNOT see is whether the stub read the answer at all**:

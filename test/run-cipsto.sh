@@ -37,8 +37,10 @@
 #                             One constant apart from K1
 #   K3  SERVER_TIMEOUT=7201   refused by the module — and the stub comes up
 #                             anyway, serves DZRP, and reports no fault
-#   K4  the same, plus        the refusal treated as a bring-up failure:
-#       CIPSTO_STRICT=1       nothing listens at all
+#   K4  the same, plus        the refusal treated as a bring-up failure: the
+#       CIPSTO_STRICT=1       chain stops dead there, so AT+CIFSR never runs.
+#                             (The LISTENER is up either way since 00.21 — the
+#                             step now follows AT+CIPSERVER; see the check.)
 #
 # K2 IS NOT PADDING, AND NEITHER IS K4.
 #
@@ -159,11 +161,10 @@ CLIENT_TIMEOUT=20
 
 RUN_TIMEOUT=300
 LISTEN_TIMEOUT=90
-# K4 EXPECTS no listener, so a short wait here would make it pass for the wrong
-# reason. It is bounded only so the bench terminates; what actually settles K4
-# is the log — AT+CIPSTO sent, AT+CIPSERVER never reached — which no amount of
-# waiting can fake either way.
-LISTEN_TIMEOUT_NONE=45
+# LISTEN_TIMEOUT_NONE was here, for a K4 that expected NO listener. Since the
+# AT+CIPSTO step moved after AT+CIPSERVER (jnext#249, and the hardware
+# measurement behind it) the strict build's listener comes up like any other,
+# so K4 waits the normal time and settles on the log instead — see there.
 SHOT_TIMEOUT=60
 
 MF_ROM_PATH='::/machines/next/enNextMf.rom'
@@ -437,19 +438,28 @@ log ""
 log "== K4: control — the same refusal with ESP_CIPSTO_STRICT=1 (wait for OK alone)"
 
 rc=0
-run_silent_client "$ROM_STRICT" "$OUT/cipsto-strict.log" "$WATCH_SHORT" "" "$LISTEN_TIMEOUT_NONE" || rc=$?
-# "Nothing listened" alone would be satisfied by a run that never got as far as
-# the AT chain, so the log settles it instead: the command WAS sent, and
-# AT+CIPSERVER never followed it. That pins the missing listener on the wait,
-# which is the one thing that differs from K3.
+run_silent_client "$ROM_STRICT" "$OUT/cipsto-strict.log" "$WATCH_SHORT" || rc=$?
+# THIS CHECK'S SUBJECT MOVED WITH THE FIX, AND IT WAS UPDATED DELIBERATELY IN
+# THE SAME CHANGE rather than left to go red for a reason that is not a defect —
+# `test-baud`'s L3 had exactly this happen when the baud default flipped.
+#
+# AT+CIPSTO now runs AFTER AT+CIPSERVER, because a module with no server running
+# refuses it (measured on hardware 2026-08-11; jnext#249). So the old assertions
+# invert: AT+CIPSERVER IS sent, and the listener IS up even on the strict build,
+# since .no_bringup only sets ESP_LINK_FAILED and does not retire it.
+#
+# The discriminator is therefore the step AFTER this one. AT+CIFSR is sent only
+# if the chain carried on, so its ABSENCE is what pins the abandonment on the
+# strict wait — which is the one thing that differs from K3, and the whole of
+# what this control is for.
 if ! at_sent "$OUT/cipsto-strict.log" "AT+CIPSTO=$REFUSED_STO"; then
     fail "K4 PRECONDITION: the control ROM never sent AT+CIPSTO, so it stopped somewhere else"
-elif at_sent "$OUT/cipsto-strict.log" "AT+CIPSERVER=1,$PORT"; then
+elif ! at_sent "$OUT/cipsto-strict.log" "AT+CIPSERVER=1,$PORT"; then
+    fail "K4 PRECONDITION: AT+CIPSERVER never ran, so the refusal is not what stopped the chain"
+elif at_sent "$OUT/cipsto-strict.log" "AT+CIFSR"; then
     fail "K4 the strict build carried on past the refusal, so K3's green is not the two-pattern wait"
-elif [ "$listening" = 1 ]; then
-    fail "K4 something was listening although AT+CIPSERVER was never sent — check for a stray jnext"
 else
-    pass "K4 waiting for OK alone abandons bring-up on the refusal: K3's green is the wait"
+    pass "K4 waiting for OK alone abandons bring-up at the refusal: K3's green is the wait"
 fi
 
 log ""

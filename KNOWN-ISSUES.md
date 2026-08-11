@@ -119,7 +119,26 @@ than three.** The timer is the module's `AT+CIPSTO`, and since issue #24 the stu
 | build | the stub sends | you wait |
 |---|---|---|
 | before `00.14` | nothing — the firmware default governs | **~3 min** |
-| **`00.14` and later** | **`AT+CIPSTO=1800`** at bring-up | **~30 min** |
+| `00.14` .. `00.20` | `AT+CIPSTO=1800`, **and the module REFUSED it** | **~3 min** |
+| **`00.21` and later** | **`AT+CIPSTO=1800`**, accepted | **~30 min** |
+
+> **CORRECTION, 2026-08-11 — THE MIDDLE ROW IS NEW AND EVERY "THIRTY MINUTES" BELOW WAS WRONG FOR
+> SIX BUILDS.** `AT+CIPSTO=` is refused by a module with no TCP server running, and `transport_init`
+> sent it one step *before* `AT+CIPSERVER`. The refusal is silent by design — that step accepts
+> `ERROR` on purpose, so that a firmware too old for the command still gets a working debugger — so
+> the value was never in force from `00.14` to `00.20` and nothing said so. Measured interactively
+> under `.UART` on the user's own Next with nothing of ours involved: `AT+CIPSTO=` answers `ERROR`
+> at 1800, 900, 240, 180 and 60 alike, and the same `AT+CIPSTO=1800` answers `OK` after
+> `AT+CIPMUX=1` and `AT+CIPSERVER=1,11000`, with `AT+CIPSTO?` reading back `+CIPSTO:1800`.
+>
+> **The direction of the error is worth noting: this entry's fault self-healed FASTER than
+> documented, not slower.** What was actually broken is the thing #24 was written to fix — an idle
+> debug session was still being dropped at ~182 s throughout, which is what milestone M2 ran into
+> the moment a debuggee was left running.
+>
+> **Everything below that says "thirty minutes" describes `00.21` onwards** and is correct again
+> there; read it as the intent for `00.14`-`00.20` and the reality before and after. Nothing else in
+> this entry changes — the mechanism, the advice to wait, and the reopen criterion are unaffected.
 
 **That is a deliberate trade, not a regression.** The firmware's 180 s was hanging up on **idle
 debug sessions** — a DeZog session parked at a breakpoint while somebody reads code is silent for

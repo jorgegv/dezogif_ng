@@ -65,13 +65,16 @@ cmd_jump_table:
 .interrupt_on_off:	defw cmd_interrupt_on_off	; 23
 .end
 
-;.add_breakpoint:		defw 0		; not supported (see set_breakpoints/restore_mem)
-;.remove_breakpoint:	defw 0	; not supported (see set_breakpoints/restore_mem)
-;.add_watchpoint:		defw 0	; not supported
-;.remove_watchpoint:	defw 0	; not supported
-
-;.read_state:			defw 0	; not supported
-;.write_state:			defw 0	; not supported
+; ABOVE 23 THE COMMAND SPACE IS SPARSE, so these are numbers rather than table
+; slots. 40 and 41 are dispatched by get_cmd_pointer's .not_supported arm, which
+; explains why; the rest reach cmd_not_supported and are silent, which is a
+; defect in the same family as issues #8 and #9 and is not fixed here.
+CMD_ADD_BREAKPOINT:		equ 40	; refused honestly: cmd_add_breakpoint
+CMD_REMOVE_BREAKPOINT:	equ 41	; acknowledged: cmd_remove_breakpoint
+;CMD_ADD_WATCHPOINT		equ 42	; not supported, and silent
+;CMD_REMOVE_WATCHPOINT	equ 43	; not supported, and silent
+;CMD_READ_STATE			equ 50	; not supported, and silent
+;CMD_WRITE_STATE		equ 51	; not supported, and silent
 
 
 ;===========================================================================
@@ -101,6 +104,25 @@ get_cmd_pointer:	; For unit tests this is a separate function.
     ld l,a
     ret
 .not_supported:
+    ; TWO COMMANDS ABOVE THE TABLE ARE SERVED HERE RATHER THAN BY EXTENDING IT,
+    ; and the reason is the shape of the command space rather than thrift alone.
+    ; DZRP's numbering is SPARSE above 23: 40/41 are the breakpoint pair, 42/43
+    ; the watchpoints, 50/51 the state save/restore. A dense table reaching 41
+    ; costs 36 bytes of which 32 are filler pointing straight back at
+    ; cmd_not_supported, and one reaching 51 costs 56 for 44 bytes of filler.
+    ; That is 17% of the WiFi build's whole remaining budget spent on nothing,
+    ; and commands.asm is common code so both ROMs pay it. Two compares cost 12
+    ; and grow only with commands actually implemented.
+    ;
+    ; A is command - 24 here, which is what the `sub l` above left; the compares
+    ; are written against the command numbers so they read as command numbers.
+    ; Issue #41.
+    ld hl,cmd_add_breakpoint
+    cp CMD_ADD_BREAKPOINT-(cmd_jump_table.end-cmd_jump_table)/2
+    ret z
+    ld hl,cmd_remove_breakpoint
+    cp CMD_REMOVE_BREAKPOINT-(cmd_jump_table.end-cmd_jump_table)/2
+    ret z
     ld hl,cmd_not_supported
     ret
 
@@ -183,6 +205,17 @@ cmd_init:
     ret
 
 .inner:
+consume_declared_payload:
+    ; TWO NAMES, ONE ADDRESS, AND NEITHER IS REDUNDANT. `cmd_init.inner` is the
+    ; original and is called by UT_01_cmd_init (src/unit_tests/ut_commands.asm),
+    ; so it stays. `consume_declared_payload` is what this loop actually is —
+    ; "take exactly the bytes the frame declared and drop them" has nothing
+    ; cmd_init-specific in it — and it is what cmd_add_breakpoint and
+    ; cmd_remove_breakpoint call, so that reading them does not send anybody
+    ; into the middle of cmd_init (issue #41). Copying the loop instead would
+    ; have cost 15 bytes of a 216-byte budget AND made the framing rule below
+    ; a thing rendered twice, which is how two renderings of one fact drift.
+    ;
     ; Consume exactly the payload the frame declared: 3 version bytes followed
     ; by the remote's NUL-terminated program name, none of which is used here.
     ;
@@ -573,6 +606,89 @@ cmd_continue:
 cmd_pause:
     ; LOGPOINT [CMD] cmd_pause
     ; Send response: the sequence number alone
+    ld de,1
+    jp send_length_and_seqno
+
+
+;===========================================================================
+; CMD_ADD_BREAKPOINT / CMD_REMOVE_BREAKPOINT
+;
+; THIS STUB DOES NOT IMPLEMENT BREAKPOINTS THROUGH 40/41, AND THESE TWO
+; HANDLERS ARE HOW IT SAYS SO. It implements CMD_SET_BREAKPOINTS (13) and
+; CMD_RESTORE_MEM (14) — the pair DeZog's own ZxNextSerialRemote drives, where
+; the CLIENT owns the breakpoint list and patches them in around every resume.
+; The cspect remote, which is the one that can reach us over a socket at all
+; (plan §7), sends 40/41 instead and owns nothing. So a breakpoint placed in
+; the VS Code editor arrived here, fell out of the jump table's 0..23 into
+; cmd_not_supported, and got NO RESPONSE AT ALL — DeZog stalled ~50 s, logged
+; "No response received from remote", carried on, and the red dot never fired.
+; Measured on a real Next 2026-08-11 at build 00.21. Issue #41.
+;
+; DZRP ALREADY HAS A WAY TO SAY "NOT THERE", AND WE WERE NOT USING IT.
+; sendDzrpCmdAddBreakpoint reads a 2-byte little-endian breakpoint id out of
+; the response — `e.bpId = getWord(i, 0)` — and setBreakpoint treats id ZERO as
+; a refusal: `e.bpId===0 && (e.longAddress=-1)`, after which VS Code shows the
+; breakpoint UNVERIFIED. Read out of DeZog 3.7.4's own bundle, not inferred.
+; So the client already has a vocabulary for this and the honest answer is a
+; three-byte response carrying id 0, not silence.
+;
+; (Worth knowing before trusting the id-0 convention further: DeZog 3.7.4's own
+; producer of it, ZxNextSerialRemote.sendDzrpCmdAddBreakpoint, is BROKEN — it
+; sets e.bpId=0 for an address it refuses and then unconditionally overwrites it
+; with the next allocated index in the same comma-expression. The CONSUMER,
+; DzrpRemote.setBreakpoint, is what we depend on and it is correct.)
+;
+; WHAT THIS BUYS, stated so it is not over-read: the ~50 s stall goes, the
+; session is no longer torn down through drain_main, the Next stops showing
+; "Last Error: Command not supported" for something that is not an error, and
+; VS Code marks the breakpoint unverified instead of looking normal and doing
+; nothing. IT DOES NOT BUY BREAKPOINTS. A silent lie becomes an honest refusal,
+; which is the same move issue #8 made for CMD_PAUSE and issue #9 for the
+; sprite commands. doc/DEZOG-BREAKPOINTS-DESIGN.md is where the four ways to
+; make them actually work are compared; this is its option A.
+;
+; THE PAYLOAD IS CONSUMED FIRST AND EXACTLY, which is not optional and is
+; issue #7's lesson: 40 carries three address bytes plus a NUL-terminated
+; condition string whose length only the frame knows, and 41 carries two id
+; bytes. Leaving any of them in the stream desynchronises every command after
+; it, silently, for the rest of the session. consume_declared_payload is
+; cmd_init's own loop under its second name.
+;
+; Consuming BEFORE responding is also deliberate: cmd_get_tbblue_reg,
+; cmd_set_breakpoints and cmd_restore_mem answer first and read afterwards,
+; which is the window issue #13 had to close at transport level. These two have
+; no reason to join that family.
+;
+; NEITHER TOUCHES last_error AND NEITHER GOES NEAR drain_main. A refusal is
+; expected behaviour, not a fault: the Next's error area must stay clean, or
+; the one place a user is trained to look would report a working session as a
+; broken one. Conformance checks C24 and C25.
+; Changes:
+;  NA
+;===========================================================================
+cmd_add_breakpoint:
+    ; LOGPOINT [CMD] cmd_add_breakpoint
+    ; The frame declares 3 address bytes plus the condition string
+    call consume_declared_payload
+    ; Send response: the sequence number and a 2-byte breakpoint id
+    ld de,3
+    call send_length_and_seqno
+    ; Id 0 = refused. Little endian, and both bytes are zero, so the order of
+    ; these two is not a thing that can be got wrong.
+    xor a
+    call transport_write_byte
+    xor a
+    jp transport_write_byte
+
+
+cmd_remove_breakpoint:
+    ; LOGPOINT [CMD] cmd_remove_breakpoint
+    ; The frame declares the 2-byte id. DeZog only ever sends one it was given,
+    ; and every id we hand out is 0, so there is nothing here to look up.
+    call consume_declared_payload
+    ; Send response: the sequence number alone. sendDzrpCmdRemoveBreakpoint
+    ; ignores the body, but sendDzrpCmd still WAITS for a frame, so one must be
+    ; sent — the same reason cmd_pause exists at all.
     ld de,1
     jp send_length_and_seqno
 

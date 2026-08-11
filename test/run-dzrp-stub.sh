@@ -494,9 +494,18 @@ log ""
 # command along — C15 is the only check that sends command 2, and talk() maps a
 # remote that hangs up onto Unsupported, so a stub that started closing the
 # socket on CMD_CLOSE would score UNSUP and this target would still exit 0.
+#
+# ADD_BREAKPOINT,REMOVE_BREAKPOINT for the same reason, and it is not
+# hypothetical for them: refusing a breakpoint HONESTLY is precisely what C24
+# and C25 assert (issue #41), and "refusing" it by dropping the connection is
+# what talk() reads as a legitimate partial remote. Against this stub it is not
+# one — the whole point is that a client is answered — so a regression that put
+# 40/41 back where cmd_not_supported can reach them must be a red here rather
+# than two UNSUP lines and exit 0.
 set +e
 python3 "$CONFORMANCE" --remote "tcp:127.0.0.1:$PORT" --expect-preamble none \
-    --require CONTINUE,CLOSE --timeout "$DZRP_TIMEOUT" $DZRP_ARGS
+    --require CONTINUE,CLOSE,ADD_BREAKPOINT,REMOVE_BREAKPOINT \
+    --timeout "$DZRP_TIMEOUT" $DZRP_ARGS
 suite_rc=$?
 set -e
 [ "$suite_rc" -eq 0 ] || failures=$((failures + 1))

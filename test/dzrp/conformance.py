@@ -40,6 +40,11 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import dzrp  # noqa: E402
+# The screen reader hardware bench row H6 already uses, reused rather than
+# rewritten: C24 asks whether the remote painted an error for a command it is
+# meant to refuse quietly, and the error area is not observable any other way.
+# It sends only CMD_READ_MEM and never a CMD_INIT — see _error_area.
+import screen  # noqa: E402
 
 PASS, FAIL, UNSUP = "PASS", "FAIL", "UNSUP"
 
@@ -112,6 +117,8 @@ NAMES = {
     "GET_SPRITE_PATTERNS": dzrp.CMD_GET_SPRITE_PATTERNS,
     "SET_BREAKPOINTS": dzrp.CMD_SET_BREAKPOINTS,
     "RESTORE_MEM": dzrp.CMD_RESTORE_MEM,
+    "ADD_BREAKPOINT": dzrp.CMD_ADD_BREAKPOINT,
+    "REMOVE_BREAKPOINT": dzrp.CMD_REMOVE_BREAKPOINT,
 }
 
 # The byte a DZRP breakpoint substitutes (RST 0), and the byte the ROM
@@ -1519,6 +1526,250 @@ def chk_slot7_restore_uses_swap_window(d):
                   "bank" % SLOT7_ADDR)
 
 
+# ==========================================================================
+# The breakpoint commands the cspect remote sends, and this stub does not
+# implement.
+#
+# DeZog HAS TWO BREAKPOINT APIS AND THIS STUB SPEAKS THE OTHER ONE. It
+# implements CMD_SET_BREAKPOINTS (13) / CMD_RESTORE_MEM (14), which is what the
+# ZxNextSerialRemote drives and what C19-C23 verify. The cspect remote — the
+# only one that can reach a Next over a socket at all — sends CMD_ADD_BREAKPOINT
+# (40) and CMD_REMOVE_BREAKPOINT (41) instead. Those are outside the stub's
+# jump table, so a breakpoint set in the VS Code editor reached
+# cmd_not_supported: NO RESPONSE AT ALL, a ~50 s stall, "No response received
+# from remote" in DeZog's log, and a red dot that silently never fired.
+# Measured on a real Next 2026-08-11 at build 00.21. Issue #41.
+#
+# WHAT THESE TWO CHECKS ASSERT IS AN HONEST REFUSAL, NOT BREAKPOINTS. That is
+# the whole of option A in doc/DEZOG-BREAKPOINTS-DESIGN.md and it is deliberately
+# the smaller claim: nothing here says a breakpoint works, and a remote that
+# passes C24 will still not stop a debuggee at an address the editor names.
+# ==========================================================================
+
+# The 2-byte breakpoint id DeZog reads out of a CMD_ADD_BREAKPOINT response, and
+# the value it reads as "refused". `DzrpRemote.sendDzrpCmdAddBreakpoint` does
+# `e.bpId = getWord(i, 0)` and `DzrpRemote.setBreakpoint` does
+# `e.bpId === 0 && (e.longAddress = -1)`, after which VS Code shows the
+# breakpoint unverified. Read out of DeZog 3.7.4's own bundle.
+BP_ID_LEN = 2
+BP_ID_REFUSED = 0
+
+# TWO addresses, and asking for both is what makes C24 an assertion rather than
+# a reading. See its docstring: a remote that hands out real ids must hand out
+# DIFFERENT ones for different addresses, because DeZog removes breakpoints by
+# id and nothing else. Both are ordinary RAM, where a remote that did implement
+# breakpoints would have somewhere legitimate to put one — C19 uses 0x8000 as
+# its own RAM control for the same reason.
+BP_LONG_ADDRESSES = (0x8000, 0x8010)
+
+
+def _add_breakpoint_payload(long_address, condition=""):
+    """The wire payload of CMD_ADD_BREAKPOINT.
+
+    Three address bytes little-endian, then a NUL-terminated condition string.
+    A captured frame from a real session: `Cmd: 40, Length: 4, Data: 149 128 5
+    0` — 0x058095 and an empty condition, which is one NUL and not zero bytes.
+    """
+    return (bytes([long_address & 0xFF,
+                   (long_address >> 8) & 0xFF,
+                   (long_address >> 16) & 0xFF])
+            + condition.encode("ascii") + b"\x00")
+
+
+def _error_area(d):
+    """(judged, text) — what the remote's own error area says, if we can read it.
+
+    When judged is False, text is a SHORT phrase naming which kind of abstention
+    this was, because the two are different findings and a verdict that
+    collapsed them would hide one of them. "not this stub's screen" is the
+    expected answer from CSpect, which `make test-dzrp` points this suite at;
+    "could not be read" against our own stub is a degradation nobody would
+    otherwise notice, since both look like a clean area from here. Three or four
+    words each, deliberately: the caller pays for them inside its own budget.
+    The exception's own text is dropped rather than interpolated — it is
+    unbounded, and a verdict line whose length depends on its data cannot be
+    held to a word budget at all.
+
+    JUDGED IS FALSE WHENEVER THIS IS NOT OUR STUB'S SCREEN, and that gate is a
+    positive test rather than a guess: screen.validate_reader() requires row 12
+    to read "R = Reset", which ui.asm draws in the same font by the same code
+    and which is the same guard run-client-status.sh applies to its screenshots.
+    A remote that is not this stub — CSpect, which `make test-dzrp` points this
+    suite at — has no such row, so the error area is NOT JUDGED there rather
+    than judged wrongly. That is the difference between abstaining and passing
+    vacuously, and it is why the caller reports which of the two happened.
+
+    No CMD_INIT is sent. screen.py never sends one, deliberately: cmd_init
+    clears last_error, so a reader that introduced itself would erase the very
+    thing it was run to read.
+    """
+    try:
+        glyphs = screen.read_font(d)
+        scr = screen.read_screen(d, glyphs=glyphs)
+    except (dzrp.DzrpError, OSError, ValueError):
+        return False, "could not be read"
+    ok, _ = scr.validate_reader()
+    if not ok:
+        return False, "not this stub's screen"
+    return True, " / ".join(scr.error_text())
+
+
+def chk_add_breakpoint_refused(d):
+    """CMD_ADD_BREAKPOINT is answered, and the breakpoint id it gives is honest.
+
+    THREE THINGS ARE ASSERTED AND EACH FAILS DIFFERENTLY.
+
+    (1) A RESPONSE ARRIVES, at Length=3 — the sequence byte and a two-byte id.
+    Silence is the defect: DeZog's sendDzrpCmd waits for a frame whatever the
+    remote thinks of the command, so a handler that consumes the frame and sends
+    nothing blocks the client. That is issue #8's shape exactly, one command
+    along, and it is why the length is not negotiable: getWord(i, 0) reads two
+    bytes and a shorter body would be read out of whatever followed it.
+
+    (2) THE PAIR OF IDS IS COHERENT, and this is the half that took a
+    measurement to get right. The obvious check — "the id must be 0" — is wrong
+    for this suite, because a remote that IMPLEMENTS breakpoints answers with a
+    real one and is not defective for doing so. Measured rather than assumed:
+    CSpect's DeZog plugin, which the Makefile names as the way to validate this
+    suite against a reference, carries CMD_ADD_BREAKPOINT and
+    CMD_REMOVE_BREAKPOINT as implemented commands (its DLL's own symbols). A
+    strict id-0 assertion would have made C24 a knowingly-red check against a
+    supported target, which is the one thing this project's benches may not be.
+
+    So TWO breakpoints are asked for, at different addresses, and the pair is
+    judged:
+
+      0 and 0        refused honestly, which is what THIS stub does and what
+                     DZRP's own vocabulary for "not there" is: DeZog's
+                     setBreakpoint reads `e.bpId === 0 && (e.longAddress = -1)`
+                     and marks the breakpoint unverified
+      two DIFFERENT  the remote implements breakpoints; correct, and reported
+      non-zero ids
+      anything else  FAIL. The same non-zero id for two addresses, or one id
+                     and one refusal, is a promise the remote cannot keep:
+                     DeZog removes a breakpoint BY ID and nothing else, so two
+                     breakpoints wearing one id can never both be removed.
+
+    That last row is what keeps this an assertion against our own stub. A
+    regression answering a constant non-zero id — the plausible way to get this
+    wrong, since it is what "just return something" produces — is caught. A
+    regression inventing DISTINCT ids for breakpoints it never sets would pass,
+    and that is stated rather than hidden: no PC-side check can tell a real id
+    from an invented one without watching a debuggee stop on it, which is the
+    feature this remote does not have.
+
+    (3) THE SESSION SURVIVES IN SYNC. The payload is three address bytes plus a
+    NUL-terminated condition string whose length only the frame declares, so a
+    handler that consumed the wrong number of bytes leaves the stream offset for
+    every command after it — silently, and for the rest of the session (issue
+    #7). An ordinary CMD_GET_REGISTERS afterwards is what proves it did not: a
+    stream one byte out cannot answer a further command at the right length. It
+    is the DISCRIMINATING half, because a handler that ignored the length
+    entirely would still satisfy (1) and (2) on these two frames alone.
+
+    AND ONE THING IS OBSERVED RATHER THAN ASSERTED WHEREVER IT CANNOT BE. A
+    refusal is expected behaviour, not a fault, so the Next's error area must
+    stay clean — the old handler stored ERROR_CMD_NOT_SUPPORTED and went to
+    drain_main, which paints "Last Error: Command not supported" on a machine
+    with nothing wrong with it and re-initialises the debuggee's saved state on
+    the way past. The CMD_INIT above clears last_error, so anything found here
+    was written by the command under test and by nothing before it. It is read
+    only on the REFUSED path, because "did refusing paint an error" is not a
+    question about a remote that did not refuse. Against a remote whose screen
+    this reader cannot validate the area is NOT JUDGED — see _error_area — and
+    the verdict says which of the two abstentions happened rather than claiming
+    a clean area.
+    """
+    talk(d, dzrp.CMD_INIT, dzrp.init_payload())
+
+    ids = []
+    for addr in BP_LONG_ADDRESSES:
+        try:
+            body = talk(d, dzrp.CMD_ADD_BREAKPOINT, _add_breakpoint_payload(addr))
+        except dzrp.Timeout:
+            return FAIL, "no response within %.0fs; %s" % (d.base_timeout, _liveness())
+        if len(body) != BP_ID_LEN:
+            return FAIL, ("answered with %d bytes, not the %d-byte breakpoint id"
+                          % (len(body), BP_ID_LEN))
+        ids.append(body[0] | (body[1] << 8))
+
+    refused = all(i == BP_ID_REFUSED for i in ids)
+    honoured = all(i != BP_ID_REFUSED for i in ids) and len(set(ids)) == len(ids)
+    if not refused and not honoured:
+        return FAIL, ("two breakpoints at different addresses came back as ids "
+                      "%s, which cannot both be removed" % (tuple(ids),))
+
+    try:
+        regs = talk(d, dzrp.CMD_GET_REGISTERS)
+    except (dzrp.DzrpError, OSError) as e:
+        return FAIL, "the stream desynchronised: the next command failed (%s)" % e
+    if len(regs) < 28:
+        return FAIL, ("the next command came back as %d bytes: the payload was "
+                      "not consumed exactly" % len(regs))
+
+    if honoured:
+        return PASS, ("the remote implements breakpoints: ids %s, next command "
+                      "in sync" % (tuple(ids),))
+
+    judged, text = _error_area(d)
+    if not judged:
+        return PASS, "both refused with id 0, in sync; error area %s" % text
+    if text:
+        return FAIL, "refused and in sync, but the remote reported an error: %s" % text
+    return PASS, "both refused with id 0, next command in sync, error area clean"
+
+
+def chk_remove_breakpoint_answered(d):
+    """CMD_REMOVE_BREAKPOINT is answered, and the stream stays in sync.
+
+    WHY IT NEEDS ITS OWN CHECK RATHER THAN RIDING ON C24. DeZog sends 41 for
+    every breakpoint it removes, including on disconnect, and
+    sendDzrpCmdRemoveBreakpoint IGNORES the response body — but sendDzrpCmd
+    still WAITS for a frame, so silence blocks the client exactly as it does for
+    40. The two commands reach two separate handlers, so a fix to one leaves the
+    other's silence in place and only a check naming 41 would say so.
+
+    THE ASSERTION IS LENGTH=1 AND SYNC. The specification gives it the sequence
+    number and nothing else, which is cmd_pause's shape (C12). The body being
+    ignored client-side is not a licence to send a wrong-length one: a longer
+    frame is bytes the client will read as the next response.
+
+    THE ID REMOVED IS ONE THE REMOTE ITSELF JUST HANDED OUT, rather than a
+    constant, and that is what lets one check cover both kinds of remote. For
+    this stub it is 0 — the only id it ever gives — and a client cannot remove
+    one it was not given. For a remote that implements breakpoints it is a live
+    id, so the removal is the ordinary case rather than a lookup of something
+    that was never there. Sending a bare 0 to such a remote would have been
+    asking it to remove a breakpoint nobody set, which is a different question
+    and not one this check is about.
+    """
+    talk(d, dzrp.CMD_INIT, dzrp.init_payload())
+    try:
+        added = talk(d, dzrp.CMD_ADD_BREAKPOINT,
+                     _add_breakpoint_payload(BP_LONG_ADDRESSES[0]))
+    except dzrp.Timeout:
+        raise Precondition("CMD_ADD_BREAKPOINT was not answered, so there is "
+                           "no id to remove — see C24")
+    if len(added) != BP_ID_LEN:
+        raise Precondition("CMD_ADD_BREAKPOINT gave %d bytes, not an id — see C24"
+                           % len(added))
+    try:
+        body = talk(d, dzrp.CMD_REMOVE_BREAKPOINT, added)
+    except dzrp.Timeout:
+        return FAIL, "no response within %.0fs; %s" % (d.base_timeout, _liveness())
+    if body:
+        return FAIL, "answered, but with a %d-byte payload" % len(body)
+
+    try:
+        regs = talk(d, dzrp.CMD_GET_REGISTERS)
+    except (dzrp.DzrpError, OSError) as e:
+        return FAIL, "answered, but the stream desynchronised: the next command failed (%s)" % e
+    if len(regs) < 28:
+        return FAIL, ("answered, but the next command came back as %d bytes: "
+                      "the id was not consumed" % len(regs))
+    return PASS, "answered with the sequence number alone, next command in sync"
+
+
 # One byte over would be the boundary and is not what this asks. C5's 8192 holds
 # the boundary; this asks whether a frame that is decisively too big is SURVIVED,
 # and a size well past the window is what makes the unfixed failure unambiguous
@@ -1769,6 +2020,18 @@ CHECKS = [
      chk_slot7_breakpoint_uses_swap_window, "SET_BREAKPOINTS"),
     ("C23 a 64K CMD_RESTORE_MEM above 0xE000 uses the swap window",
      chk_slot7_restore_uses_swap_window, "RESTORE_MEM"),
+    # C24 AND C25 CHANGE NO STATE THE CHECKS BELOW CARE ABOUT — they send
+    # CMD_INIT, one refused command, and a CMD_GET_REGISTERS — so their position
+    # is free. They sit here because the two things they refuse are breakpoints,
+    # and C19-C23 above are where the breakpoints this stub DOES implement are
+    # verified: read in that order, "and these two it does not" follows the
+    # evidence that the other pair works, rather than preceding it.
+    #
+    # They must stay ABOVE C18 and C15, which both reset the remote.
+    ("C24 CMD_ADD_BREAKPOINT is answered and its id is honest",
+     chk_add_breakpoint_refused, "ADD_BREAKPOINT"),
+    ("C25 CMD_REMOVE_BREAKPOINT is acknowledged",
+     chk_remove_breakpoint_answered, "REMOVE_BREAKPOINT"),
     # C18 IS SECOND-TO-LAST, and for a weaker version of C15's reason. Our stub
     # answers an oversize frame by reporting on its own screen and going to
     # drain_main, which re-initialises the debugger — so anything below it would

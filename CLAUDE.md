@@ -13,7 +13,7 @@ The goal is to **add a WiFi transport alongside that serial one and select betwe
 assembly time**, so the ROM can be built in either UART mode or WiFi mode, and to add
 PC-initiated break in WiFi mode. The serial transport will be kept, not replaced.
 
-**M1 is built; M2 is not.** The tree builds **two** ROMs — `make` gives the serial one, byte for
+**M1 and M2 are both built.** The tree builds **two** ROMs — `make` gives the serial one, byte for
 byte upstream's behaviour, and `make TRANSPORT=wifi` gives one that brings the ESP-01 up as a TCP
 server and speaks DZRP through it (`src/transport_esp.asm`). A DZRP client talks to the WiFi build
 under jnext and gets correct answers: `make test-dzrp-stub`. The two ROMs now also **draw different
@@ -1257,13 +1257,17 @@ replacement for T4.** A *button* NMI is a cause `nmi66h` accepts, so T6 asserts 
 gets 90.28%. An earlier version of this section said T4 "should become" that assertion; that was
 wrong, and the two are not alternatives. They send **different causes** to the same cause check:
 T6 one it accepts, T4 one it rejects. Keeping both is what leaves M2 a regression check it has to
-invert deliberately, instead of one that vanished the day the button check arrived.
+re-examine deliberately, instead of one that vanished the day the button check arrived.
+**M2 re-examined it and did NOT invert it** (2026-08-11): the poll accepts the software cause and
+then declines unless our image is in `MAIN_BANK` *and* a debuggee is running, which in T4's run it
+is not — so T4's verdict is unchanged and only its reason moved. **T9** is where the software cause
+being SERVED is asserted.
 
 **This is a live constraint on M2, not a testing detail.** The plan's asynchronous break is a
 Copper `MOVE $02,$08`, which sets the same latch through the same signal (`nmi_gen_nr_mf` covers
 CPU and Copper alike, `zxnext.vhd:3832`). It will be filtered by that same check until `nmi66h`
-is taught to accept a software cause — and then T4's assertion must be inverted, deliberately and
-in the same change. **T8's expectations belong in that same change too**: it asserts that a
+is taught to accept a software cause — ~~and then T4's assertion must be inverted, deliberately and
+in the same change~~. **It was not, and did not need to be** (2026-08-11); see the paragraph above. **T8's expectations belong in that same change too**: it asserts that a
 *button* press taken while the debugger executes is declined, which is the branch M2 edits first
 and reuses `MF.nmi_slot7` from, so whatever M2 makes that branch do, T8 is where it is written
 down.

@@ -8,7 +8,11 @@
 ; This is NOT the stub's break mechanism — it is the proof that the hardware
 ; path exists and that jnext models it. Run against the SD image's stock
 ; Multiface ROM it must produce a takeover; run against our stub it must not,
-; for the reason in test/nmi_trigger.asm (nmi66h serves button causes only).
+; for the reason in test/nmi_trigger.asm — which since issue #22 is no longer
+; "nmi66h serves button causes only" but "the poll declines where no debugger
+; image is in MAIN_BANK", which is the state this fixture's run is in. Same
+; outcome, different reason. test/copper_poll.asm is the fixture that exercises
+; the poll itself rather than its decline.
 ;
 ; Instruction encoding, from device/copper.vhd:91-104 — not from a wiki:
 ;

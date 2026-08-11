@@ -696,12 +696,30 @@ def chk_continue_state(d):
 def chk_pause_while_stopped(d):
     """CMD_PAUSE, sent while the remote is already stopped.
 
-    SCOPE, STATED UP FRONT. This is NOT a test of PC-initiated break. Breaking
-    into a FREELY RUNNING program is milestone M2 and is not built: mf_rom.asm's
-    nmi66h serves button NMIs only (bench check T4 asserts that decline
-    deliberately), so with the debuggee running there is nothing polling for a
-    byte from the PC and no CMD_PAUSE can be received at all. That is a design
-    state, not a bug, and no check here can pass until M2 changes it.
+    SCOPE, STATED UP FRONT. This is NOT a test of PC-initiated break — but the
+    reason has changed, and the old one is struck rather than deleted because it
+    was true for the whole life of this check.
+
+    IT USED TO SAY: "Breaking into a FREELY RUNNING program is milestone M2 and
+    is not built: mf_rom.asm's nmi66h serves button NMIs only (bench check T4
+    asserts that decline deliberately), so with the debuggee running there is
+    nothing polling for a byte from the PC and no CMD_PAUSE can be received at
+    all. That is a design state, not a bug, and no check here can pass until M2
+    changes it."
+
+    EVERY CLAUSE OF THAT IS NOW FALSE (issue #22, built 2026-08-10). nmi66h
+    serves a SOFTWARE Multiface NMI as well, raised by a two-instruction Copper
+    list the DEBUGGED PROGRAM installs; the poll reads the link while the
+    debuggee runs; and a check that breaks into a freely running program exists
+    and passes — bench W8, test/dzrp/pause-running.py, driven by
+    test/run-dzrp-stub.sh. T4 still asserts a decline, and its verdict is
+    unchanged, but its reason is not: the software cause is now SERVED and
+    correctly declined at a machine where no debugger image is in MAIN_BANK.
+
+    WHAT SURVIVES IS THE SCOPE OF THIS CHECK, which is the sentence that
+    mattered: C12 is about CMD_PAUSE arriving while the remote is ALREADY
+    STOPPED, which is the other half of the command and reaches cmd_pause rather
+    than the poll. The two states are now both reachable and both must work.
 
     What CAN be asked today is the narrow protocol question: the specification
     gives CMD_PAUSE a Length=1 response — the sequence number and nothing else
@@ -1217,12 +1235,12 @@ def chk_rom_breakpoint_spares_trampoline(d):
 #  - ABOVE ANY BYTE THE DEBUGGER OCCUPIES IN MAIN_BANK, so that a remote which
 #    still has the defect writes into DEAD SPACE and the red is a repeatable
 #    reading rather than a crash somewhere in the debugger's own code. It is
-#    above the end of the SAVEBIN image itself: ROM_MAGIC_ADDR is 0xFEA0 and
-#    ROM_MAGIC_SIZE is 32, so the image ends at 0xFEC0 — and only
+#    above the end of the SAVEBIN image itself: ROM_MAGIC_ADDR is 0xFE70 and
+#    ROM_MAGIC_SIZE is 32, so the image ends at 0xFE90 — and only
 #    main_end-MAIN_ADDR bytes are ever COPIED into the bank at all (mf_rom.asm's
 #    MEMCOPY). main.asm:279 bounds main_end at 0xFF00 outright and the assert
 #    below it bounds it by ROM_MAGIC_ADDR, which only ever moves DOWN, 16 bytes
-#    at a time, as the MF ROM half grows. So 224 bytes of margin at worst case,
+#    at a time, as the MF ROM half grows. So 272 bytes of margin at worst case,
 #    structurally, now and after M2 — and no new ASSERT is needed here.
 #  - NOT 0xFFFF, so nothing here rests on the last byte of a bank.
 #

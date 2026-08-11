@@ -538,10 +538,26 @@ cmd_continue:
 ; same way: its Pause() stops the CPU and calls SendResponse(), while the
 ; notification is emitted later and only if the state actually changed.
 ;
-; Breaking into a FREELY RUNNING debuggee is a different problem and is
-; milestone M2, not this: mf_rom.asm's nmi66h serves button NMIs only (bench
-; check T4 asserts that decline deliberately), so while the debuggee runs
-; nothing polls the link and no command can be received at all.
+; Breaking into a FREELY RUNNING debuggee is a different problem, and since
+; issue #22 it is a SOLVED one — this comment used to say it was unreachable:
+;
+;   "milestone M2, not this: mf_rom.asm's nmi66h serves button NMIs only (bench
+;    check T4 asserts that decline deliberately), so while the debuggee runs
+;    nothing polls the link and no command can be received at all."
+;
+; nmi66h serves a software Multiface NMI now, raised every frame by a Copper
+; list the DEBUGGED PROGRAM installs, and the poll reads the link while the
+; debuggee runs. Bench check W8 sends CMD_PAUSE to a debuggee resumed with no
+; breakpoint at all and it stops. T4 still asserts a decline and its verdict is
+; unchanged; what changed is its reason.
+;
+; NOTHING HERE MOVES BECAUSE OF THAT, AND THAT IS THE POINT WORTH KEEPING. The
+; break is caused by the POLL, not by this handler: by the time cmd_loop reads
+; command 7 the machine is already stopped and send_ntf_pause has already set
+; prgm_state to PRGM_STOPPED. So cmd_loop still runs only while stopped, there
+; is still nothing here to pause, and both of issue #8's prohibitions above —
+; do not touch prgm_state, do not send a notification — still hold for exactly
+; the reasons #8 gives them. C12 covers this handler; W8 covers the poll.
 ;
 ; Upstream routed command 7 to cmd_not_supported, which stores an error and
 ; jumps to drain_main: the frame was consumed and NOTHING was sent, so a client

@@ -26,6 +26,23 @@
 # following frame rather than at a frame boundary. Two readings and a subtraction
 # make that irrelevant; one reading would fold it into the answer.
 #
+# IF YOU WIDEN THE WINDOW, READ THIS FIRST. HL is sixteen bits and the counter
+# starts at zero when the fixture is injected, so a long enough window WRAPS —
+# and a wrapped pair of readings is not obviously wrong, it is a plausible
+# smaller number. Provoked deliberately: at LAST_FRAME=830 the count goes
+# 11736 -> 51824, the second reading is still larger than the first, and the
+# arithmetic yields `1484.9 iterations/frame` and a cost of 0.609% instead of the
+# true ~3912 and 0.230%. Nothing about that output looks wrong.
+#
+# The first version of the guard tested only "did HL increase", which catches
+# about 9 of the ~46 wrapping gap-widths and missed exactly this one. A bare
+# ceiling on the readings does not help either — both of those numbers are far
+# below any sane ceiling. TWO READINGS CANNOT DISTINGUISH A WRAP FROM A LARGE
+# HONEST INCREASE, so the guard that matters is A PRIORI: it computes whether the
+# window CAN wrap, from the clock and the loop's own nominal T-state count, and
+# refuses before it looks at the numbers. Measured: 14 frames after injection is
+# accepted at 28 MHz, 15 is refused, and the reviewer's 30 is refused loudly.
+#
 # THE CLOCK IS READ OFF THE MACHINE, not assumed. The poll runs at the DEBUGGEE's
 # speed, so the same absolute cost is a very different fraction of a frame at
 # 3.5 MHz than at 28 MHz. The fixture puts NR 0x07's read-back in D and this
@@ -55,8 +72,8 @@ INJECT_FRAME=800
 # Two readings, nine frames apart. Short enough that HL cannot wrap (~4500
 # iterations per frame at 28 MHz against HL's 65536), long enough that nine
 # frames' worth of polls is a number rather than a rounding error.
-FIRST_FRAME=803
-LAST_FRAME=812
+FIRST_FRAME=${FIRST_FRAME:-803}
+LAST_FRAME=${LAST_FRAME:-812}
 
 RUN_TIMEOUT=120
 
@@ -123,10 +140,11 @@ snap "$COST_BIN_OFF" "$FIRST_FRAME" "$OUT/cost-off-first.sna"
 snap "$COST_BIN_OFF" "$LAST_FRAME"  "$OUT/cost-off-last.sna"
 log ""
 
-python3 - "$OUT" "$FIRST_FRAME" "$LAST_FRAME" <<'EOF'
+python3 - "$OUT" "$FIRST_FRAME" "$LAST_FRAME" "$INJECT_FRAME" <<'EOF'
 import struct, sys
 
-out, first, last = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+out, first, last, inject = (sys.argv[1], int(sys.argv[2]),
+                            int(sys.argv[3]), int(sys.argv[4]))
 frames = last - first
 
 
@@ -143,24 +161,74 @@ on_last, _ = read("cost-on-last")
 off_first, _ = read("cost-off-first")
 off_last, _ = read("cost-off-last")
 
-# A wrap would make a difference meaningless, and it is the mistake the first
-# attempt at this made — so it is refused rather than reported.
+# The frame is 50 Hz; the T-states in one depend on the clock the DEBUGGEE runs
+# at, which is why the fixture reports it rather than leaving it to be inferred.
+# Bits 1:0 are the PROGRAMMED speed (zxnext.vhd:5903, :5789). Derived HERE rather
+# than beside the printing, because the wrap refusal below is built on it.
+HZ = {0: 3.5, 1: 7.0, 2: 14.0, 3: 28.0}[clock & 0x03]
+t_per_frame = HZ * 1e6 / 50.0
+
+# THE WRAP REFUSAL, AND THE FIRST VERSION OF IT DID NOT DO WHAT ITS OWN COMMENT
+# SAID. It tested `b <= a` alone — i.e. it fired only when a wrapped total
+# happened to land numerically BELOW the first reading. Provoked and reproduced:
+# at LAST_FRAME=830 the counter genuinely wraps, 11736 -> 51824, the final
+# reading still exceeds the first, nothing is refused, and the script prints
+# `1484.9 iterations/frame` and a cost of 0.609% as an ordinary MEAS line and
+# exits 0. About 9 of the ~46 wrapping gap-widths were caught; the rest sailed
+# through. A plausible wrong number is worse than a loud refusal, and this is the
+# one file whose whole purpose is to be re-runnable evidence for somebody who
+# widens the window.
+#
+# NOTE THAT A BARE READING BOUND DOES NOT FIX IT EITHER, which is the trap: both
+# of those readings are below any sane ceiling. Two readings simply cannot tell a
+# wrap from a large honest increase. So the load-bearing check is A PRIORI —
+# whether the window CAN wrap — and the reading and rate checks are backstops for
+# the case where the loop is not what this script thinks it is.
+#
+# MIN_LOOP_T is a hard floor rather than a guess: copper_cost.asm's loop is
+# `ld b,8` (7) + eight `djnz` (99) + `inc hl` (6) + `jr` (12) = 124 T-states
+# nominal, and no machine executes it in fewer. Measured here at 143, the
+# difference being contention. If DELAY_COUNT ever shrinks, this must shrink with
+# it — which is why the number is derived in a comment rather than asserted.
+MIN_LOOP_T = 120        # below copper_cost.asm's nominal 124
+MAX_LOOP_T = 250        # generously above the measured 143
+SAFE_COUNT = 60000      # comfortably below HL's 65536
+
+# The counter starts at zero when the fixture is injected, so what can wrap is
+# the count at the LAST frame, measured from the injection — not the window.
+span = last - inject
+max_rate = t_per_frame / MIN_LOOP_T
+if span * max_rate >= 65536:
+    sys.exit("ERROR: the window can wrap: %d frames after injection at up to %.0f "
+             "iterations/frame is %.0f, and HL holds 65536. No reading from it "
+             "could be trusted. Keep the last frame within %d of the injection."
+             % (span, max_rate, span * max_rate, int(65535 / max_rate)))
+
 for a, b, what in ((on_first, on_last, "with the poll"),
                    (off_first, off_last, "without it")):
     if b <= a:
         sys.exit("ERROR: HL did not increase %s (%d -> %d): the counter wrapped, "
                  "so no rate can be taken. Shorten the window." % (what, a, b))
+    if b >= SAFE_COUNT or a >= SAFE_COUNT:
+        sys.exit("ERROR: a reading is within reach of HL's wrap %s (%d -> %d, "
+                 "ceiling %d): the loop is faster than this script assumes. "
+                 "Shorten the window." % (what, a, b, SAFE_COUNT))
 
 on_rate = (on_last - on_first) / frames
 off_rate = (off_last - off_first) / frames
+
+# Third backstop: a wrap that survived both of the above would show up as a loop
+# that suddenly takes far longer per iteration than its own instruction count
+# allows. The band is a property of the fixture's code, so it is clock-independent.
+observed_t = t_per_frame / off_rate
+if not MIN_LOOP_T <= observed_t <= MAX_LOOP_T:
+    sys.exit("ERROR: %.0f T-states per iteration is outside [%d, %d], which "
+             "copper_cost.asm's loop cannot be. The counter probably wrapped, or "
+             "the fixture changed and these bounds did not."
+             % (observed_t, MIN_LOOP_T, MAX_LOOP_T))
 lost = off_rate - on_rate
 pct = 100.0 * lost / off_rate
 
-# The frame is 50 Hz; the T-states in one depend on the clock the DEBUGGEE runs
-# at, which is why the fixture reports it rather than leaving it to be inferred.
-# Bits 1:0 are the PROGRAMMED speed (zxnext.vhd:5903, :5789).
-HZ = {0: 3.5, 1: 7.0, 2: 14.0, 3: 28.0}[clock & 0x03]
-t_per_frame = HZ * 1e6 / 50.0
 t_per_iter = t_per_frame / off_rate
 t_lost = lost * t_per_iter
 

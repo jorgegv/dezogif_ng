@@ -101,13 +101,37 @@ issue #8's refusal to write it in the handler still holds.
 **THE PER-FRAME COST IS MEASURED, AND THE PLAN'S ESTIMATE WAS 6-13× LOW.**
 `make measure-poll-cost`, two builds one assembler constant apart, HL differenced
 across nine frames so start-up and snapshot overhead cancel, bit-identical over
-three runs, and it **refuses to report** rather than lie if the counter wrapped:
+three runs:
 
 | | |
 |---|---|
 | poll, per frame, nothing arriving | **1288 T-states** |
 | of a frame at **28 MHz** | **0.230%** — measured, clock read off NR `0x07` |
 | of a frame at **3.5 MHz** | **1.84%** — arithmetic, and marked as such |
+
+**AND THE WRAP REFUSAL IT SHIPPED WITH DID NOT DO WHAT I WROTE HERE.** This entry
+said it "refuses to report rather than lie if the counter wrapped". It tested
+only whether HL had increased, which fires just when a wrapped total lands
+numerically *below* the first reading — about 9 of the ~46 wrapping gap-widths.
+Found by the independent reviewer by **provoking it**: at `LAST_FRAME=830` the
+count goes 11736 → 51824, the second reading is still the larger, and the script
+prints `1484.9 iterations/frame` and a cost of 0.609% as an ordinary MEAS line
+and exits 0. **A plausible wrong number, in the one file whose whole purpose is
+to be re-runnable evidence for whoever next widens the window** — a green check
+that cannot fail, wearing an instrument's clothes.
+
+**THE FIX IS A PRIORI, AND THAT IS THE PART WORTH KEEPING.** A ceiling on the
+readings does not work either: both of those numbers are far below any sane one.
+**Two readings cannot distinguish a wrap from a large honest increase** — the
+information is simply not there. So the load-bearing guard computes whether the
+window *can* wrap, from the clock it already reads and the loop's own nominal
+T-state count (124, a hard floor rather than a guess), and refuses before it
+looks at the numbers at all; the monotonicity and reading-ceiling tests stay as
+backstops for a fixture that is not what the script thinks it is. Measured: 14
+frames after injection accepted, 15 refused, the reviewer's 30 refused loudly.
+**The published figures were never in doubt** — the shipped window is nine
+frames and clear of any wrap by more than a third — which is exactly what makes
+this a defect in a safety claim rather than in a measurement.
 
 Plan §10 and Appendix A carried "~100-200 T-states/frame (≈0.3%)" as an estimate
 nobody had measured; both are annotated in place. **The first figure was

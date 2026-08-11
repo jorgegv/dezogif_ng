@@ -523,11 +523,11 @@ either way and would not say which.
 
 The probe address is **`0xFF80`**, and every part of that is chosen. It is in `MAIN_SLOT`, or there
 is no wrong branch to take. It is **above any byte the debugger occupies in `MAIN_BANK`** — above
-the end of the SAVEBIN image itself, in fact: `ROM_MAGIC_ADDR` is `0xFEA0` and `ROM_MAGIC_SIZE` is
-32, so the image ends at **`0xFEC0`**, and only `main_end-MAIN_ADDR` bytes are ever *copied* into
+the end of the SAVEBIN image itself, in fact: `ROM_MAGIC_ADDR` is `0xFE70` and `ROM_MAGIC_SIZE` is
+32, so the image ends at **`0xFE90`**, and only `main_end-MAIN_ADDR` bytes are ever *copied* into
 the bank at all (`mf_rom.asm`'s `MEMCOPY`). `main.asm:279` bounds `main_end` at `0xFF00` outright
 and the assert below it bounds it at `ROM_MAGIC_ADDR`, which only ever moves **down** as the MF ROM
-half grows — so `0xFF80` has **224 bytes of margin at worst case**, structurally. A defective remote
+half grows — so `0xFF80` has **272 bytes of margin at worst case**, structurally. A defective remote
 therefore writes into **dead space**: the red is a repeatable reading rather than a crash somewhere
 in the debugger's own code, and every check below it still runs. And it is not `0xFFFF`, so nothing
 rests on the last byte of a bank. **No new `ASSERT` is needed** — the existing ones already pin it.
@@ -681,10 +681,26 @@ part: the machine is healthy and answering, and only the resume is gone.
 
 ### C12: `CMD_PAUSE`, and what it does NOT test
 
-**It is not a test of PC-initiated break.** Breaking into a *freely running* program is milestone
-M2 and is not built: `mf_rom.asm`'s `nmi66h` serves button NMIs only, which bench check T4 asserts
-deliberately, so while the debuggee runs there is nothing polling the link and no `CMD_PAUSE` can
-be received at all. No check can pass that until M2 changes it, and none is written.
+**It is not a test of PC-initiated break** — and the reason is no longer the one this paragraph
+gave for the whole life of the check.
+
+~~Breaking into a *freely running* program is milestone M2 and is not built: `mf_rom.asm`'s
+`nmi66h` serves button NMIs only, which bench check T4 asserts deliberately, so while the debuggee
+runs there is nothing polling the link and no `CMD_PAUSE` can be received at all. No check can pass
+that until M2 changes it, and none is written.~~
+
+**M2 IS BUILT (issue #22, 2026-08-10) AND EVERY CLAUSE OF THAT IS FALSE.** `nmi66h` serves a
+software Multiface NMI too, raised every frame by a two-instruction Copper list **the debugged
+program installs**; the poll reads the link while the debuggee runs; and the check that was never
+written is **W8**, which sends `CMD_PAUSE` to a debuggee resumed with no breakpoint at all and
+passes. T4's verdict is unchanged and its reason is not — the software cause is now *served* and
+correctly *declined* where no debugger image is in `MAIN_BANK`. See
+[ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md) and
+[ASYNCHRONOUS-BREAK-USER-HOWTO.md](ASYNCHRONOUS-BREAK-USER-HOWTO.md).
+
+What survives is C12's own **scope**, which is the half that still matters: it is about `CMD_PAUSE`
+arriving while the remote is **already stopped**, which reaches `cmd_pause` rather than the poll.
+Both states are now reachable and both must work — W8 is the other one.
 
 What C12 asks is the narrow protocol question that *is* answerable today: the specification gives
 `CMD_PAUSE` a Length=1 response — the sequence number alone — with no exemption for a remote that

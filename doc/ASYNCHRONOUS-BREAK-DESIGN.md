@@ -233,7 +233,8 @@ a Copper-using program can carry these two instructions in **its own** list inst
 
 7. **`nmi66h` runs — the routine M2 has to change.** Today it reads NR `0x02`, masks `00011100b`
    and returns unless the result is zero: button causes only, which bench **T4** asserts. M2 teaches
-   it to accept a software cause and **inverts T4 in the same change** (§4.1).
+   it to accept a software cause and ~~**inverts T4 in the same change**~~ — **it did not need to;
+   see §0** (§4.1).
 
    It also needs a **fast path**, not a widening of the existing one. The current entry runs **82
    instructions** before the dispatch decides anything — saving the NextREG select, reading and
@@ -546,7 +547,11 @@ and M2 must not lose it.** Prefer a literal constant over a read-modify-write he
 
 `nmi66h` reads NR `0x02`, masks `00011100b` and returns unless the result is zero — it serves button
 causes only, which is why bench **T4** asserts that our stub *declines* a software NMI. M2 must teach
-it to accept a software cause, and **invert T4 in the same change**, deliberately. T4 and T6 send
+it to accept a software cause, and ~~**invert T4 in the same change**, deliberately~~ — **ANNOTATED
+2026-08-11: it did not, and the prediction was wrong rather than the change incomplete.** The poll
+accepts the cause and then declines unless our image is in `MAIN_BANK` and a debuggee is running,
+neither of which holds in T4's run, so T4's verdict is unchanged and only its reason moved. §0.
+T4 and T6 send
 different causes to the same check, so both stay; T4 becomes the assertion that the software cause is
 now *taken*.
 

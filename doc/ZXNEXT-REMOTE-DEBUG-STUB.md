@@ -504,8 +504,10 @@ return side — see the scope limit below.
 
 **T6 did not replace T4, and an earlier draft here said it would.** They send different causes to
 the same check in `nmi66h` — T6 one it accepts, T4 one it rejects. Both are kept, so T4 remains
-the regression check M2 must invert deliberately when it teaches `nmi66h` to accept a software
-cause.
+the regression check M2 had to re-examine deliberately when it taught `nmi66h` to accept a software
+cause. ~~invert~~ **It did not need inverting** (2026-08-11): the poll accepts the cause and then
+declines unless our image is in `MAIN_BANK` and a debuggee is running, neither of which holds in
+T4's run. Verdict unchanged, reason changed; **T9** asserts the serving half.
 
 **What T6 does not cover, and it is more than "the second press".** **T6 never resumes.** No DZRP
 client attaches, so the stub idles in `main.asm`'s `main_loop`, whose
@@ -809,16 +811,38 @@ issue #15, with the anti-hang design in issue #16. M1's functionality is complet
 Add the Copper-driven periodic NMI poll (§4.3). Success: `CMD_PAUSE` from DeZog stops a freely
 running program, and breakpoints can be set without pressing anything.
 
-**EVALUATED 2026-08-08, before any code:
-[ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md). Verdict: feasible, and it should be
-OPT-IN.** The mechanism is sound and is the only one on the machine; the byte budget is not the
-blocker it was briefly recorded as; and open question 5b is answered (you cannot distinguish the
-causes, and a poll-shaped handler does not need to). What the evaluation adds to this milestone is
-two costs the plan did not carry: the Copper list is **write-only**, so enabling the break destroys
-any Copper program the debuggee had, irrecoverably; and the debuggee can switch the break off
-silently — NR `0x06` bit 3, or a write of NR `0x62` that **changes** the mode bits, which restarts
-the list (`device/copper.vhd:69-78`) — after which **the poll is what would have restored it**, so only a
-human pressing M1 gets it back. Read §3 and §7 of that document before starting.
+**BUILT 2026-08-10, AND THE BUILD CHANGED THE SHAPE OF IT.** `CMD_PAUSE` from a client stops a
+freely running program — bench check **W8** in `make test-dzrp-stub`, which resumes a debuggee with
+**no** temporary breakpoint so that nothing the debugger planted can bring it back, and its own
+control run with the pause withheld. `nmi66h` serves a software Multiface NMI; the decline path
+costs a **measured** ~1288 T-states per frame (`make measure-poll-cost`). Read
+[ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md) §0 first, and
+[ASYNCHRONOUS-BREAK-USER-HOWTO.md](ASYNCHRONOUS-BREAK-USER-HOWTO.md) for what a user has to do.
+
+**THE ONE DECISION THAT MOVED, AND IT REMOVES THIS MILESTONE'S HEADLINE COST: the DEBUGGED PROGRAM
+installs the Copper list, not the debugger.** Two instructions at the start of the program under
+test, 44 bytes, compiled out for release. So there is nothing for the debugger to destroy and
+nothing to opt into — the feature is opt-in in the *debuggee*, by construction. The cost falls the
+other way instead: a program that does not carry them gets no asynchronous break at all, and the
+debugger cannot install one for it, because it cannot read what it would be overwriting.
+
+The 2026-08-08 evaluation follows, annotated. Its VHDL and its reasoning stand; its verdict is
+superseded by the paragraph above.
+
+> **EVALUATED 2026-08-08, before any code:
+> [ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md). Verdict: feasible, and it should be
+> ~~OPT-IN~~** *(opt-in in the DEBUGGEE, as built)*. **The mechanism is sound and is the only one on
+> the machine; the byte budget is not the
+> blocker it was briefly recorded as; and open question 5b is answered (you cannot distinguish the
+> causes, and a poll-shaped handler does not need to). What the evaluation adds to this milestone is
+> two costs the plan did not carry: ~~the Copper list is **write-only**, so enabling the break destroys
+> any Copper program the debuggee had, irrecoverably~~ *(the list is write-only, and that fact
+> stands — but the debugger never writes one, so nothing is destroyed)*; and the debuggee can switch
+> the break off
+> silently — NR `0x06` bit 3, or a write of NR `0x62` that **changes** the mode bits, which restarts
+> the list (`device/copper.vhd:69-78`) — after which **the poll is what would have restored it**, so only a
+> human pressing M1 gets it back *(the NR `0x62` half is now the program's own business, since it
+> owns the list; the NR `0x06` half stands)*. Read §3 and §7 of that document before starting.
 
 ### M3 — Robustness
 Reconnect after WiFi drop, ESP state recovery, baud negotiation, a configuration path for
@@ -838,10 +862,10 @@ Named DeZog remote type; contribute the transport abstraction back to dezogif if
 | **ESP contention** | One ESP. A program that uses WiFi cannot be debugged over WiFi. NextZXOS/NextSync also reconfigure it | Detect and report rather than hang — and **this is the reason the UART build is kept**: for a debuggee that owns the ESP, the serial ROM is the answer, not a workaround. Since issue #5 that answer is reachable **from the machine**: mfselect carries both ROMs on the card and switches between them in three keystrokes, so choosing the serial build costs a power-cycle rather than a PC session |
 | **State transparency** | Several NextREGs are write-only; a full snapshot is impossible on hardware | Permanent ceiling vs an emulator. Accept and document |
 | **No watchpoints / coverage / true reverse debugging** | Would require tracing every instruction | Ruled out by dezogif's design doc; DeZog lite history remains |
-| **`nmi66h` filters the Copper NMI** | Inherited `mf_rom.asm` reads NR `0x02`, masks `00011100b` and returns unless zero — button causes only. The Copper `MOVE $02,$08` sets exactly that bit (`nmi_gen_nr_mf` covers CPU and Copper, `zxnext.vhd:3832`; latched at `:3843-3848`), so **M2's break mechanism is filtered out by the code M1 inherits**. Demonstrated: bench T4 | M2 must modify the cause check to accept a software cause, clear the latch on the way out, and invert bench T4 in the same change. Not optional, and not discovered late — it is the first thing M2 touches |
+| **`nmi66h` filters the Copper NMI** | Inherited `mf_rom.asm` reads NR `0x02`, masks `00011100b` and returns unless zero — button causes only. The Copper `MOVE $02,$08` sets exactly that bit (`nmi_gen_nr_mf` covers CPU and Copper, `zxnext.vhd:3832`; latched at `:3843-3848`), so **M2's break mechanism is filtered out by the code M1 inherits**. Demonstrated: bench T4 | **DONE, 2026-08-11.** M2 modified the cause check to accept a software cause and clears the latch on the way out — for cause REPORTING rather than to re-arm, which RETN does in hardware. ~~and invert bench T4 in the same change~~: T4 did **not** need inverting, because the poll declines where no debugger image is in `MAIN_BANK`; its verdict is unchanged and only its reason moved. **T9** asserts the serving half |
 | **NR `0x06` bit 3 gates every MF NMI** | Power-on 0 (`zxnext.vhd:2090`, `:5166`), but **NextZXOS leaves it set** — measured 2026-08-04, see M0(c). So the live risk is not that the stub forgets to set it, it is that the **debuggee clears it** and the break then dies silently | Set on entry anyway (seven bytes, removes the dependency on what the firmware left); re-assert from the poll |
 | **Timing intrusiveness** | ~0.3%/frame for the NMI poll; contention-timed and tape/beeper code will notice. **The figure is an estimate nobody has measured**, and part of the entry path runs at the *debuggee's* clock before the handler switches to 28 MHz — a speed change 50 times a second is a different kind of perturbation from stolen cycles | Make the poll disableable; document; **measure it in M2** rather than inheriting the estimate |
-| **Copper contention — the debuggee's list is DESTROYED, not borrowed** | The 1024-instruction list is **write-only**: both instruction RAMs discard their CPU-side read output (`zxnext.vhd:3959-3976`, `:3980-3998`) and NR `0x60`/`0x63` have no read decode (`:6286-6287`). So the debugger cannot save and restore it. NR `0x61`/`0x62` read back the mode and the *load* pointer only (`:6083-6087`) | **Make asynchronous break opt-in.** A Copper-using program can instead carry `WAIT`/`MOVE $02,$08` in its **own** list. There is no fallback mechanism — the Copper is the only periodic NMI source on the machine |
+| **Copper contention — the debuggee's list is DESTROYED, not borrowed** | The 1024-instruction list is **write-only**: both instruction RAMs discard their CPU-side read output (`zxnext.vhd:3959-3976`, `:3980-3998`) and NR `0x60`/`0x63` have no read decode (`:6286-6287`). So the debugger cannot save and restore it. NR `0x61`/`0x62` read back the mode and the *load* pointer only (`:6083-6087`) | ~~**Make asynchronous break opt-in.**~~ **RESOLVED 2026-08-11 by making the escape hatch the ONLY route**: the debugged program carries `WAIT`/`MOVE $02,$08` in its own list, the debugger installs nothing, so nothing is destroyed and there is nothing to opt into. The write-only fact stands and is precisely why. There is still no fallback mechanism — the Copper is the only periodic NMI source on the machine |
 | **The debuggee can switch the break off silently, and it cannot be restored** | NR `0x06` bit 3 gates every MF NMI source; and a write of NR `0x62` that **changes** the mode bits restarts the list from index 0, mode `00` stopping it outright (`device/copper.vhd:69-78`). The plan's "re-assert from the poll" cannot work here: once the Copper stops, **the poll is what would have re-asserted it** | Document as best-effort. Recovery is an M1 press — the button the feature exists to remove. Detecting it from the PC side is not possible either: the stub simply goes quiet |
 | **NR `0x02` read-modify-write resets the machine** | Bits 1:0 *written* trigger a soft/hard reset (`zxnext.vhd:6370-6371`); *read* they are reset history (`:1306`, `:1732-1739`) and are non-zero in ordinary operation. The handler must clear the cause latch on the way out, so it writes this register every frame | Upstream's `and 10000000b` mask is what makes the existing path safe — **load-bearing, do not lose it**. Prefer a literal constant to a read-modify-write |
 | **Latency** | 10-100 ms per round trip | Batch; DZRP's bounded reads help |
@@ -969,7 +993,7 @@ reason attached, is fine.
 | **An NMI taken against a RUNNING debuggee returns a correct PC on an uncorrupted stack** — `save_nmi_return_address`'s outcome, §3.4's actual concern | **a real DeZog session on a Next, 2026-08-05**: `CMD_CONTINUE` with no breakpoint set the fixture running in its `jr $`, the M1 button was pressed, and the `NTF_PAUSE` carried break reason 1 (`MANUAL_BREAK`) with `CMD_GET_REGISTERS` returning **PC `0x801C`, SP `0x9F00`** — where it was spinning, on its own stack. `backup.pc` can only come from that routine on a press taken while `prgm_state` is `PRGM_RUNNING` | **verified on hardware** — the last unexecuted path in the entry/exit choreography. **Which branch of that routine ran is NOT distinguished**: stackless (NR `0xC2`/`0xC3`) and the stack read both give this answer, and `doc/legacy/Design.md:378,434` make stackless the presumption rather than an observation. It needed a finger on a button, which is why no bench could ever reach it |
 | `CMD_PAUSE` while stopped is answered with the Length=1 response | `make test-dzrp-stub` C12, measured green; `commands.asm` maps command 7 to `cmd_pause` | **verified** — issue #8. It got **no** response until then, a failure the serial build had always had |
 | DeZog's `cspect` remote really sends command 7 and blocks on it, while its `zxnext` remote never puts it on the wire | DeZog 3.7.4 `out/extension.js`: `CSpectRemote` has no `sendDzrpCmdPause` override and inherits `await this.sendDzrpCmd(7)`; `ZxNextSerialRemote`'s throws "use the yellow NMI button" | **verified** — why upstream never saw issue #8 |
-| dezogif declines a software MF NMI: `nmi66h` serves button causes only | `mf_rom.asm` `nmi66h`, `zxnext.vhd:3843-3848`; `make test` T4 | **verified** |
+| ~~dezogif declines a software MF NMI: `nmi66h` serves button causes only~~ **Upstream's did; ours has SERVED one since 2026-08-11** (issue #22), declining it only where no debugger image is in `MAIN_BANK` | `mf_rom.asm` `nmi66h`, `zxnext.vhd:3843-3848`; `make test` T4 and T9 | **verified**, both arms |
 | I/O trap on `0x2FFD`/`0x3FFD` generates MF NMI | `zxnext.vhd:3835` | **verified** |
 | Prescaler formula and width | `ports.txt` (`0x143B`), `uart.h` | **verified** |
 | dezogif ships as `enNextMf.rom` | its `readme.md` + `releases/enNextMf.rom` | **verified** |

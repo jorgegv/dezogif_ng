@@ -369,21 +369,28 @@ off its source, never observed.
     make pause-transparency
 
 That builds `build/pause-transparency.nex` and its `.sld` — the same program Step 4a drives over
-DZRP, so a break here can be checked the same way. `launch.json`:
+DZRP, so a break here can be checked the same way. The configuration is already in
+`.vscode/launch.json` as **"Real Next: async break (Pause button)"**; change the `hostname` if the
+machine has moved:
 
 ```json
 {
   "type": "dezog",
   "request": "launch",
+  "name": "Real Next: async break (Pause button)",
   "remoteType": "cspect",
-  "cspect": { "hostname": "192.168.1.42", "port": 11000 },
+  "cspect": { "hostname": "192.168.100.136", "port": 11000, "socketTimeout": 50 },
   "sjasmplus": [{ "path": "build/pause-transparency.sld" }],
   "load": "build/pause-transparency.nex",
   "rootFolder": "${workspaceFolder}",
-  "topOfStack": "STACK_TOP",
+  "topOfStack": "0x9F00",
   "startAutomatically": false
 }
 ```
+
+`topOfStack` is the literal address rather than the `STACK_TOP` label: the label is an `equ` and
+does reach the SLD, but a number cannot fail to resolve, and a wrong stack top costs a call stack
+rather than an error.
 
 The procedure, and each step is a thing that has not been observed:
 
@@ -1213,9 +1220,11 @@ An earlier draft of this section reported that as "about a third of the estimate
 one-way payload figure against a line rate. It is recorded here because the arithmetic error
 pointed at the wrong optimisation.
 
-## M2 ON SILICON — measured 2026-08-11 09:41, on a real Next
+## M2 ON SILICON — measured 2026-08-11 09:41, on a real Next, build `00.20`
 
-**The asynchronous break works on real hardware.** `make test-hardware NEXT_IP=192.168.100.136`:
+**The asynchronous break works on real hardware.** Build **`00.20`**, read off the stub's own
+banner — DZRP reports upstream's `dezogif v2.2.1` for every ROM we ship, so the screen is the only
+place ours appears. `make test-hardware NEXT_IP=192.168.100.136`:
 
     H1  PASS  connected in 43 ms, session opened and closed cleanly
     H2  PASS  the DZRP conformance suite passed in full — 23 of 23
@@ -1263,9 +1272,6 @@ executed code on silicon:
   the minutes-long version and has not been run on hardware.
 - **The poll's cost on a Next**, at any clock. 1288 T-states is jnext's, and the 3.5 MHz figure is
   arithmetic from it.
-- **The build number was not captured.** DZRP reports upstream's `dezogif v2.2.1` for every ROM we
-  ship, and only the stub's own screen carries ours. What H7 passing *does* establish is that the
-  installed ROM contains M2, since without it there is no poll to serve the Copper's NMI at all.
 
 ## The suite at its full size — measured 2026-08-08 12:37, on a real Next
 

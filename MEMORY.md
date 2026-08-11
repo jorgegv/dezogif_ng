@@ -7,7 +7,9 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ## 2026-08-11 — M2 RUNS ON A REAL NEXT: the PC stops a freely running program, and the stackless branch is finally distinguished on silicon
 
-**Measured, not decided** (user's own Next, 192.168.100.136, 09:41), and it is the
+**Measured, not decided** (user's own Next, 192.168.100.136, 09:41, build **`00.20`**
+read off the stub's banner — DZRP reports upstream's `dezogif v2.2.1`, so the
+screen is the only place ours appears), and it is the
 result this project was built for: **dezogif's headline limitation is lifted on
 the machine it was a limitation of.** `make test-hardware` — **4 passed, 0
 failed, 3 measured of 7**, with **H2 at 23 of 23** and **H7 green with its
@@ -48,10 +50,7 @@ against 6.6, **20.6 KB/s** against 20.3, H6 clean.
 DZRP directly, so what a real client does with an `NTF_PAUSE` arriving *before*
 its own `CMD_PAUSE` response is still read off CSpect's plugin rather than
 observed. The **long run** is not this: H7's debuggee ran one second, about fifty
-polls. The **poll's cost on a Next** is unmeasured at any clock. And **the build
-number was not captured** — DZRP reports upstream's `dezogif v2.2.1` for every
-ROM we ship — though H7 passing does establish that the installed ROM contains
-M2, since without it there is no poll to serve the NMI at all.
+polls. The **poll's cost on a Next** is unmeasured at any clock.
 
 **Cost: no `src/` change and no ROM byte.** This is a measurement, not a change.
 

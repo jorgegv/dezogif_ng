@@ -181,9 +181,16 @@ prescribes was **not** done: `ZxNextSocketRemote` simply **derives from
 `ZxNextSerialRemote`** and overrides three of the four transport members, which
 is upstream's own idiom — `ZxNextSerialLoopback` already derives from it the same
 way. The fourth, `dataReceived`, became a two-line `usesMessageStartByte` guard
-rather than an override, and is the **only** change to existing behaviour in the
-diff. Everything else in this section held: the four members were the right four,
-and `CMD_PAUSE` and the `0xA5` preamble both needed no flag.
+rather than an override — the only change to the **serial path's runtime**
+behaviour, and it defaults to the previous one. Everything else in this section
+held: the four members were the right four, and `CMD_PAUSE` and the `0xA5`
+preamble both needed no flag.
+
+*(An earlier version of this paragraph said that guard was the only change to
+existing behaviour in the **whole diff**. It was not: `settings.ts` also lost the
+`port` arm of 2.6.0's obsolete-property error, so a leftover 2.5.x `port` beside
+a `serial` stopped erroring. Found by the independent review, by running both
+trees rather than reading the diff, and fixed — see MEMORY.md.)*
 
 **The claim about pausing was narrowed before it shipped.** "Through a socket the
 program can be paused" is true of *this* stub with M2 and a cooperating debuggee

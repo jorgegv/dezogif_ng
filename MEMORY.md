@@ -40,9 +40,32 @@ Checking what the repository already does beat following our own plan.
 `dataReceived`'s 0xA5 swallow is guarded by a new `usesMessageStartByte`,
 default `true`. The alternative was
 `DzrpBufferRemote.prototype.dataReceived.call(this, data)` from the grandchild —
-zero lines in upstream's file and a smell in a PR. **This is the only change to
-existing behaviour in the whole diff**, which is what makes the serial gap below
-the one risk worth naming.
+zero lines in upstream's file and a smell in a PR. It is the only change to the
+**serial path's runtime** behaviour, and it defaults to the previous one.
+
+**AND THE FIRST VERSION OF THAT SENTENCE SAID "the only change to existing
+behaviour in the whole diff", WHICH WAS FALSE — the independent review disproved
+it by EXECUTION.** `settings.ts` changed twice, not once: beside the intended
+validation, the 2.6.0 error naming `port` / `hostname` / `socketTimeout` obsolete
+lost its `port` arm, so a config carrying a leftover 2.5.x `port` beside its
+`serial` **stopped erroring and started being silently accepted** with the port
+ignored. The reviewer built a checkout of `283d18ef`, drove `Settings` on both
+trees and printed the two answers — `THROWS` against `NO THROW` — rather than
+reading the diff and agreeing with me.
+
+**Fixed rather than documented**, since it is a real regression in upstream's own
+helpfulness: `port` is defaulted **only when a hostname is present**, so a port
+sitting next to a serial is still recognisable at check time and is reported.
+Test `port needs hostname`; suite 900 → **901**.
+
+**The claim was wrong in the place that makes it dangerous rather than the place
+that makes it visible.** The PR body scopes the same statement to
+`ZxNextSerialRemote`, where it is true and remains true; it was only this file
+and the design doc that generalised it to "the whole diff" — and the
+generalisation was doing *work*, because it is what justified naming the serial
+gap as the sole residual risk. `ERRORS.md` records this disease under several
+names; here it is again, in the entry whose own subject is checking claims, and
+it took an agent that ran the code to catch it.
 
 **TWO PROPERTIES NEEDED NO FLAG AND NO CAPABILITY NEGOTIATION**, which is §10's
 finding 1 holding up under construction. `CMD_PAUSE`'s refusal and the `0xA5`

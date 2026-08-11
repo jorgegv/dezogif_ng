@@ -84,7 +84,8 @@ to work.
   session blocks every Multiface NMI, poll and M1 button alike, for its whole duration.
 - **@doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md** — the user's half of M2: the 44 bytes a program adds
   to make itself breakable from DeZog's Pause, what the poll costs (**1288 T-states/frame**,
-  measured, against a plan estimate that was 6-13× low), and the five states in which the break
+  measured; the plan estimate it retired was 6-13× low, which is recorded in the design doc §5
+  rather than here), and the five states in which the break
   will not fire. Read it before answering "why does Pause do nothing" — the first of the five is
   that this is a **WiFi-mode feature in practice**, and the second is that esxDOS file I/O
   suppresses it.

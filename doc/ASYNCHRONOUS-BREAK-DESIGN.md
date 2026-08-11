@@ -735,6 +735,9 @@ mis-return, and the DivMMC automap block, none of which has run on hardware eith
   that the enumeration in §3.3 is not read as more exhaustive than it is.
 - **No hardware.** Everything about a real Next remains to be seen, and this project has twice been
   caught by jnext sitting on the safe side of reality.
+- **Nothing has driven this from DeZog itself.** W8 speaks DZRP directly, so what a real client does
+  with an `NTF_PAUSE` that arrives *before* its own `CMD_PAUSE` response is reasoned from CSpect's
+  plugin rather than observed.
 - **The extinguished RX-overflow diagnostic** (§0, cost 3) is reasoned from the VHDL and from the
   ordering in `mf_nmi_poll`. No run anywhere produces an overflow while a debuggee is running, so
   neither the loss nor its harmlessness has been observed.

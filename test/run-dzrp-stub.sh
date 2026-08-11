@@ -57,6 +57,12 @@
 #          window used to supply the missing bytes and receive the reply. Its
 #          precondition — three frames, from two connections, in the order that
 #          makes the collision — is asserted from the module's log, as W4's is.
+#          Its contamination guard is TWO-SIDED, unlike W2's, W3's and W4's, it
+#          KEEPS ITS LOG when it fails, and it NAMES the race collapsing (15/6/1
+#          instead of 6/15/1) with the framing latency that caused it. All three
+#          are because it is the one check here with a history of failing
+#          intermittently, and every one of those reds used to read "the
+#          precondition never happened". See the assertions.
 #
 #   run 6
 #     W6   AN M1 PRESS WHILE THE DEBUGGER IS STOPPED LEAVES THE DEBUGGEE'S
@@ -235,6 +241,18 @@ CONTROL_TIMEOUT=${CONTROL_TIMEOUT:-10}
 # the note in start_stub; test/run-tx-patience.sh uses the same value for the
 # same reason.
 SETTLE=${SETTLE:-2}
+
+# THE PORT W5's FIXTURE DIALS, WHICH IS NORMALLY THE ONE THE STUB IS LISTENING
+# ON. It is overridable so that W5's two-sided contamination guard has a
+# RE-RUNNABLE red: point the fixture somewhere else and its connections land in
+# somebody else's log instead of ours, which is exactly the state the deficit
+# arm exists to name. `W5_CLIENT_PORT=11009 test/run-dzrp-stub.sh` stages it.
+#
+# A bench seam, not one of the IP_MAX / RX_WAIT / LINK_IDS build-constant
+# family — no probe ROM is built — but it is there for their reason, which this
+# project has paid for repeatedly: a red nobody can re-run is a story about a
+# scratch tree.
+W5_CLIENT_PORT=${W5_CLIENT_PORT:-$PORT}
 
 log()  { printf '%s\n' "$*"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -686,7 +704,7 @@ if ! start_stub "$jlog5" "$shot5"; then
     fail "W5 the stub never listened on 127.0.0.1:$PORT for the split-command run"
 else
     set +e
-    split_out=$(DZRP_PORT="$PORT" DZRP_TIMEOUT="$CONTROL_TIMEOUT" python3 "$SPLIT" 2>&1)
+    split_out=$(DZRP_PORT="$W5_CLIENT_PORT" DZRP_TIMEOUT="$CONTROL_TIMEOUT" python3 "$SPLIT" 2>&1)
     split_rc=$?
     set -e
     stop_stub
@@ -718,12 +736,109 @@ else:
 EOF
 )
 
+    # AND WHEN THE PRECONDITION DOES NOT ARISE, NAME WHY — because "it never
+    # happened" is the message this check has failed with three times and it
+    # sends the next reader hunting a ROM defect that is not there.
+    #
+    # OBSERVED 2026-08-11, not inferred: the trio comes out 15/6/1 instead of
+    # 6/15/1. jnext's frame_ipd() emits one chunk per quiet moment and scans
+    # connections in cid order, and split-command.py opens B first — so whenever
+    # A's 6-byte header and B's 15-byte command are BOTH buffered at one quiet
+    # moment, B is framed ahead of A's header and there is no split left to see.
+    # That needs the wire to be busy for longer than the fixture's 8 ms gap, so
+    # the latency since the stub last went quiet is measured and printed: it is
+    # the number that discriminates, and counting failures is not.
+    #
+    # THIS IS A BENCH TIMING OUTCOME AND NOT A VERDICT ON THE ROM, so it still
+    # FAILS — nothing was tested — but with a reason somebody can act on. Do NOT
+    # "fix" it by raising DZRP_SPLIT_GAP: tuning a race until it is green is
+    # weakening a check to make it pass, which is why the gap has both its edges
+    # measured and written down in split-command.py.
+    split_collapsed=$(python3 - "$jlog5" <<'EOF'
+import re, sys
+
+stamp = re.compile(r'^\[(\d+):(\d+):(\d+)\.(\d+)\]')
+ipd = re.compile(r'\+IPD,(\d+),(\d+)')
+
+def when(line):
+    m = stamp.match(line)
+    if not m:
+        return None
+    h, mi, s, f = (int(x) for x in m.groups())
+    return ((h * 60 + mi) * 60 + s) * 1000 + f
+
+frames, quiet = [], None
+for line in open(sys.argv[1], errors='replace'):
+    t = when(line)
+    if 'SEND OK' in line and t is not None:
+        quiet = t
+    m = ipd.search(line)
+    if m:
+        frames.append((int(m.group(1)), int(m.group(2)), t, quiet))
+
+for i in range(len(frames) - 2):
+    (c1, n1, t1, q1), (c2, n2, _, _), (c3, n3, _, _) = frames[i:i + 3]
+    if (n1, n2, n3) == (15, 6, 1) and c2 == c3 and c1 != c2:
+        print("?" if t1 is None or q1 is None else str(t1 - q1))
+        break
+else:
+    print("")
+EOF
+)
+
+    # THE CONTAMINATION GUARD IS TWO-SIDED, AND THE DEFICIT ARM IS THE ONE THAT
+    # MATTERS HERE. An EXCESS means somebody else's client reached our stub, and
+    # the standing rule is that such a run comes out GREEN. A DEFICIT is the
+    # mirror image and inverts that rule: our fixture reached somebody else's
+    # listener, so its frames are in THEIR log and not in $jlog5 — after which
+    # the `split_ok` arm below reports "the precondition never happened", which
+    # is a true statement about this log and a completely misleading one about
+    # the ROM under test. A red with a plausible wrong reason is worse than a
+    # green, because a green invites suspicion and a red invites a diagnosis.
+    #
+    # FOUR IS EXACT, NOT A MARGIN: start_stub's port probe makes one (it breaks
+    # out of its loop on the first success) and split-command.py's connect() has
+    # no retry, so its B, A and the fresh client afterwards make three.
+    #
+    # AND A GENUINE ISSUE-#13 RED STILL MAKES FOUR, which is what stops this arm
+    # mislabelling the defect W5 exists to catch. The A and B verdicts in
+    # split-command.py set `failed` and fall through; the only paths that return
+    # before opening the third connection are its own preconditions, which print
+    # their own reason into the `  | ` block above and are ambiguous in exactly
+    # the way this arm reports.
+    #
+    # Measured on the shipped fixture, 2026-08-11: 4, with the run green.
+    w5_fail=""
     if [ "$s_connects" -gt 8 ]; then
-        fail "W5 CONTAMINATED: $s_connects connections in $jlog5 where this fixture makes 3, so this verdict means nothing"
+        w5_fail="W5 CONTAMINATED: $s_connects connections in $jlog5 where this fixture makes 3, so this verdict means nothing"
+    elif [ "$s_connects" -lt 4 ]; then
+        w5_fail="W5 CONTAMINATED: only $s_connects connections in $jlog5 where this run makes 4, so this verdict means nothing"
+    elif [ -z "$split_ok" ] && [ -n "$split_collapsed" ]; then
+        w5_fail="W5 the race collapsed: the other client's frame was framed first, $split_collapsed ms after the stub last went quiet"
     elif [ -z "$split_ok" ]; then
-        fail "W5 the precondition never happened: no 6/15/1 run of +IPD frames from two connections in $jlog5"
+        w5_fail="W5 the precondition never happened: no 6/15/1 run of +IPD frames from two connections in $jlog5"
     elif [ "$split_rc" -ne 0 ]; then
-        fail "W5 a split command was answered on the wrong connection or from the wrong payload (issue #13)"
+        w5_fail="W5 a split command was answered on the wrong connection or from the wrong payload (issue #13)"
+    fi
+
+    # THE FAILING LOG IS KEPT, because $jlog5 is overwritten by the next run of
+    # this bench and W5 is the one check here with a history of failing
+    # intermittently — 1 of 3 on 2026-08-07, 2 of 4 on 2026-08-09, 2 of 2 on
+    # 2026-08-10. Both of those last two were unreadable by the time anyone
+    # looked, and reconstructing them cost 19 emulator runs and ~85 minutes
+    # without reproducing the failure, where the log itself would have answered
+    # it in a minute. This project's own standard is that a red nobody can
+    # re-run is a story about a scratch tree; the bench was doing that to
+    # itself. Timestamped rather than a fixed name, so a second failure does not
+    # erase the first; `make clean` sweeps them with everything else in $OUT.
+    if [ -n "$w5_fail" ]; then
+        fail "$w5_fail"
+        w5_kept=$OUT/dzrp-stub-w5-$(date +%Y%m%dT%H%M%S).log
+        if cp -- "$jlog5" "$w5_kept" 2>/dev/null; then
+            log "  W5 failed: this run's jnext log is kept as $w5_kept"
+        else
+            log "  W5 failed and its jnext log could NOT be kept from $jlog5"
+        fi
     else
         pass "W5 a split command (cid $split_ok) got its own connection and payload, and the other client was answered too"
     fi

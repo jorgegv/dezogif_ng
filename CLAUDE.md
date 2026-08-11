@@ -1278,6 +1278,23 @@ Two things the shortening may **never** touch, because they are interface rather
   contaminated run is worthless *in either direction* (it can come out **green**), and that,
   with the `pgrep -x jnext` recovery, is now three lines above them in `run-dzrp-stub.sh`. If a
   clause cannot survive either move, keep the long line and say so out loud.
+  **W5's guard is TWO-SIDED since 2026-08-11 and the "it comes out green" rule is only half of it
+  there**: a *deficit* of connections means the fixture reached somebody else's listener, so its
+  frames are in that run's log and not in ours — and the precondition arm then reports *"the
+  precondition never happened"*, which is **red with a plausible wrong reason**, the worse of the
+  two outcomes. Four is exact for that run, not a margin, and a genuine issue-#13 red still makes
+  four; the reasoning is at the assertion. **W5 also keeps its jnext log on failure**, timestamped,
+  because it is the one check here that fails intermittently and both 2026-08-10 failures were
+  overwritten before anyone read them.
+  **AND ITS COMMONEST RED NOW NAMES ITSELF, from a mechanism OBSERVED rather than inferred**
+  (2026-08-11): the trio comes out **15/6/1** instead of 6/15/1 — jnext's `frame_ipd()` emits one
+  chunk per quiet moment and scans connections **in cid order**, and the fixture opens B first, so
+  when A's header and B's whole command are both buffered at one quiet moment B is framed ahead of
+  A's header and there is no split left to see. It needs the wire busy for longer than the
+  fixture's **8 ms** gap — which is the budget, **not** the 100 ms RX timeout — so the check
+  measures and prints the latency since the stub last went quiet. First capture: **10 ms**. That is
+  a bench timing outcome and still FAILS, because nothing was tested; **do not raise
+  `DZRP_SPLIT_GAP` to make it green**, which is tuning a race until it passes.
 
 **M2 IS BUILT (2026-08-10) AND IT DID NOT INVERT T4.** The paragraphs below were written before
 any M2 code existed and predicted that teaching `nmi66h` to accept a software cause would make T4

@@ -697,8 +697,16 @@ strongest:
    so they are unreachable from inside the guest, and a project-specific peripheral does not
    belong in jnext. **Do not read a green run as "the unit tests pass"**; read it as
    "the 28 that can run, pass". What they cover is the banking and breakpoint code — all of
-   `ut_backup.asm`, all of `ut_breakpoints.asm`, all of `ut_utilities.asm` — not the DZRP command
-   layer, whose gate is `test-dzrp-stub`. The count is pinned in **two** places (the Makefile,
+   `ut_backup.asm` (9), all of `ut_breakpoints.asm` (8), all of `ut_utilities.asm` (4) — **plus
+   seven the older wording of this sentence denied**: `ut_uart.UT_transport_read_byte_timeout`,
+   and six of `ut_commands` (`UT_get_cmd_pointer`, `UT_04_cmd_set_register`'s `UT_SP_to_HL2` /
+   `UT_A_to_IR` / `UT_im` / `UT_wrong_register`, and `UT_07_pause`). 21 + 7 = 28.
+   ~~not the DZRP command layer, whose gate is `test-dzrp-stub`~~ — **that clause was the wrong
+   shape**: the command layer's gate really is `test-dzrp-stub`, and it is not true that *no*
+   `ut_commands` case runs here. **Enumerated from a run, 2026-08-11**, not from the source and
+   not from this sentence, which is how the discrepancy was found in the first place — the
+   totals were right and pinned in two places the whole time, so nothing here could drift; what
+   drifted was the prose describing where the 28 come from. The count is pinned in **two** places (the Makefile,
    checked against the sources at build time; the bench, checked against what ran), because
    pinning only the total would let a test slide from the runnable set into the excluded one
    unnoticed. **Silence is a FAIL**: jnext's run is frame-bounded, so a hang ends it quietly with

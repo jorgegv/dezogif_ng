@@ -36,8 +36,9 @@ worktree.
 
 **The cost of that is measured rather than argued.** Reconstructing what those
 two runs did took **19 emulator runs across two ROMs, idle and deliberately
-loaded, over ~87 minutes**, and still could not reproduce the failure — where the
-failing log itself would have answered it in a minute. This project's own
+loaded, over ~80-85 minutes of runs** (nearer 87 counting the analysis around
+them), and still could not reproduce the failure — where the failing log itself
+would have answered it in a minute. This project's own
 standard is that a red nobody can re-run is a story about a scratch tree; here the
 bench does that to itself.
 

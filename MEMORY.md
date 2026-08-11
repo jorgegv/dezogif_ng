@@ -24,9 +24,10 @@ invoked directly.
 | `00.21` | 9 — 6 idle, 3 under deliberate load | **0** |
 
 **THE 38 BYTES ARE NOT A SUFFICIENT CAUSE, AND THAT IS ALL THE FAILURE COUNTS CAN
-SAY.** Two zeros cannot be compared. Rule of three puts `00.22`'s W5 failure rate
-at **≤26%** (95%, one-sided), under which two consecutive failures has probability
-**≤7%** — so the reported 2-of-2 is unlikely to be an intrinsic property of the
+SAY.** Two zeros cannot be compared. The exact zero-event bound —
+`1 − 0.05^(1/10)`, **not** the rule-of-three approximation `3/n`, which would say
+30% — puts `00.22`'s W5 failure rate at **≤26%** (95%, one-sided), under which two
+consecutive failures has probability **≤7%** — so the reported 2-of-2 is unlikely to be an intrinsic property of the
 ROM. The load arm was run as a **separate labelled probe** precisely because the
 idle arm would not stage the failure at all, and it is applied identically to both
 ROMs, so it cannot by itself explain a difference between them.

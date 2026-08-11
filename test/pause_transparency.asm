@@ -12,9 +12,10 @@
 ;                                  resumes it with no breakpoint, lets it run,
 ;                                  and then sends CMD_PAUSE.
 ;   build/pause-transparency.nex   loaded by DeZog in VS Code, so that the
-;                                  Pause BUTTON can be clicked at it. That is
-;                                  the one path nothing in this project has
-;                                  ever exercised: W8 speaks DZRP directly.
+;                                  Pause BUTTON can be clicked at it — which it
+;                                  was, on a real Next, 2026-08-11. That was the
+;                                  last path in M2 nothing had exercised: W8 and
+;                                  H7 both speak DZRP directly.
 ;
 ; WHY A DETECTOR AT ALL: a healthy poll is INVISIBLE — that is its whole
 ; specification — so there is nothing about one for a test to observe. What can

@@ -25,8 +25,8 @@ been since 2026-08-05.** What is here today:
   possible live in **your** program, 44 bytes; see
   [doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md](doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md), including the five
   states in which it will not fire. **It has run on a real Next, 2026-08-11** — bench check H7,
-  with its control. What has still never happened is **DeZog itself** driving it: every check of it
-  so far speaks DZRP directly.
+  with its control. **DeZog itself has driven it**, on the same machine the same day: Pause, `Manual break`,
+  Continue, Pause again, clean disconnect.
 - **Both ROMs go on the SD card together** and are switched from the machine, either from a menu
   (`mfselect`) or from the NextZXOS command line and `AUTOEXEC.BAS` (`.mfinstall`), so choosing
   the serial build for a program that owns the ESP costs a power cycle rather than a PC session.
@@ -78,7 +78,9 @@ and will not get one: a serial build hands the joy ports back when it resumes yo
 re-points the UART's receive line at the ESP-01 pin, so the PC's cable bytes have nowhere to land
 while the program runs. There, the yellow NMI button is still the only way to stop it.
 
-**None of M2 has run on real hardware.** Every result behind it is the jnext bench's.
+~~**None of M2 has run on real hardware.** Every result behind it is the jnext bench's.~~
+**IT ALL HAS, 2026-08-11**: bench check H7 with its control, a debuggee run free under the poll for
+2.8 million iterations with nothing disturbed, and **DeZog itself** clicking Pause at it.
 
 
 # Build

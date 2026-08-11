@@ -37,7 +37,7 @@ answers are only interesting on silicon:
   H7  Asynchronous break — a freely running debuggee stopped by CMD_PAUSE, with
       its control. DELEGATED to pause-running.py, which is bench check W8.
       Milestone M2's acceptance criterion, and the half of it no emulator can
-      settle: the Copper raising a Multiface NMI has never run on silicon.
+      settle. It first ran on hardware 2026-08-11 and passed, with its control.
 
 H4 and H5 moved two rows of the plan's Appendix A off the "estimate" rung of its
 evidence ladder on 2026-08-05, with these checks' own numbers, and they keep
@@ -719,11 +719,15 @@ def h7_async_break(host, port, timeout, results):
     which could drift. It is host-parameterised already, so nothing about it
     needed changing to point it at a Next.
 
-    WHAT ONLY HARDWARE CAN SETTLE HERE. The Copper raising a Multiface NMI at
-    50 Hz has never run on silicon — T5 and T9 are jnext's — and neither has the
-    poll's restoration of MMU slot 7 and the NextREG select latch on a machine
-    where the debuggee is real. This project has twice been caught by the
-    emulator sitting on the safe side of reality.
+    WHAT ONLY HARDWARE CAN SETTLE HERE, and it did on 2026-08-11. The Copper
+    raising a Multiface NMI at 50 Hz was jnext's word alone — T5 and T9 are the
+    emulator's — as was the poll's restoration of MMU slot 7 and the NextREG
+    select latch on a machine where the debuggee is real. This project has twice
+    been caught by the emulator sitting on the safe side of reality, which is
+    why this check exists rather than the emulator's green being the answer.
+    First hardware run: PASS, with the control silent, PC at the fixture's spin
+    and SP its own; NR 0xC0 read 0x0A, so the stackless branch of
+    save_nmi_return_address is established on silicon rather than in jnext.
 
     THE CONTROL RUNS FIRST, AND ITS VERDICT IS FOLDED INTO THIS ONE. With
     --no-pause the client does everything except send CMD_PAUSE, and nothing

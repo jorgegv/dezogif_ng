@@ -1084,9 +1084,10 @@ test-hardware:
 # back, and reads its verdict out after the pause.
 #
 # `pause-transparency` alone builds the .nex and .sld, which is what DeZog needs
-# to load this as an ordinary program and click Pause at it — the one path
-# nothing in this project has exercised, since W8 speaks DZRP directly. See
-# doc/HARDWARE-TESTING.md for the launch.json and the procedure.
+# to load this as an ordinary program and click Pause at it. That was the last
+# path in M2 nothing had exercised — W8 and H7 both speak DZRP directly — and it
+# was driven on a real Next on 2026-08-11. See doc/HARDWARE-TESTING.md step 4b
+# for the launch.json and the procedure.
 #
 # NOTE the description line must be the LAST `# ` line before the target.
 #

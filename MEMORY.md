@@ -45,11 +45,22 @@ into the debuggee's bank rather than the debugger's.
 Latency and throughput are consistent with the 460800 runs: median **6.8 ms**
 against 6.6, **20.6 KB/s** against 20.3, H6 clean.
 
-**WHAT IT DOES NOT ESTABLISH, and the first is the whole of what is left.**
-**DeZog has still never driven the asynchronous break** — H7 and W8 both speak
-DZRP directly, so what a real client does with an `NTF_PAUSE` arriving *before*
-its own `CMD_PAUSE` response is still read off CSpect's plugin rather than
-observed. The **long run** is not this: H7's debuggee ran one second, about fifty
+**AND LATER THE SAME DAY, DeZog ITSELF DROVE IT — THE LAST UNEXERCISED PATH IN
+M2.** The transparency fixture loaded as an ordinary `.nex` from VS Code, source
+view and labels correct, Continue, **Pause**: the program stopped, `Manual break`
+was reported, registers and the memory view populated, Continue and Pause again
+both worked, and Shift+F5 closed the session cleanly. **So the ordering nobody
+had watched — the stub emits `NTF_PAUSE` BEFORE it answers `CMD_PAUSE`, and what
+`CSpectRemote` does with that was read off its minified source and never
+observed — is observed, and the real client handles it.**
+
+**The red bytes are worth recording as a method.** DeZog highlights values that
+changed since the last stop, so the counter at 0x9000 lit up between the first
+and second Pause: an independent confirmation that the debuggee really ran in
+between, taken from the client rather than from the fixture's own report or from
+a flashing cell. Nothing was designed for that; it fell out of using the tool.
+
+**WHAT IT DOES NOT ESTABLISH.** The **long run** is not this: H7's debuggee ran one second, about fifty
 polls. The **poll's cost on a Next** is unmeasured at any clock.
 
 **AND THE LONG RUN, THE SAME DAY, PASSED ITS SUBJECT AND FOUND SOMETHING ELSE.**

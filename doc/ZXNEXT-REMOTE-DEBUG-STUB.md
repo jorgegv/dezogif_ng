@@ -821,8 +821,9 @@ costs a **measured** ~1288 T-states per frame (`make measure-poll-cost`).
 So the milestone's success criterion is met on silicon and not only in the emulator: the Copper
 raises a Multiface NMI at 50 Hz on real hardware, the poll serves it, and `CMD_PAUSE` stops a
 freely running program. NR `0xC0` read `0x0A` at the break, which makes this the first time the
-**stackless** branch of `save_nmi_return_address` has been distinguished on hardware. **DeZog has
-still never driven it** — H7 and W8 both speak DZRP directly, and that is the next real test.
+**stackless** branch of `save_nmi_return_address` has been distinguished on hardware. **AND DeZog HAS NOW DRIVEN IT**, the same day and the same machine: Pause clicked in VS Code,
+`Manual break` reported, registers and source view populated, Continue and Pause again, clean
+disconnect. **M2 is complete end to end on hardware, with the real client.**
 Read
 [ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md) §0 first, and
 [ASYNCHRONOUS-BREAK-USER-HOWTO.md](ASYNCHRONOUS-BREAK-USER-HOWTO.md) for what a user has to do.

@@ -36,8 +36,11 @@ the five states in which the break will not fire. ~~**Nothing in M2 has run on h
 running debuggee, resumed with no breakpoint, stopped by `CMD_PAUSE` from the PC, with its control
 run silent. `PC` came back at the fixture's spin and `SP` at the fixture's own stack, and NR `0xC0`
 read `0x0A`, so the **stackless** branch of `save_nmi_return_address` is now established on silicon
-rather than in the emulator alone. **What has still never happened is DeZog driving it**: H7 and W8
-both speak DZRP directly.
+rather than in the emulator alone. **AND DeZog ITSELF HAS NOW DRIVEN IT**, 2026-08-11 on the same machine: the transparency fixture
+loaded as an ordinary program, Continue, **Pause**, `Manual break` reported, registers and source
+view populated, Continue and Pause again, clean `CMD_CLOSE`. So the `NTF_PAUSE`-arrives-before-its
+own-`CMD_PAUSE`-response ordering — the last thing in M2 that was read off CSpect's plugin rather
+than observed — is observed.
 
 **It has now run on a real ZX Spectrum Next**, 2026-08-04 — the stub takes the M1 NMI and paints
 its UI on core 03.02.01, and mfselect installed it. That single evening found **two bugs no
@@ -1164,9 +1167,8 @@ strongest:
    one second, with a fixture that watches MMU slot 7 **and** the NextREG select latch (the half
    T9's fixture is measured to be unable to see) and was shown red one instruction apart on each;
    and `make pause-transparency` builds the `.nex` + `.sld` for **DeZog's own Pause button**, which
-   is the one path nothing here has ever driven — W8 and H7 speak DZRP directly, so what a real
-   client does with an `NTF_PAUSE` arriving before its own `CMD_PAUSE` response is still read off
-   CSpect's plugin rather than observed. Procedure in `doc/HARDWARE-TESTING.md` steps 4a and 4b.
+   **has now driven it on a real Next** (2026-08-11): Pause, `Manual break`, Continue, Pause again,
+   clean close. That was the last path in M2 nothing had exercised. Procedure in `doc/HARDWARE-TESTING.md` steps 4a and 4b.
 
 **A verdict line is one short sentence; the reasoning lives here and in the script's own header.**
 Every `PASS`/`FAIL` line a bench prints is **at most twenty words** (user, 2026-08-05), across all

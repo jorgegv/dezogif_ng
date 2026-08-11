@@ -162,13 +162,14 @@ which is not in the display file and which no `CMD_READ_MEM` can ever reach.
 | **H5** | Throughput, **measured** |
 | **H7** | **Asynchronous break — milestone M2's acceptance criterion.** A freely running debuggee, resumed with no breakpoint, is stopped by `CMD_PAUSE`; plus its control run, in which the pause is withheld and nothing may come back. Delegated to `pause-running.py`, which is bench check W8 |
 
-### H7 is the one check here whose subject has never run on silicon at all
+### H7's subject had never run on silicon until 2026-08-11, and then it passed
 
-The Copper raising a Multiface NMI at 50 Hz is **jnext's word and nothing else's** — T5 and T9 are
-emulator checks, and so is W8. So is the poll's restoration of MMU slot 7 and the NextREG select
+The Copper raising a Multiface NMI at 50 Hz was **jnext's word and nothing else's** — T5 and T9 are
+emulator checks, and so is W8 — as was the poll's restoration of MMU slot 7 and the NextREG select
 latch on a machine where the debuggee is real. This project has twice been caught by the emulator
 sitting on the safe side of reality (a connection id of 0, a 15-character address), which is the
-whole reason H7 exists rather than the emulator's green being taken as the answer.
+whole reason H7 exists rather than the emulator's green being taken as the answer. **It ran on a
+real Next on 2026-08-11 and passed** — see the results section below.
 
 **It runs after H3-H5 and before the teardown**, and the order is not arbitrary. Its control leaves
 a debuggee running free — it never pauses it — and on hardware there is no "the emulator run ends"
@@ -361,10 +362,13 @@ never touches, the PC being inside the fixture, and SP being untouched by the st
 
 ## Step 4b — DeZog's own Pause button, which is the test that matters
 
-**Nothing in this project has ever driven the asynchronous break from a real client.** W8 and H7
-speak DZRP directly. The specific thing they cannot exercise: the stub emits the `NTF_PAUSE`
-**before** it answers `CMD_PAUSE`, and what DeZog's `CSpectRemote` does with that ordering is read
-off its source, never observed.
+~~**Nothing in this project has ever driven the asynchronous break from a real client.**~~ **DONE,
+2026-08-11, and it worked.** W8 and H7 speak DZRP directly; the thing they could not exercise is
+that the stub emits the `NTF_PAUSE` **before** it answers `CMD_PAUSE`, and what DeZog's
+`CSpectRemote` does with that ordering was read off its source and never watched. It was watched:
+Pause stopped the program, `Manual break` was reported, registers and the source view populated,
+Continue and Pause again worked, and Shift+F5 closed cleanly. The procedure below is kept as the
+way to repeat it.
 
     make pause-transparency
 
@@ -1269,9 +1273,9 @@ executed code on silicon:
 
 **WHAT THIS RUN DOES NOT ESTABLISH, and the first item is the important one:**
 
-- **DeZog has still never driven the asynchronous break.** H7 and W8 both speak DZRP directly, so
-  the one thing still taken on trust is what a real client does with an `NTF_PAUSE` that arrives
-  *before* its own `CMD_PAUSE` response — read off CSpect's plugin, never observed. Step 4b.
+- ~~**DeZog has still never driven the asynchronous break.**~~ **It did, later the same day** —
+  step 4b, including the `NTF_PAUSE`-before-its-own-response ordering that was read off CSpect's
+  plugin and never observed. Nothing in M2 is now untested by a real client on real hardware.
 - **The poll under a LONG run.** H7's debuggee ran for one second — about fifty polls. Step 4a is
   the minutes-long version and has not been run on hardware.
 - **The poll's cost on a Next**, at any clock. 1288 T-states is jnext's, and the 3.5 MHz figure is

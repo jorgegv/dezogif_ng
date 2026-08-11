@@ -49,13 +49,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from dzrp import (CMD_CLOSE, CMD_CONTINUE, CMD_GET_REGISTERS,  # noqa: E402
                   CMD_GET_TBBLUE_REG, CMD_INIT, CMD_PAUSE, CMD_READ_MEM,
-                  CMD_SET_REGISTER, CMD_WRITE_MEM, Dzrp, NTF_PAUSE, Timeout,
-                  init_payload, open_remote)
+                  CMD_SET_REGISTER, CMD_WRITE_MEM, Dzrp, DzrpError, NTF_PAUSE,
+                  Timeout, init_payload, open_remote)
 
 HOST = os.environ.get("DZRP_HOST", "127.0.0.1")
 PORT = int(os.environ.get("DZRP_PORT", "11000"))
 TIMEOUT = float(os.environ.get("DZRP_TIMEOUT", "25"))
 RUN_SECONDS = float(os.environ.get("PT_RUN_SECONDS", "60"))
+# Iterations per second, from a short run on the same machine. Optional: with
+# it, a reaped run reports how long the debuggee actually survived instead of
+# a bare count. Measured on a real Next at 3.5 MHz, 2026-08-11: 15688.
+RATE = float(os.environ.get("PT_RATE", "0"))
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_BIN = os.path.join(HERE, "..", "..", "build", "pause-transparency.bin")
@@ -97,6 +101,53 @@ def _w(v):
 
 def _u32(b):
     return int.from_bytes(b, "little")
+
+
+def report_reaped(exc, ran_for):
+    """The remote closed the connection DURING the silence — reconnect and ask
+    the fixture how far it got.
+
+    THIS IS A VERDICT, NOT A CRASH, and it used to be the latter: the client
+    died with a traceback out of `d.command(CMD_PAUSE)` and said nothing about a
+    run that had just produced a finding. Same shape as issue #33 one file
+    along — a bare OSError escaping the one place that could have reported it.
+
+    The reconnect sends NO CMD_INIT. That would clear `last_error` — the screen
+    is evidence here — and remap the slots the record is read through.
+
+    MEASURED ON HARDWARE, 2026-08-11: a real module reaps an idle inbound
+    connection at ~182 s, its firmware default, and the `<id>,CLOSED` that
+    follows breaks the debuggee in because `transport_poll_traffic` cannot tell
+    that line from a command. So this path is not exotic — it is what a free run
+    longer than the module's timeout does every time.
+    """
+    print("CONNECTION LOST after %.0fs of silence: %s" % (ran_for, exc))
+    try:
+        d2 = Dzrp(open_remote("tcp:%s:%d" % (HOST, PORT), timeout=TIMEOUT),
+                  start_byte=None, base_timeout=TIMEOUT)
+        rec = d2.command(CMD_READ_MEM, b"\x00" + _w(RESULTS) + _w(RESULTS_LEN))
+    except (DzrpError, OSError) as exc2:
+        print("RESULT transparency BAD the remote closed the connection during the "
+              "%.0fs run and could not be reached again (%s)"
+              % (ran_for, type(exc2).__name__))
+        return 0
+
+    iterations, fault = _u32(rec[0:4]), rec[4]
+    detail = ""
+    if RATE:
+        detail = ", i.e. about %.0fs of running" % (iterations / RATE)
+    if fault:
+        print("RESULT transparency BAD %s at iteration %d, and the remote then closed "
+              "the connection" % (FAULTS.get(fault, "fault %d" % fault),
+                                  _u32(rec[5:9])))
+        return 0
+    print("RESULT transparency BAD the remote closed the connection during the %.0fs "
+          "run; the debuggee had done %d iterations%s with no fault"
+          % (ran_for, iterations, detail))
+    print("      Nothing was wrong with the poll — see doc/HARDWARE-TESTING.md, "
+          "'the module reaps an idle session at ~182 s'. PT_RATE=<iter/s> converts "
+          "the count to seconds; a short run measures it.")
+    return 0
 
 
 def main():
@@ -171,6 +222,8 @@ def main():
         print("RESULT transparency BAD no response to CMD_PAUSE within %.0fs: the "
               "running debuggee was not stopped" % TIMEOUT)
         return 0
+    except (DzrpError, OSError) as exc:
+        return report_reaped(exc, ran_for)
     if body:
         problems.append("CMD_PAUSE answered with a %d-byte payload, expected none"
                         % len(body))

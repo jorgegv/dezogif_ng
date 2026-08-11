@@ -398,7 +398,11 @@ The procedure, and each step is a thing that has not been observed:
 2. **Continue.** The program installs its Copper list and spins. The bottom-right character cell
    flickers — that is the debuggee's own liveness, deliberately not the border, because the border
    is how you will tell the *debugger* is executing again.
-3. **Wait.** A minute is 3000 polls. The machine should be completely unremarkable.
+3. **Wait — but keep it UNDER THREE MINUTES.** A minute is 3000 polls and the machine should be
+   completely unremarkable. Do not leave it longer: measured 2026-08-11, the module reaps an idle
+   inbound connection at **~182 s** and its `<id>,CLOSED` then breaks the debuggee in and takes the
+   session with it. From VS Code that looks exactly like DeZog failing, and it is not — see
+   *"the module reaps an idle session at ~182 s"* below.
 4. **Click Pause.** The program should stop. Check: the debug toolbar comes back, registers and the
    call stack populate, `PC` is inside the fixture, and DeZog reports the reason as `Manual break`.
    **The Next's own screen does not change** — a poll break goes to the debugger's command loop,
@@ -1272,6 +1276,60 @@ executed code on silicon:
   the minutes-long version and has not been run on hardware.
 - **The poll's cost on a Next**, at any clock. 1288 T-states is jnext's, and the 3.5 MHz figure is
   arithmetic from it.
+
+### The poll is transparent on silicon — and the module reaps an idle session at ~182 s
+
+**Measured 2026-08-11, build `00.20`, `make test-pause-transparency`.** Two runs, and the second is
+the control that turns the first into a number.
+
+| run | iterations | fault |
+|---|---|---|
+| `PT_RUN_SECONDS=300` | **2,856,144** | **0** |
+| `PT_RUN_SECONDS=30` | **470,660**, i.e. **15,688/s** | **0** |
+
+**THE SUBJECT PASSED.** Across 2.86 million passes with the poll firing 50 times a second, MMU
+slot 7 and the NextREG select latch were restored **every time**; `PC` was inside the loop and `SP`
+was the fixture's own. The debuggee ran at **3.5 MHz** throughout (`NR 0x07` read `0x00`), which is
+the poll leaving the clock alone exactly as designed.
+
+**THE 300 s RUN DID NOT SURVIVE ITS OWN WINDOW, AND THE RATE IDENTIFIES WHAT KILLED IT.** At
+15,688/s, 2,856,144 iterations is **182.1 seconds** — against **182.5 s** and **181.8 s**, the two
+readings [probe C](#) took of *this same module's* firmware-default `AT+CIPSTO` on 2026-08-08. The
+module reaped the idle inbound connection at its 180 s default, **not at the 1800 s the stub sends**
+(issue #24), which this machine was measured obeying — a silent client held for 400 s — on
+2026-08-09.
+
+**AND IT WAS THEN WATCHED HAPPENING, WHICH IS A SECOND AND INDEPENDENT METHOD.** A 600 s run with
+an observer at the machine: the border started cycling and `Last Error: RX Timeout` appeared on the
+stub's screen **at exactly t = 3 minutes**. So the drop time is a direct reading as well as a
+quotient — a stopwatch and an iteration count agreeing to within a couple of seconds, on a number
+this module had already given twice.
+
+The client saw `remote closed the connection` on its `CMD_PAUSE`; the Next's screen read
+`Last Error: RX Timeout` and `Session lost - client gone`.
+
+**Issue #24's idle sweep is excluded twice over, from the source rather than by elimination**:
+`esp_idle_tick` returns immediately while `esp_session_valid` is set
+(`src/transport_esp.asm:2128`), and it runs only from `main_loop`, which is not executing while a
+debuggee has the CPU. So the close came from the module.
+
+**AND THE DEBUGGEE WAS BROKEN IN BY THE MODULE'S OWN `<id>,CLOSED`.** `transport_poll_traffic` is
+O(1) by contract and cannot tell that line from a command, so the poll broke in when nobody had
+asked. That is the accepted cost written into
+[ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md) §0 — **and this is the first time it
+has been observed anywhere**, in the emulator or on hardware. The break itself was clean: the PC
+was in the loop and nothing was corrupted.
+
+**WHY THIS IS AN M2 PROBLEM AND WAS NOT ONE BEFORE.** Until asynchronous break existed, nobody left
+a DZRP session idle while a program ran — there was no way back except the button, so the state was
+never entered. The feature's whole use case is *resume, think, click Pause*, and every second of
+that is idle TCP time. At the module's default the ceiling is three minutes; at the value the stub
+intends, half an hour.
+
+**NOT YET ESTABLISHED: why 1800 is not in force.** `make probe-idle-drop NEXT_IP=<ip>
+PROBE_ARGS="--expect-timeout 1800 --deadline 400"` isolates it — no debuggee, just a silent session
+— and `AT+CIPSTO?` under `.UART` at the machine is the authoritative reading. Until one of those is
+taken, the mechanism above is a measurement of *when*, not of *why*.
 
 ## The suite at its full size — measured 2026-08-08 12:37, on a real Next
 

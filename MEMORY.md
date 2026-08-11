@@ -52,6 +52,50 @@ its own `CMD_PAUSE` response is still read off CSpect's plugin rather than
 observed. The **long run** is not this: H7's debuggee ran one second, about fifty
 polls. The **poll's cost on a Next** is unmeasured at any clock.
 
+**AND THE LONG RUN, THE SAME DAY, PASSED ITS SUBJECT AND FOUND SOMETHING ELSE.**
+`make test-pause-transparency` at 300 s: **2,856,144 iterations, fault 0** — MMU
+slot 7 and the NextREG select latch restored every time, `PC` in the loop, `SP`
+untouched, the debuggee at **3.5 MHz** throughout (the poll leaving the clock
+alone, as designed). **The poll is transparent on silicon.**
+
+**But the run did not survive its own window, and a 30 s control identifies what
+killed it.** That control measured **15,688 iterations/s**, so 2,856,144 is
+**182.1 seconds** — against the **182.5 s** and **181.8 s** this file records
+probe C measuring on *this same module* on 2026-08-08. That is the ESP's
+**firmware-default `AT+CIPSTO`**, 180 s — **not the 1800 s the stub sends**,
+which this machine was measured obeying (400 s, no drop) on 2026-08-09.
+
+**AND A 600 s RUN WITH AN OBSERVER AT THE MACHINE WATCHED IT HAPPEN AT
+t = 3 MINUTES EXACTLY** — the border resuming its cycle and `RX Timeout`
+appearing on the stub's screen. A stopwatch and an iteration count, agreeing to
+within a couple of seconds, on a number this module had already given twice.
+
+**The idle sweep is excluded from the SOURCE, not by elimination**:
+`esp_idle_tick` returns while `esp_session_valid` is set
+(`transport_esp.asm:2128`), and runs only from `main_loop`, which is not
+executing while a debuggee has the CPU.
+
+**SO THE DEBUGGEE WAS BROKEN IN BY THE MODULE'S OWN `<id>,CLOSED`, AND THAT IS
+THE FIRST OBSERVATION OF A COST THIS PROJECT WROTE DOWN AND COULD NOT STAGE.**
+`transport_poll_traffic` is O(1) by contract and cannot tell that line from a
+command, so the poll broke in with nobody asking — the accepted cost in
+`doc/ASYNCHRONOUS-BREAK-DESIGN.md` §0, whose own NOT-COVERED list says no run
+anywhere makes the module emit an unsolicited line while a debuggee runs. A real
+module did it unprompted on the feature's first hardware outing. The break was
+clean; what was lost was the session.
+
+**WHY M2 CREATED THIS EXPOSURE RATHER THAN MEETING IT.** Before asynchronous
+break nobody left a session idle while a program ran — there was no way back
+except the button, so the state was never entered. The feature's use case is
+*resume, think, click Pause*, and every second of that is idle TCP time. The
+practical ceiling is the module's timer: three minutes at the default, half an
+hour at the value the stub intends.
+
+**NOT ESTABLISHED: why 1800 is not in force.** `make probe-idle-drop` isolates it
+with no debuggee in the picture, and `AT+CIPSTO?` under `.UART` is the
+authoritative reading. Until one is taken this is a measurement of *when* and not
+of *why*, and no issue is filed on it.
+
 **Cost: no `src/` change and no ROM byte.** This is a measurement, not a change.
 
 ---

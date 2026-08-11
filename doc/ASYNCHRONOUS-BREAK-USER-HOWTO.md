@@ -93,11 +93,11 @@ Assemble it out for release. It is a contiguous block with no other dependency, 
 
 Measured with `make measure-poll-cost`:
 
-| | |
-|---|---|
-| the poll, per frame, when nothing has arrived | **1288 T-states** |
-| as a fraction of a frame at **28 MHz** | **0.230%** — measured |
-| as a fraction of a frame at **3.5 MHz** | **1.84%** — arithmetic, not measured |
+|                                               |                                      |
+| --------------------------------------------- | ------------------------------------ |
+| the poll, per frame, when nothing has arrived | **1288 T-states**                    |
+| as a fraction of a frame at **28 MHz**        | **0.230%** — measured                |
+| as a fraction of a frame at **3.5 MHz**       | **1.84%** — arithmetic, not measured |
 
 Plus the 44 bytes, plus the Copper list, plus the raster line.
 

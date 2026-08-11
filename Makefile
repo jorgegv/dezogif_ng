@@ -401,10 +401,16 @@ UT_HL_FILES  = $(wildcard $(SRC)/unit_tests/headless/*) $(UT_ASM_FILES) $(UT_GEN
 # shrinks and still reports "all passed" is a failure this project has already
 # had twice (ERRORS.md), and one pin can only catch half of it.
 #
-# The 36 excluded cases need ports invented by DeZog's zsim customCode plugin
+# The 38 excluded cases need ports invented by DeZog's zsim customCode plugin
 # (src/simulation/uart.js) and cannot run in any emulator — see doc/UNIT-TESTS.md.
-UT_EXPECTED_TESTS   = 64
-UT_EXPECTED_SKIPPED = 36
+#
+# It was 64/36 until issue #41 added UT_40_cmd_add_breakpoint and
+# UT_41_cmd_remove_breakpoint, which read a response back through
+# test_get_response and are therefore excluded BY THE MARKER RULE rather than by
+# choice. The number that RUN is unchanged at 28: that issue's headless coverage
+# went into UT_get_cmd_pointer, which is an existing case and adds none.
+UT_EXPECTED_TESTS   = 66
+UT_EXPECTED_SKIPPED = 38
 
 MAIN_BIN    = $(OUT)/main$(VARIANT_SUFFIX).bin
 MF_NMI_BIN  = $(OUT)/mf_nmi$(VARIANT_SUFFIX).bin

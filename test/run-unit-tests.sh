@@ -65,8 +65,10 @@ UT_MANIFEST=${UT_MANIFEST:-$OUT/ut_headless/ut_manifest.txt}
 # Pinned counts. Also passed to tools/ut-headless-gen.py by the Makefile, which
 # fails the BUILD if the source disagrees; this is the second, independent
 # statement of the same numbers, checked against what actually ran.
-UT_EXPECTED_TESTS=64
-UT_EXPECTED_SKIPPED=36
+# 64/36 until issue #41; its two new cases read a response back and so are
+# excluded by the marker rule, leaving UT_EXPECTED_RUN unchanged at 28.
+UT_EXPECTED_TESTS=66
+UT_EXPECTED_SKIPPED=38
 UT_EXPECTED_RUN=$((UT_EXPECTED_TESTS - UT_EXPECTED_SKIPPED))
 
 # jnext's magic debug port: guest writes appear on the emulator's stderr.

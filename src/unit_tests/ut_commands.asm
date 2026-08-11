@@ -189,6 +189,55 @@ UT_get_cmd_pointer:
     call get_cmd_pointer
     ; ASSERTION HL == cmd_get_sprite_patterns
 
+    ; THE TWO BREAKPOINT COMMANDS THAT ARE ABOVE THE TABLE ALTOGETHER.
+    ; DZRP's numbering is sparse past 23, so 40 and 41 are dispatched by
+    ; get_cmd_pointer's .not_supported arm — two compares — rather than by
+    ; sixteen filler table slots (issue #41). This is the only check of that arm
+    ; that needs neither jnext nor a socket, which is the whole reason the
+    ; comment above exists: the three moves it records were each a red unit test
+    ; found after the fact.
+    ld a,40
+    ld (receive_buffer.command),a
+    call get_cmd_pointer
+    ; ASSERTION HL == cmd_add_breakpoint
+    ld a,41
+    ld (receive_buffer.command),a
+    call get_cmd_pointer
+    ; ASSERTION HL == cmd_remove_breakpoint
+
+    ; AND THE NEIGHBOURS THOSE COMPARES MUST NOT HAVE CAUGHT, WHICH IS THE HALF
+    ; WORTH HAVING. A compare written one off, or a table extended past what was
+    ; meant, would answer one of these with a breakpoint id — a promise DeZog
+    ; records and later removes by id — and nothing else anywhere would notice:
+    ; the conformance suite sends 40 and 41 and no other command in this range.
+    ; 39 and 44 bracket the pair, so an off-by-one in either direction is caught;
+    ; 42/43 are the watchpoints and 50/51 the state pair, all four still
+    ; deliberately unimplemented and silent (issue #9's family).
+    ld a,39
+    ld (receive_buffer.command),a
+    call get_cmd_pointer
+    ; ASSERTION HL == cmd_not_supported
+    ld a,42
+    ld (receive_buffer.command),a
+    call get_cmd_pointer
+    ; ASSERTION HL == cmd_not_supported
+    ld a,43
+    ld (receive_buffer.command),a
+    call get_cmd_pointer
+    ; ASSERTION HL == cmd_not_supported
+    ld a,44
+    ld (receive_buffer.command),a
+    call get_cmd_pointer
+    ; ASSERTION HL == cmd_not_supported
+    ld a,50
+    ld (receive_buffer.command),a
+    call get_cmd_pointer
+    ; ASSERTION HL == cmd_not_supported
+    ld a,51
+    ld (receive_buffer.command),a
+    call get_cmd_pointer
+    ; ASSERTION HL == cmd_not_supported
+
     ; Out of range
     ld a,24
     ld (receive_buffer.command),a
@@ -1702,6 +1751,76 @@ UT_23_cmd_interrupt_on_off:
 
 .cmd_data:
     defb 0
+.cmd_data_end
+
+
+;========================================================
+; CMD_ADD_BREAKPOINT / CMD_REMOVE_BREAKPOINT (issue #41).
+;
+; BOTH OF THESE ARE EXCLUDED FROM THE HEADLESS RUN AND REPORTED AS UT-SKIP, and
+; that is a property of the harness rather than a choice. Reading a response
+; back means test_get_response, which pops the bytes out of zsim ports
+; 0x0001-0x0003 — peripherals invented by DeZog's customCode plugin
+; (src/simulation/uart.js) that exist on no real machine and in no other
+; emulator, because the Z80 cannot trap its own I/O. TEST_PREPARE_COMMAND feeds
+; the payload in through zsim port 0x8000 for the same reason. Both are
+; SKIP_MARKERS in tools/ut-headless-gen.py, so these two join the 36 — now 38 —
+; that run only under DeZog + zsim in VS Code, exactly as UT_01_cmd_init does.
+;
+; SO NOTHING IN THIS REPOSITORY EXECUTES THEM, and they must not be read as
+; evidence. What HAS executed for the response shape is conformance checks C24
+; and C25, over a socket against the real stub under jnext, shown red first four
+; ways. These exist so the VS Code layer covers the two handlers too, and so a
+; regression there is a red rather than an absence — which is the same reason
+; UT_01_cmd_init is kept despite never running here.
+;========================================================
+
+; Test response of cmd_add_breakpoint: Length=3, carrying breakpoint id 0.
+;
+; ID 0 IS THE ANSWER AND NOT A PLACEHOLDER. DeZog reads a 2-byte id out of this
+; response and treats zero as a refusal — `e.bpId === 0 && (e.longAddress = -1)`
+; — after which VS Code shows the breakpoint unverified. Any other value is a
+; promise this stub cannot keep, so both bytes are asserted rather than only the
+; length. test_get_response leaves the first payload byte at +1: +0 holds its
+; own seq-no check result.
+UT_40_cmd_add_breakpoint:
+    ; Test data = the three address bytes and an empty condition string
+    TEST_PREPARE_COMMAND
+    ; Test
+    call cmd_add_breakpoint
+    ; Get response
+    call test_get_response
+    ; Test size: the sequence number and the 2-byte id
+    TEST_MEMORY_WORD test_memory_payload.length, 1+2
+    ; Breakpoint id 0, little endian
+    TEST_MEMORY_BYTE test_memory_payload+1, 0
+    TEST_MEMORY_BYTE test_memory_payload+2, 0
+ TC_END
+
+.cmd_data:
+    defb 0x00, 0x80, 0x00	; long address 0x008000, three bytes as DeZog sends
+    defb 0			; the condition string, empty and NUL-terminated
+.cmd_data_end
+
+
+; Test response of cmd_remove_breakpoint: Length=1, the sequence number alone.
+;
+; DeZog's sendDzrpCmdRemoveBreakpoint ignores the body, but sendDzrpCmd still
+; WAITS for a frame, so a wrong length is bytes the client reads as the next
+; response. The id sent is 0 because that is the only one this stub hands out.
+UT_41_cmd_remove_breakpoint:
+    ; Test data = the 2-byte breakpoint id
+    TEST_PREPARE_COMMAND
+    ; Test
+    call cmd_remove_breakpoint
+    ; Get response
+    call test_get_response
+    ; Test size: the sequence number and nothing else
+    TEST_MEMORY_WORD test_memory_payload.length, 1
+ TC_END
+
+.cmd_data:
+    defw 0			; breakpoint id 0
 .cmd_data_end
 
     ENDMODULE

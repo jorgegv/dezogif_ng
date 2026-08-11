@@ -5,6 +5,102 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-11 — DeZog's breakpoints WORK, on hardware, and the fix cost zero Z80 bytes
+
+**Measured on the user's own Next the same evening the fault was found** (build
+`00.22`, core 03.02.01, ESP at 460800, error area clean before the run). A
+breakpoint set in the VS Code editor is **verified and hit**, Continue from it
+hits it **again, repeatedly**, Pause returns control, and `IM` reads `?`. Option
+**C** of `doc/DEZOG-BREAKPOINTS-DESIGN.md`, built and driven end to end within
+hours of the entry below being written.
+
+**Draft PR [maziac/DeZog#186](https://github.com/maziac/DeZog/pull/186)**, from
+`jorgegv/DeZog` branch `zxnext-socket-transport`, 7 files, +237 −20, MIT by
+construction — new TypeScript written from scratch, nothing pasted from this
+GPLv3 tree (plan §6, decided before writing rather than after).
+
+**THE REPEAT IS THE RESULT, NOT THE FIRST HIT.** Continuing *from* a breakpoint
+is the hard half of the 13/14 dialect: `sendDzrpCmdContinue` restores the
+original opcode, steps off the address with temporary breakpoints, re-plants it
+and carries on. That is **why** 13/14 exist instead of 40/41, and it is the path
+`cspect` could never reach. It ran three times. A single hit would have been
+consistent with a much weaker fix.
+
+**THE SHAPE CHANGED FROM WHAT §10 PRESCRIBED, ON THE USER'S "as minimal as
+possible", AND THE REPO ITSELF SETTLED IT.** §10 said to extract an abstract
+base from `ZxNextSerialRemote`, having found only four transport-specific
+members. That is a refactor of a 704-line file of upstream's for no behavioural
+gain. Instead **`ZxNextSocketRemote extends ZxNextSerialRemote`** and overrides
+three of the four — and the precedent is Maziac's own: **`ZxNextSerialLoopback`
+already derives from `ZxNextSerialRemote`** and reuses its protected
+`serialPort` / `msgStartByteFound` / `receivedData` / `closeSerialPort`.
+Checking what the repository already does beat following our own plan.
+
+**The fourth member became two lines rather than an override.**
+`dataReceived`'s 0xA5 swallow is guarded by a new `usesMessageStartByte`,
+default `true`. The alternative was
+`DzrpBufferRemote.prototype.dataReceived.call(this, data)` from the grandchild —
+zero lines in upstream's file and a smell in a PR. **This is the only change to
+existing behaviour in the whole diff**, which is what makes the serial gap below
+the one risk worth naming.
+
+**TWO PROPERTIES NEEDED NO FLAG AND NO CAPABILITY NEGOTIATION**, which is §10's
+finding 1 holding up under construction. `CMD_PAUSE`'s refusal and the `0xA5`
+preamble are both properties **of the transport, not of the machine**: over a
+cable the stub hands the joy ports back on resume, re-pointing UART0's RX away
+from the pin the cable is on, so no byte can land while the program runs. Both
+stay in the serial class; the socket class simply does not carry them.
+
+**AND THE PAUSE CLAIM WAS PULLED BACK BEFORE IT SHIPPED.** The first draft said
+that over a socket "the program can be paused". True of **this** stub with M2
+and a cooperating debuggee; **false of stock dezogif**, which does not poll while
+the program runs. What the change actually does is stop the *client* refusing the
+command. The class comment, `Usage.md` and the PR all say that and no more —
+the honest form being that whether the pause takes effect is up to the program on
+the ZX Next.
+
+**A test had to move, and it moved deliberately rather than being deleted.**
+`npm test` was **900 passing on upstream/main** (run, not assumed) and is 900 on
+the branch. One existing test, `port obsolete`, **failed correctly** — it encodes
+the 2.6.0 contract that `port` is rejected. A second, `hostname obsolete`,
+started passing **for a different reason** (the new "not both" rule). Both were
+repurposed — `hostname` as a positive case, `serial and hostname are exclusive`
+as the error — so the count is unchanged and the new contract is what is asserted.
+
+**Rejected.** The §10 base-class extraction (churn, above); a separate
+`zxnextsocket` remote type (it cannot disturb existing users at all, which is a
+real argument — so it is **offered in the PR** rather than dismissed, for Maziac
+to overrule); a config flag for `CMD_PAUSE` (a transport property needs none);
+adding `socketTimeout` (`timeout` already exists and serves both); and
+`--body`-style AI attribution in the PR, per house style.
+
+**Cost: no `src/` change, no ROM byte, no `make bump`.** The fix is entirely in
+somebody else's repository, which is exactly why **option B is dead** — writing
+dialect 1 in Z80, in 178 free WiFi bytes, to work around a client that is about
+to speak our dialect natively.
+
+**NOT COVERED, and the first item is the PR's real risk.** **The serial path has
+not been run** — no USB/serial adapter here, and `ZxNextSerialRemote` is the one
+existing file touched. The guard defaults to the previous behaviour and the diff
+is one `&&` term, but that is reasoning and not a measurement; it is stated
+plainly in the PR so Maziac, who has the rig, can close it with a loopback run.
+**Breakpoints at addresses `checkBreakpoint` refuses** (ROM, and #27's
+`0x0000-0x0007` / `0x0066-0x0073` trampoline guard), **conditions, LOGPOINTs and
+ASSERTIONs** — all inherited code, none exercised. **The emulator path**: no
+jnext run, so there is no repeatable regression check, only a hardware session.
+**And issue #41 stays open**: what shipped in `00.22` is the honest refusal, and
+breakpoints work only for someone running this branch of DeZog.
+
+**One process error, recorded because it is this file's recurring disease.** I
+reported that the message to Maziac still proposed a config flag and needed a
+pass before sending. It had already been sent, and it did not propose one — the
+sentence I acted on was §10's own note that an **earlier draft** of that message
+had. I carried a superseded draft's defect onto the file on disk **without
+opening it**, in a session whose whole subject was a claim asserted rather than
+checked. One `cat` would have settled it.
+
+---
+
 ## 2026-08-11 — DeZog's own breakpoints have never worked, and the suite could not have found it
 
 **Measured on the user's own Next, build `00.21`, and it is a fault in the

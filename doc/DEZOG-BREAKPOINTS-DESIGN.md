@@ -169,6 +169,31 @@ because that trade is the clearest statement of §1: the two remotes have one ha
 
 ## 10. DECIDED, 2026-08-11: option C, as a PR, and Maziac has asked for it
 
+**BUILT AND VALIDATED ON HARDWARE THE SAME DAY — draft PR
+[maziac/DeZog#186](https://github.com/maziac/DeZog/pull/186).** A breakpoint set
+in the VS Code editor is verified and **hit**, Continue from it hits it **again,
+repeatedly**, Pause returns control, and `IM` reads `?`. Measured on the user's
+own Next at build `00.22`, core 03.02.01, ESP at 460800.
+
+**The shape below is what was designed; the shape built is smaller.** On the
+user's "as minimal as possible", the abstract-base extraction this section
+prescribes was **not** done: `ZxNextSocketRemote` simply **derives from
+`ZxNextSerialRemote`** and overrides three of the four transport members, which
+is upstream's own idiom — `ZxNextSerialLoopback` already derives from it the same
+way. The fourth, `dataReceived`, became a two-line `usesMessageStartByte` guard
+rather than an override, and is the **only** change to existing behaviour in the
+diff. Everything else in this section held: the four members were the right four,
+and `CMD_PAUSE` and the `0xA5` preamble both needed no flag.
+
+**The claim about pausing was narrowed before it shipped.** "Through a socket the
+program can be paused" is true of *this* stub with M2 and a cooperating debuggee
+and false of stock dezogif; what the change does is stop the **client** refusing
+the command. See MEMORY.md.
+
+**Issue #41 stays open.** `00.22` ships the honest refusal (option A); breakpoints
+work only for someone running that branch of DeZog, and only until it is released.
+
+
 **He offered; the user accepted; he wants the PR.** That retires C's one real objection — plan §7's
 *"a PR adding a remote type for a target that does not exist yet is not practically mergeable,
 because the maintainer has nothing to test against"* — on both halves: the target now runs on
@@ -226,15 +251,29 @@ New TypeScript, written from scratch, **licensed MIT** so it fits DeZog — deci
 afterwards (plan §6). Nothing from this GPLv3 tree may be pasted into it; nothing there is worth
 copying anyway.
 
-### Not started
+### ~~Not started~~ Built
 
-No branch, no `upstream` remote on the fork yet, nothing written. **The installed extension at
+~~No branch, no `upstream` remote on the fork yet, nothing written.~~ Branch
+`zxnext-socket-transport` on `jorgegv/DeZog`, one commit, `upstream` remote added and level with
+`283d18ef` when it was cut. 7 files, +237 −20. **The installed extension at
 `~/.vscode/extensions/maziac.dezog-3.7.4/` has never been modified** and must not be: development
-uses VS Code's Extension Development Host against the fork.
+used VS Code's Extension Development Host against the fork, whose launch args carry
+`--disable-extensions`, so the installed DeZog is inert in that window and cannot be what answered.
+
+The test rig is kept: worktree `~/tmp/worktrees/dezogif_ng/dezog-pr-test` (branch `dezog-pr-test`)
+carries a `Next: zxnext socket (PR test)` launch configuration and its own build of the
+pause-transparency fixture, so the session is one keypress to repeat. It is a separate worktree
+because VS Code refuses to open one folder in two windows.
 
 ## 11. What this document does not establish
 
-- **Nothing here has been built or run.** Every byte figure is an estimate.
+- ~~**Nothing here has been built or run.** Every byte figure is an estimate.~~ **Option A was
+  built (`00.22`) and option C is built and validated on hardware — §10.** What is still an
+  estimate is every byte figure for **option B**, which is dead, and for option D, which is not
+  needed. What option C has **not** exercised: the **serial path**, which is the one existing
+  file the PR touches and which has no adapter here; breakpoints at addresses `checkBreakpoint`
+  refuses; conditions, LOGPOINTs and ASSERTIONs; and any emulator run, so there is no repeatable
+  regression check for it — only a hardware session.
 - **The disassembly hazard in §3 is a mechanism, not a measurement.** Nobody has watched DeZog
   mis-step over a patched byte; the argument is that the client which owns this problem solves it by
   restoring.

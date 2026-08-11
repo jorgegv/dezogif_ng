@@ -5,6 +5,48 @@ attempting similar logic.
 
 ---
 
+## A contamination guard that only looks in one direction, and a red that erases its own evidence
+
+**Not a fix — two properties of a bench, found while investigating something
+else, and written down because the next occurrence is otherwise as unreadable as
+the last one.** Both are in `test/run-dzrp-stub.sh`'s W5.
+
+**1. The guard is one-sided.** W5 asserts the run saw no *excess* of connections.
+It does not assert the count is the baseline, so a **deficit** passes the guard —
+and a deficit is exactly what a fixture talking to **somebody else's listener**
+produces. The run then fails on its subject with *"the precondition never
+happened"*, which is a true statement about a contaminated run and a completely
+misleading one about the ROM under test.
+
+**This inverts the standing rule, which is why it is worth an entry.** MEMORY.md
+and the agent-orchestration guidance both say that concurrent benches contaminate
+each other and **a contaminated run comes out GREEN**. That is the hazard everyone
+watches for. This is the same hazard producing a **RED with a plausible wrong
+reason**, which is worse: a green invites suspicion, a red invites a diagnosis.
+
+**Explicitly a hypothesis.** Nothing here staged it, and there is no evidence it
+is what happened on any particular run. It is written down so that the next
+failing log is read for `accepted as cid` before anything is concluded from it.
+
+**2. The failing run's log is overwritten by the next run.** W5's
+`build/dzrp-stub-w5.log` is not preserved on failure, so by the time a red is
+noticed the evidence is a run or more behind. Two reported failures on
+2026-08-11 left **nothing** — searched across the main checkout and every
+worktree.
+
+**The cost of that is measured rather than argued.** Reconstructing what those
+two runs did took **19 emulator runs across two ROMs, idle and deliberately
+loaded, over ~87 minutes**, and still could not reproduce the failure — where the
+failing log itself would have answered it in a minute. This project's own
+standard is that a red nobody can re-run is a story about a scratch tree; here the
+bench does that to itself.
+
+**Neither is fixed.** Both are cheap — copy the log aside on failure, and compare
+the connection count against the baseline rather than a ceiling — and both are
+test-only. Deferred deliberately rather than forgotten.
+
+---
+
 ## An honest number about the wrong field, and a flag the harness forgot to clear
 
 **Two wrong diagnoses in one day, from two correct measurements.** Both blocked

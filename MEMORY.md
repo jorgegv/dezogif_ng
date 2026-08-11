@@ -5,6 +5,100 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-11 — W5's red did not reproduce in 19 runs, and counting failures is the wrong instrument for it
+
+**Measured, as an instrument rather than a gate**, after W5 failed **2 of 2** on
+merged `main` at the end of the previous session. The question was whether build
+`00.22`'s 38 extra bytes had moved a timing-sensitive race, or whether this was
+the same intermittency W5 has had since it was written (1 of 3 on 2026-08-07,
+2 of 4 on 2026-08-09).
+
+Harness held constant — `d3818c0`'s `test/` throughout, only `ROM=`/`LIST=`
+varied, so the ROM is the single variable. `make` cannot do this: its recipe
+passes `ROM=` explicitly and overrides the environment, so `run-dzrp-stub.sh` is
+invoked directly.
+
+| ROM | runs | W5 failures |
+|---|---|---|
+| `00.22` | 10 — 7 idle, 3 under deliberate load | **0** |
+| `00.21` | 9 — 6 idle, 3 under deliberate load | **0** |
+
+**THE 38 BYTES ARE NOT A SUFFICIENT CAUSE, AND THAT IS ALL THE FAILURE COUNTS CAN
+SAY.** Two zeros cannot be compared. Rule of three puts `00.22`'s W5 failure rate
+at **≤26%** (95%, one-sided), under which two consecutive failures has probability
+**≤7%** — so the reported 2-of-2 is unlikely to be an intrinsic property of the
+ROM. The load arm was run as a **separate labelled probe** precisely because the
+idle arm would not stage the failure at all, and it is applied identically to both
+ROMs, so it cannot by itself explain a difference between them.
+
+**BUT A CONTINUOUS MEASURE OF THE SAME RACE DISCRIMINATES AT n=10 WHERE COUNTING
+FAILURES DOES NOT, AND IT GIVES THE BUMP A CASE TO ANSWER.** The margin is the
+framing latency of the critical frame against the client's budget:
+
+| ROM | idle | worst |
+|---|---|---|
+| `00.22` | `2 3 3 4 4 4 7` ms | **7.0 of 8** — one run within **1 ms** |
+| `00.21` | `3 3 3 3 3 3` ms | **3.0 of 8** — never within 5 |
+
+**Suggestive, not established**: n≈10 per arm, and jnext's log timestamps are
+**1 ms quantised**, which is the limiting resolution. It is a case to answer.
+
+**THE BUDGET IS THE CLIENT'S 8 ms GAP, NOT THE 100 ms RX TIMEOUT — every intuition
+about this check was an order of magnitude wrong.** Read out of jnext's source
+(`src/esp01/src/esp_at.cpp:1283`), not inferred: `frame_ipd()` returns unless the
+wire is quiet — nothing outbound, command mode, **no guest AT command line in
+flight** — and then emits **one** chunk, scanning connections **in cid order**.
+The fixture opens B first (cid 1) and A second (cid 2), so whenever A's 6-byte
+header and B's 15-byte command are both buffered at one quiet moment, **B is
+framed first** and the asserted `6/15/1` trio becomes `15/6/1`. Hence the failure
+text, *"the precondition never happened"*.
+
+**And whether the wire is quiet at that instant depends on the stub having
+finished flushing the PREVIOUS reply**, which is guest-instruction-timed. That is
+a real coupling between ROM size and this race, and it is what makes the 38-byte
+hypothesis *mechanistically* plausible rather than merely temporal.
+
+**WHY THE 2-OF-2 LEFT NOTHING TO READ, which is the finding to act on.** The
+failing run's `build/dzrp-stub-w5.log` is **overwritten by the next run**. Both
+reported failures were therefore unreadable by the time anyone looked, and no
+artefact survives anywhere — searched across the main checkout and every worktree.
+A red nobody can examine is a story about a scratch tree, which is this project's
+own standard turned on its own bench.
+
+**A SECOND BENCH FINDING, OFFERED AS A HYPOTHESIS AND EXPLICITLY UNPROVEN**, in
+[[ERRORS.md]]: W5's contamination guard is **one-sided**. It catches an *excess* of
+connections and not a **deficit** — and a deficit is what a fixture talking to
+somebody else's listener produces, reporting as exactly the message seen. The
+standing rule is that a contaminated run comes out **green**; this says it can
+come out **red with a misleading reason**. Nothing here stages it.
+
+**What would settle the margin question.** More failure-count runs is the wrong
+instrument: bounding `00.22` below 5% needs ~59 runs (~3 h) and below 1% ~299
+(~15 h), and it still cannot compare two zeros. Either ~30 runs per arm scored on
+the **margin**, ideally with sub-millisecond timestamps, or **capture the artefact
+when it next fails** — which needs the log preserved first.
+
+**Rejected.** Touching `DZRP_SPLIT_GAP` or any bench constant to make it pass —
+tuning a race until it is green is weakening a check to make it pass, which this
+project refuses; it was never set, and was confirmed not exported from any shell
+profile, ruling out a stale override as an explanation for the original failures.
+Also rejected: reporting the null result as "the bump is exonerated", which two
+zeros do not support.
+
+**NOT ESTABLISHED.** **That the original 2-of-2 was environmental** — nothing
+reproduces it, and the artefact is gone. **That the margin difference is real**,
+n≈10 at 1 ms resolution. **Anything about hardware**: this is jnext throughout,
+and the race is between an emulated module's framing and a Python client's
+`sleep`. And **the contamination hypothesis**, which has no evidence behind it at
+all and is written down only so the next failing log is read for it.
+
+**Cost: no `src/` change, no ROM byte, no `make bump`.** This is a measurement.
+Re-runnable: `~/tmp/scratchpads/w5-race/` carries `RESULTS.md`, the per-run
+evidence and `one-run.sh <tag> <rom> <list> <n>`, with both ROMs built in
+worktrees `w5-race` and `w5-race-0021`.
+
+---
+
 ## 2026-08-11 — DeZog's breakpoints WORK, on hardware, and the fix cost zero Z80 bytes
 
 **Measured on the user's own Next the same evening the fault was found** (build
@@ -14,18 +108,14 @@ hits it **again, repeatedly**, Pause returns control, and `IM` reads `?`. Option
 **C** of `doc/DEZOG-BREAKPOINTS-DESIGN.md`, built and driven end to end within
 hours of the entry below being written.
 
-**PR [maziac/DeZog#186](https://github.com/maziac/DeZog/pull/186)**, from
-`jorgegv/DeZog` branch `zxnext-socket-transport`, MIT by
-construction — new TypeScript written from scratch, nothing pasted from this
-GPLv3 tree (plan §6, decided before writing rather than after).
-
-**IT MOVED WHILE THIS ENTRY WAS BEING WRITTEN, so the figures are stamped rather
-than stated.** Opened **as a draft** at `e63786ff`, one commit, 7 files,
-**+237 −20**. The user marked it **ready for review** at 22:02, and two further
-commits followed: `1e8a000c`, naming the ZX Next side precisely (below), and
-`19fb93ae`, the review's finding (below). **At 22:13 it is 3 commits, 7 files,
-+263 −17, not a draft.** Anything quoted here is a reading of a live artefact at
-a moment; check it rather than carrying it forward.
+**THE CHANGE ITSELF IS [maziac/DeZog#186](https://github.com/maziac/DeZog/pull/186)
+AND IS DELIBERATELY NOT RESTATED HERE.** The PR body is its home; it is MIT by
+construction (plan §6, decided before writing rather than after), and it is a
+**live artefact in somebody else's repository**. An earlier version of this entry
+quoted its draft state, commit count and diff stat — and was falsified **twice
+inside one hour**, once by the user marking it ready and once by two further
+commits. Follow the link; do not carry figures forward from here. What follows is
+only what this project has to remember.
 
 **THE REPEAT IS THE RESULT, NOT THE FIRST HIT.** Continuing *from* a breakpoint
 is the hard half of the 13/14 dialect: `sendDzrpCmdContinue` restores the
@@ -44,36 +134,26 @@ already derives from `ZxNextSerialRemote`** and reuses its protected
 `serialPort` / `msgStartByteFound` / `receivedData` / `closeSerialPort`.
 Checking what the repository already does beat following our own plan.
 
-**The fourth member became two lines rather than an override.**
-`dataReceived`'s 0xA5 swallow is guarded by a new `usesMessageStartByte`,
-default `true`. The alternative was
-`DzrpBufferRemote.prototype.dataReceived.call(this, data)` from the grandchild —
-zero lines in upstream's file and a smell in a PR. It is the only change to the
-**serial path's runtime** behaviour, and it defaults to the previous one.
-
-**AND THE FIRST VERSION OF THAT SENTENCE SAID "the only change to existing
-behaviour in the whole diff", WHICH WAS FALSE — the independent review disproved
-it by EXECUTION.** `settings.ts` changed twice, not once: beside the intended
-validation, the 2.6.0 error naming `port` / `hostname` / `socketTimeout` obsolete
-lost its `port` arm, so a config carrying a leftover 2.5.x `port` beside its
-`serial` **stopped erroring and started being silently accepted** with the port
-ignored. The reviewer built a checkout of `283d18ef`, drove `Settings` on both
-trees and printed the two answers — `THROWS` against `NO THROW` — rather than
-reading the diff and agreeing with me.
-
-**Fixed rather than documented**, since it is a real regression in upstream's own
-helpfulness: `port` is defaulted **only when a hostname is present**, so a port
-sitting next to a serial is still recognisable at check time and is reported.
-Test `port needs hostname`; suite 900 → **901**.
+**THE INDEPENDENT REVIEW REJECTED THIS ENTRY TWICE AND WAS RIGHT BOTH TIMES, AND
+THE FIRST REJECTION FOUND A DEFECT IN THE CODE RATHER THAN IN THE PROSE.** This
+entry claimed a change was "the only change to existing behaviour in the whole
+diff". It was not: a second, unintended change had loosened a validation guard,
+so a stale configuration that upstream deliberately errored on was being silently
+accepted. **The reviewer disproved the claim by EXECUTION** — it built a checkout
+of the upstream base, drove the code on both trees, and printed the two answers
+side by side — rather than reading the diff and agreeing with me. Fixed in the PR
+rather than merely documented, since it was a real regression in upstream's own
+helpfulness.
 
 **The claim was wrong in the place that makes it dangerous rather than the place
-that makes it visible.** The PR body scopes the same statement to
-`ZxNextSerialRemote`, where it is true and remains true; it was only this file
-and the design doc that generalised it to "the whole diff" — and the
-generalisation was doing *work*, because it is what justified naming the serial
-gap as the sole residual risk. `ERRORS.md` records this disease under several
-names; here it is again, in the entry whose own subject is checking claims, and
-it took an agent that ran the code to catch it.
+that makes it visible.** The PR body scoped the same statement narrowly, where it
+was true and remains true; only this file and the design doc generalised it — and
+the generalisation was doing *work*, because it is what justified naming the
+serial gap as the sole residual risk. The second rejection was this entry
+contradicting itself on a test count and describing a PR that had moved under it,
+which is what the link above now replaces. `ERRORS.md` records this disease under
+several names; here it is twice in one entry whose own subject is checking claims,
+and it took an agent that ran the code to catch either.
 
 **TWO PROPERTIES NEEDED NO FLAG AND NO CAPABILITY NEGOTIATION**, which is §10's
 finding 1 holding up under construction. `CMD_PAUSE`'s refusal and the `0xA5`
@@ -90,27 +170,15 @@ command. The class comment, `Usage.md` and the PR all say that and no more —
 the honest form being that whether the pause takes effect is up to the program on
 the ZX Next.
 
-**A test had to move, and it moved deliberately rather than being deleted.**
-`npm test` was **900 passing on upstream/main** (run, not assumed) and was 900 at
-`e63786ff` — **901 since `19fb93ae`**, which adds `port needs hostname`. One
-existing test, `port obsolete`, **failed correctly** — it encodes
-the 2.6.0 contract that `port` is rejected. A second, `hostname obsolete`,
-started passing **for a different reason** (the new "not both" rule). Both were
-repurposed — `hostname` as a positive case, `serial and hostname are exclusive`
-as the error — so the count was unchanged by that commit and the new contract is
-what is asserted.
-
-*(A word on the load: at ~20 the disassembler's `1000 nodes` case, a 2000 ms
-wall-clock benchmark, times out and the suite reports one failure. It passes in
-~7 s given room. Every count here is with the timeout raised, and that is said
-rather than reported as a bare green.)*
+**Two upstream tests encoded a contract the change moves, and were repurposed
+rather than deleted** — one had to fail, and a second started passing **for a
+different reason**, which is the more dangerous of the two. Detail in the PR.
 
 **Rejected.** The §10 base-class extraction (churn, above); a separate
-`zxnextsocket` remote type (it cannot disturb existing users at all, which is a
-real argument — so it is **offered in the PR** rather than dismissed, for Maziac
-to overrule); a config flag for `CMD_PAUSE` (a transport property needs none);
-adding `socketTimeout` (`timeout` already exists and serves both); and
-`--body`-style AI attribution in the PR, per house style.
+`zxnextsocket` remote type — it cannot disturb existing users at all, which is a
+real argument, so it is **offered in the PR** for Maziac to overrule rather than
+dismissed; a config flag for `CMD_PAUSE`, a transport property needing none; and
+AI attribution anywhere in the PR, per house style.
 
 **Cost: no `src/` change, no ROM byte, no `make bump`.** The fix is entirely in
 somebody else's repository, which is exactly why **option B is dead** — writing

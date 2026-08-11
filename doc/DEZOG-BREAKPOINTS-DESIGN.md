@@ -263,9 +263,10 @@ copying anyway.
 
 ~~No branch, no `upstream` remote on the fork yet, nothing written.~~ Branch
 `zxnext-socket-transport` on `jorgegv/DeZog`, `upstream` remote added and level with
-`283d18ef` when it was cut. **One commit and +237 −20 when it was opened; 3 commits and
-+263 −17 at 22:13** — the two extra being the dezogif_ng naming and the review's finding.
-The figures are a reading of a live PR at a moment; check it rather than quoting this. **The installed extension at
+`283d18ef` when it was cut. **The commit count and diff stat are deliberately not quoted
+here** — they belong to a live PR in somebody else's repository, and an earlier version of
+this section quoted them and was falsified within the hour. Read them off
+[the PR](https://github.com/maziac/DeZog/pull/186). **The installed extension at
 `~/.vscode/extensions/maziac.dezog-3.7.4/` has never been modified** and must not be: development
 used VS Code's Extension Development Host against the fork, whose launch args carry
 `--disable-extensions`, so the installed DeZog is inert in that window and cannot be what answered.

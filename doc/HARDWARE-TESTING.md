@@ -1069,6 +1069,25 @@ sentence — **the check says what happened, this file says what it means.** Not
 either direction; if a line here contradicts a line the harness prints, this file is the one that
 was written to be read.
 
+### Two families of M2 claim are ANALYSED AND DELIBERATELY NOT TESTED (user, 2026-08-11)
+
+Not overlooked, and not queued: a decision that the cost of testing them exceeds what a green
+would buy. Recorded so that a future reader does not mistake the gap for an oversight and go
+looking for the bench that covers them.
+
+**The five states in which the break will not fire**, listed in
+[ASYNCHRONOUS-BREAK-USER-HOWTO.md](ASYNCHRONOUS-BREAK-USER-HOWTO.md). Each rests on the FPGA source
+or on inspection, and none has been watched happening: the UART build having nowhere for the PC's
+bytes to land, a DivMMC automap session blocking every Multiface NMI, a debuggee clearing NR `0x06`
+bit 3, a debuggee restarting its own Copper, and `.mfinstall`'s config-mode window. The second is
+the one a user is most likely to meet and the one with the least evidence — `zxnext.vhd:2107`
+against `device/divmmc.vhd:148-150`, read and not run.
+
+**The poll's cost at 3.5 MHz**, quoted as 1.84% of a frame. That is *arithmetic* from a 28 MHz
+measurement (`make measure-poll-cost`), not a reading, and a contended-memory or beeper program on
+real silicon is the only thing that could settle it. The same goes for end-to-end Pause latency,
+predicted as one frame plus the measured ~11 ms WiFi round trip and never measured as a whole.
+
 - ~~**The stub has never resumed a debuggee ON HARDWARE.**~~ **It has, 2026-08-05.** C10 and C11
   passed against a real Next: a fixture loaded over DZRP, `CMD_CONTINUE` onto a temporary
   breakpoint, `NTF_PAUSE` back at `0x8016` with the registers as the program left them. So

@@ -4,17 +4,37 @@ A Z80 debug stub that runs on **real ZX Spectrum Next hardware** and is debugged
 [DeZog](https://github.com/maziac/DeZog) in VS Code, speaking DZRP.
 
 It is a fork of [maziac/dezogif](https://github.com/maziac/dezogif), whose transport is a serial
-cable on the joystick port. The goal of this fork is to **add a second transport over the Next's
-on-board ESP-01 WiFi module** — the same UART peripheral behind a pin mux — and to select between
-the two **at assembly time**, so the ROM can be built in either UART mode or WiFi mode. The serial
-transport is not being removed. WiFi mode would drop the cable, leave the joysticks with the game
-permanently, and open a route for **PC-initiated break**, which the serial version cannot do.
-None of it is written yet: what is here today is upstream's serial stub, plus this project's
-build, test bench and documentation.
+cable on the joystick port. This fork **adds a second transport over the Next's on-board ESP-01
+WiFi module** — the same UART peripheral behind a pin mux — selected **at assembly time**, so the
+ROM builds in either UART mode or WiFi mode. The serial transport is not removed. WiFi mode drops
+the cable, leaves the joysticks with the game permanently, and opens a route for **PC-initiated
+break**, which the serial version cannot do.
+
+~~None of it is written yet: what is here today is upstream's serial stub, plus this project's
+build, test bench and documentation.~~ **That was true when this file was written and has not
+been since 2026-08-05.** What is here today:
+
+- **The WiFi transport is built and has run on real hardware.** `make TRANSPORT=wifi` gives a ROM
+  that brings the ESP-01 up as a TCP server and speaks DZRP through it. On a real Next, **DeZog
+  itself** has attached over WiFi and disassembled, read registers and memory, single-stepped,
+  broken in with the M1 button and reattached — measured at a median **11.2 ms** round trip.
+- **PC-initiated break is built**, milestone M2, 2026-08-11 — Pause in DeZog stops a freely
+  running program with no button press and no breakpoint. The two Copper instructions that make it
+  possible live in **your** program, 44 bytes; see
+  [doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md](doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md), including the five
+  states in which it will not fire. **This is the one part that has NOT run on hardware.**
+- **Both ROMs go on the SD card together** and are switched from the machine, either from a menu
+  (`mfselect`) or from the NextZXOS command line and `AUTOEXEC.BAS` (`.mfinstall`), so choosing
+  the serial build for a program that owns the ESP costs a power cycle rather than a PC session.
+- **The bench is local, headless and jnext-driven** — `make test` is the gate, with a dozen more
+  targets behind it; bare `make` lists every one.
 
 Maintained by [jorgegv](https://github.com/jorgegv). Original author: maziac.
 
-**Status: Work in Progress**
+**Status: usable, and in active development.** Read
+[doc/ZXNEXT-REMOTE-DEBUG-STUB.md](doc/ZXNEXT-REMOTE-DEBUG-STUB.md) first — it carries the plan, the
+VHDL-verified hardware facts with citations, and an appendix recording which claims are verified,
+which were reported on hardware, and which are still estimates.
 
 
 # Design
@@ -28,6 +48,9 @@ When the debugged program is stopped the dezogif takes over and configures the j
 
 This implies that it is not possible to stop the debugged program from DeZog.
 To stop it you need to press the yellow NMI button.
+
+> **This section describes upstream's serial design, and it is still exactly right for UART mode.
+> For the WiFi build the sentence above is no longer true — see the note below the diagram.**
 
 When the NMI button was pressed dezogif sends a DZRP pause notification to DeZog to notify about the state change. Then dezogif will wait for further requests from DeZog, e.g. to read register values etc.
 

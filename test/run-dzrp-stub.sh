@@ -58,11 +58,14 @@
 #          precondition — three frames, from two connections, in the order that
 #          makes the collision — is asserted from the module's log, as W4's is.
 #          Its contamination guard is TWO-SIDED, unlike W2's, W3's and W4's, it
-#          KEEPS ITS LOG when it fails, and it NAMES the race collapsing (15/6/1
-#          instead of 6/15/1) with the framing latency that caused it. All three
-#          are because it is the one check here with a history of failing
-#          intermittently, and every one of those reds used to read "the
-#          precondition never happened". See the assertions.
+#          KEEPS ITS LOG when it fails, it NAMES the race collapsing (15/6/1
+#          instead of 6/15/1) with the framing latency that caused it, and it
+#          RETRIES the staging up to W5_TRIES times in the same emulator run.
+#          All four are because it is the one check here with a history of
+#          failing intermittently, and every one of those reds used to read "the
+#          precondition never happened". The retry re-attempts the SETUP and
+#          leaves the assertion alone; widening the fixture's gap would have
+#          been the other way and is refused. See the assertions.
 #
 #   run 6
 #     W6   AN M1 PRESS WHILE THE DEBUGGER IS STOPPED LEAVES THE DEBUGGEE'S
@@ -253,6 +256,21 @@ SETTLE=${SETTLE:-2}
 # project has paid for repeatedly: a red nobody can re-run is a story about a
 # scratch tree.
 W5_CLIENT_PORT=${W5_CLIENT_PORT:-$PORT}
+
+# How many times W5 may re-run its fixture, in one emulator run, trying to get
+# the race to stage. See the loop for why retrying is legitimate where widening
+# the fixture's gap is not.
+#
+# THREE, and the reason it is not one is measured: on 2026-08-11 the race
+# collapsed on three consecutive unstaged runs, and on 2026-08-12 an independent
+# reviewer got three greens in three runs of the same commit. So a single
+# attempt is a coin toss on a gate, and each retry costs about a second against
+# an emulator run of twenty.
+#
+# `W5_TRIES=1` is the control: it restores exactly the single-attempt behaviour
+# this replaces, so the retry can be shown to be what removes the redness rather
+# than assumed to be.
+W5_TRIES=${W5_TRIES:-3}
 
 log()  { printf '%s\n' "$*"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -697,43 +715,21 @@ fi
 # crashed by the runs above, and a clean log to read the precondition from.
 # ===========================================================================
 
-log ""
-log "== run 5: a command split across frames while another connection speaks"
-
-w5_fail=""
-split_ok=""
-if ! start_stub "$jlog5" "$shot5"; then
-    # THIS ARM KEEPS ITS LOG TOO, and the first version of this change did not
-    # — which made "W5 keeps its log when it fails" a claim the code did not
-    # deliver, in the header comment and in CLAUDE.md, both unqualified. It is
-    # also the arm whose log is most obviously worth reading: the listener never
-    # appeared, and the only record of why is what jnext wrote on its way there.
-    # start_stub's redirection creates the file the instant jnext is forked, so
-    # the copy always succeeds — though an emulator that died before writing
-    # anything leaves it empty, which is itself the answer to "how far did it
-    # get". Measured: staged with a jnext that refuses to start, 0 bytes.
-    w5_fail="W5 the stub never listened on 127.0.0.1:$PORT for the split-command run"
-else
-    set +e
-    split_out=$(DZRP_PORT="$W5_CLIENT_PORT" DZRP_TIMEOUT="$CONTROL_TIMEOUT" python3 "$SPLIT" 2>&1)
-    split_rc=$?
-    set -e
-    stop_stub
-    printf '%s\n' "$split_out" | sed 's/^/  | /'
-
-    s_connects=$(grep -c "accepted as cid" "$jlog5" || true)
-
-    # THE PRECONDITION, from the module's own log rather than assumed: the three
-    # frames really were emitted, from two different connections, in the order
-    # that puts somebody else's command exactly where the split command's
-    # payload should have been.
-    #
-    # The lengths are the fixture's and must be read with it: 6 = a DZRP command
-    # header, 15 = the other client's whole CMD_LOOPBACK, 1 = the register
-    # number that was withheld. Change B_PAYLOAD in split-command.py and this
-    # line has to change with it — which is the point of asserting the exact
-    # shape rather than "some frames interleaved".
-    split_ok=$(python3 - "$jlog5" <<'EOF'
+# w5_split_shape <log> — "<A's cid>,<B's cid>" if the module really emitted the
+# three frames this check needs, and nothing if it did not.
+#
+# THE PRECONDITION, from the module's own log rather than assumed: the three
+# frames really were emitted, from two different connections, in the order that
+# puts somebody else's command exactly where the split command's payload should
+# have been.
+#
+# The lengths are the fixture's and must be read with it: 6 = a DZRP command
+# header, 15 = the other client's whole CMD_LOOPBACK, 1 = the register number
+# that was withheld. Change B_PAYLOAD in split-command.py and this has to change
+# with it — which is the point of asserting the exact shape rather than "some
+# frames interleaved".
+w5_split_shape() {
+    python3 - "$1" <<'EOF'
 import re, sys
 frames = re.findall(r'\+IPD,(\d+),(\d+)', open(sys.argv[1], errors='replace').read())
 frames = [(int(c), int(n)) for c, n in frames]
@@ -745,27 +741,25 @@ for i in range(len(frames) - 2):
 else:
     print("")
 EOF
-)
+}
 
-    # AND WHEN THE PRECONDITION DOES NOT ARISE, NAME WHY — because "it never
-    # happened" is the message this check has failed with three times and it
-    # sends the next reader hunting a ROM defect that is not there.
-    #
-    # OBSERVED 2026-08-11, not inferred: the trio comes out 15/6/1 instead of
-    # 6/15/1. jnext's frame_ipd() emits one chunk per quiet moment and scans
-    # connections in cid order, and split-command.py opens B first — so whenever
-    # A's 6-byte header and B's 15-byte command are BOTH buffered at one quiet
-    # moment, B is framed ahead of A's header and there is no split left to see.
-    # That needs the wire to be busy for longer than the fixture's 8 ms gap, so
-    # the latency since the stub last went quiet is measured and printed: it is
-    # the number that discriminates, and counting failures is not.
-    #
-    # THIS IS A BENCH TIMING OUTCOME AND NOT A VERDICT ON THE ROM, so it still
-    # FAILS — nothing was tested — but with a reason somebody can act on. Do NOT
-    # "fix" it by raising DZRP_SPLIT_GAP: tuning a race until it is green is
-    # weakening a check to make it pass, which is why the gap has both its edges
-    # measured and written down in split-command.py.
-    split_collapsed=$(python3 - "$jlog5" <<'EOF'
+# w5_collapsed_ms <log> — the milliseconds of busy wire that ate the split, if
+# the trio came out 15/6/1, and nothing otherwise.
+#
+# WHEN THE PRECONDITION DOES NOT ARISE, NAME WHY — because "it never happened"
+# is the message this check failed with three times and it sends the next reader
+# hunting a ROM defect that is not there.
+#
+# OBSERVED 2026-08-11, not inferred: the trio comes out 15/6/1 instead of 6/15/1.
+# jnext's frame_ipd() emits one chunk per quiet moment and scans connections in
+# cid order, and split-command.py opens B first — so whenever A's 6-byte header
+# and B's 15-byte command are BOTH buffered at one quiet moment, B is framed
+# ahead of A's header and there is no split left to see. That needs the wire
+# busy for longer than the fixture's 8 ms gap, so the latency since the stub
+# last went quiet is what this measures: it is the number that discriminates,
+# and counting failures is not.
+w5_collapsed_ms() {
+    python3 - "$1" <<'EOF'
 import re, sys
 
 stamp = re.compile(r'^\[(\d+):(\d+):(\d+)\.(\d+)\]')
@@ -795,7 +789,85 @@ for i in range(len(frames) - 2):
 else:
     print("")
 EOF
-)
+}
+
+log ""
+log "== run 5: a command split across frames while another connection speaks"
+
+w5_fail=""
+split_ok=""
+split_collapsed=""
+split_rc=0
+w5_tries=0
+
+# RETRY THE WHOLE EMULATOR RUN, WHICH IS NOT THE SAME AS WIDENING THE GAP. The
+# race collapses (see w5_collapsed_ms) whenever the wire is busy for longer than
+# the fixture's 8 ms, and the check then has nothing to judge.
+#
+# THE UNIT OF RETRY IS THE RUN, AND THAT WAS MEASURED RATHER THAN CHOSEN. The
+# first version of this re-ran only the FIXTURE, three times inside one emulator
+# run, on the assumption that the collapse was transient. It is not: on
+# 2026-08-12 a run collapsed on all three in-run attempts at 11 ms each, seconds
+# apart, while the very next emulator run staged first time. The stub's flush
+# timing is near enough constant within a run and varies between runs — so
+# re-running the fixture buys almost nothing and re-running the emulator buys
+# nearly all of it.
+#
+# WHAT THIS DELIBERATELY DOES NOT DO IS WEAKEN THE ASSERTION. Each attempt is
+# judged by the same `w5_split_shape` on its own fresh log, the verdict below is
+# unchanged, and a run where every attempt collapsed still FAILS with the
+# latency that caused it. Raising DZRP_SPLIT_GAP was the other way to stop the
+# redness and is refused: that is tuning a race until it is green, and the gap
+# has both its edges measured in split-command.py.
+#
+# Each collapse is still REPORTED, because the latency is the number that
+# discriminates and this check is where it now accumulates. Retrying must make
+# the flake harmless, not invisible.
+#
+# `start_stub`'s redirection truncates $jlog5, so each attempt is judged on its
+# own log and the connection counts below stay per-attempt rather than summing.
+while : ; do
+    w5_tries=$((w5_tries + 1))
+
+    if ! start_stub "$jlog5" "$shot5"; then
+        # THIS ARM KEEPS ITS LOG TOO, and the first version of this work did not
+        # — which made "W5 keeps its log when it fails" a claim the code did not
+        # deliver, in the header comment and in CLAUDE.md, both unqualified. It
+        # is also the arm whose log is most obviously worth reading: the listener
+        # never appeared, and the only record of why is what jnext wrote on its
+        # way there. The redirection creates the file the instant jnext is
+        # forked, so the copy always succeeds — though an emulator that died
+        # before writing anything leaves it empty, which is itself the answer to
+        # "how far did it get". Measured: staged with a jnext that refuses to
+        # start, 0 bytes.
+        w5_fail="W5 the stub never listened on 127.0.0.1:$PORT for the split-command run"
+        break
+    fi
+
+    set +e
+    split_out=$(DZRP_PORT="$W5_CLIENT_PORT" DZRP_TIMEOUT="$CONTROL_TIMEOUT" python3 "$SPLIT" 2>&1)
+    split_rc=$?
+    set -e
+    stop_stub
+
+    s_connects=$(grep -c "accepted as cid" "$jlog5" || true)
+    split_ok=$(w5_split_shape "$jlog5")
+    split_collapsed=$(w5_collapsed_ms "$jlog5")
+
+    { [ -n "$split_ok" ] || [ "$w5_tries" -ge "$W5_TRIES" ]; } && break
+    log "  W5 attempt $w5_tries did not stage${split_collapsed:+ (the race collapsed, $split_collapsed ms of busy wire)}; re-running"
+done
+
+if [ -z "$w5_fail" ]; then
+    printf '%s\n' "$split_out" | sed 's/^/  | /'
+
+    # Said only when it is TRUE, which the first version of this line was not:
+    # it announced "staged on attempt N" whenever more than one attempt had been
+    # made, including runs where none of them staged. Caught by its own control,
+    # which is the only reason a line nobody reads twice got read.
+    if [ "$w5_tries" -gt 1 ] && [ -n "$split_ok" ]; then
+        log "  W5 staged on attempt $w5_tries of at most $W5_TRIES"
+    fi
 
     # THE CONTAMINATION GUARD IS TWO-SIDED, AND THE DEFICIT ARM IS THE ONE THAT
     # MATTERS HERE. An EXCESS means somebody else's client reached our stub, and
@@ -810,6 +882,13 @@ EOF
     # FOUR IS EXACT, NOT A MARGIN: start_stub's port probe makes one (it breaks
     # out of its loop on the first success) and split-command.py's connect() has
     # no retry, so its B, A and the fresh client afterwards make three.
+    #
+    # THE RETRIES DO NOT MOVE THESE BOUNDS, and that is a property of retrying
+    # the RUN rather than the fixture: start_stub's redirection truncates the
+    # log, so what is counted here is always one attempt's worth. An earlier
+    # version re-ran the fixture inside one run and had to scale the upper bound
+    # to 1 + 3 x attempts; retrying the emulator removed that complication
+    # rather than solving it.
     #
     # AND A GENUINE ISSUE-#13 RED STILL MAKES FOUR, which is what stops this arm
     # mislabelling the defect W5 exists to catch. The A and B verdicts in
@@ -829,9 +908,9 @@ EOF
     # established would be this bench asserting rather than observing. The `  | `
     # block above carries the fixture's own reason when that is what happened.
     if [ "$s_connects" -gt 8 ]; then
-        w5_fail="W5 CONTAMINATED: $s_connects connections in $jlog5 where this fixture makes 3, so this verdict means nothing"
+        w5_fail="W5 CONTAMINATED: $s_connects connections in $jlog5 where this attempt makes 4, so this verdict means nothing"
     elif [ "$s_connects" -lt 4 ]; then
-        w5_fail="W5 only $s_connects connections in $jlog5 where this run makes 4, so nothing here was tested"
+        w5_fail="W5 only $s_connects connections in $jlog5 where this attempt makes 4, so nothing here was tested"
     elif [ -z "$split_ok" ] && [ -n "$split_collapsed" ]; then
         w5_fail="W5 the race collapsed: the other client's frame was framed first, $split_collapsed ms after the stub last went quiet"
     elif [ -z "$split_ok" ]; then

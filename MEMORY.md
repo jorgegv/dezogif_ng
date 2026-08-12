@@ -91,6 +91,29 @@ reviewer. Regression: **16 headless targets green**, serially — `make test`,
 `test-wifi-assoc`, `test-mfselect`, `test-mfinstall`, and
 `check-reproducible` in **both** variants.
 
+**ADDENDUM, SAME NIGHT — THE STAGING IS RETRIED NOW, AND THE UNIT OF RETRY WAS
+A MEASUREMENT.** The user's call after reading the above: W5 guards a defect a
+single-connection client cannot reach, so the gate must stop costing anything.
+Removing the check — and even the 110 bytes of `src/` it guards — was weighed
+and **rejected**: the stub is a server that accepts five connections, this
+project's own probes and suite use that, #24's connect-time sweep was already
+rejected to preserve it, and #13's failure mode is silent corruption of the
+debuggee's breakpoints. Deleting the protection while keeping the capability is
+the worst of both.
+
+So the fixture is re-run until the shape appears, up to `W5_TRIES` (3). **The
+first version retried the FIXTURE inside one emulator run and was wrong**: a run
+collapsed on all three in-run attempts at 11 ms each, seconds apart, while the
+next emulator run staged first time. The stub's flush timing is near constant
+within a run and varies between runs, so **the unit of retry is the run**. That
+also simplified the guard — `start_stub` truncates the log, so counts stay
+per-attempt at 4 and the bounds did not have to scale after all.
+
+Retrying the **setup** is not tuning the race: `DZRP_SPLIT_GAP` is untouched,
+every attempt is judged by the same shape test, and a run where all three
+collapsed still fails, with the latency. Controls: `W5_TRIES=1` restores the old
+behaviour, and a gap that can never stage exercises all three attempts.
+
 **NOT COVERED, and none of it is hidden.** **Whether the 2026-08-10 failures
 were this same collapse** — their logs are gone, so the shape is a strong
 inference and not a reading of those runs. **The `00.21`-versus-`00.22` margin

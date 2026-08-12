@@ -1297,6 +1297,12 @@ Two things the shortening may **never** touch, because they are interface rather
   measures and prints the latency since the stub last went quiet. First capture: **10 ms**. That is
   a bench timing outcome and still FAILS, because nothing was tested; **do not raise
   `DZRP_SPLIT_GAP` to make it green**, which is tuning a race until it passes.
+  **What IS legitimate is retrying the STAGING, and W5 does — the whole emulator run, up to
+  `W5_TRIES` (3)**, re-attempting the setup while leaving the assertion untouched. **The unit of
+  retry was measured, not chosen**: a run that collapsed did so on all three *in-run* fixture
+  attempts at 11 ms each, seconds apart, while the next emulator run staged first time — so the
+  stub's flush timing is near constant within a run and varies between them. `W5_TRIES=1` is the
+  control that restores the single-attempt behaviour.
 
 **M2 IS BUILT (2026-08-10) AND IT DID NOT INVERT T4.** The paragraphs below were written before
 any M2 code existed and predicted that teaching `nmi66h` to accept a software cause would make T4

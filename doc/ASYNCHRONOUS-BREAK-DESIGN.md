@@ -780,9 +780,87 @@ The original recommendation follows for the record.
 
 ## 8. UART MODE — IT IS ACHIEVABLE, THE BLOCKER IS OURS, AND THE ROUTING IS THE WHOLE OF THE DESIGN
 
-**Investigated 2026-08-12, before any code, and independently reviewed. Nothing in this section has
-run — not in jnext, which structurally cannot test the load-bearing half of it yet, and not on
-hardware.** It is VHDL and source analysis, at the tiers in the table at the end.
+**Investigated 2026-08-12, before any code, and independently reviewed. BUILT 2026-08-12, and
+§8.0 below is the part to read first — it records what the build changed about this section and what
+it still has not shown.** The rest of §8 is the pre-build analysis, annotated where building it
+moved something and left standing where it did not. It is VHDL and source analysis, at the tiers in
+the table at the end.
+
+### 8.0 AS BUILT — two corrections to the change list, and the evidence ladder
+
+**The design survived intact and the change list did not.** Two things §8.8 did not know:
+
+**1. THE UART REGISTERS ARE PER-CHANNEL, SO THE WRITE ORDER IN `transport_init` IS LOAD-BEARING.**
+§8.8 item 2 said the select was "zero bytes … a changed immediate". It is zero bytes and it is also
+a **reorder**: 0x133B, 0x143B and 0x163B all act on whichever channel 0x153B bit 6 selects at the
+instant of the access (`serial/uart.vhd:293-306`, `:311-330`, `:335-372`), and `transport_init`
+wrote the frame register *before* the select. Left alone, the frame byte would land on UART0 and
+UART1 would keep whatever it had.
+
+**It would have LOOKED correct, which is why this is worth the paragraph.** 0x163B's documented
+default is `0x18` and that is exactly the byte we write — so a wrong-order build works by
+coincidence. And the coincidence is not even reliable: that default is restored only by
+`i_reset_hard`, which `zxnext.vhd:3367` ties to the constant `'0'` ("hard_reset done by core
+load"), so **no reset a guest can cause ever puts it back**. A program that had configured UART1
+differently would leave the debugger running at its frame settings. The select is written first now.
+
+**2. NR `0xA0` IS NOT A PRECONDITION, WHICH THE CHANGE LIST HAD AS AN OPEN RISK.**
+`ports.txt:373` attaches "pi gpio must be configured for uart, see nextreg 0xa0" to 0x153B bit 6,
+and if that gated the joystick path the change list would have been incomplete. It does not:
+`pi_uart_en` is not a term of `uart1_rx <= joy_uart_rx when …` (`zxnext.vhd:3341`) and is scoped
+entirely to `pi_uart_rx`/`pi_uart_cts_n`/`gpio_14..17` — the **else** branch, i.e. the physical
+header. Nothing about NR `0xA0` has to be touched.
+
+**Two smaller findings, both confirming rather than moving the design.** The RX engine is
+unconditionally clocked and has no clock-enable at all — `i_CLK => i_CLK_28`, `i_reset_hard => '0'`,
+and `uart_rx`'s state machine free-runs (`zxnext.vhd:3363`, `:3366-3367`;
+`serial/uart_rx.vhd:219-224`) — which answers §8.11's second falsifier, the one named as able to
+collapse the whole design. And the mux enumeration is complete at **eight** signals: bit 0 = 1
+forces `uart1_tx_pi` idle and `pi_uart_rtr_n` "not ready" — the exact mirror of what bit 0 = 0 does
+to the ESP — while GPIO *direction* is gated only on `pi_uart_en` and is unaffected either way
+(`zxnext.vhd:3340-3350`, `:2323-2326`).
+
+**What was built.** `TRANSPORT_DEACTIVATE` keeps io mode on when `uart_joyport_selection` is 2 and
+clears it otherwise (**+7 bytes**, the only real cost); `transport_activate` writes bit 0 = 1 on
+**both** ports, so the ESP is no longer disturbed even transiently — a small improvement on today,
+where either port idled the module's TX for as long as the debugger held the machine;
+`transport_init` selects UART1 first; `show_ui` gains a row-7 line, `PC break: ready` or
+`PC break: needs Joy 2`, in the UART-only text block; `ut_uart` gains `UT_transport_deactivate` and
+its `UT_transport_activate` assertions move to the new NR `0x0B` values.
+
+**THE EVIDENCE LADDER, AND THE TOP TWO RUNGS ARE EMPTY.**
+
+| | |
+|---|---|
+| assembles, ROM 8192 bytes, in-source `ASSERT`s | **run** |
+| **the WiFi ROM is byte-identical** to `main`'s, pinned — so nothing leaked across the transport boundary | **run**, `194ac424…` both sides |
+| `make check-reproducible`, both variants | **run** |
+| `make test` — T1-T9 against the **UART** ROM, T9 driving `mf_nmi_poll` → `transport_poll_traffic` ~400 times per run | **run, 9/9** |
+| `make test-unit` — 5/5, 28 of 67 run | **run**, but see below |
+| `UT_transport_activate` / `UT_transport_deactivate` — the only checks that assert the NR `0x0B` values and the resume-path behaviour | **NOT RUN.** Both read a register back through `in a,(4)`, a port `src/simulation/uart.js` invents, so the marker rule excludes them headless. They run only under DeZog + zsim in VS Code, which is a manual layer nothing here drives |
+| **a byte arriving on the cable while a debuggee runs — i.e. the feature** | **NOT RUN, AND NOT RUNNABLE HERE.** §8.7 |
+
+**So the thing this change exists to do has been demonstrated nowhere.** `make test`'s T9 shows the
+poll runs every frame against the UART ROM and declines correctly, which is the half that was
+already true; what no bench here can produce is the *stimulus*. §8.7 gives the reason and it has not
+changed: there is no CLI route into `inject_joy_uart_rx`, and using `--esp` as a stand-in for a cable
+would be green even against a completely wrong mux.
+
+**AND `TRANSPORT_DEACTIVATE` IS NOT REACHED BY ANY HEADLESS RUN AT ALL**, which is worth separating
+out because it is the one line whose behaviour actually changed. It runs only from
+`restore_registers`, which is reached only from `cmd_continue`, which needs a DZRP client — and
+**no bench anywhere has ever driven the UART transport with one**, in jnext or on hardware (plan
+§M1: "nothing here can drive that transport headless"; the hardware bench is `NEXT_IP` and WiFi-only).
+Its logic is asserted by `UT_transport_deactivate` and that case cannot run headless either. The
+honest statement is that this change is **carried by inspection and by the unchanged benches not
+regressing**, and that its acceptance test is a serial cable on a real Next.
+
+**The precedent that cuts the other way, and it is this project's own.** Issue #16 *declined* a fix
+because `AT+CIPCLOSE=<id>` existed in no bench, which would have meant shipping Z80 nothing could
+execute (MEMORY.md 2026-08-05). This is not that: the Z80 here is executable and mostly already
+executed — `transport_poll_traffic` runs ~400 times in every T9 run today. What is missing is a
+stimulus a human with a cable can supply in a minute. That is a weaker gap than #16's, and it is
+still a gap.
 
 This document, the plan and the HOWTO all say asynchronous break is a WiFi-mode feature. The
 mechanism they give for that has always been cited correctly. **What was underclaimed is whether it
@@ -996,7 +1074,15 @@ CLI-attachable serial device routed through `inject_joy_uart_rx`, gated on `joy_
 2. `transport_activate` writes **`10110001b`** — UART1 on joy port 2, §8.3's decision — and
    `transport_init` selects the matching channel in its `UART_SELECT` write. **Zero bytes** for the
    first (a changed immediate) and zero for the second, and it carries the whole of §8.3's argument.
-   The port-1 encoding (`10100000b`) has no async-break form, per §8.3's second consequence.
+   ~~The port-1 encoding (`10100000b`) has no async-break form, per §8.3's second consequence.~~
+
+   **ANNOTATED AS BUILT — both halves of this item moved; see §8.0.** The select write is zero bytes
+   *and a reorder*, because the frame and prescaler registers are per-channel and were being written
+   before the select. And **port 1 became `10100001b` rather than staying `10100000b`**: it has no
+   async-break form, which is what §8.3 decided and is unchanged, but there is no reason for it to go
+   on severing the ESP while the debugger holds the machine either. Bit 0 = 1 on both ports means
+   `transport_activate` no longer disturbs the module at all, on any selection, and the port-2-only
+   restriction is carried entirely by `TRANSPORT_DEACTIVATE` — one place instead of two.
 3. Both polls save, force and restore `0x153B` — §8.5, wanted in the WiFi build too, and the honest
    estimate is 15-20 bytes rather than 8, since it must also read NR `0x0B` to know which channel to
    force.
@@ -1011,8 +1097,13 @@ NR `0x0B`, and `transport_activate` is idempotent.
 
 ### 8.9 What this section does NOT establish
 
-- **That any of it works.** Nothing has run. The Z80 half could be probed today; the mux half cannot
-  be, until jnext gains §8.7's hook.
+- **That any of it works.** ~~Nothing has run.~~ **BUILT 2026-08-12 and the benches are green, which
+  is a much weaker statement than it sounds — see §8.0's ladder.** What has run is everything that
+  was already true: the poll, the entry and exit choreography, T1-T9 against the UART ROM. What has
+  run **nowhere** is a byte arriving on the cable while a debuggee is running, and
+  `TRANSPORT_DEACTIVATE` — the one line whose behaviour changed — is reached by no headless run at
+  all, because it needs a DZRP client on the serial transport and nothing here has ever been one.
+  The mux half needs §8.7's jnext hook; the whole feature needs a cable on a real Next.
 - **Anything about a real Next.** And the precedent to keep in mind is this project's own:
   `doc/CONFIG-MODE-ROM-REPLACEMENT.md` was a five-times-reviewed VHDL analysis, correct in every
   mechanical claim, and defeated by a **NextZXOS runtime** fact no VHDL line could show. "Confirmed in
@@ -1029,6 +1120,12 @@ NR `0x0B`, and `transport_activate` is idempotent.
 
 | Claim | Tier |
 |---|---|
+| **0x133B, 0x143B and 0x163B are all PER-CHANNEL**, selected by 0x153B bit 6 at the instant of access — so the select must be written before the frame register | **verified** — `serial/uart.vhd:293-306`, `:311-330`, `:335-372`, `:387-388`, `:572-573` |
+| **0x163B's `0x18` default is restored only by `i_reset_hard`, which is tied to the constant `'0'`** — so no guest-causable reset ever restores it | **verified** — `serial/uart.vhd:296-299` against `zxnext.vhd:3367` |
+| **NR `0xA0` does NOT gate the joystick-routed `uart1_rx`** — `pi_uart_en` is not a term of that mux | **verified** — `zxnext.vhd:3341` against `:2278-2333`; corrects the natural reading of `ports.txt:373` |
+| **UART1's RX engine is unconditionally clocked**, with no clock-enable anywhere, and is stalled only by `i_reset` or the frame register's own bit 7 | **verified** — `zxnext.vhd:3363`, `:3366-3367`; `serial/uart.vhd:38-42`; `serial/uart_rx.vhd:219-224`. Answers §8.11's second falsifier |
+| Bit 0 = 1 forces `uart1_tx_pi` idle and `pi_uart_rtr_n` not-ready — the mirror of what bit 0 = 0 does to the ESP — and GPIO **direction** is unaffected either way | **verified** — the eight muxes at `zxnext.vhd:3340-3350`; `:2323-2326` against `:2328-2331` |
+| In io mode both connectors are sampled alternately, so the core is symmetric and either could carry RX | **verified** — `input/md6_joystick_connector_x2.vhd:106-117`, `:180-195`. **But the DB9 wiring is not in the VHDL**, and upstream's own `transport_activate` comment says "RX = PIN 9 Joystick 2" — so whether port 1 can receive at all is **unverified** and only hardware can say |
 | Both UARTs' joy routing share `joy_iomode_uart_en`; NR `0x0B` = 0 severs both | **verified**, VHDL — `zxnext.vhd:3536`, `:3340-3341`, sole assignments and sole uses |
 | Bit 7+5 enable, bit 4 connector, bit 0 channel | **verified** — `zxnext.vhd:3538-3539`, `:5201-5203` + `nextreg.txt:198-202` |
 | UART1 has a 512-byte RX FIFO and an identical one-read status bit | **verified** — `serial/uart.vhd:419`, `:604`, `:365-376` |
@@ -1054,9 +1151,15 @@ NR `0x0B`, and `transport_activate` is idempotent.
 1. **A term missed in the mux.** The kill-shot rests on two signals having one assignment each and
    two uses between them. A board revision wiring `i_JOY_*` or a UART RX differently changes the
    analysis for that revision — `_issue2` and `_issue5` are unread.
-2. **The RX engine not being clocked while the debuggee runs.** `uart_mod` is unconditionally
-   instantiated and nothing traced gates `uart_rx`, but a clock-enable or reset not followed would
-   collapse the whole thing. Check what drives `reset` in that port map.
+2. ~~**The RX engine not being clocked while the debuggee runs.**~~ **CHECKED 2026-08-12 AND IT IS
+   NOT A FALSIFIER.** The port map was read as this item asks: `i_CLK => i_CLK_28` (the core clock, a
+   top-level pin), `i_reset => reset` where `reset <= i_RESET`, and `i_reset_hard => '0'`, a hardwired
+   constant (`zxnext.vhd:3363`, `:3366-3367`, `:1730`). Neither the `uart` entity nor `uart_rx`/
+   `uart_tx` has a clock-enable port at all, and `uart_rx`'s state machine free-runs on every clock
+   edge, forced to `S_PAUSE` only by `i_reset` or the frame register's own bit 7
+   (`serial/uart.vhd:38-42`, `serial/uart_rx.vhd:219-224`) — and bit 7 is ours to write. So the
+   receiver is running whatever the debuggee does, short of resetting the machine, which is state 7
+   of the HOWTO rather than a falsifier.
 3. **§8.4 being optimistic on silicon** — a free connector reading garbage in io mode makes the trade
    much worse than the table says.
 4. **A NextZXOS-runtime fact**, per §8.9. This is the failure mode with precedent in this repository.

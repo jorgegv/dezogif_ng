@@ -410,8 +410,14 @@ UT_HL_FILES  = $(wildcard $(SRC)/unit_tests/headless/*) $(UT_ASM_FILES) $(UT_GEN
 # test_get_response and are therefore excluded BY THE MARKER RULE rather than by
 # choice. The number that RUN is unchanged at 28: that issue's headless coverage
 # went into UT_get_cmd_pointer, which is an existing case and adds none.
-UT_EXPECTED_TESTS   = 66
-UT_EXPECTED_SKIPPED = 38
+#
+# 66/38 until UART-mode asynchronous break added ut_uart.UT_transport_deactivate,
+# which reads NR 0x0B back through `in a,(4)` and so is excluded by that same
+# marker rule. The number that RUN is again unchanged at 28 — and that is the
+# whole reason this change's headless evidence is `make test`'s T6-T9 against the
+# UART ROM rather than a unit test.
+UT_EXPECTED_TESTS   = 67
+UT_EXPECTED_SKIPPED = 39
 
 MAIN_BIN    = $(OUT)/main$(VARIANT_SUFFIX).bin
 MF_NMI_BIN  = $(OUT)/mf_nmi$(VARIANT_SUFFIX).bin

@@ -176,8 +176,9 @@ corrupts the program being debugged.
 
 *This section describes **WiFi mode**. UART mode is upstream's architecture unchanged — the same
 diagram with the ESP box replaced by the joy-port cable — and §4.2's TCP/server discussion has no
-counterpart there. §4.3 is the interesting difference: PC-initiated break is absent from UART mode
-for a concrete reason, not by choice. Upstream hands the joy ports back to the debuggee before
+counterpart there. ~~§4.3 is the interesting difference: PC-initiated break is absent from UART mode
+for a concrete reason, not by choice.~~* ***CORRECTED 2026-08-12: IT WAS ABSENT BY CHOICE — OURS —
+AND IT IS NOW BUILT FOR JOY PORT 2.*** *Upstream hands the joy ports back to the debuggee before
 resuming it — `backup.asm` writes `REG_JOYSTICK_IO_MODE,0` — which clears `joy_iomode_uart_en`
 (`zxnext.vhd:3536`) and so re-points UART0's RX **away from the joystick pin and onto the ESP-01
 pin** (`zxnext.vhd:3340`: `uart0_rx <= joy_uart_rx when joy_iomode_uart_en = '1' ... else
@@ -185,6 +186,16 @@ i_UART0_RX`). The PC's cable is on the joystick pin, so while the debuggee runs 
 nowhere to land. WiFi mode never touches that register, UART0 stays on the ESP-01 pin
 permanently, and that is exactly why a byte from the PC can reach it at any time — which is what
 makes the break reachable.*
+
+*Every citation above stands; the **inference** from them did not. That write is a four-byte
+`nextreg` in a macro with one call site, entirely inside this project's control, and the serial
+build's poll was already present and already correct — so what looked like an architectural
+constraint was a line of ours. On joy port 2 `TRANSPORT_DEACTIVATE` no longer clears the register,
+and the joystick pin is routed to **UART1** (NR `0x0B` bit 0 = 1) rather than UART0, which is what
+keeps the ESP-01's own TX and RTR out of io mode's way. Port 1 keeps the old behaviour on purpose,
+so the debugged program has a connector for a real joystick. **Not shown to work anywhere**: no
+bench here can put a byte on that cable. See
+[ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md) §8, and §8.0 for the evidence ladder.*
 
 ```
    PC (dev machine)                        ZX Spectrum Next (real hardware)
@@ -336,9 +347,9 @@ it:
 | Area | dezogif | This project |
 |---|---|---|
 | Transport | Serial on joy port | **Either**, chosen at assembly time: serial as upstream, or **ESP-01 WiFi, TCP** |
-| Joysticks | Taken over while stopped | **Never touched** in WiFi mode; as upstream in UART mode |
+| Joysticks | Taken over while stopped | **Never touched** in WiFi mode; in UART mode the chosen port is held permanently on joy 2 (async break) and as upstream on joy 1 |
 | Cable | D-SUB 9 + USB serial adapter | **None** in WiFi mode; as upstream in UART mode |
-| PC-initiated pause | **Impossible** | **Yes** (Copper NMI poll), WiFi mode |
+| PC-initiated pause | **Impossible** | **Yes** (Copper NMI poll). WiFi mode, and UART mode on **joy port 2** since 2026-08-12 — untested there, see design doc §8.0 |
 | Breakpoint while running | Impossible | Yes, follows from the above |
 | Bootstrap | `enNextMf.rom` | Same |
 | Memory choreography | slot 7 MAIN / slot 6 SWAP / AltROM | Same |
@@ -914,17 +925,26 @@ Named DeZog remote type; contribute the transport abstraction back to dezogif if
    wasted poll that returns immediately. See
    [ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md) §3.3.
 6. Is Maziac interested in the transport work upstream, or is a permanent fork the honest plan?
-7. **Is asynchronous break reachable in UART mode too?** The mux routes UART0's RX to the ESP-01
-   pin (`i_UART0_RX`) whenever `joy_iomode_uart_en` is `'0'` — which is the state a UART-mode
-   build leaves behind while the debuggee runs, since it clears NR `0x0B` to give the joysticks
-   back (§4, `backup.asm`). So the ESP pin is the live RX source even in a serial build. Whether
-   that is *exploitable* is unverified and deliberately not claimed: the ESP-01 needs bring-up
-   before it forwards anything, its baud would have to match what the serial build leaves the
-   peripheral at, and nothing polls the RX FIFO while the debuggee runs in UART mode. Worth a
-   spike, not a design decision.
+7. ~~**Is asynchronous break reachable in UART mode too?**~~ **ANSWERED YES, 2026-08-12, AND BUILT
+   FOR JOY PORT 2 — BUT BY A DIFFERENT ROUTE THAN THIS QUESTION PROPOSED.** The answer is not to
+   exploit the ESP pin at all; it is to **stop clearing NR `0x0B` on resume** and to route the
+   joystick pin to **UART1** (bit 0 = 1) so that doing so leaves the ESP-01's own TX and RTR
+   untouched. The cable's bytes reach the machine through the joystick pin, exactly as they do while
+   the debugger is stopped — no ESP bring-up, no baud coincidence, and the poll that reads them
+   (`transport_poll_traffic`) was already present and already correct. Port 2 only, so the debugged
+   program keeps a connector for a real joystick. **What is NOT established is that it works**: no
+   bench here can put a byte on that cable. See
+   [ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md) §8, and §8.0 for the evidence ladder.
+
+   *The route this question actually asked about — the ESP pin being the live RX source in a serial
+   build — is **still unexplored and is now moot**, since it was only ever attractive while NR `0x0B`
+   looked immovable. Its three obstacles as stated (bring-up, baud, nothing polling) all stand.*
 
 Note on question 7: the hardware fact is cited, the opportunity is not. Do not promote it to a
 design assumption without measuring it — see ERRORS.md on what deriving instead of reading costs.
+*(That note was written about the ESP-pin opportunity and it held: the opportunity was never
+measured, and what replaced it was a different mechanism read out of the same mux. The caution
+applies unchanged to the built one, which no run anywhere has exercised.)*
 
 ---
 

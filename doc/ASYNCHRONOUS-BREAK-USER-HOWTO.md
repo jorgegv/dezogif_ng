@@ -110,13 +110,31 @@ is running at.
 
 ## When it will not work
 
-Five states, in rough order of how likely they are to be met. None of them damages anything: in
+Seven states, in rough order of how likely they are to be met. None of them damages anything: in
 each, Pause simply does nothing until the state passes, and the M1 button always still works.
 
-**1. UART (serial) builds.** In practice this is a **WiFi-mode feature**. A serial build hands
-the joy ports back to the program when it resumes, which re-points UART0's receive line away
-from the joystick pin the cable is on — so the PC's bytes have nowhere to land while the
-program runs. The poll fires and finds nothing. Use the WiFi ROM.
+**1. A UART (serial) build with the cable on joy port 1.** Over a cable the break works on
+**joy port 2 only** — the stub's screen says which you have, on the line under the port
+selection: `PC break: ready` or `PC break: needs Joy 2`. Press **2** on the stub's screen and
+put the cable in the right-hand connector.
+
+The reason it is one port and not both is that the port selector is what decides whether the
+cable's receive line stays connected while your program runs, and the connector holding the cable
+cannot also hold a joystick. Port 2 keeps the line live so a Pause can land; **port 1 is left
+alone so that the debugged program gets a real joystick on the left connector**, which is the more
+useful thing to have there. See ASYNCHRONOUS-BREAK-DESIGN.md §8.3.
+
+**Joystick caveat, and it applies to both ports and to WiFi mode too.** While the debugger holds a
+joy port, **Kempston (port `0x1F`) and MD (port `0x37`) reads keep working on both connectors** —
+so a game reading Kempston on port 1 has a working stick. But **Sinclair, Cursor and user-defined
+joystick types produce nothing**, on either connector, because the keyboard-key injection those
+types rely on is switched off for the whole register. A game using those cannot be given a working
+joystick by any port choice.
+
+*(**This state read "UART builds — in practice this is a WiFi-mode feature. Use the WiFi ROM"
+until 2026-08-12.** That was true of the code and was never a property of the machine: the poll
+already existed in the serial build and was already correct, and the one thing stopping it was
+four bytes of ours that severed the cable's receive line on every resume. See the design doc §8.2.)*
 
 **2. While the machine is inside an esxDOS / DivMMC call.** Any live DivMMC automap session
 blocks **every** Multiface NMI for its whole duration — the poll and the M1 button alike. Not
@@ -137,6 +155,19 @@ program, this is under its control: restart the list and the break comes back wi
 **5. While `.mfinstall` is writing a ROM.** Config mode suppresses every Multiface NMI while it
 is active. It is a window of milliseconds and it self-recovers.
 
+**6. If the program writes NR `0x0B` (serial builds), or port `0x153B` (either build).** Both take
+the debug link out from under the poll. NR `0x0B` is the joystick i/o mode: clearing it disconnects
+the cable's receive line, which is exactly what the debugger stopped doing to make the break work.
+Port `0x153B` chooses which of the machine's two UARTs those reads refer to, so pointing it at the
+other one leaves the poll reading a channel nothing is arriving on. Either one kills the break
+**silently**, and the M1 button is the way back. A program that wants its own UART or its own
+joystick i/o mode can have them; it cannot have them and PC-initiated break at the same time.
+
+**7. After a reset, until the next M1 press (serial builds).** Any reset puts NR `0x0B` back to
+disabled (`zxnext.vhd:4939-4941`), so the cable's receive line is disconnected again and Pause
+stops working. The debugger re-arms it the next time it takes control, so one M1 press is the
+whole cure. The same shape as state 3, and with the same tell: nothing says why.
+
 ## How to tell it is working
 
 Press Pause and look at the PC, not at the Next — there is deliberately nothing to see on the
@@ -149,6 +180,7 @@ machine:
 - DeZog reports the stop as **`Manual break`**, the same reason an M1 press gives. DZRP has no
   break reason meaning "the PC asked".
 
-If Pause does nothing: check that the WiFi ROM is the one running (state 1), that the two
-instructions really are in the list, and that NR `0x06` bit 3 has not been cleared (state 3).
-Then press M1, which always works.
+If Pause does nothing: on a **serial** build check the stub's screen reads `PC break: ready`
+rather than `PC break: needs Joy 2` (state 1), and that nothing has reset the machine since the
+last M1 press (state 7). On **either** build, check the two instructions really are in the list,
+and that NR `0x06` bit 3 has not been cleared (state 3). Then press M1, which always works.

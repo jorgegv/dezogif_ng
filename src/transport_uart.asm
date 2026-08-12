@@ -26,20 +26,45 @@
 ; TRANSPORT_DEACTIVATE — the debugger is about to resume the debuggee.
 ;
 ; The joy ports were taken over for the serial link while the debugger had the
-; machine; this hands them back. Clearing NR 0x0B is also what re-points
-; UART0's RX away from the joystick pin and onto the ESP-01 pin
-; (zxnext.vhd:3340, :3536) — which is why a byte from the PC cannot arrive
-; while the debuggee runs in this mode. See plan §4.
+; machine; this hands them back. Clearing NR 0x0B is also what re-points the
+; UART's RX away from the joystick pin (zxnext.vhd:3341, :3536) — which is why
+; a byte from the PC could not arrive while the debuggee ran in this mode.
+;
+; ON JOY PORT 2 IT NO LONGER CLEARS IT, AND THAT IS ASYNCHRONOUS BREAK IN UART
+; MODE. Leaving io mode on keeps the joystick pin wired to UART1's receiver
+; while the debuggee runs, so a CMD_PAUSE from the PC lands in a FIFO that
+; mf_nmi_poll's transport_poll_traffic can see. The poll and the Copper
+; machinery are M2's and unchanged; the only thing that ever stopped them
+; working over a cable was this macro. See doc/ASYNCHRONOUS-BREAK-DESIGN.md §8.
+;
+; PORT 1 STILL CLEARS IT, AND THE ASYMMETRY IS DELIBERATE (user, 2026-08-12):
+; the enable is global and the mode field names exactly one connector, so the
+; cable and a real joystick cannot share a port. Keeping port 1's old behaviour
+; is what leaves that connector free for the debugged program's own joystick —
+; Kempston and MD reads survive io mode, so a game using those really does get
+; a working stick there. It also means asynchronous break exists only on the
+; port-2 selection, which show_ui and the HOWTO both say.
 ;
 ; A macro rather than a subroutine: the single caller is inline in
-; backup.asm's restore path, where a CALL would cost bytes and a stack slot it
-; does not have. A transport with nothing to hand back expands this to nothing.
+; backup.asm's restore path, and a transport with nothing to hand back expands
+; this to nothing rather than paying for a CALL and a RET.
+;
+; The registers are free here. This runs in restore_registers immediately after
+; `call transport_flush` — which itself changes AF and BC — and before
+; `ld sp,backup.r`, so every one of the debuggee's values is still on the stack
+; and is popped afterwards. Nothing this touches is live.
 ; Changes:
-;   -   (NEXTREG reg,imm is ED 91 nn nn; it touches no Z80 register)
+;   AF
 ;===========================================================================
     MACRO TRANSPORT_DEACTIVATE
+    ; Joy port 2 keeps io mode, so the PC can still break in. Anything else
+    ; hands the port back and gives up the break with it.
+    ld a,(uart_joyport_selection)
+    cp 2
+    jr z,.transport_deactivate_keep
     ; Disable joy port IO mode to enable the joysticks
     nextreg REG_JOYSTICK_IO_MODE,0
+.transport_deactivate_keep:
     ENDM
 
 
@@ -331,6 +356,16 @@ transport_wait_rx:
 ; prgm_state question first so that this is never touched while the debugger is
 ; using the link itself.
 ;
+; THIS IS REACHED WITH A DEBUGGEE RUNNING NOW, WHICH IT WAS NOT BEFORE. Until
+; TRANSPORT_DEACTIVATE stopped clearing NR 0x0B on joy port 2, the RX source was
+; severed before the poll could ever see a byte, so this half of asynchronous
+; break was shipping dead code. It reads whichever channel 0x153B selects, which
+; transport_init points at UART1 — and NOTHING HERE PROTECTS THAT SELECT, so a
+; debuggee that writes 0x153B for its own peripheral redirects this read to the
+; other channel and silently blinds the break. That is not a cost of the UART
+; work: transport_esp.asm's poll has the identical exposure and ships today.
+; See doc/ASYNCHRONOUS-BREAK-DESIGN.md §8.5.
+;
 ; Returns:
 ;   NZ = Byte available
 ;   Z = No byte available
@@ -523,20 +558,45 @@ transport_flush:
 ; The baudrate timings depend on the video timings in register 0x11.
 ; They don't depend on video mode being 50 or 60 Hz.
 ; Sets also 8 bit mode.
+;
+; WE USE UART1, THE "PI" UART, AND NOT UART0 — and that is what makes
+; asynchronous break possible in this mode. NR 0x0B bit 0 chooses which UART
+; the joystick pin feeds, and with bit 0 CLEAR the same io mode holds the
+; ESP-01's TX line idle and de-asserts its RTR (zxnext.vhd:3343, :3349). So a
+; build that left io mode on with bit 0 clear — which is what buys the break —
+; would sever the ESP for the whole session, for precisely the population the
+; UART build exists to serve. Bit 0 SET leaves both those signals alone.
+; See doc/ASYNCHRONOUS-BREAK-DESIGN.md §8.3.
+;
+; THE SELECT MUST BE WRITTEN BEFORE THE FRAME REGISTER, AND THAT ORDER IS
+; LOAD-BEARING. Every one of 0x133B, 0x143B and 0x163B acts on whichever
+; channel 0x153B bit 6 selects at the instant of the access
+; (serial/uart.vhd:293-306 frame, :311-330 prescaler LSB, :335-372 the read
+; mux) — they are two independent sets of registers, not one. Written the other
+; way round, the frame byte lands on UART0 and UART1 keeps whatever it had.
+; It would LOOK right, because 0x163B's documented default is 0x18 and that is
+; exactly the value we write — but that default is restored only by
+; `i_reset_hard`, which zxnext.vhd:3367 ties to the constant '0' ("hard_reset
+; done by core load"). So NO reset a guest can cause ever puts it back, and a
+; program that had configured UART1 differently would leave us running at its
+; frame settings. Verified rather than assumed; see the design doc §8.
+;
 ; Returns:
 ;  -
 ; Changes:
 ;  A, BC, DE, HL
 ;===========================================================================
 transport_init:
+    ; Select UART1 (bit 6) and clear prescaler MSB (bit 4 = these bits are
+    ; being written). This comes FIRST: it is what makes the two writes below
+    ; land on UART1 rather than on the ESP's channel.
+    ld bc,UART_SELECT
+    ld a,01010000b
+    out	(c),a
+
     ; Set 8 bit
     ld bc,UART_FRAME
     ld a,00011000b   ; 8 bit
-    out	(c),a
-
-    ; Select UART and clear prescaler MSB
-    ld bc,UART_SELECT
-    ld a,00010000b
     out	(c),a
 
     ; Get display timing
@@ -566,11 +626,28 @@ transport_init:
 
 
 ;===========================================================================
-; Sets up the ESP UART at joystick port.
+; Sets up the UART at a joystick port.
 ; TX = PIN 7 both joystick ports
 ; RX = PIN 9 Joystick 2
 ; These pins are not used on normal Joystick.
 ; Only for Sega Genesis controller which cannot be used.
+;
+; BIT 0 IS SET ON BOTH PORTS, AND IT IS THE WHOLE OF WHY ASYNCHRONOUS BREAK IS
+; REACHABLE HERE. It routes the joystick pin to UART1 instead of UART0, which
+; leaves the ESP-01's TX and RTR lines untouched (zxnext.vhd:3343, :3349, both
+; conditioned on bit 0 = 0). That matters twice over: it is what lets
+; TRANSPORT_DEACTIVATE leave io mode ON across a resume — see there — and it
+; also means this routine no longer disturbs the ESP AT ALL, where before it
+; idled the module's TX line for as long as the debugger held the machine, on
+; either port. See doc/ASYNCHRONOUS-BREAK-DESIGN.md §8.3, and transport_init
+; for the matching channel select.
+;
+; What it costs instead is the Raspberry Pi header UART, whose TX is idled and
+; whose RTR is de-asserted while io mode is on (zxnext.vhd:3344, :3350) — far
+; rarer on a real Next than the ESP, and only if NR 0xA0 has configured it.
+; NR 0xA0 is NOT a precondition for the joystick routing itself: it is not a
+; term of the uart1_rx mux (zxnext.vhd:3341), so nothing has to be set up here.
+;
 ; Parameters:
 ;  uart_joyport_selection:
 ;     0x0=00b => no joystick port used
@@ -585,13 +662,13 @@ transport_activate:
     dec a
     jr nz,.joy_port_cont
     ; Joy port 1 selected
-    nextreg REG_JOYSTICK_IO_MODE,10100000b  ; Left joy port
+    nextreg REG_JOYSTICK_IO_MODE,10100001b  ; Left joy port, UART1
     ret
 .joy_port_cont:
     dec a
     jr nz,.joy_port_none
     ; Joy port 2 selected
-    nextreg REG_JOYSTICK_IO_MODE,10110000b  ; Right joy port
+    nextreg REG_JOYSTICK_IO_MODE,10110001b  ; Right joy port, UART1
     ret
 .joy_port_none:
     ; No joy port selected

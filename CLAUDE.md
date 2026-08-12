@@ -94,10 +94,19 @@ to work.
 - **@doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md** — the user's half of M2: the 44 bytes a program adds
   to make itself breakable from DeZog's Pause, what the poll costs (**1288 T-states/frame**,
   measured; the plan estimate it retired was 6-13× low, which is recorded in the design doc §5
-  rather than here), and the five states in which the break
-  will not fire. Read it before answering "why does Pause do nothing" — the first of the five is
-  that this is a **WiFi-mode feature in practice**, and the second is that esxDOS file I/O
+  rather than here), and the **seven** states in which the break
+  will not fire. Read it before answering "why does Pause do nothing" — the first of the seven is
+  a **serial build with the cable on joy port 1**, and the second is that esxDOS file I/O
   suppresses it.
+  **IT IS NO LONGER A WiFi-MODE FEATURE, AND THIS LINE SAID IT WAS UNTIL 2026-08-12.** Over a cable
+  it works on **joy port 2**, which the stub's own screen reports on the row under the port
+  selection (`PC break: ready` / `PC break: needs Joy 2`). The blocker was never the machine: the
+  serial build's `transport_poll_traffic` already existed and was already correct, and
+  `TRANSPORT_DEACTIVATE` — four bytes with one call site — severed the cable's RX on every resume.
+  Port 2 only, deliberately, so the debugged program keeps a real joystick on port 1. **What is NOT
+  established is that it works**: no bench here can put a byte on that cable, and
+  `TRANSPORT_DEACTIVATE` is reached by no headless run at all, so the acceptance test is a serial
+  cable on a real Next. See doc/ASYNCHRONOUS-BREAK-DESIGN.md §8.0 for the evidence ladder.
 - **@KNOWN-ISSUES.md** — faults that are real, reproduced, understood and deliberately **WONTFIX**,
   each with what causes it, what does *not*, what to do about it, and what would reopen it. Read it
   before investigating odd behaviour on hardware: two of the states it describes look exactly like

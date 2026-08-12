@@ -67,8 +67,11 @@ UT_MANIFEST=${UT_MANIFEST:-$OUT/ut_headless/ut_manifest.txt}
 # statement of the same numbers, checked against what actually ran.
 # 64/36 until issue #41; its two new cases read a response back and so are
 # excluded by the marker rule, leaving UT_EXPECTED_RUN unchanged at 28.
-UT_EXPECTED_TESTS=66
-UT_EXPECTED_SKIPPED=38
+# 66/38 until UART-mode asynchronous break added ut_uart.UT_transport_deactivate,
+# which reads NR 0x0B back through `in a,(4)` and is excluded by the same rule —
+# UT_EXPECTED_RUN unchanged at 28 again.
+UT_EXPECTED_TESTS=67
+UT_EXPECTED_SKIPPED=39
 UT_EXPECTED_RUN=$((UT_EXPECTED_TESTS - UT_EXPECTED_SKIPPED))
 
 # jnext's magic debug port: guest writes appear on the emulator's stderr.

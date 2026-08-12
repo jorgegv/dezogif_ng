@@ -6,6 +6,10 @@ not work.**
 The design reasoning is in [ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md); it is
 not needed to use this.
 
+**Exception note:** Example code included in this document is an exception to the general license
+for this repository, and is explicitly licensed according to MIT License, on the terms specified
+in the NOTICE file at the root of the repository.
+
 ---
 
 ## What it gives you

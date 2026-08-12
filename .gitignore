@@ -2,6 +2,10 @@
 .DS_Store
 .vscode/settings.json
 .tmp/
+# make bump writes version.yaml through this and renames it into place. The
+# recipe removes it on every reachable failure, so this only catches the process
+# being killed between the write and the rename.
+/version.yaml.tmp
 *.list
 *.lst
 *.nex

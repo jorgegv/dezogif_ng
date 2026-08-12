@@ -488,9 +488,9 @@ DEPLOY_DOT   = $(DEPLOY)/dot
 # assembled by SJASMPLUS at a fixed address (0x5000) because it has to run from
 # somewhere that survives DivMMC being turned off, and a C function cannot be
 # relocated. It is then turned into a C array so the dot command carries it and
-# copies it there itself. `xxd -i` names the array after the FILE, so the binary
-# is copied to a file called `mfwin_bin` rather than the symbol being patched
-# afterwards.
+# copies it there itself, by tools/bin2c.py, which takes the array's name as an
+# argument. (It was `xxd -i -n` until `-n` turned out not to be portable; see
+# the $(MFWIN_H) rule.)
 #
 # IT IS THE ONE FILE ON THE CARD THAT DOES NOT GO IN /mfselect/. Dot commands
 # are looked up in /dot/ — checked on the reference SD image — while its ROMs
@@ -1397,7 +1397,6 @@ $(MFWIN_H): $(MFWIN_BIN) $(BIN2C) Makefile | $(OUT)
 	@mkdir -p $(MFWIN_INCDIR)
 	python3 $(BIN2C) mfwin_bin $(MFWIN_BIN) > $@
 	@echo '#define MFWIN_BIN_LEN mfwin_bin_len' >> $@
-	@rm -f $(MFWIN_INCDIR)/mfwin_bin
 
 # The dot command. -I finds the generated header; zcc leaves its intermediates
 # beside the -o basename, which is $(OUT), for the same reason mfselect's rule

@@ -815,10 +815,31 @@ header. Nothing about NR `0xA0` has to be touched.
 unconditionally clocked and has no clock-enable at all — `i_CLK => i_CLK_28`, `i_reset_hard => '0'`,
 and `uart_rx`'s state machine free-runs (`zxnext.vhd:3363`, `:3366-3367`;
 `serial/uart_rx.vhd:219-224`) — which answers §8.11's second falsifier, the one named as able to
-collapse the whole design. And the mux enumeration is complete at **eight** signals: bit 0 = 1
-forces `uart1_tx_pi` idle and `pi_uart_rtr_n` "not ready" — the exact mirror of what bit 0 = 0 does
-to the ESP — while GPIO *direction* is gated only on `pi_uart_en` and is unaffected either way
-(`zxnext.vhd:3340-3350`, `:2323-2326`).
+collapse the whole design. And bit 0 = 1 forces `uart1_tx_pi` idle and `pi_uart_rtr_n` "not ready" —
+the exact mirror of what bit 0 = 0 does to the ESP — while GPIO *direction* is gated only on
+`pi_uart_en` and is unaffected either way (`zxnext.vhd:3340-3350`, `:2323-2326`).
+
+**A COMPLETENESS CLAIM HERE WAS WRONG AND THE REVIEW CAUGHT IT.** This paragraph said the mux
+enumeration was "complete at eight signals" over `zxnext.vhd:3340-3350`. It is not: bit 0 is read
+again in the **TX-out** process at `:3518-3531`, which is what decides whose transmit waveform
+reaches the joystick's physical pin 7 —
+
+```vhdl
+when others =>                                  -- io mode, i.e. our two encodings
+   if nr_0b_joy_iomode_0 = '0' then
+      joy_iomode_pin7 <= uart0_tx;
+   else
+      joy_iomode_pin7 <= uart1_tx;
+```
+
+— reaching the pin through `o_JOY_IO_MODE_PIN_7` (`:1593`). **The direction of travel this whole
+section is about is RECEIVE, and the send half was never traced**, so a claim of completeness had no
+business being made. Traced now, by the reviewer and again here: it is **symmetric** with the RX mux,
+on the same bit, and both `10100001b` and `10110001b` land in that `when others` and take the
+`uart1_tx` branch. So the fix is correct and was correct — but it was correct by luck of symmetry
+rather than by anything checked, which in this project is the difference that matters. *(§8.4's table
+already said "TX = PIN 7 both joystick ports", inherited from upstream's own comment; that is where
+the send direction had been left, and it is a statement about connectors rather than about channels.)*
 
 **What was built.** `TRANSPORT_DEACTIVATE` keeps io mode on when `uart_joyport_selection` is 2 and
 clears it otherwise (**+7 bytes**, the only real cost); `transport_activate` writes bit 0 = 1 on
@@ -861,6 +882,21 @@ execute (MEMORY.md 2026-08-05). This is not that: the Z80 here is executable and
 executed — `transport_poll_traffic` runs ~400 times in every T9 run today. What is missing is a
 stimulus a human with a cable can supply in a minute. That is a weaker gap than #16's, and it is
 still a gap.
+
+**A SPURIOUS-BREAK SOURCE THIS SECTION HAD NOT NAMED**, found in review. `transport_init` selects
+UART1 permanently, whatever port is chosen. On the **port-1 and no-port** selections io mode is
+cleared on resume, and in that state `uart1_rx <= pi_uart_rx` (`zxnext.vhd:3341`, else branch) — so
+the poll is reading the **Raspberry Pi header**, and a device sending on it would break a debuggee in
+with nobody having asked. Narrow (Pi header hardware, plus a UART build, plus port 1 or none, plus a
+running debuggee, plus NR `0xA0` configured for it) and benign at worst — an unwanted stop, not
+corruption — and it is the same class as the accepted cost in §0: `transport_poll_traffic` is O(1) by
+contract and cannot tell a `CMD_PAUSE` from anything else that arrives.
+
+**It is a MOVE rather than a new exposure, which is worth stating precisely.** Before this change the
+poll read UART0, whose RX with io mode cleared is `i_UART0_RX` — **the ESP-01 pin**. So the same shape
+existed and pointed at the module instead; in practice nothing arrives from either, because the
+serial build never brings the ESP up and nothing here configures NR `0xA0`. Unstaged by any run, in
+either direction.
 
 This document, the plan and the HOWTO all say asynchronous break is a WiFi-mode feature. The
 mechanism they give for that has always been cited correctly. **What was underclaimed is whether it
@@ -1125,6 +1161,8 @@ NR `0x0B`, and `transport_activate` is idempotent.
 | **NR `0xA0` does NOT gate the joystick-routed `uart1_rx`** — `pi_uart_en` is not a term of that mux | **verified** — `zxnext.vhd:3341` against `:2278-2333`; corrects the natural reading of `ports.txt:373` |
 | **UART1's RX engine is unconditionally clocked**, with no clock-enable anywhere, and is stalled only by `i_reset` or the frame register's own bit 7 | **verified** — `zxnext.vhd:3363`, `:3366-3367`; `serial/uart.vhd:38-42`; `serial/uart_rx.vhd:219-224`. Answers §8.11's second falsifier |
 | Bit 0 = 1 forces `uart1_tx_pi` idle and `pi_uart_rtr_n` not-ready — the mirror of what bit 0 = 0 does to the ESP — and GPIO **direction** is unaffected either way | **verified** — the eight muxes at `zxnext.vhd:3340-3350`; `:2323-2326` against `:2328-2331` |
+| **The SEND direction is symmetric with receive**: in io mode the joystick's pin 7 carries `uart1_tx` when bit 0 = 1 and `uart0_tx` when it is 0, so both of our encodings transmit from UART1 | **verified** — `zxnext.vhd:3518-3531`, reaching the pin at `:1593`. **Found in review; §8.0's earlier claim that the enumeration was complete over `:3340-3350` was wrong**, and the send half had not been traced at all |
+| With port 1 or no port selected, the poll reads UART1 fed from the **Pi header**, so a device there could cause a spurious break | **verified** as a mechanism — `zxnext.vhd:3341` else branch — and **unstaged by any run**. A move rather than a new exposure: before this change the same shape pointed at the ESP-01 pin through UART0 |
 | In io mode both connectors are sampled alternately, so the core is symmetric and either could carry RX | **verified** — `input/md6_joystick_connector_x2.vhd:106-117`, `:180-195`. **But the DB9 wiring is not in the VHDL**, and upstream's own `transport_activate` comment says "RX = PIN 9 Joystick 2" — so whether port 1 can receive at all is **unverified** and only hardware can say |
 | Both UARTs' joy routing share `joy_iomode_uart_en`; NR `0x0B` = 0 severs both | **verified**, VHDL — `zxnext.vhd:3536`, `:3340-3341`, sole assignments and sole uses |
 | Bit 7+5 enable, bit 4 connector, bit 0 channel | **verified** — `zxnext.vhd:3538-3539`, `:5201-5203` + `nextreg.txt:198-202` |

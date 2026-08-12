@@ -775,3 +775,288 @@ The original recommendation follows for the record.
 > 5. measure the per-frame cost rather than inheriting the estimate (§5);
 > 6. document, for users: async break destroys the Copper, can be switched off by the debuggee
 >    silently, and a Copper-using program can instead carry the two instructions itself (§3.1).
+
+---
+
+## 8. UART MODE — IT IS ACHIEVABLE, THE BLOCKER IS OURS, AND THE ROUTING IS THE WHOLE OF THE DESIGN
+
+**Investigated 2026-08-12, before any code, and independently reviewed. Nothing in this section has
+run — not in jnext, which structurally cannot test the load-bearing half of it yet, and not on
+hardware.** It is VHDL and source analysis, at the tiers in the table at the end.
+
+This document, the plan and the HOWTO all say asynchronous break is a WiFi-mode feature. The
+mechanism they give for that has always been cited correctly. **What was underclaimed is whether it
+is fixable, and the answer is that it is, cheaply — but not by the obvious change.**
+
+### 8.1 The hypothesis that was tested, and disproved
+
+The Next has two UARTs. UART0 is wired to the ESP-01; UART1 can be redirected to the joystick port.
+UART1 is a UART, so it has an RX FIFO and a byte-available bit — so poll *that* and the serial build
+gets PC-initiated break too.
+
+**It does not work, and one line says why.** `zxnext.vhd:3536`:
+
+```vhdl
+joy_iomode_uart_en <= '1' when nr_0b_joy_iomode_en = '1' and nr_0b_joy_iomode(1) = '1' else '0';
+```
+
+That term appears in **both** UARTs' joy-port mux legs, `zxnext.vhd:3340-3341`:
+
+```vhdl
+uart0_rx <= joy_uart_rx when joy_iomode_uart_en = '1' and nr_0b_joy_iomode_0 = '0' else i_UART0_RX;
+uart1_rx <= joy_uart_rx when joy_iomode_uart_en = '1' and nr_0b_joy_iomode_0 = '1' else pi_uart_rx;
+```
+
+`joy_iomode_uart_en` has exactly one assignment and `joy_uart_rx` exactly one, with exactly those two
+uses — verified exhaustively by grep, twice, not spot-checked. So NR `0x0B` decomposes as: **bits 7
+and 5 are the enable, bit 4 picks the connector** (0 = left, 1 = right, `zxnext.vhd:3538-3539`),
+**and bit 0 picks which UART receives the pin** (`nextreg.txt:198-202` corroborates independently).
+`nextreg REG_JOYSTICK_IO_MODE,0` clears the enable and severs the pin from **both** UARTs at once.
+
+**UART1's FIFO was never the obstacle**, and it is not deficient in any respect: 512-byte RX and
+64-byte TX per channel, verified at the FIFO instantiations rather than only at the header comment
+(`serial/uart.vhd:419`, `:604`, `DEPTH_BITS => 9`; `:486`, `:671`, `DEPTH_BITS => 6`), one
+`in a,(0x133B)` gives the selected channel's byte-available bit (`:365-376`), and a status read
+clears only *that* channel's sticky overflow and framing bits, because the two falling-edge signals
+are disjoint and gated on the select (`:254-255`, `:265-266`).
+
+### 8.2 THE REAL BLOCKER IS `TRANSPORT_DEACTIVATE`, AND IT IS FOUR BYTES WITH ONE CALL SITE
+
+`src/backup.asm:62` invokes it on the resume path; `src/transport_uart.asm:39-42` is the whole of it:
+
+```asm
+    MACRO TRANSPORT_DEACTIVATE
+    nextreg REG_JOYSTICK_IO_MODE,0
+    ENDM
+```
+
+That is the entire reason a cable byte has nowhere to land while a debuggee runs. The macro's own
+header comment already says so and already cites `zxnext.vhd:3340`, `:3536` — **so the mechanism was
+never mis-recorded.** What was wrong is the framing elsewhere: the plan's §4.3 says PC-initiated
+break is absent from UART mode "for a concrete reason, not by choice", and this document's own §0
+cost list calls it a WiFi-mode feature in practice. Both read as an architectural constraint. It is
+a `nextreg` in a macro with one caller, entirely inside this project's control.
+
+**And the poll it would feed is already built and already correct.** `src/transport_uart.asm:339-345`:
+
+```asm
+transport_poll_traffic:
+transport_byte_available:
+    ld a,HIGH UART_TX
+    in a,(LOW UART_TX)
+    bit UART_RX_FIFO_EMPTY,a
+    ret
+```
+
+O(1), non-consuming, one routine under two labels, with a comment already citing the sticky-bit
+hazard. `mf_nmi_poll` (`src/mf.asm:232-273`) calls it with no `ROM_VARIANT` test, so the poll is
+already transport-agnostic. **The UART side of asynchronous break is shipping dead code**, unreachable
+only because the RX source is severed before it can ever see a byte.
+
+So the minimal change is **negative bytes** — it removes a four-byte `nextreg`.
+
+### 8.3 BUT THE MINIMAL CHANGE IS THE WRONG CHANGE: WITH BIT 0 CLEAR IT PERMANENTLY SEVERS THE ESP
+
+This is the finding that decides the design, and it was missed by the investigation and caught by its
+reviewer. `zxnext.vhd:3343`, `:3349`:
+
+```vhdl
+uart0_tx_esp   <= '1' when joy_iomode_uart_en = '1' and nr_0b_joy_iomode_0 = '0' else uart0_tx;
+esp_uart_rtr_n <= '1' when joy_iomode_uart_en = '1' and nr_0b_joy_iomode_0 = '0' else uart0_rx_rtr_n;
+```
+
+Both conditioned on **bit 0 = 0**, and traced through to the top-level ports that physically reach
+the module (`zxnext.vhd:1611-1612`, `zxnext_top_issue4.vhd:1917-1918`). While io mode is active with
+bit 0 clear, the line to the ESP-01's RX pin is **held idle and the module is told "not ready"**.
+
+**And bit 0 clear is exactly what we write.** `src/transport_uart.asm:588`, `:594`:
+
+```asm
+    nextreg REG_JOYSTICK_IO_MODE,10100000b  ; Left joy port
+    nextreg REG_JOYSTICK_IO_MODE,10110000b  ; Right joy port
+```
+
+Today that costs a debuggee nothing lasting, because io mode is only active while the debugger holds
+the machine and the debuggee gets the ESP back the moment it resumes — through the very
+`TRANSPORT_DEACTIVATE` §8.2 wants to stop calling. **Stop calling it and the loss becomes permanent,
+for the whole session, for precisely the population the UART build exists to serve.** `CLAUDE.md`'s
+risk table states that population outright: *"for a debuggee that owns the ESP, the serial ROM is the
+answer, not a workaround."* The cheap fix would take the answer away.
+
+**Routing to UART1 — bit 0 = 1 — leaves both signals untouched**, because both conditions are false
+when bit 0 is set. So the hypothesis in §8.1 picked the right lever and the wrong reason: UART1 is not
+better because of its FIFO, it is better because it is **the only routing that does not sever the
+ESP**. What it costs instead is the Raspberry Pi header UART, which is far rarer on a real Next than
+ESP-01 WiFi, and which a debuggee wanting one can still have by declining the feature.
+
+**DECIDED (user, 2026-08-12): UART1 ON THE SECOND JOYSTICK PORT, LEAVING THE FIRST FOR THE DEBUGGED
+PROGRAM.** So both halves of NR `0x0B` move away from what is written today, and the value is one bit
+from an encoding the stub already emits. Derived from the field decode at `zxnext.vhd:5201-5203`
+(`nr_0b_joy_iomode <= nr_wr_dat(5 downto 4)`, so that vector's bit 0 is register **bit 4**) together
+with `:3538` (`nr_0b_joy_iomode(0)` = 1 selects `i_JOY_RIGHT`) and `nextreg.txt:192-202`:
+
+```
+    10110001b       bit 7   = 1     enable i/o mode
+                    bits 5:4 = 11   uart on the RIGHT joystick port   (joy port 2)
+                    bit 0   = 1     redirect UART1 to the joystick    (leaves the ESP alone)
+```
+
+against today's `10110000b` for the right port — **bit 0, and nothing else.**
+
+**What the decision buys, and it is both halves of the problem at once.** Bit 0 = 1 keeps
+`uart0_tx_esp` and `esp_uart_rtr_n` out of the branch that idles them (§8.3), so a debuggee that owns
+the ESP is unaffected for the whole session. And the connector choice leaves **joy port 1 untouched
+hardware**, so a program reading Kempston there has a fully working joystick — which §8.4 shows was
+never gated on NR `0x0B` in the first place.
+
+**Two consequences to carry into the build.** The cable must be on **joy port 2**: the enable is
+global and the mode field names exactly one connector, so there is no configuration in which the
+cable is on port 1 and port 2 stays a UART. Since `uart_joyport_selection` already lets a user choose
+port 1, port 2 or neither, **asynchronous break in UART mode is available only on the port-2
+selection**, and the UI and the HOWTO have to say so. And the loss in §8.4 is now confined to what
+NR `0x0B` does globally — the keyboard-mapped joystick types and the MD extended buttons — rather
+than to a connector, which is a smaller statement than §8.4's table makes on its own.
+
+### 8.4 What leaving io mode on costs the debuggee, and it is less than this project assumed
+
+| | |
+|---|---|
+| Kempston (`0x1F`) and MD (`0x37`) port reads | **still work**, both connectors, directions and both fire bits |
+| Sinclair / Cursor / user-defined joystick types | **dead** — no keypresses injected |
+| MD 6-button extended buttons | **read as 0**, both connectors |
+| The connector carrying the cable | has a cable in it, not a joystick — nothing is lost |
+| Leaving io mode later | ~64 scan lines of dead joystick |
+
+The port decode is **not gated on NR `0x0B` at all** — `zxnext.vhd:3471-3494` mentions only NR `0x05`,
+and all 20 references to `nr_0b_joy_iomode*` in `zxnext.vhd` were enumerated to confirm none reaches
+that block. What io mode changes is the *content* of `i_JOY_LEFT`/`i_JOY_RIGHT`:
+`input/md6_joystick_connector_x2.vhd:108-109` forces the scan state's high bits, `:188-190` then
+publishes `"000000" & not joy_raw` — six raw bits kept, bits 11:6 zeroed. The keyboard-mapped types
+die at `input/membrane/membrane_stick.vhd:190`, fed from `zxnext_top_issue4.vhd:1855`
+(`i_joy_en_n => zxn_joy_io_mode_en`) — **a naming trap: an `_n` port driven by an active-high signal.
+The logic is right and the name is wrong.** All of it corroborated in words, independently of any
+VHDL trace, by `nextreg.txt:203-206`.
+
+**AND THE DEBUGGEE ALREADY LOSES THOSE WHILE THE DEBUGGER IS STOPPED.** `transport_activate` is called
+from `src/main.asm:194`, `src/mf.asm:148` and `src/breakpoints.asm:250` — every entry — and writes
+bit 7 whenever `uart_joyport_selection` is 1 or 2. So clearing NR `0x0B` on resume buys the debuggee
+its Sinclair/Cursor joystick back only *between* breaks. The ~64 scan lines
+(`nextreg.txt:206`) matter only if anyone ever makes the feature toggle-able rather than sticky.
+
+### 8.5 Two pre-existing defects found on the way, one of them in SHIPPED code
+
+**1. Neither poll protects the `0x153B` UART-select register — including the WiFi one that ships
+today.** `transport_poll_traffic` reads `0x133B` and never touches the select; the stub sets it once,
+in `transport_init`. A debuggee that writes `0x153B` to talk to a peripheral therefore redirects the
+poll to the other channel's status, silently. **This is not a cost of the UART fix**: the shipped
+`transport_esp.asm` poll does the identical raw `in` with no protection, so **a debuggee can blind M2's
+asynchronous break today**. It is unreachable in UART mode only because the poll cannot see a byte at
+all. `0x153B` is readable — bit 6 gives the select, and a write with bit 4 clear changes only the
+select and leaves both prescalers alone (`serial/uart.vhd:280-287`, `:355`, `:373`,
+`ports.txt:368-372`) — so save/force/restore is implementable, and it is wanted in **both** transports.
+
+**2. Any reset silently reverts NR `0x0B`.** `zxnext.vhd:4939-4941` resets
+`nr_0b_joy_iomode_en <= '0'`, `iomode <= "00"`, `iomode_0 <= '1'`. So a reset — the debugger's own `R`
+key, or one the debuggee causes — disarms the break until the debugger next takes control and
+`transport_activate` re-asserts it. That is the same silent-death shape §3.2 documents for NR `0x06`
+bit 3, and it belongs in the HOWTO's list of states in which the break will not fire. **The HOWTO is
+deliberately not edited here.**
+
+### 8.6 Still no UART path to NMI, so the Copper is still required
+
+`zxnext.vhd:1941-1944` puts both UARTs' RX requests in `im2_int_req`, the **maskable** IM2 bus;
+`nmi_activated` has exactly three terms and none is UART-derived (`:2093`, set at `:2107-2112`). §2's
+table is unchanged and the Copper remains the only periodic NMI source. Nothing in this section
+changes the debuggee's obligation to install the two Copper instructions.
+
+### 8.7 IT CANNOT BE TESTED IN jnext TODAY, AND A BENCH THAT FAKED IT WOULD BE GREEN AGAINST A BROKEN MUX
+
+jnext models the decision correctly — `src/input/iomode.h:87-88` computes bit 7 **and** bit 5, citing
+`zxnext.vhd:3537`. But:
+
+- `Emulator::inject_joy_uart_rx` (`src/core/emulator.h:917-922`) gates on `iomode_en()`, which is
+  **bit 7 alone** (`iomode.h:117`) — more permissive than the hardware, two lines below a method that
+  gets it right;
+- its **only callers anywhere** are jnext's own unit test (`test/uart/uart_integration_test.cpp:650`,
+  `:661`, `:671`). No CLI option attaches a serial source to the joy port;
+- the ESP device's sink injects unconditionally (`src/peripheral/uart.cpp:797-798`) with no reference
+  to io mode anywhere in that file, where `zxnext.vhd:3340`/`:3343` make the native path unreachable in
+  that state.
+
+**So a bench that used `--esp` as a stand-in for a cable would pass even if the mux were completely
+wrong** — the "green check that cannot fail" this project refuses. The Z80 half is testable now (a
+probe ROM with the macro emptied, run under T9's Copper fixture, asserting the fixture runs free and
+slot 7 and the NextREG latch come back intact); the **mux** half is blocked on a jnext feature — a
+CLI-attachable serial device routed through `inject_joy_uart_rx`, gated on `joy_uart_en()` rather than
+`iomode_en()`. Same shape as jnext#210 and jnext#211, with this project as the demonstrated consumer.
+
+### 8.8 What a change would look like, and it is NOT the 11 bytes first estimated
+
+1. `TRANSPORT_DEACTIVATE` stops clearing NR `0x0B` — **−4 bytes**.
+2. `transport_activate` writes **`10110001b`** — UART1 on joy port 2, §8.3's decision — and
+   `transport_init` selects the matching channel in its `UART_SELECT` write. **Zero bytes** for the
+   first (a changed immediate) and zero for the second, and it carries the whole of §8.3's argument.
+   The port-1 encoding (`10100000b`) has no async-break form, per §8.3's second consequence.
+3. Both polls save, force and restore `0x153B` — §8.5, wanted in the WiFi build too, and the honest
+   estimate is 15-20 bytes rather than 8, since it must also read NR `0x0B` to know which channel to
+   force.
+4. The HOWTO gains two states: the program must not write NR `0x0B`, and a reset disarms the break.
+
+`commands.asm`, `message.asm`, `breakpoints.asm`, `main.asm`, `backup.asm` and `mf.asm` are all
+untouched, so the WiFi ROM should stay byte-identical except for item 3 — which is the mirror image of
+the usual proof, and is itself the evidence that nothing leaked across the transport boundary. The
+entry and exit choreography was traced and is clean: `.poll_decline` and `.return_to_interrupted`
+(`src/mf_rom.asm:239-243`, `:156-166`) touch MMU slot 7 and the NextREG select latch and never
+NR `0x0B`, and `transport_activate` is idempotent.
+
+### 8.9 What this section does NOT establish
+
+- **That any of it works.** Nothing has run. The Z80 half could be probed today; the mux half cannot
+  be, until jnext gains §8.7's hook.
+- **Anything about a real Next.** And the precedent to keep in mind is this project's own:
+  `doc/CONFIG-MODE-ROM-REPLACEMENT.md` was a five-times-reviewed VHDL analysis, correct in every
+  mechanical claim, and defeated by a **NextZXOS runtime** fact no VHDL line could show. "Confirmed in
+  the VHDL" is necessary and not sufficient.
+- **Whether a real joystick on the free connector reads reliably while io mode is on.** The cost table
+  in §8.4 depends on it, and only hardware can say. Pin 7 there carries the UART TX waveform instead
+  of the MD select strobe — same pin, same direction (`zxnext_pins_issue4.xdc:211`, `:537-543`) — and
+  what a given third-party pad does with that is unknown.
+- **Board revisions other than issue 4.** `zxnext_top_issue2.vhd` and `_issue5.vhd` were not read.
+- **Whether the ESP trade is acceptable to a user.** §8.3 makes it avoidable, which is why the routing
+  matters; it is still a judgement and not a measurement.
+
+### 8.10 Tier of every claim
+
+| Claim | Tier |
+|---|---|
+| Both UARTs' joy routing share `joy_iomode_uart_en`; NR `0x0B` = 0 severs both | **verified**, VHDL — `zxnext.vhd:3536`, `:3340-3341`, sole assignments and sole uses |
+| Bit 7+5 enable, bit 4 connector, bit 0 channel | **verified** — `zxnext.vhd:3538-3539`, `:5201-5203` + `nextreg.txt:198-202` |
+| UART1 has a 512-byte RX FIFO and an identical one-read status bit | **verified** — `serial/uart.vhd:419`, `:604`, `:365-376` |
+| A status read clears only its own channel's sticky bits | **verified** — `serial/uart.vhd:254-255`, `:265-266` |
+| `0x153B` is readable; a bit-4-clear write changes only the select | **verified** — `serial/uart.vhd:280-287`, `:355`, `:373` + `ports.txt:368-372` |
+| **With bit 0 clear, io mode idles the ESP TX line and de-asserts its RTR** | **verified** — `zxnext.vhd:3343`, `:3349`, traced to `:1611-1612` and `zxnext_top_issue4.vhd:1917-1918` |
+| We write bit 0 clear today | **verified** — `src/transport_uart.asm:588`, `:594` |
+| Kempston/MD decode is not gated on NR `0x0B`; io mode zeroes only bits 11:6 | **verified** — `zxnext.vhd:3471-3494`; `md6_joystick_connector_x2.vhd:100`, `:108-109`, `:188-190` |
+| Keyboard-mapped joystick types produce nothing in io mode | **verified** — `membrane_stick.vhd:190` + `zxnext_top_issue4.vhd:1855`, corroborated by `nextreg.txt:203-206` |
+| The debuggee already loses those while the debugger is stopped | **verified** — `src/main.asm:194`, `src/mf.asm:148`, `src/breakpoints.asm:250` |
+| Any reset reverts NR `0x0B` to disabled | **verified** — `zxnext.vhd:4939-4941` |
+| No UART path reaches NMI | **verified** — `zxnext.vhd:1941-1944`, `:2093`, `:2107-2112` |
+| The UART poll already exists and is already the right shape | **verified**, source — `src/transport_uart.asm:339-345`, `src/mf.asm:232-273` |
+| Neither poll protects `0x153B`, the shipped WiFi one included | **verified**, source — `src/transport_esp.asm`, `src/transport_uart.asm` |
+| ~64 scan lines of dead joystick on leaving io mode | **register documentation only** — `nextreg.txt:206`; no VHDL found for the figure |
+| jnext models the mux correctly but injects only from its own tests, gated on bit 7 alone | **verified**, jnext source — `iomode.h:87-88`, `:117`; `emulator.h:917-922`; `uart.cpp:797-798` |
+| An io-mode RX sample rate of 28 MHz/4 ≈ 7 MHz, so a ceiling near 1.75-2.3 Mbaud | **inference** from `md6_joystick_connector_x2.vhd:106-109`, corroborated by `src/transport_uart.asm`'s own "maximum 1958400, good results at 921600" |
+| Joystick bits sample reliably in io mode | **inference** — the UART RX line is the same latched signal, and the joy-port UART demonstrably works at 921600. Strong, not measured |
+| That any of this works | **unknowable without hardware.** No run of any kind |
+
+### 8.11 What would falsify this
+
+1. **A term missed in the mux.** The kill-shot rests on two signals having one assignment each and
+   two uses between them. A board revision wiring `i_JOY_*` or a UART RX differently changes the
+   analysis for that revision — `_issue2` and `_issue5` are unread.
+2. **The RX engine not being clocked while the debuggee runs.** `uart_mod` is unconditionally
+   instantiated and nothing traced gates `uart_rx`, but a clock-enable or reset not followed would
+   collapse the whole thing. Check what drives `reset` in that port map.
+3. **§8.4 being optimistic on silicon** — a free connector reading garbage in io mode makes the trade
+   much worse than the table says.
+4. **A NextZXOS-runtime fact**, per §8.9. This is the failure mode with precedent in this repository.

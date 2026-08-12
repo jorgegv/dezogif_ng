@@ -20,7 +20,7 @@ Maintained by [jorgegv](https://github.com/jorgegv). Original author: maziac.
 | Joysticks | taken over while stopped | **never touched** in WiFi mode |
 | Pause from the PC | impossible — press the NMI button | **yes** in WiFi mode |
 | Choosing a ROM | swap a file on the SD card in a PC | **from the machine**, both builds on the card |
-| Test bench | — | headless, emulator-driven, `make test` |
+| Test bench | Z80 unit tests, DeZog-driven | those, **plus** a headless emulator-driven bench: `make test` |
 
 Everything above the byte stream is inherited unchanged: the memory choreography, the AltROM
 trick, `RST 0` breakpoints, and the DZRP command layer.
@@ -110,7 +110,7 @@ make test
 is the gate: it installs the freshly built ROM into a copy of an SD card image, boots a Next,
 fires Multiface NMIs and judges the resulting screenshots.
 
-Behind it are about a dozen more targets, each with its own subject — the DZRP conformance suite
+Behind it are seventeen more `test-*` targets, each with its own subject — the DZRP conformance suite
 against our own stub over an emulated ESP-01 (`make test-dzrp-stub`), the ROM switcher
 (`make test-mfselect`), the dot command (`make test-mfinstall`), the ESP transport's timeouts,
 recovery and baud negotiation, and the Z80 unit tests (`make test-unit`). Bare `make` lists them;
@@ -120,7 +120,7 @@ against a real Next.
 
 Two limits worth knowing. The benches bind host TCP ports or need a client running concurrently
 with the emulator, so most of them are deliberately not part of `make test`. And `make test-unit`
-runs 28 of the 64 unit test cases: the other 36 need ports invented by a JavaScript peripheral
+runs 28 of the 66 unit test cases: the other 38 need ports invented by a JavaScript peripheral
 that DeZog's zsim loads as `customCode`, and the Z80 cannot trap its own I/O, so those stay a
 manual VS Code layer.
 
@@ -169,6 +169,9 @@ Then, from the NextZXOS command line:
 Up/Down to move, ENTER to choose:
 
 ![mfselect's menu on a ZX Spectrum Next](doc/images/mfselect-menu.png)
+
+*A real screenshot, taken by `make test-mfselect` from a headless run — not a mock-up, so it cannot
+drift from what the program actually draws.*
 
 `Installed:` names which ROM is on the card and its build number, read from a magic string inside
 the ROM rather than from a checksum, so it stays correct after the stub is rebuilt. Whichever is
@@ -220,8 +223,11 @@ configurable hostname:
 ~~~
 
 Everything works that way **except breakpoints set in the editor**, which the `cspect` remote
-places with a DZRP command the stub does not implement, and which the stub therefore refuses. It
-says so on its own screen, and the session carries on. Stepping is unaffected. If you need editor
+places with a DZRP command the stub does not implement, and which the stub therefore refuses. DeZog
+shows such a breakpoint as unverified and the session carries on; **the Next's own screen stays
+clean**, deliberately, because a refusal is expected behaviour and not a fault. The same applies to
+ASSERTIONs and LOGPOINTs, which DeZog places the same way. Stepping is unaffected — temporary
+breakpoints travel inside the continue command and touch none of this. If you need editor
 breakpoints today, build the `zxnext` remote from that pull request.
 
 Also note that nothing else may use the ESP during a session — NextSync and friends will
@@ -238,10 +244,9 @@ It is a derivative work of [maziac/dezogif](https://github.com/maziac/dezogif), 
 MIT licence. That notice is retained in [NOTICE](NOTICE) and still governs maziac's original code;
 the GPLv3 covers the combined work.
 
-**Example code meant to be copied into your own program is MIT rather than GPLv3**, on the terms in
-[NOTICE](NOTICE) — currently the 44-byte Copper snippet in
-[doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md](doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md), which would be of no
-use to anybody under a licence that infected the program it goes into.
+Example code meant to be copied into your own program — currently the 44-byte Copper snippet in
+[doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md](doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md) — carries its own
+licence note in that document.
 
 
 # Acknowledgements

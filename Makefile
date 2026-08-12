@@ -389,6 +389,7 @@ MFWIN_ASM   = $(TOOLS)/mfinstall/mfwin.asm
 MFINSTALL_YML = $(TOOLS)/mfinstall/mfinstall.yml
 ROMSUM      = $(TOOLS)/romsum.py
 UT_GEN      = $(TOOLS)/ut-headless-gen.py
+BIN2C       = $(TOOLS)/bin2c.py
 
 ASM_FILES    = $(wildcard $(SRC)/*.asm) $(wildcard $(SRC)/zx/*.inc)
 UT_ASM_FILES = $(wildcard $(SRC)/unit_tests/*.asm) $(wildcard $(SRC)/unit_tests/*.inc) $(ASM_FILES)
@@ -1218,6 +1219,13 @@ probe-idle-drop:
 # bump-major, rather than silently minting a new series nobody decided on —
 # which is the whole reason the high byte exists. Both refuse to leave FF.FF.
 #
+# BOTH REWRITE version.yaml THROUGH A TEMPORARY AND A mv, NOT WITH `sed -i`,
+# which has no portable spelling either: GNU sed takes no argument after -i and
+# BSD/macOS sed requires one, so `-i` alone edits nothing on macOS and `-i ''`
+# is a syntax error on GNU. The temporary also means a sed that fails leaves the
+# file alone instead of truncating it — this file carries the ROM's identity, and
+# the comments around the value are most of it.
+#
 # Increment the low byte of the ROM build number (one bump per merge to main)
 bump:
 	@cur=$$(awk '/^build_number:/ { v = $$2; gsub(/"/, "", v); print v }' $(VERSION_FILE)); \
@@ -1231,7 +1239,9 @@ bump:
 	  exit 1; \
 	fi; \
 	next=$$(printf '%04X' $$(( n + 1 ))); \
-	sed -i "s/^build_number:.*/build_number: \"$$next\"/" $(VERSION_FILE); \
+	sed "s/^build_number:.*/build_number: \"$$next\"/" $(VERSION_FILE) > $(VERSION_FILE).tmp \
+	  && mv -f $(VERSION_FILE).tmp $(VERSION_FILE) \
+	  || { rm -f $(VERSION_FILE).tmp; echo "ERROR: could not rewrite $(VERSION_FILE)" >&2; exit 1; }; \
 	printf 'build_number %s -> %s   (shown as %s; ROM magic becomes DeZoGiFnG_<VARIANT>_%s)\n' \
 	  "$$cur" "$$next" "$$(printf '%s' "$$next" | sed 's/../&./')" "$$next"
 
@@ -1247,7 +1257,9 @@ bump-major:
 	  exit 1; \
 	fi; \
 	next=$$(printf '%04X' $$(( ((n >> 8) + 1) << 8 ))); \
-	sed -i "s/^build_number:.*/build_number: \"$$next\"/" $(VERSION_FILE); \
+	sed "s/^build_number:.*/build_number: \"$$next\"/" $(VERSION_FILE) > $(VERSION_FILE).tmp \
+	  && mv -f $(VERSION_FILE).tmp $(VERSION_FILE) \
+	  || { rm -f $(VERSION_FILE).tmp; echo "ERROR: could not rewrite $(VERSION_FILE)" >&2; exit 1; }; \
 	printf 'build_number %s -> %s   (shown as %s; ROM magic becomes DeZoGiFnG_<VARIANT>_%s)\n' \
 	  "$$cur" "$$next" "$$(printf '%s' "$$next" | sed 's/../&./')" "$$next"
 
@@ -1376,14 +1388,14 @@ $(MFSELECT_NEX): $(MFSELECT_C) Makefile | $(OUT)
 $(MFWIN_BIN): $(MFWIN_ASM) Makefile | $(OUT)
 	$(SJASMPLUS) -DMFWIN_BIN=\"$@\" $(MFWIN_FLAGS) $(MFWIN_ASM)
 
-# ... and the same bytes as a C array. `xxd -i` derives the array's name from
-# the FILE's name, so the binary is copied to `mfwin_bin` first; patching the
-# symbol afterwards would be a sed expression that has to keep matching xxd's
-# output format.
-$(MFWIN_H): $(MFWIN_BIN) Makefile | $(OUT)
+# ... and the same bytes as a C array. This used to be `xxd -i -n`, and `-n` is
+# a recent xxd option: macOS ships whatever xxd came with its bundled vim, so
+# the build could not rely on it. bin2c.py emits byte-identical output and, by
+# taking the array's name as an argument, also removes the copy-to-a-file-called-
+# mfwin_bin step that only existed to make xxd derive the name from it.
+$(MFWIN_H): $(MFWIN_BIN) $(BIN2C) Makefile | $(OUT)
 	@mkdir -p $(MFWIN_INCDIR)
-	@cp -f $(MFWIN_BIN) $(MFWIN_INCDIR)/mfwin_bin
-	xxd -i -n mfwin_bin $(MFWIN_INCDIR)/mfwin_bin > $@
+	python3 $(BIN2C) mfwin_bin $(MFWIN_BIN) > $@
 	@echo '#define MFWIN_BIN_LEN mfwin_bin_len' >> $@
 	@rm -f $(MFWIN_INCDIR)/mfwin_bin
 

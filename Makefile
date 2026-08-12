@@ -1350,9 +1350,17 @@ $(PT_NEX) $(PT_SLD): $(PT_BIN)
 # The deployable ROM is the NMI entry code followed by the debugger image.
 # tbblue.fw loads exactly ROM_SIZE bytes, so a wrong size is a build error
 # and not something to discover on hardware.
+#
+# THE SIZE IS TAKEN WITH `wc -c` AND NOT WITH `stat`, WHICH HAS NO PORTABLE
+# SPELLING: GNU stat wants `-c%s` and BSD/macOS stat wants `-f%z`, so either
+# choice breaks the build on the other platform. It did — `make mf-rom` on macOS
+# died with "stat: illegal option -- c" and then, worse, with an empty $$size
+# reaching a numeric comparison (reported by maziac, 2026-08-12). `wc -c` is
+# POSIX and needs no branch. The `tr` is not decoration: BSD wc pads its output
+# with leading blanks, and the value goes straight into `[ ... -ne ... ]`.
 $(ROM): $(MF_NMI_BIN) $(MAIN_BIN)
 	cat $(MF_NMI_BIN) $(MAIN_BIN) > $@
-	@size=$$(stat -c%s $@); \
+	@size=$$(wc -c < "$@" | tr -d '[:space:]'); \
 	if [ "$$size" -ne $(ROM_SIZE) ]; then \
 	  echo "ERROR: $@ is $$size bytes, expected $(ROM_SIZE)" >&2; rm -f $@; exit 1; \
 	fi
@@ -1395,6 +1403,7 @@ $(MFWIN_H): $(MFWIN_BIN) Makefile | $(OUT)
 # page mapped at 0x2000, and z88dk's own documentation puts the practical
 # ceiling nearer 7 KB under stock esxdos. Over that it does not fail to build —
 # it fails to LOAD, on the machine, with an error that says nothing about size.
+# The size comes from `wc -c` rather than `stat` for the reason given at $(ROM).
 $(MFINSTALL_DOT): $(MFINSTALL_C) $(MFWIN_H) Makefile | $(OUT)
 	$(ZCC) $(ZCCDOTFLAGS) -I$(MFWIN_INCDIR) $(MFINSTALL_C) -o $(OUT)/mfinstall-app$(MFWIN_SUFFIX)
 	@bin=$(OUT)/mfinstall-app$(MFWIN_SUFFIX)_CODE.bin; \
@@ -1402,7 +1411,7 @@ $(MFINSTALL_DOT): $(MFINSTALL_C) $(MFWIN_H) Makefile | $(OUT)
 	if [ ! -s "$$bin" ]; then \
 	  echo "ERROR: zcc produced no dot command binary for $(MFINSTALL_C)" >&2; exit 1; \
 	fi; \
-	size=$$(stat -c%s "$$bin"); \
+	size=$$(wc -c < "$$bin" | tr -d '[:space:]'); \
 	if [ "$$size" -gt 8192 ]; then \
 	  echo "ERROR: the dot command is $$size bytes, over the 8192-byte page it loads into" >&2; \
 	  exit 1; \

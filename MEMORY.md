@@ -101,13 +101,22 @@ rejected to preserve it, and #13's failure mode is silent corruption of the
 debuggee's breakpoints. Deleting the protection while keeping the capability is
 the worst of both.
 
-So the fixture is re-run until the shape appears, up to `W5_TRIES` (3). **The
-first version retried the FIXTURE inside one emulator run and was wrong**: a run
-collapsed on all three in-run attempts at 11 ms each, seconds apart, while the
-next emulator run staged first time. The stub's flush timing is near constant
-within a run and varies between runs, so **the unit of retry is the run**. That
-also simplified the guard — `start_stub` truncates the log, so counts stay
-per-attempt at 4 and the bounds did not have to scale after all.
+So the staging is re-run until the shape appears, up to `W5_TRIES` (3). **The
+first version retried the FIXTURE inside one emulator run and did not survive
+its first encounter**: a run collapsed on all three in-run attempts at 11 ms
+each, seconds apart, while the next emulator run staged first time. Read as: the
+stub's flush timing is near constant within a run and varies between runs, so
+**the unit of retry is the run**. That also simplified the guard — `start_stub`
+truncates the log, so counts stay per-attempt at 4 and the bounds did not have
+to scale after all.
+
+**THAT READING IS n=1 AND IS LABELLED AS SUCH, after a first version of this
+entry called it "measured rather than chosen".** One observation, not a
+controlled comparison. **Nothing rests on it**: if the collapse were transient
+after all, retrying the run would still be correct and merely slower than
+necessary, by one emulator boot per collapse. The distinction matters here
+because this file's own 2026-08-11 entry is scrupulous about exactly this, and
+the addendum was not.
 
 Retrying the **setup** is not tuning the race: `DZRP_SPLIT_GAP` is untouched,
 every attempt is judged by the same shape test, and a run where all three

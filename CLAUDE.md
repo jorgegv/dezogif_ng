@@ -1299,10 +1299,12 @@ Two things the shortening may **never** touch, because they are interface rather
   `DZRP_SPLIT_GAP` to make it green**, which is tuning a race until it passes.
   **What IS legitimate is retrying the STAGING, and W5 does — the whole emulator run, up to
   `W5_TRIES` (3)**, re-attempting the setup while leaving the assertion untouched. **The unit of
-  retry was measured, not chosen**: a run that collapsed did so on all three *in-run* fixture
-  attempts at 11 ms each, seconds apart, while the next emulator run staged first time — so the
-  stub's flush timing is near constant within a run and varies between them. `W5_TRIES=1` is the
-  control that restores the single-attempt behaviour.
+  retry is the RUN and not the fixture, from ONE observation rather than a controlled comparison**:
+  a run that collapsed did so on all three *in-run* fixture attempts at 11 ms each, seconds apart,
+  while the next emulator run staged first time. Read as: the stub's flush timing is near constant
+  within a run and varies between them — n=1, and **nothing rests on it being right**, since a
+  transient collapse would make retrying the run merely slower than necessary rather than wrong.
+  `W5_TRIES=1` is the control that restores the single-attempt behaviour.
 
 **M2 IS BUILT (2026-08-10) AND IT DID NOT INVERT T4.** The paragraphs below were written before
 any M2 code existed and predicted that teaching `nmi66h` to accept a software cause would make T4

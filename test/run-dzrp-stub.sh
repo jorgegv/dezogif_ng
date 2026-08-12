@@ -257,15 +257,15 @@ SETTLE=${SETTLE:-2}
 # scratch tree.
 W5_CLIENT_PORT=${W5_CLIENT_PORT:-$PORT}
 
-# How many times W5 may re-run its fixture, in one emulator run, trying to get
-# the race to stage. See the loop for why retrying is legitimate where widening
-# the fixture's gap is not.
+# How many times W5 may re-run its whole setup — a FRESH EMULATOR BOOT each
+# time, not just the fixture — trying to get the race to stage. The loop below
+# carries the reasoning, including why retrying the run rather than the fixture,
+# and why this is not the same as widening the fixture's gap.
 #
-# THREE, and the reason it is not one is measured: on 2026-08-11 the race
-# collapsed on three consecutive unstaged runs, and on 2026-08-12 an independent
-# reviewer got three greens in three runs of the same commit. So a single
-# attempt is a coin toss on a gate, and each retry costs about a second against
-# an emulator run of twenty.
+# THREE, because a single attempt is a coin toss on a gate: on 2026-08-11 the
+# race collapsed on three consecutive runs, and on other days it has not
+# collapsed in nineteen. Each extra attempt costs one emulator run, ~20 s, and
+# is paid only when an attempt collapses.
 #
 # `W5_TRIES=1` is the control: it restores exactly the single-attempt behaviour
 # this replaces, so the retry can be shown to be what removes the redness rather
@@ -804,14 +804,19 @@ w5_tries=0
 # race collapses (see w5_collapsed_ms) whenever the wire is busy for longer than
 # the fixture's 8 ms, and the check then has nothing to judge.
 #
-# THE UNIT OF RETRY IS THE RUN, AND THAT WAS MEASURED RATHER THAN CHOSEN. The
-# first version of this re-ran only the FIXTURE, three times inside one emulator
-# run, on the assumption that the collapse was transient. It is not: on
-# 2026-08-12 a run collapsed on all three in-run attempts at 11 ms each, seconds
-# apart, while the very next emulator run staged first time. The stub's flush
-# timing is near enough constant within a run and varies between runs — so
-# re-running the fixture buys almost nothing and re-running the emulator buys
-# nearly all of it.
+# THE UNIT OF RETRY IS THE RUN, FROM ONE OBSERVATION RATHER THAN A CONTROLLED
+# COMPARISON — n=1, and it is worth saying so. The first version of this re-ran
+# only the FIXTURE, three times inside one emulator run, on the assumption that
+# the collapse was transient. That assumption did not survive its first
+# encounter: on 2026-08-12 a run collapsed on all three in-run attempts at 11 ms
+# each, seconds apart, while the very next emulator run staged first time. The
+# reading is that the stub's flush timing is near enough constant within a run
+# and varies between runs, so re-running the fixture buys little and re-running
+# the emulator buys most of it.
+#
+# NOTHING RESTS ON THAT READING BEING RIGHT. If the collapse turned out to be
+# transient after all, retrying the run would still be correct — merely slower
+# than it needed to be, by one emulator boot per collapse.
 #
 # WHAT THIS DELIBERATELY DOES NOT DO IS WEAKEN THE ASSERTION. Each attempt is
 # judged by the same `w5_split_shape` on its own fresh log, the verdict below is

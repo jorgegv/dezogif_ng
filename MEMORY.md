@@ -18,18 +18,30 @@ FIRST PRINCIPLES.** `ld a,2 ; Joy 2 selected` is **upstream's**, byte for byte a
 the joy port over at all three entry sites and cleared NR `0x0B` on every resume,
 so its contract was already *io mode on while stopped, off while running*.
 
-**So the whole behavioural delta our break adds is one thing**: Sinclair, Cursor
-and user-defined joystick types stay dead **while the debuggee runs**, where
-before they died only while it was stopped. Kempston (port `0x1F`) and MD
-(`0x37`) are unaffected on **both** connectors, so a game reading Kempston on
-port 1 has a working stick throughout.
+**So the behavioural delta our break adds is TWO things**: Sinclair, Cursor and
+user-defined joystick types, **and the MD 6-button extended buttons**, stay dead
+**while the debuggee runs**, where before they died only while it was stopped.
+Kempston (port `0x1F`) and MD (`0x37`) **port reads keep working** on **both**
+connectors — directions and both fire bits — so a game reading Kempston on port 1
+has a working stick throughout.
 
-**AND NO PORT CHOICE COULD EVER HAVE PRESERVED THE KEYBOARD-MAPPED TYPES**, which
-is the fact that decides this rather than the cost being small. NR `0x0B` bit 7
-kills the key injection **globally** — `membrane_stick.vhd:190` fed from
-`zxnext_top_issue4.vhd:1855` — so it is not a per-connector cost that a different
-selection could dodge. There is no configuration in which a debugger holds a joy
-port for a cable and those types keep working.
+*(An earlier version of this entry said "one thing" and put MD wholesale in the
+unaffected column. That collapses two separate rows of this project's own
+VHDL-cited table — §8.4 of the design doc has "Kempston and MD port reads still
+work" and "MD 6-button extended buttons read as 0" as distinct findings. In io
+mode `md6_joystick_connector_x2.vhd:188-190` publishes `"000000" & not joy_raw`,
+zeroing bits 11:6, and `zxnext.vhd:3477-3478`/`:3490-3491` feed the reads' bits
+7:6 from exactly those. Caught in review, and it matters because it UNDERCOUNTED
+the cost of a decision, in the file every session is told to read first.)*
+
+**AND NO PORT CHOICE COULD EVER HAVE PRESERVED EITHER OF THEM**, which is the fact
+that decides this rather than the cost being small. NR `0x0B` bit 7 kills the key
+injection **globally** — `membrane_stick.vhd:190` fed from
+`zxnext_top_issue4.vhd:1855` — and the md6 connector's own `io_mode` comes from
+that same global signal (`zxnext_top_issue4.vhd:1680`), so neither is a
+per-connector cost that a different selection could dodge. There is no
+configuration in which a debugger holds a joy port for a cable and either keeps
+working.
 
 **Rejected**, both costed and offered rather than waved away:
 

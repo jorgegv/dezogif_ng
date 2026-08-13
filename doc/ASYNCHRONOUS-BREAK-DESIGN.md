@@ -689,7 +689,29 @@ thirteen times low in T-states, and its percentage happened to look right only b
 quoted against the slow clock while the real cost is a much bigger absolute number. Corrected in
 `doc/ZXNEXT-REMOTE-DEBUG-STUB.md` §10 and Appendix A, annotated rather than rewritten.
 
-**WHAT THE FIGURE DOES NOT COVER.** It is the **decline** path only: no client is attached, so
+**WHAT THE FIGURE DOES NOT COVER, AND IT IS MORE THAN THIS PARAGRAPH SAID UNTIL 2026-08-13: THE
+LINK CHECK IS NOT IN IT AT ALL.** The sentence below reads as though `transport_poll_traffic` runs
+and answers "quiet". **It does not run.** The fixture brings no debugger up, so `MAIN_BANK` holds
+somebody else's bytes, and `nmi66h`'s `.software_cause` declines at its magic-number compare —
+which sits *before* the `jp mf_nmi_poll` that would have led to the link at all
+(`src/mf_rom.asm`). So 1288 T-states is **NMI entry + cause check + slot-7 page-in + magic-check
+decline**, and nothing above it.
+
+**Proved by control rather than by reading**, because the reading is what produced the wrong
+sentence in the first place: a ~3300 T-state delay loop planted at the top of
+`transport_poll_traffic` moves the measurement by **nothing** — 3903.1 iterations/frame and 1288
+T-states, bit-identical, with and without. Found while measuring issue #42, whose +39 T-states the
+instrument likewise cannot see.
+
+**What that changes, and what it does not.** The 1288 is still a real per-frame cost and still the
+right number for a machine with a Copper list and no debugger. What is wrong is calling it the cost
+of *the poll*: a **real** session — debugger up, debuggee resumed — pays that **plus** the
+`prgm_state` test and the link check, of the order of another hundred T-states by instruction
+timing. **Arithmetic, measured nowhere.** An instrument that covered it would need a debugger, a
+resumed debuggee and a counting loop in one run, which is `make test-pause-transparency` with a
+counter — not written.
+
+The original claim follows. It is the **decline** path only: no client is attached, so
 every poll answers "quiet" and returns. A poll that breaks in costs the whole entry path, which is
 a much larger number paid once rather than per frame, and nothing measures it. It is jnext rather
 than silicon — legitimate here, because jnext counts the same T-states a Next does, and that is the
@@ -1069,6 +1091,37 @@ all. `0x153B` is readable — bit 6 gives the select, and a write with bit 4 cle
 select and leaves both prescalers alone (`serial/uart.vhd:280-287`, `:355`, `:373`,
 `ports.txt:368-372`) — so save/force/restore is implementable, and it is wanted in **both** transports.
 
+> **FIXED, issue #42, build `00.24`, and the framing above is the half worth keeping.** Both polls
+> borrow the select for their one status read and hand it straight back, and `transport_activate`
+> reclaims it at every entry. **+37 bytes in each ROM**, measured; WiFi headroom 178 → **141**.
+>
+> **THE ARGUMENT FOR FIXING RATHER THAN DOCUMENTING, because "just document what the debuggee may
+> not touch" was the obvious cheaper answer and was put explicitly** (user, 2026-08-13). Three
+> things decided it. `0x153B` is a **shared pointer, not a resource we own** — everything else on
+> that list (slots 6/7, the AltROM, NR `0x06` bit 3) is something the debugger is *using*, whereas
+> here we own UART0 and the pointer is merely how the CPU says which channel it means; forbidding
+> writes to it charges the debuggee for a UART we are not touching. It is better described as **our
+> own read being under-specified** than as the debuggee misbehaving: `in a,(0x133B)` means "the
+> status of whichever channel is selected" where it intends "of ours", and those coincide only by
+> luck. And this codebase already answers exactly this shape with force-and-restore three times —
+> `screen_map` (#28), `text.font_map` (#31), and the slot-5 borrow C22/C23 use — with #28 having
+> settled *when* to check-and-abandon (a cosmetic row) versus force-and-restore (something that
+> must work). A Pause that silently does nothing is the second.
+>
+> **THE HALF THAT WAS NOT FIXED, deliberately: the debuggee's selection is not preserved across a
+> break.** `transport_activate` forces ours and nothing restores theirs, so a program using the
+> other UART must re-select after any break. Saving it *there* would be issue #26's defect one
+> register along — that routine also runs when the debugger is already executing (`main.asm`'s path
+> through `drain_main` and `cmd_close`), where the value it would read is its own — so the capture
+> belongs with the other `backup.*` break-time state, which is a different change to a different
+> file. Same shape as `backup.io_next_reg`. It is in the HOWTO as a thing users are told.
+>
+> **AND `transport_activate` HAD TO MOVE TOO, WHICH THE ITEM ABOVE DID NOT FORESEE.** Guarding only
+> the polls is not a smaller fix, it is a **worse** one: the select is established exactly once, in
+> `transport_init`, so a debuggee that moved it and then stopped would hand the debugger a link
+> whose every read and write went to the other UART. Poll-only would therefore have turned "Pause
+> does nothing" into "Pause stops the machine and the debugger never speaks again".
+
 **2. Any reset silently reverts NR `0x0B`.** `zxnext.vhd:4939-4941` resets
 `nr_0b_joy_iomode_en <= '0'`, `iomode <= "00"`, `iomode_0 <= '1'`. So a reset — the debugger's own `R`
 key, or one the debuggee causes — disarms the break until the debugger next takes control and
@@ -1122,6 +1175,14 @@ CLI-attachable serial device routed through `inject_joy_uart_rx`, gated on `joy_
 3. Both polls save, force and restore `0x153B` — §8.5, wanted in the WiFi build too, and the honest
    estimate is 15-20 bytes rather than 8, since it must also read NR `0x0B` to know which channel to
    force.
+
+   **BUILT (issue #42, `00.24`) AT +37 BYTES PER ROM, AND BOTH HALVES OF THAT ESTIMATE WERE WRONG.**
+   It does **not** read NR `0x0B`: `transport_init` selects one channel unconditionally per variant
+   — UART1 in the serial build, UART0 in the WiFi one — so which channel is ours is a **build-time
+   constant**, and the premise that it varies with the joy-port selection was superseded by §8.0's
+   own item 1 before this item was read again. And the count is 37 rather than 15-20, because the
+   fix is in three places and not one: the borrow in each poll (30 bytes) **plus** a reclaim in
+   `transport_activate` (7) without which the guard is worse than useless — see §8.5.
 4. The HOWTO gains two states: the program must not write NR `0x0B`, and a reset disarms the break.
 
 `commands.asm`, `message.asm`, `breakpoints.asm`, `main.asm`, `backup.asm` and `mf.asm` are all
@@ -1177,7 +1238,9 @@ NR `0x0B`, and `transport_activate` is idempotent.
 | Any reset reverts NR `0x0B` to disabled | **verified** — `zxnext.vhd:4939-4941` |
 | No UART path reaches NMI | **verified** — `zxnext.vhd:1941-1944`, `:2093`, `:2107-2112` |
 | The UART poll already exists and is already the right shape | **verified**, source — `src/transport_uart.asm:339-345`, `src/mf.asm:232-273` |
-| Neither poll protects `0x153B`, the shipped WiFi one included | **verified**, source — `src/transport_esp.asm`, `src/transport_uart.asm` |
+| ~~Neither poll protects `0x153B`, the shipped WiFi one included~~ — **FIXED, issue #42, `00.24`**: both polls borrow it and `transport_activate` reclaims it | **verified**, source; and the defect **measured** — bench W9 red against `main`'s ROM, green after |
+| **The hardware reports the select in BIT 6 of a `0x153B` read; jnext reports it in BIT 3** | **verified** — `serial/uart.vhd:355` (`"00000" & …`) and `:369` (`"01000" & …`), corroborated by `ports.txt:370`; against jnext's `(select_ ? 0x08 : 0x00)` at `src/peripheral/uart.cpp:751`, whose WRITE path takes bit 6 correctly at `:712-720`. **Measured**: the shipped 0x40 mask cannot make W9 green in the emulator and a `SELECT_MASK=0x48` build can, one constant apart |
+| **`make measure-poll-cost` never reaches `transport_poll_traffic`** — its 1288 T-states is the entry-plus-magic-check decline, taken with no debugger up | **verified by control** — a ~3300 T-state delay loop planted in that routine moves the reading by **nothing** (3903.1 iterations/frame either way). So the cost of the link check itself is measured **nowhere**, and #42's +39 T-states on the common path is **arithmetic** |
 | ~64 scan lines of dead joystick on leaving io mode | **register documentation only** — `nextreg.txt:206`; no VHDL found for the figure |
 | jnext models the mux correctly but injects only from its own tests, gated on bit 7 alone | **verified**, jnext source — `iomode.h:87-88`, `:117`; `emulator.h:917-922`; `uart.cpp:797-798` |
 | An io-mode RX sample rate of 28 MHz/4 ≈ 7 MHz, so a ceiling near 1.75-2.3 Mbaud | **inference** from `md6_joystick_connector_x2.vhd:106-109`, corroborated by `src/transport_uart.asm`'s own "maximum 1958400, good results at 921600" |

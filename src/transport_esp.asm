@@ -458,6 +458,44 @@ UART_RX:   equ 0x143b
 ; prescaler's 3 most significant bits (bits 2:0).
 UART_SELECT:   equ 0x153b
 
+; 0x153B IS A SHARED POINTER, NOT A RESOURCE WE OWN, AND THAT IS WHY THE THREE
+; CONSTANTS BELOW EXIST. Bit 6 says which of the machine's two UARTs every one
+; of 0x133B, 0x143B and 0x163B refers to at the instant of the access
+; (ports.txt:370, serial/uart.vhd:335-372) — so a read of 0x133B means "the
+; status of whichever channel is selected", where we mean "the status of OUR
+; channel". Those coincide only while nothing else has moved the pointer, and a
+; debuggee legitimately using the OTHER UART must move it. Issue #42.
+;
+; THIS BUILD OWNS UART0 AND LEAVES UART1 ENTIRELY FREE, which is what makes the
+; case concrete rather than hypothetical: a program using the Raspberry Pi
+; header UART while being debugged over WiFi contends with nothing at all, and
+; used to blind asynchronous break simply by selecting its own channel.
+;
+; Writing these values back has BIT 4 CLEAR, which is what makes the correction
+; safe: with bit 4 clear the write changes only the select and leaves both
+; 17-bit prescalers alone (ports.txt:371-372, serial/uart.vhd:280-287). A write
+; with bit 4 set would take bits 2:0 as the prescaler's top three bits.
+; BIT 6 IS WHERE THE HARDWARE REPORTS THE SELECT ON A READ, AND jnext REPORTS IT
+; IN BIT 3 — so this mask is a build seam, of the ESP_IP_MAX / ESP_RX_WAIT /
+; ESP_LINK_IDS family and for their reason: the shipped value is unreachable in
+; the emulator, so a bench that needs to reach it moves the constant.
+;
+; The hardware is not in doubt. serial/uart.vhd:369 returns `"01000" &
+; uart1_prescalar_msb_r` for the UART1 case and `"00000" & ...` for UART0
+; (:355), i.e. bit 6 and bit 3 = 0 in both; ports.txt:370 says bit 6 in words.
+; jnext's `(select_ ? 0x08 : 0x00)` (src/peripheral/uart.cpp:751) is simply the
+; wrong bit — its WRITE path takes bit 6 correctly (:712-720), so only the
+; read-back disagrees. Measured: with SELECT_MASK=0x48 bench W9 goes green and
+; with the shipped 0x40 it cannot, one constant apart.
+;
+; DO NOT "FIX" THIS BY MASKING BOTH BITS IN THE SHIPPED ROM. That would put an
+; emulator's defect into the bytes a real Next executes, to make a check pass.
+ IFNDEF UART_SELECT_CHANNEL
+UART_SELECT_CHANNEL: equ 01000000b  ; the select bit, for masking a read
+ ENDIF
+UART_SELECT_OURS:    equ 00000000b  ; UART0, the ESP's channel — see transport_init
+UART_SELECT_OTHER:   equ 01000000b  ; UART1, the Pi header's
+
 ; UART frame format.
 UART_FRAME:     equ 0x163b
 
@@ -3499,6 +3537,25 @@ transport_byte_available:
 ; flags (serial/uart.vhd:536-539); mf_nmi_poll's ordering is what keeps that
 ; away from the debugger's own reads.
 ;
+; IT BORROWS THE UART SELECT, AND THAT IS NOT DEFENSIVE PROGRAMMING AGAINST THE
+; DEBUGGEE — IT IS THIS READ BEING UNDER-SPECIFIED WITHOUT IT (issue #42). The
+; `in a,(0x133B)` below means "the status of whichever channel 0x153B selects";
+; what it INTENDS is "the status of ours". Those coincide only while nothing has
+; moved the pointer since transport_init, and this build leaves UART1 entirely
+; free — so a debuggee using the Pi header contends with nothing, moves the
+; pointer for its own channel, and silently blinds the break. Documenting "do
+; not write 0x153B" would charge it for a UART we are not using; borrowing the
+; pointer for one read costs it nothing. See UART_SELECT_OURS above.
+;
+; THE COMMON PATH DOES NOT WRITE. It reads the select, compares, and falls
+; straight through — about 39 T-states against the poll's measured ~1288 per
+; frame. Only a debuggee that has actually moved the pointer pays for the
+; correction, and it gets its value back before the NMI returns.
+;
+; The two counter tests come FIRST and are deliberately left in front of it:
+; they answer from MAIN_BANK without touching the UART at all, so a poll that
+; already has a reason to break in never goes near the debuggee's register.
+;
 ; Returns:
 ;   NZ = there is something for us
 ;   Z  = the link is quiet
@@ -3520,9 +3577,40 @@ transport_poll_traffic:
     or a
     ret nz
 
+    ; Is 0x133B about our channel?
+    ld a,HIGH UART_SELECT
+    in a,(LOW UART_SELECT)
+    and UART_SELECT_CHANNEL
+    cp UART_SELECT_OURS
+    jr nz,.borrow_select
+
     ld a,HIGH UART_TX
     in a,(LOW UART_TX)
     bit UART_RX_FIFO_EMPTY,a
+    ret
+
+.borrow_select:
+    ; The debuggee owns the pointer and is still running, so this is a loan:
+    ; point it at our channel, read, and put its value straight back. BC is
+    ; free here in practice (mf.asm:205 — the debuggee's is on the MF stack),
+    ; but the interface promises it preserved, so the promise is kept. The
+    ; stack is MF RAM, switched by nmi66h before this path exists.
+    push bc
+    ld bc,UART_SELECT
+    ld a,UART_SELECT_OURS
+    out (c),a
+
+    ld a,HIGH UART_TX
+    in a,(LOW UART_TX)
+    bit UART_RX_FIFO_EMPTY,a
+
+    ; NEITHER `ld a,n` NOR `out (c),a` TOUCHES THE FLAGS, so the verdict the
+    ; caller reads survives the restore with no push/pop of AF. `in a,(n)` does
+    ; not either, unlike `in r,(c)` — which is why the read above can sit
+    ; between the two writes.
+    ld a,UART_SELECT_OTHER
+    out (c),a
+    pop bc
     ret
 
 
@@ -5105,15 +5193,46 @@ esp_negotiate_baud:
 ; debuggee that used the joy-port serial itself would have moved it, and the
 ; link would then be silently dead. Writing 0 here removes that dependency.
 ;
+; IT ALSO RECLAIMS THE UART SELECT, AND WITHOUT THAT THE POLL'S GUARD WOULD BE
+; HALF A FIX (issue #42). transport_init points 0x153B at UART0 exactly once,
+; when MAIN is first entered; nothing has re-established it since. So a debuggee
+; that moved the pointer to reach UART1 and then stopped — at a breakpoint, on
+; the button, or through the poll's own break-in — would hand the debugger a
+; link whose every read and write went to the Pi header, and the session would
+; be mute rather than merely unbreakable. Guarding the poll alone would
+; therefore have converted "Pause does nothing" into "Pause stops the machine
+; and the debugger never speaks again", which is worse.
+;
+; This is the right single place: all three entries into the debugger come
+; through here (main.asm, mf.asm, breakpoints.asm) and none of them has touched
+; the link yet.
+;
+; IT DOES NOT PUT THE DEBUGGEE'S SELECTION BACK ON RESUME, and that is a known
+; gap rather than an oversight — the same shape as backup.io_next_reg, and it
+; wants the same treatment: the value belongs with the other break-time
+; captures, not here, because this routine also runs when the debugger is
+; ALREADY executing (main.asm's path through drain_main and cmd_close), where
+; the value it would read is its own. Saving unconditionally here is issue #26's
+; defect one register along. See doc/ASYNCHRONOUS-BREAK-DESIGN.md §8.5.
+;
 ; It is also where a bring-up failure is put back into last_error: transport_init
 ; runs before main_bank_entry falls into drain_main, which zeroes it. Guarded on
 ; esp_init_error so the breakpoint and NMI paths, which also call this, cannot
 ; overwrite a real error with a stale one.
 ; Changes:
-;  AF
+;  AF, BC   (BC is new with the select reclaim above; the UART build's
+;            transport_activate has always changed AF, BC and HL, and it is
+;            called from the same three sites, so no caller can depend on it)
 ;===========================================================================
 transport_activate:
     nextreg REG_JOYSTICK_IO_MODE,0
+
+    ; Reclaim the UART select before anything uses the link. Bit 4 clear, so
+    ; only the channel moves and neither prescaler is touched.
+    ld bc,UART_SELECT
+    ld a,UART_SELECT_OURS
+    out (c),a
+
     ld a,(esp_init_error)
     or a
     ret z

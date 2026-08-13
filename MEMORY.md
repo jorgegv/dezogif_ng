@@ -5,6 +5,112 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-13 — The UART select is a shared POINTER, so we borrow it rather than forbid it; and the poll's headline cost turns out not to include the poll
+
+**Built, issue #42**, and the decision worth recording is the one that was nearly
+taken the other way. The user's question was the right one: instead of
+second-guessing what a debuggee might touch, why not just **document** the ports
+the debugger owns? This project already answers the AltROM constraint, slots 6
+and 7, and NR `0x06` bit 3 exactly that way — and `0x153B` was **already
+documented**, as state 6 of the HOWTO's seven.
+
+**THREE THINGS DECIDED IT THE OTHER WAY, and the second is the one that
+generalises.**
+
+1. **`0x153B` is not a resource we own, it is a shared pointer.** Everything else
+   on that list is something the debugger is *using*. Here we own UART0; the
+   pointer is merely how the CPU says which channel it means. The machine has two
+   UARTs precisely so two owners can coexist, so "do not write `0x153B`" charges
+   the debuggee for a UART we are not touching — and our own HOWTO conceded it in
+   as many words: *"it cannot have them and PC-initiated break at the same
+   time."*
+2. **It is better described as OUR READ being under-specified than as the
+   debuggee misbehaving.** `in a,(0x133B)` means *"the status of whichever
+   channel is selected"*; it intends *"of ours"*. Those coincide only while
+   nothing has moved the pointer. A read whose meaning depends on state we do not
+   control is a defect in the read.
+3. **This codebase already answers this exact shape with force-and-restore, three
+   times** — `screen_map` (#28), `text.font_map` (#31), the slot-5 borrow C22/C23
+   use — and #28 settled *when*: check-and-abandon for a cosmetic row,
+   force-and-restore for something that must work. A Pause that silently does
+   nothing is the second.
+
+**GUARDING THE POLLS ALONE WOULD HAVE BEEN WORSE THAN NOTHING, and that was not
+foreseen when the issue was filed.** The select is established exactly once, in
+`transport_init`. So a debuggee that moved it and then stopped — breakpoint,
+button, or the poll's own break-in — hands the debugger a link whose every read
+and write goes to the other UART. Poll-only would have converted *"Pause does
+nothing"* into *"Pause stops the machine and the debugger never speaks again"*.
+`transport_activate` reclaims it at every entry; that is 7 of the 37 bytes.
+
+**WHAT WAS DELIBERATELY NOT FIXED**: the debuggee's selection is not restored on
+resume, so a program using the other UART must re-select after a break. Saving it
+in `transport_activate` would be **issue #26's defect one register along** — that
+routine also runs while the debugger is already executing (`main.asm` via
+`drain_main` and `cmd_close`), where the value it would read is its own. The
+capture belongs with the other `backup.*` break-time state, which is a different
+change to a different file. Same shape as `backup.io_next_reg`. It is in the
+HOWTO as a thing users are told, and it is a far smaller constraint than the one
+it replaces.
+
+**Cost: +37 bytes in BOTH ROMs** — `main_end` UART `0xF35D` → `0xF382`, WiFi
+`0xFDBE` → `0xFDE3`, both measured against `main` built pinned with `build/*.bin`
+deleted first. **WiFi headroom 178 → 141**, which is the number to plan against
+and is getting tight. Both ROMs move by design (`transport_*.asm` are per-variant
+but the defect is in both), so the merge carries a `make bump`.
+
+**BENCH W9, AND ITS CONTROL IS W8 RATHER THAN A SECOND RUN.** Same client, same
+fixture, one env var apart: the fixture's last act before it spins is
+`ld bc,0x153B / ld a,0x40 / out (c),a`. Red-first against `main`'s ROM
+(`4785892829…`) with **W8 green in the same run**, which is what isolates the
+select.
+
+**IT NEEDS A PROBE ROM, AND THAT IS A jnext DEFECT RATHER THAN A CONVENIENCE.**
+**jnext reports the select in BIT 3** of a `0x153B` read
+(`src/peripheral/uart.cpp:751`), where the hardware reports it in **BIT 6**
+(`serial/uart.vhd:355` gives `"00000" & msb` for UART0 and `:369` gives
+`"01000" & msb` for UART1; `ports.txt:370` says so in words). Its **write** path
+takes bit 6 correctly, so only the read-back disagrees. The shipped guard masks
+`0x40` — correct for silicon — and is therefore **inert in the emulator**, so W9
+cannot go green against a shipped ROM however right that ROM is. `SELECT_MASK` is
+the seam, of the `IP_MAX` / `RX_WAIT` / `LINK_IDS` family and for their reason,
+and `SELECT_MASK=0x48` accepts either bit.
+
+**Measured, one constant apart, which is what turns "the code reads correct" into
+"the code runs correct":** with `0x48`, W9 green; with the shipped `0x40`, red.
+So the compare, the borrow, both writes with bit 4 clear, the status read taken
+between them, the flags surviving the restore and the whole break-in path are all
+exercised — and **the bit position is not**, resting on the VHDL alone.
+**Rejected: masking both bits in the shipped ROM**, which would put an emulator's
+defect into the bytes a real Next runs, to make a check pass.
+
+**AND THE MEASUREMENT FOUND SOMETHING BIGGER THAN THE THING IT WAS MEASURING.**
+`make measure-poll-cost` reported **1288 T-states, 3903.1 iterations/frame,
+bit-identical before and after** — which looked like "the guard is free" and is
+not. **The instrument never reaches `transport_poll_traffic` at all.** Its fixture
+brings no debugger up, so `nmi66h`'s `.software_cause` declines at its
+magic-number compare, which sits *before* the `jp mf_nmi_poll` that leads to the
+link. **Proved by control rather than by reading** — the reading is what produced
+the wrong sentence in the first place: a ~3300 T-state delay loop planted at the
+top of that routine moves the measurement by **nothing**.
+
+So the project's headline figure is **not the cost of the poll** as three
+documents describe it; it is NMI entry + cause check + slot-7 page-in + magic
+decline. Still the right number for a machine with a Copper list and no debugger.
+A **real** session pays that plus the `prgm_state` test and the link check —
+another ~100 T-states by instruction timing, **arithmetic and measured nowhere**,
+and #42's own +39 on the common path is part of that remainder. Corrected in
+`CLAUDE.md`, the design doc §5 and the plan's Appendix A rather than restated.
+An instrument that covered it needs a debugger, a resumed debuggee and a counting
+loop in one run — `test-pause-transparency` with a counter — which is not written.
+
+**Gates: `test-dzrp-stub` 25/25 with W1-W9 and exit 0, `make test` 9/9,
+`test-unit` 5/5, `check-reproducible` both variants.** **NOT covered**: hardware,
+as ever — and here the bit position is exactly the thing hardware would settle,
+so a real Next is worth more to this fix than to most.
+
+---
+
 ## 2026-08-12 — W5's red reproduced the moment we stopped hunting it and started preserving it
 
 **Built, test-only, and the finding is worth more than the change.** W5's

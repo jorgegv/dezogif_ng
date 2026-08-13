@@ -122,6 +122,13 @@ TIMEOUT = float(os.environ.get("DZRP_TIMEOUT", "25"))
 NO_PAUSE = os.environ.get("W8_NO_PAUSE", "") not in ("", "0")
 RUN_SECONDS = float(os.environ.get("W8_RUN_SECONDS", "1.0"))
 
+# W9: the fixture also points the UART select at the OTHER channel before it
+# spins, which is what a debuggee using the Raspberry Pi header's UART does.
+# Issue #42 — see UART_SELECT below and transport_esp.asm's poll. W8 and W9 are
+# the same run differing in this one flag, so a red here is attributable to the
+# select and to nothing else.
+STEAL_SELECT = os.environ.get("W9_STEAL_SELECT", "") not in ("", "0")
+
 # Inside 0x8000-0x9FFF, which CMD_INIT maps to bank 4 — the same window
 # conformance.py's own fixture uses, and clear of the debugger's slots 6 and 7.
 DBG_CODE = 0x8000
@@ -141,6 +148,14 @@ REG_COPPER_CONTROL = 0x62
 
 COPPER_LINE = 100
 COPPER_RUN_LOOP = 0x40
+
+# The UART select. Bit 6 picks which of the two UARTs 0x133B/0x143B/0x163B refer
+# to; bit 4 clear means this write moves the select and leaves both prescalers
+# alone (ports.txt:370-372). 0x40 selects the Pi UART, i.e. the channel the WiFi
+# build does NOT own — so this is a debuggee taking a resource the debugger is
+# not using, which is the whole point of issue #42.
+UART_SELECT = 0x153B
+UART_SELECT_OTHER = 0x40
 
 
 def _w(v):
@@ -178,6 +193,14 @@ FIXTURE = (
     _nextreg(REG_COPPER_DATA, _move & 0xFF) +
     # run it from index 0, looping
     _nextreg(REG_COPPER_CONTROL, COPPER_RUN_LOOP) +
+    # W9 only: take the UART select for our own channel, exactly as a program
+    # using the Pi header's UART would. LAST, so that everything above is
+    # byte-identical between the two runs and the spin address is the only
+    # thing that moves.
+    ((b"\x01" + _w(UART_SELECT) +               # ld bc,0x153B
+      b"\x3E" + bytes([UART_SELECT_OTHER]) +    # ld a,0x40
+      b"\xED\x79")                              # out (c),a
+     if STEAL_SELECT else b"") +
     b"\x18\xFE"                                 # jr $   <- the spin
 )
 SPIN = DBG_CODE + len(FIXTURE) - 2

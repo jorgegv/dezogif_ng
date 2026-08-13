@@ -105,8 +105,34 @@ Measured with `make measure-poll-cost`:
 
 Plus the 44 bytes, plus the Copper list, plus the raster line.
 
+**THAT FIGURE IS A FLOOR, NOT THE WHOLE BILL, AND THE INSTRUMENT CANNOT SEE THE REST.**
+`make measure-poll-cost` runs its fixture with **no debugger brought up**, so the handler declines
+at its "is our image really there?" check and never reaches the part that looks at the debug link
+at all. Proved rather than assumed: planting a ~3300 T-state delay loop inside the link check moves
+the measurement by **nothing**. What a real session pays is the 1288 above **plus** that check —
+of the order of another 100 T-states by instruction timing, which is **arithmetic and has been
+measured nowhere**. Nothing here is affected by build `00.24`'s extra 39 T-states except that they
+are part of the unmeasured remainder.
+
 The poll does **not** change the machine's clock speed. It runs at whatever clock the program
 is running at.
+
+## If your program uses the other UART
+
+It may, and the break still works — that is what build `00.24` fixed. One thing to know:
+
+**The debugger selects its own UART channel whenever it takes control, and does not give your
+selection back.** So after any break — a breakpoint, the M1 button, or a Pause — port `0x153B`
+points at the debugger's channel, and your program's next UART access goes to the wrong one unless
+it selects again. **Select your channel where you use it rather than once at start-up** and the
+question does not arise.
+
+While your program is *running* the pointer is yours: the poll borrows it for a single status read
+and restores it before the interrupt returns, so a program that never breaks never notices.
+
+This is the same shape as the NextREG select latch, which the debugger also does not preserve, and
+for the same reason — the value belongs with the debugger's other break-time captures and is not
+saved there yet.
 
 ## When it will not work
 
@@ -155,13 +181,19 @@ program, this is under its control: restart the list and the break comes back wi
 **5. While `.mfinstall` is writing a ROM.** Config mode suppresses every Multiface NMI while it
 is active. It is a window of milliseconds and it self-recovers.
 
-**6. If the program writes NR `0x0B` (serial builds), or port `0x153B` (either build).** Both take
-the debug link out from under the poll. NR `0x0B` is the joystick i/o mode: clearing it disconnects
-the cable's receive line, which is exactly what the debugger stopped doing to make the break work.
-Port `0x153B` chooses which of the machine's two UARTs those reads refer to, so pointing it at the
-other one leaves the poll reading a channel nothing is arriving on. Either one kills the break
-**silently**, and the M1 button is the way back. A program that wants its own UART or its own
-joystick i/o mode can have them; it cannot have them and PC-initiated break at the same time.
+**6. If the program writes NR `0x0B` (serial builds only).** That is the joystick i/o mode:
+clearing it disconnects the cable's receive line, which is exactly what the debugger stopped doing
+in order to make the break work. It kills the break **silently**, and the M1 button is the way
+back. A program that wants its own joystick i/o mode can have it; it cannot have it and
+PC-initiated break at the same time.
+
+*(**This state used to name port `0x153B` as well, and that is FIXED as of build `00.24`.** The
+machine has two UARTs so that two owners can coexist, and `0x153B` is only the pointer saying which
+one the CPU's UART registers currently refer to — not a resource the debugger owns. The poll now
+borrows the pointer for its one status read and hands it straight back, so **your program may use
+the other UART and still be paused from the PC**. See "using the other UART" below for the one
+thing you do have to know, and ASYNCHRONOUS-BREAK-DESIGN.md §8.5 for why guarding it was preferred
+to documenting it.)*
 
 **7. After a reset, until the next M1 press (serial builds).** Any reset puts NR `0x0B` back to
 disabled (`zxnext.vhd:4939-4941`), so the cable's receive line is disconnected again and Pause

@@ -371,6 +371,18 @@ strongest:
      three runs, with the clock read off the machine (NR 0x07 = 0x33). **That retires plan §10's
      "~100-200 T-states/frame", which was 6-13 times low**; the 3.5 MHz figure is arithmetic from
      the 28 MHz measurement, and it covers the DECLINE path only.
+     **AND "THE DECLINE PATH" IS NARROWER THAN THIS PARAGRAPH MEANT — THE LINK CHECK IS NOT IN THE
+     1288 AT ALL** (found 2026-08-13, while measuring issue #42). The fixture brings no debugger up,
+     so `nmi66h`'s `.software_cause` declines at its magic-number compare, which sits *before* the
+     `jp mf_nmi_poll` that leads to `transport_poll_traffic` — so the figure is NMI entry + cause
+     check + slot-7 page-in + magic decline, and **the poll never asks the link anything**. Proved
+     by control, not by reading: a ~3300 T-state delay loop planted in `transport_poll_traffic`
+     moves the reading by **nothing**, 3903.1 iterations/frame either way. The number is still right
+     for a machine with a Copper list and no debugger; what a **real session** pays is that plus the
+     `prgm_state` test and the link check, of the order of another hundred T-states by instruction
+     timing — **arithmetic, and measured nowhere**. An instrument that covered it needs a debugger,
+     a resumed debuggee and a counting loop in one run, i.e. `test-pause-transparency` with a
+     counter, which is not written.
      **AND THE POLL EXTINGUISHES AN RX-OVERFLOW DIAGNOSTIC**: reading the UART status register
      clears the sticky overflow and framing bits (`serial/uart.vhd:530-539`), so an overflow during
      a free run is wiped ~50 times a second before anything can report it and
@@ -511,6 +523,25 @@ strongest:
    disable: identical up to the pause, which is withheld, and nothing may come back — W3's
    argument, and without it a green W8 would not say the *pause* caused the break rather than the
    debuggee stopping by itself or never running.
+   **W9 IS THE SAME RUN WITH THE DEBUGGEE HOLDING THE OTHER UART'S SELECT** (issue #42, `00.24`),
+   and **W8 is its control** — same client, same fixture, one env var apart, so no separate run.
+   Port `0x153B` is a shared *pointer*: it decides which of the two UARTs every access to `0x133B`,
+   `0x143B` and `0x163B` refers to, so before the fix a debuggee that selected the Pi header's
+   channel — contending with nothing, since the WiFi build owns UART0 and leaves UART1 free —
+   silently blinded the break. Both polls borrow the pointer for their one status read now, and
+   `transport_activate` reclaims it at every entry; **guarding the polls alone would have been
+   worse than nothing**, turning "Pause does nothing" into "Pause stops the machine and the
+   debugger never speaks again", because the select is established exactly once in
+   `transport_init`. Shown red against `main`'s ROM with W8 green in the same run.
+   **IT RUNS A PROBE ROM AND THAT IS NOT OPTIONAL: jnext reports the select in BIT 3
+   (`src/peripheral/uart.cpp:751`) where the hardware reports it in BIT 6
+   (`serial/uart.vhd:355`/`:369`, `ports.txt:370`)**, while honouring bit 6 on writes — so the
+   shipped mask is inert in the emulator and W9 cannot be green against a shipped ROM however
+   correct it is. `SELECT_MASK=0x48` accepts either bit; it exercises the compare, the borrow, both
+   writes, the read between them and the flags surviving the restore, and **not** the bit position,
+   which rests on the VHDL alone. Point run 9 back at `$ROM` and delete the seam when jnext moves.
+   **NOT covered by `make measure-poll-cost`** — that instrument never reaches
+   `transport_poll_traffic` at all (below), so #42's +39 T-states on the common path is arithmetic.
    **THE VERDICT IS `CMD_GET_REGISTERS`, NOT THE NOTIFICATION, AND READING IT FROM THE WRONG PLACE
    IS WHAT MADE THIS A STANDING RED FOR A DAY.** `NTF_PAUSE`'s payload is
    `[id][reason][bp_addr][bank+1][string]` (`src/message.asm:342-362`) and `bp_addr` is the address
@@ -1218,7 +1249,7 @@ Two things the shortening may **never** touch, because they are interface rather
   | `M1`-`M10` | `test/run-mfselect.sh` | `make test-mfselect` |
   | `E1`-`E4` | `test/esp-echo-client.py` | `make test-esp` |
   | `U1`-`U5` | `test/run-unit-tests.sh` | `make test-unit` |
-  | `W1`-`W8` | `test/run-dzrp-stub.sh` | `make test-dzrp-stub` |
+  | `W1`-`W9` | `test/run-dzrp-stub.sh` | `make test-dzrp-stub` |
   | `C1`-`C25` | `test/dzrp/conformance.py` | `test-dzrp-stub`, `test-dzrp`, `test-hardware` |
   | `B1`-`B2` | `test/run-ip-boundary.sh` | `make test-ip-boundary` |
   | `P1`-`P3` | `test/run-tx-patience.sh` | `make test-tx-patience` |

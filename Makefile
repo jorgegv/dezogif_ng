@@ -151,6 +151,27 @@ ifneq ($(IP_MAX),)
   VARIANT_FLAGS  += -DESP_IP_MAX=$(IP_MAX)
 endif
 
+# SELECT_MASK — the bit of port 0x153B the poll reads the UART channel select
+# from. The hardware puts it in bit 6 (serial/uart.vhd:355 and :369,
+# ports.txt:370) and the shipped ROMs mask 0x40; jnext reports it in bit 3
+# (src/peripheral/uart.cpp:751) while honouring bit 6 on writes, so the guard
+# issue #42 added is inert there and bench W9 cannot go green against a shipped
+# ROM. SELECT_MASK=0x48 accepts either bit, which makes the borrow-and-restore
+# path reachable in the emulator; everything else about the ROM is unchanged.
+#
+# THIS IS NOT A TUNING KNOB AND MUST NEVER BECOME THE DEFAULT: it exists so the
+# emulator can exercise Z80 that is correct for silicon, not so the Z80 can be
+# made to suit the emulator. It retires when jnext reports the select in bit 6.
+#
+# Same naming rule as IP_MAX: its own output name, so no probe ROM can be left
+# where a shipped one is read from.
+SELECT_MASK ?=
+
+ifneq ($(SELECT_MASK),)
+  VARIANT_SUFFIX := $(VARIANT_SUFFIX)-selmask$(SELECT_MASK)
+  VARIANT_FLAGS  += -DUART_SELECT_CHANNEL=$(SELECT_MASK)
+endif
+
 # RX_WAIT / TX_PASSES — the second bench seam, and the only way the SEND
 # timeout path can be reached, for the same reason IP_MAX exists: jnext answers
 # an AT+CIPSEND at once, so the budget that a real ESP-01 overran is never
@@ -774,8 +795,11 @@ test-esp: $(ESP_BIN)
 # Run the DZRP conformance suite against OUR OWN WiFi stub in jnext (1 run + a TCP client)
 test-dzrp-stub:
 	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
+	@$(MAKE) --no-print-directory TRANSPORT=wifi SELECT_MASK=0x48 mf-rom
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
-	 ROM="$(OUT)/enNextMf-wifi.rom" DZRP_ARGS="$(DZRP_ARGS)" $(TEST)/run-dzrp-stub.sh
+	 ROM="$(OUT)/enNextMf-wifi.rom" \
+	 ROM_SELMASK="$(OUT)/enNextMf-wifi-selmask0x48.rom" \
+	 DZRP_ARGS="$(DZRP_ARGS)" $(TEST)/run-dzrp-stub.sh
 
 # The session line on the Next's own screen (issues #14, #23 and #28): eight
 # jnext runs. Five are judged by READING row 8 back as text with the ZX ROM font

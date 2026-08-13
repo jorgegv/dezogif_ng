@@ -87,6 +87,18 @@
 #          a manual break does not have (mf.asm passes `ld hl,0`), so those bytes
 #          are 0x0000 by design on every remote. Asserting they were the PC is
 #          what made this a standing red for a day; see pause-running.py.
+#   run 9
+#     W9   THE SAME PAUSE, WITH THE DEBUGGEE HOLDING THE OTHER UART'S SELECT
+#          (issue #42). The fixture's last act before it spins is a write to
+#          port 0x153B selecting the Raspberry Pi header's UART — a channel this
+#          build does not own and is not using, so nothing is contended. 0x153B
+#          is a shared POINTER: it decides which UART every access to 0x133B,
+#          0x143B and 0x163B refers to (ports.txt:370), so before the fix the
+#          poll's status read was about the debuggee's channel and CMD_PAUSE
+#          could never break in — silently, with the stub otherwise healthy.
+#          W8 IS ITS CONTROL and no separate run is needed: same client, same
+#          fixture, same ROM, one env var apart. A red W8 makes the pair prove
+#          nothing, which W9's own verdict says rather than assumes.
 #
 #     W7   THE SAME PRESS LEAVES backup.speed AND backup.io_next_reg ALONE
 #          (issue #37) — the same defect two bytes along, saved two and eleven
@@ -148,6 +160,10 @@ JNEXT=${JNEXT:-$HOME/src/spectrum/jnext/build/gui-release/jnext}
 SD_IMAGE=${SD_IMAGE:-$HOME/.jnext/sdcard/cspect-next-1gb-fixed.img}
 OUT=${OUT:-build}
 ROM=${ROM:-$OUT/enNextMf-wifi.rom}
+# W9's ROM, and the only run that uses it. Same source, one assembler constant
+# apart: it accepts jnext's (wrong) bit 3 for the UART select as well as the
+# hardware's bit 6. See the W9 block below and the Makefile's SELECT_MASK.
+ROM_SELMASK=${ROM_SELMASK:-$OUT/enNextMf-wifi-selmask0x48.rom}
 DZRP_ARGS=${DZRP_ARGS:-}
 
 # The assembler's label table (--lstlab), for W7 alone. backup.speed and
@@ -359,6 +375,7 @@ jlog5=$OUT/dzrp-stub-w5.log
 jlog6=$OUT/dzrp-stub-w6.log
 jlog8=$OUT/dzrp-stub-w8.log
 jlog8c=$OUT/dzrp-stub-w8c.log
+jlog9=$OUT/dzrp-stub-w9.log
 shot=$OUT/screenshots/dzrp-stub.png
 shot2=$OUT/screenshots/dzrp-stub-w2.png
 shot3=$OUT/screenshots/dzrp-stub-w3.png
@@ -367,6 +384,7 @@ shot5=$OUT/screenshots/dzrp-stub-w5.png
 shot6=$OUT/screenshots/dzrp-stub-w6.png
 shot8=$OUT/screenshots/dzrp-stub-w8.png
 shot8c=$OUT/screenshots/dzrp-stub-w8c.png
+shot9=$OUT/screenshots/dzrp-stub-w9.png
 
 jnext_pid=""
 cleanup() {
@@ -1134,6 +1152,11 @@ fi
 
 PAUSE_RUNNING_CONTROL=${PAUSE_RUNNING_CONTROL:-1}
 
+# W9 reads this, and the script runs under `set -u`: a W8 whose stub never
+# listened would otherwise leave it unset and abort the run rather than
+# reporting. 0 is the honest default — nothing has been shown green yet.
+w8_ok=0
+
 log ""
 log "== run 7: a freely running debuggee, stopped from the PC (M2)"
 
@@ -1189,14 +1212,93 @@ else
 fi
 
 # ===========================================================================
+# Run 9 — W9: the same, with the debuggee using the OTHER UART (issue #42)
+#
+# W8 AND W9 ARE ONE RUN DIFFERING IN ONE FLAG, which is what makes a red here
+# attributable to the UART select and to nothing else. The fixture's last act
+# before it spins is `ld bc,0x153B / ld a,0x40 / out (c),a` — a debuggee taking
+# the Raspberry Pi header's UART, which THIS BUILD DOES NOT OWN and is not
+# using. Nothing is contended; the two channels are independent.
+#
+# WHAT IT COSTS WITHOUT THE FIX IS THE WHOLE FEATURE. 0x153B is a shared
+# pointer: every access to 0x133B, 0x143B and 0x163B refers to whichever channel
+# it selects (ports.txt:370). So the poll's `in a,(0x133B)` reads the Pi UART's
+# status, which is empty for ever, and CMD_PAUSE never breaks in — silently, and
+# with the stub otherwise perfectly healthy. Measured red against main's ROM
+# before the guard existed.
+#
+# NO SEPARATE CONTROL RUN, and that is deliberate rather than a saving: W8 IS
+# the control. Same client, same fixture, same emulator, with the select left
+# alone — so a green W8 beside a red W9 isolates the select, and a red W8 says
+# the pair proves nothing whatever W9 reports. Which is why W9's verdict names
+# W8 when W8 has already failed.
+#
+# IT RUNS A PROBE ROM, AND WHAT THAT COSTS THE CHECK IS STATED RATHER THAN
+# BURIED. jnext reports the UART select in BIT 3 of a 0x153B read
+# (src/peripheral/uart.cpp:751) where the hardware reports it in bit 6
+# (serial/uart.vhd:355 and :369; ports.txt:370 in words), while honouring bit 6
+# on WRITES. So the shipped guard — which masks 0x40, because that is what a
+# real Next returns — never sees the debuggee's change here and this check
+# cannot go green against a shipped ROM however correct that ROM is. Measured:
+# it does not.
+#
+# So run 9 installs a ROM built SELECT_MASK=0x48, one assembler constant apart,
+# which accepts either bit. WHAT THAT STILL EXERCISES is everything except the
+# bit position: the compare, the borrow branch, both writes to 0x153B with bit 4
+# clear, the status read taken between them, the flags surviving the restore,
+# and the whole break-in path behind it. WHAT IT DOES NOT is whether 0x40 is the
+# right bit — that rests on the VHDL and on ports.txt, cited above, and on no
+# run anywhere. When jnext moves the select to bit 6 this run should be pointed
+# back at "$ROM" and the seam deleted.
+# ===========================================================================
+
+log ""
+log "== run 9: the debuggee takes the other UART's select, then is paused (#42)"
+
+# The probe ROM goes into the working image for this run alone, which is the
+# last one. Its ONLY difference from the shipped ROM is that its select mask
+# accepts jnext's bit 3 as well as the hardware's bit 6 — see ROM_SELMASK above.
+if [ ! -f "$ROM_SELMASK" ]; then
+    fail "W9 the SELECT_MASK probe ROM is missing: $ROM_SELMASK"
+elif ! mcopy -o -i "$sd@@$part_off" "$ROM_SELMASK" "$MF_ROM_PATH"; then
+    fail "W9 could not install the probe ROM into the working image"
+elif ! start_stub "$jlog9" "$shot9"; then
+    fail "W9 the stub never listened on 127.0.0.1:$PORT for the stolen-select run"
+else
+    set +e
+    w9_out=$(W9_STEAL_SELECT=1 DZRP_PORT="$PORT" DZRP_TIMEOUT="$DZRP_TIMEOUT" \
+        python3 "$PAUSE_RUNNING" 2>&1)
+    w9_rc=$?
+    set -e
+    stop_stub
+    printf '%s\n' "$w9_out" | sed 's/^/  | /'
+
+    w9_connects=$(grep -c "accepted as cid" "$jlog9" || true)
+    w9_ok=$(printf '%s' "$w9_out" | grep -c '^RESULT pause OK ' || true)
+    w9_lines=$(printf '%s' "$w9_out" | grep -c '^RESULT pause ' || true)
+
+    if [ "$w9_connects" -gt 4 ]; then
+        fail "W9 CONTAMINATED: $w9_connects connections in $jlog9 where this fixture makes 1"
+    elif [ "$w8_ok" -eq 0 ]; then
+        fail "W9 W8 is red, so this pair isolates nothing: fix W8 first"
+    elif [ "$w9_rc" -ne 0 ] || [ "$w9_lines" -eq 0 ]; then
+        fail "W9 precondition: the client rendered no verdict, so nothing was judged"
+    elif [ "$w9_ok" -eq 0 ]; then
+        fail "W9 the debuggee's UART select blinded the pause: $(printf '%s' "$w9_out" | sed -n 's/^RESULT pause BAD //p' | head -1)"
+    else
+        pass "W9 CMD_PAUSE still breaks in with the debuggee holding the other UART's select"
+    fi
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 
 log ""
 if [ "$failures" -ne 0 ]; then
     log "Diagnosis:"
-    log "  jnext logs:   $jlog  $jlog2  $jlog3  $jlog4  $jlog5  $jlog6  $jlog8  $jlog8c"
-    log "  screenshots:  $shot  $shot2  $shot3  $shot4  $shot5  $shot6  $shot8  $shot8c"
+    log "  jnext logs:   $jlog  $jlog2  $jlog3  $jlog4  $jlog5  $jlog6  $jlog8  $jlog8c  $jlog9"
+    log "  screenshots:  $shot  $shot2  $shot3  $shot4  $shot5  $shot6  $shot8  $shot8c  $shot9"
 fi
 
 exit "$((failures > 0 ? 1 : 0))"

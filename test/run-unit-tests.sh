@@ -35,8 +35,11 @@
 #       miscounts its own results could otherwise report 1C passes having
 #       printed three.
 #   U5  no test failed.
+#   U6  every index ran the test the manifest names for it — the ONLY check
+#       here that asserts WHICH tests ran rather than how many, and the only
+#       one that catches a case being replaced by another rather than lost.
 #
-# WHAT IT DOES NOT COVER. 36 of the 64 test cases are EXCLUDED, and that is not
+# WHAT IT DOES NOT COVER. 40 of the 69 test cases are EXCLUDED, and that is not
 # a shortcut — see doc/UNIT-TESTS.md. They drive the debugger through a DZRP
 # command and read its response back through ports invented by
 # src/simulation/uart.js, a JavaScript peripheral DeZog's zsim loads as
@@ -236,10 +239,46 @@ else
     log "        grep -n ' <ADDR> ' $OUT/ut-headless.list"
 fi
 
+# --- U6: the runner ran the tests the manifest names ------------------------
+#
+# THE PINS COUNT HOW MANY, NEVER WHICH, AND THAT IS THE HOLE THIS CLOSES.
+# UT_EXPECTED_TESTS / _SKIPPED are stated in two places and checked against both
+# the sources and the run, which catches a case sliding between the runnable and
+# excluded sets. It cannot catch a case being replaced by ANOTHER one, because
+# the totals are then still right — and that is not hypothetical: `load_entry`
+# computed its table offset in 8 bits, so from the 65th case on the runner
+# CALLED the entry of `index & 0x3F`. Three breakpoint tests never executed
+# while tests 0x00-0x02 ran twice and were reported passing under their indices.
+# Every check above was green throughout, on both pins.
+#
+# So this one asserts the IDENTITY of every line: each UT-BEGIN/UT-SKIP index
+# must carry the manifest's name for that index, and the kind must agree with
+# the manifest's RUN/SKIP. It is the only check here that would have gone red.
+awk -v man="$UT_MANIFEST" '
+    BEGIN { while ((getline l < man) > 0)
+                if (l ~ /^[0-9A-Fa-f][0-9A-Fa-f] (RUN|SKIP) /) {
+                    split(l, f, /[ \t]+/); k[toupper(f[1])] = f[2]; n[toupper(f[1])] = f[3] } }
+    /^UT-(BEGIN|SKIP) / {
+        kind = ($1 == "UT-SKIP") ? "SKIP" : "RUN"
+        if (!($2 in n))            { print $2 " " $3 " (no manifest entry)"; bad++ }
+        else if (n[$2] != $3)      { print $2 " ran " $3 ", manifest says " n[$2]; bad++ }
+        else if (k[$2] != kind)    { print $2 " " $3 " is " kind ", manifest says " k[$2]; bad++ }
+        seen++ }
+    END { if (seen == 0) print "no UT-BEGIN/UT-SKIP lines at all"; exit 0 }
+' "$report" > "$OUT/ut-identity.txt" 2>/dev/null || true
+
+n_ident=$(wc -l < "$OUT/ut-identity.txt" | tr -d ' ')
+if [ "$n_ident" -eq 0 ] && [ "$((n_pass + n_fail + n_skip))" -gt 0 ]; then
+    pass "U6 every index ran the test the manifest names for it"
+else
+    fail "U6 $n_ident line(s) ran a different test than the manifest names"
+    sed 's/^/        /' "$OUT/ut-identity.txt" | head -10
+fi
+
 # --- verdict ---------------------------------------------------------------
 
 log ""
-checks=5
+checks=6
 if [ "$failures" -eq 0 ]; then
     verdict="$checks/$checks checks passed  ($n_pass tests passed, $n_skip excluded as zsim-dependent)"
 else

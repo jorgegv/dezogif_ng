@@ -104,6 +104,38 @@ numbers in `test/run-unit-tests.sh`, checked against what actually *ran*. Pinnin
 would let a test quietly move from the runnable set into the excluded set while the total stayed
 right.
 
+### The counts were right and three tests never ran
+
+**Found 2026-08-13, live since issue #41, and it is the sharpest illustration this project has of
+what a pinned total cannot see.** `load_entry` computed its table offset as `test_index × 4` in the
+**8-bit** accumulator. Four bytes per entry, so the multiply overflows at index `0x40` — and the
+table crossed 64 entries when #41 took the suite from 64 cases to 66.
+
+From the 65th case on, the runner therefore read the entry of `index & 0x3F`: it **CALLed the wrong
+test's code** and printed the wrong test's name. The skip flags were unaffected, being one byte per
+entry with no multiply, so exclusions stayed correct and only the runnable cases were displaced.
+
+What that looked like, at 69 cases:
+
+| index | the manifest's test | what actually ran |
+|---|---|---|
+| `40` | `ut_breakpoints.UT_check_tmp_breakpoints.UT_no_bp` | `ut_utilities.UT_write_read_slot` |
+| `41` | `ut_breakpoints.UT_check_tmp_breakpoints.UT_first_bp` | `ut_utilities.UT_div_hl_e` |
+| `42` | `ut_breakpoints.UT_check_tmp_breakpoints.UT_second_bp` | `ut_utilities.UT_itoa_2digits` |
+
+**Three breakpoint tests never executed, and the suite reported 29 of 29 passing.** U1-U5 were green
+throughout, on **both** independent pins, because the totals were right: a duplicate was counted in
+place of the test it displaced. The pins say **how many** cases run, never **which**, and this is the
+one shape that distinction lets through. `UT-FAIL`'s own diagnostic — which maps a failing index back
+to a name through the manifest — would likewise have named the wrong test.
+
+**U6 is the guard.** It asserts the identity of every printed line against the manifest: each index
+must carry that index's name, and `UT-BEGIN`/`UT-SKIP` must agree with its `RUN`/`SKIP`. Watched to
+fail against the 8-bit form — five lines, naming every displaced test, with U1-U5 still green.
+
+The three tests pass now that they run. That is luck rather than vindication: they had been unrun for
+three ROM-moving builds of the breakpoint code they cover.
+
 ## 4. Isolation between tests
 
 Several tests **self-modify the debugger they are testing** and never undo it — `ut_uart.asm`

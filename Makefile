@@ -759,7 +759,7 @@ measure-poll-cost: $(ROM) $(COST_BIN_ON) $(COST_BIN_OFF)
 # '# ' line before a target as its description.
 #
 
-# Run the Z80 unit tests headless in jnext — 5 checks, no VS Code (not part of `make test`)
+# Run the Z80 unit tests headless in jnext — 6 checks, no VS Code (not part of `make test`)
 test-unit: $(UT_HL_BIN)
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
 	 UT_NEX="$(UT_HL_BIN)" UT_MANIFEST="$(OUT)/ut_headless/ut_manifest.txt" \

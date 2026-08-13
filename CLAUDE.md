@@ -754,7 +754,7 @@ strongest:
    See `doc/DZRP-TESTING.md`. Like `test-esp`, not part of `make test`: it binds a host TCP port.
    **It says nothing about hardware.**
 4d. **`make test-unit`** — the Z80 unit tests under `src/unit_tests/`, headless (issue #3). One
-   jnext run of `build/ut-headless.nex`, 5 checks. **29 of the 69 test cases run; 40 cannot and
+   jnext run of `build/ut-headless.nex`, 6 checks. **29 of the 69 test cases run; 40 cannot and
    are reported as `UT-SKIP` on every run.** Those 40 need ports invented by `src/simulation/uart.js`,
    a JavaScript peripheral DeZog's zsim loads as `customCode` — the Z80 cannot trap its own I/O,
    so they are unreachable from inside the guest, and a project-specific peripheral does not
@@ -1257,7 +1257,7 @@ Two things the shortening may **never** touch, because they are interface rather
   | `T1`-`T9` | `test/run-headless.sh` | `make test` |
   | `M1`-`M10` | `test/run-mfselect.sh` | `make test-mfselect` |
   | `E1`-`E4` | `test/esp-echo-client.py` | `make test-esp` |
-  | `U1`-`U5` | `test/run-unit-tests.sh` | `make test-unit` |
+  | `U1`-`U6` | `test/run-unit-tests.sh` | `make test-unit` |
   | `W1`-`W9` | `test/run-dzrp-stub.sh` | `make test-dzrp-stub` |
   | `C1`-`C25` | `test/dzrp/conformance.py` | `test-dzrp-stub`, `test-dzrp`, `test-hardware` |
   | `B1`-`B2` | `test/run-ip-boundary.sh` | `make test-ip-boundary` |

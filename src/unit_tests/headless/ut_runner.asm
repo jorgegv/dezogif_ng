@@ -333,12 +333,26 @@ write_nextreg:
 ;--------------------------------------------------------
 
 ; Cache the current test's entry address and name pointer from the table.
+;
+; THE ×4 IS DONE IN 16 BITS, AND IT WAS DONE IN 8 UNTIL 2026-08-13. `add a,a`
+; twice overflows the accumulator at index 0x40, so every test from the 65th
+; onwards read the entry of `index & 0x3F`: the runner CALLED the wrong test's
+; code and printed the wrong test's name, while the skip flags — looked up one
+; byte per entry, below, with no multiply — stayed correct. With 69 cases that
+; silently re-ran tests 0x00-0x02 in place of 0x40-0x42 and reported them
+; passing under the right index, so the counts, both pins and every check in
+; run-unit-tests.sh agreed while three real breakpoint tests never executed.
+;
+; LIVE SINCE THE TABLE CROSSED 64 ENTRIES, which is issue #41. It is exactly the
+; failure the two-place pinning exists to catch and the one shape it cannot see:
+; the totals are right because a duplicate is counted in place of the test it
+; displaced. UT_EXPECTED_* pins how many, never WHICH.
 load_entry:
     ld a,(test_index)
-    add a,a
-    add a,a                     ; 4 bytes per table entry
     ld l,a
     ld h,0
+    add hl,hl
+    add hl,hl                   ; 4 bytes per table entry, in 16 bits
     ld de,ut_test_table
     add hl,de
     ld e,(hl)                   ; entry address

@@ -1547,10 +1547,16 @@ def chk_slot7_restore_uses_swap_window(d):
 # ==========================================================================
 
 # The 2-byte breakpoint id DeZog reads out of a CMD_ADD_BREAKPOINT response, and
-# the value it reads as "refused". `DzrpRemote.sendDzrpCmdAddBreakpoint` does
-# `e.bpId = getWord(i, 0)` and `DzrpRemote.setBreakpoint` does
+# the value it reads as "refused". `DzrpBufferRemote.sendDzrpCmdAddBreakpoint`
+# does `e.bpId = getWord(i, 0)` and `DzrpRemote.setBreakpoint` does
 # `e.bpId === 0 && (e.longAddress = -1)`, after which VS Code shows the
 # breakpoint unverified. Read out of DeZog 3.7.4's own bundle.
+#
+# THE TWO CLASSES ARE DIFFERENT AND BOTH ARE DELIBERATE. `setBreakpoint` really
+# is `DzrpRemote`'s — the assert(false) stub for it is `RemoteBase`'s, one level
+# further up. The command-sending half is `DzrpBufferRemote`'s, the class that
+# owns `sendDzrpCmd`; `DzrpRemote`'s own is an assert(false) stub. Corrected
+# 2026-08-13 against both the bundle and the unmodified v3.7.4 source.
 BP_ID_LEN = 2
 BP_ID_REFUSED = 0
 
@@ -1868,10 +1874,12 @@ def chk_close(d):
     TWO ASSERTIONS, AND THE SECOND IS THE INTERESTING ONE.
 
     The response first. The specification gives CMD_CLOSE a Length=1 response —
-    the sequence number and nothing else, exactly as CMD_PAUSE has — and DeZog's
-    DzrpRemote awaits it: `sendDzrpCmdClose()` is
+    the sequence number and nothing else, exactly as CMD_PAUSE has — and DeZog
+    awaits it: `sendDzrpCmdClose()` is
     `await this.sendDzrpCmd(2, undefined, this.initCloseRespTimeoutTime)` in the
-    installed 3.7.4. Silence there blocks the client, which is issue #8's shape.
+    installed 3.7.4, in `DzrpBufferRemote` — the class that owns `sendDzrpCmd` —
+    and NOT in `DzrpRemote`, which has no override at that level at all.
+    Silence there blocks the client, which is issue #8's shape.
 
     Then that the remote is still there. This is the only command our stub
     answers and then LEAVES through `jp main` (src/commands.asm), which runs

@@ -352,7 +352,7 @@ it:
 | Transport | Serial on joy port | **Either**, chosen at assembly time: serial as upstream, or **ESP-01 WiFi, TCP** |
 | Joysticks | Taken over while stopped | **Never touched** in WiFi mode; in UART mode the chosen port is held permanently on joy 2 (async break) and as upstream on joy 1 |
 | Cable | D-SUB 9 + USB serial adapter | **None** in WiFi mode; as upstream in UART mode |
-| PC-initiated pause | **Impossible** | **Yes** (Copper NMI poll). WiFi mode, and UART mode on **joy port 2** since 2026-08-12 — untested there, see design doc §8.0 |
+| PC-initiated pause | **Impossible** | **Yes** (Copper NMI poll). WiFi mode, and UART mode on **joy port 2** since 2026-08-12 — **benched in the emulator 2026-08-13** (`make test-uart-break`, issue #43), never on hardware; see design doc §8.0 |
 | Breakpoint while running | Impossible | Yes, follows from the above |
 | Bootstrap | `enNextMf.rom` | Same |
 | Memory choreography | slot 7 MAIN / slot 6 SWAP / AltROM | Same |

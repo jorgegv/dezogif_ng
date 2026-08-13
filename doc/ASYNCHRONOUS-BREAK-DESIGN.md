@@ -884,7 +884,7 @@ parenthetical said hardware was what remained, which named the wrong rung.)*
 | **the WiFi ROM is byte-identical** to `main`'s, pinned — so nothing leaked across the transport boundary | **run**, `194ac424…` both sides |
 | `make check-reproducible`, both variants | **run** |
 | `make test` — T1-T9 against the **UART** ROM, T9 driving `mf_nmi_poll` → `transport_poll_traffic` ~400 times per run | **run, 9/9** |
-| `make test-unit` — 5/5, 28 of 67 run | **run**, but see below |
+| `make test-unit` — 6/6, 29 of 69 run | **run**, but see below |
 | `UT_transport_activate` / `UT_transport_deactivate` — the only checks that assert the NR `0x0B` values and the resume-path behaviour | **NOT RUN.** Both read a register back through `in a,(4)`, a port `src/simulation/uart.js` invents, so the marker rule excludes them headless. They run only under DeZog + zsim in VS Code, which is a manual layer nothing here drives |
 | ~~**a byte arriving on the cable while a debuggee runs — i.e. the feature**~~ | ~~**NOT RUN, AND NOT RUNNABLE HERE.**~~ **RUN, 2026-08-13 — `make test-uart-break`, checks J1-J5.** See §8.0.1 |
 

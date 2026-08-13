@@ -201,6 +201,13 @@ defect never takes the common path; and nothing anywhere drives the serial
 transport headless. So that half shipped on inspection alone — which is the
 position `TRANSPORT_DEACTIVATE` was in one branch earlier, and is exactly what
 earned *it* a unit test.
+*(**ANNOTATED 2026-08-13: the last clause is now false**, and it is the THIRD
+annotation this one entry has needed. `make test-uart-break` drives the serial
+transport headless, so "nothing anywhere" has expired; the two clauses before
+it are scoped to jnext's bit-3 defect and remain accurate history. Recorded
+because of where it sits: four lines above a sibling sentence this same branch
+had already annotated for exactly this, which is the miss this session made
+seven times.)*
 
 **The fix is `ut_uart.UT_transport_select_reclaimed` and
 `ut_uart.UT_transport_poll_borrows_select`, and getting there needed

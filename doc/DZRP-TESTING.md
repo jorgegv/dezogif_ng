@@ -779,8 +779,11 @@ and only if the state actually changed.
 **Why upstream never saw it.** DeZog's `ZxNextSerialRemote` overrides `sendDzrpCmdPause()` to throw
 *"To pause execution use the yellow NMI button of the ZX Next"*, so over the serial remote command
 7 never reaches the wire. WiFi mode is driven by the `cspect` remote, which does **not** override
-it and inherits `DzrpRemote`'s `await this.sendDzrpCmd(7)` — it sends the command and blocks on the
-response. Verified against the installed DeZog 3.7.4.
+it and inherits `await this.sendDzrpCmd(7)` — it sends the command and blocks on the response.
+That implementation is **`DzrpBufferRemote`'s, not `DzrpRemote`'s**, whose own
+`sendDzrpCmdPause` is an `assert(false)` stub. Re-read off the installed DeZog 3.7.4 on
+2026-08-13; the conclusion is unchanged and the class named was wrong, which is the kind of
+citation this project treats as a defect rather than a detail.
 
 ### C15: `CMD_CLOSE`, and the destructive prologue behind it
 
@@ -791,9 +794,9 @@ ended, so the one command DeZog uses to say so had no coverage at all.
 **Two assertions, and the second is the reason this is a check rather than a teardown.**
 
 The response first. The specification gives `CMD_CLOSE` a **Length=1 response** — the sequence
-number and nothing else, exactly as `CMD_PAUSE` has — and DeZog's `DzrpRemote` awaits it:
-`sendDzrpCmdClose()` is `await this.sendDzrpCmd(2, undefined, this.initCloseRespTimeoutTime)` in the
-installed 3.7.4. Silence there blocks the client, which is issue #8's shape exactly.
+number and nothing else, exactly as `CMD_PAUSE` has — and DeZog awaits it: `sendDzrpCmdClose()`
+is `await this.sendDzrpCmd(2, undefined, this.initCloseRespTimeoutTime)` in the installed 3.7.4,
+in `DzrpBufferRemote` (the class that owns `sendDzrpCmd`) rather than in `DzrpRemote`. Silence there blocks the client, which is issue #8's shape exactly.
 
 Then that the remote is **still there**. `CMD_CLOSE` is the only command our stub answers and then
 leaves through **`jp main`** (`src/commands.asm`), and `main`'s prologue is destructive by design:

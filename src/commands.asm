@@ -598,8 +598,11 @@ cmd_continue:
 ; overrides sendDzrpCmdPause() to throw "To pause execution use the yellow NMI
 ; button of the ZX Next" and never puts the command on the wire. Our WiFi mode
 ; is driven by the cspect remote (plan §7), which does NOT override it and so
-; inherits DzrpRemote's `await this.sendDzrpCmd(7)` — it sends command 7 and
-; blocks on the response. Issue #8; conformance check C12.
+; inherits `await this.sendDzrpCmd(7)` — it sends command 7 and blocks on the
+; response. That implementation is DzrpBufferRemote's, NOT DzrpRemote's, whose
+; own sendDzrpCmdPause is an `assert(false)` stub; re-read off the DeZog 3.7.4
+; bundle 2026-08-13, because naming the wrong class in the chain is the kind of
+; citation this project treats as a defect. Issue #8; conformance check C12.
 ; Changes:
 ;  NA
 ;===========================================================================

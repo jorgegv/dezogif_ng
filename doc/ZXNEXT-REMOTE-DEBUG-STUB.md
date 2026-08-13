@@ -949,7 +949,8 @@ Note on question 7: the hardware fact is cited, the opportunity is not. Do not p
 design assumption without measuring it — see ERRORS.md on what deriving instead of reading costs.
 *(That note was written about the ESP-pin opportunity and it held: the opportunity was never
 measured, and what replaced it was a different mechanism read out of the same mux. The caution
-applies unchanged to the built one, which no run anywhere has exercised.)*
+applies unchanged to the built one — which **has** been exercised since 2026-08-13, in the
+emulator only, by `make test-uart-break` (issue #43). On hardware it still has not.)*
 
 ---
 

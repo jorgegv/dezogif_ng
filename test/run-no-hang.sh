@@ -137,7 +137,7 @@
 #   2026-08-13: `make test-uart-break` drives it with a DZRP client and does
 #   reach cmd_loop. What is still uncovered is part A's BOUND, which needs a
 #   client going silent MID-COMMAND — that bench never does, so the gap is real
-#   and the reason for it has changed. The serial half of part A is unexercised, by construction.
+#   and the reason for it has changed.
 # * Part C at its SHIPPED limit, and part C against a module that is actually
 #   broken. See N4's scope above.
 # * Anything about a real ESP-01.

@@ -871,7 +871,8 @@ where either port idled the module's TX for as long as the debugger held the mac
 `PC break: needs Joy 2`, in the UART-only text block; `ut_uart` gains `UT_transport_deactivate` and
 its `UT_transport_activate` assertions move to the new NR `0x0B` values.
 
-**THE EVIDENCE LADDER, AND THE TOP TWO RUNGS ARE EMPTY.**
+**THE EVIDENCE LADDER, AND THE TOP RUNG IS EMPTY.** *(It said TWO until 2026-08-13, when
+`make test-uart-break` filled the cable row. Hardware is the one that is left.)*
 
 | | |
 |---|---|

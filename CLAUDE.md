@@ -103,10 +103,17 @@ to work.
   selection (`PC break: ready` / `PC break: needs Joy 2`). The blocker was never the machine: the
   serial build's `transport_poll_traffic` already existed and was already correct, and
   `TRANSPORT_DEACTIVATE` — four bytes with one call site — severed the cable's RX on every resume.
-  Port 2 only, deliberately, so the debugged program keeps a real joystick on port 1. **What is NOT
-  established is that it works**: no bench here can put a byte on that cable, and
+  Port 2 only, deliberately, so the debugged program keeps a real joystick on port 1.
+  ~~**What is NOT established is that it works**: no bench here can put a byte on that cable, and
   `TRANSPORT_DEACTIVATE` is reached by no headless run at all, so the acceptance test is a serial
-  cable on a real Next. See doc/ASYNCHRONOUS-BREAK-DESIGN.md §8.0 for the evidence ladder.
+  cable on a real Next.~~ **IT IS ESTABLISHED IN THE EMULATOR SINCE 2026-08-13 —
+  `make test-uart-break`, §4o, issue #43** — because **jnext#251** shipped the cable
+  (`--joy-uart-rx`, ≥ 0.99.155) that §8.7 had asked for. A freely running debuggee is stopped by
+  bytes on that cable (**J1**), and the two arms of `TRANSPORT_DEACTIVATE` are told apart by the
+  **debuggee reading NR `0x0B` while it runs** (**J3**/**J4**) — *not* by the break, which is green
+  against the pre-fix ROM too because nothing drains the RX FIFO on the resume path. **Hardware is
+  still owed**: acceptance route 1 of #43 is a cable on a real Next and no rig exists.
+  See doc/ASYNCHRONOUS-BREAK-DESIGN.md §8.0 and §8.0.1 for the evidence ladder.
 - **@KNOWN-ISSUES.md** — faults that are real, reproduced, understood and deliberately **WONTFIX**,
   each with what causes it, what does *not*, what to do about it, and what would reopen it. Read it
   before investigating odd behaviour on hardware: two of the states it describes look exactly like
@@ -923,9 +930,12 @@ strongest:
    re-initialises is a module that was never broken.
    **None of this fixes issue #15 and none of it may be described as doing so**: four candidate
    triggers driven at a real Next on 2026-08-05, including both mechanisms this bench covers, all
-   recovered within ~3 s. **NOT covered**: the serial build's half of the bound (identical code,
-   and nothing here can drive that transport headless — T6 attaches no client, so it never reaches
-   `cmd_loop`), the recovery at its shipped limit, and anything about a real ESP-01. Not part of
+   recovered within ~3 s. **NOT covered**: the serial build's half of the bound — identical code,
+   and nothing exercises it, ~~because nothing here can drive that transport headless — T6 attaches
+   no client, so it never reaches `cmd_loop`~~ *(that reason expired on 2026-08-13: `make
+   test-uart-break` does drive the serial transport with a client, §4o. It simply does not test this
+   bound — its client never goes quiet mid-command — so the coverage gap is unchanged and only its
+   cause is)*; the recovery at its shipped limit, and anything about a real ESP-01. Not part of
    `make test`: it binds a host TCP port.
 4i. **`make test-screen-agreement`** — the DZRP **screen reader**, 2 headless jnext runs, and the
    only bench here that judges one artefact against **two independent views of it**.
@@ -1218,6 +1228,67 @@ strongest:
    re-runnable artefact); how long a real re-association takes, which is what would decide whether
    60 seconds is the right period; and the outage arriving **while a DZRP session is open**, which
    the stub deliberately does not re-query through. See `test/run-wifi-assoc.sh`.
+4o. **`make test-uart-break`** — **ASYNCHRONOUS BREAK OVER THE SERIAL CABLE (issue #43), and the
+   first run of any kind to drive the joy-port transport with a DZRP client.** 3 headless jnext
+   runs, 5 checks. It fills in the top rung of `doc/ASYNCHRONOUS-BREAK-DESIGN.md` §8.0's evidence
+   ladder: `TRANSPORT_DEACTIVATE` — the one line the feature turns on — was reached by **no
+   headless run at all**, because it runs only from `restore_registers`, reached only from
+   `cmd_continue`, which needs a client on that transport and nothing had ever been one, in jnext
+   or on hardware. Unblocked by **jnext#251** (`--joy-uart-rx`, ≥ 0.99.155), which this project is
+   the first consumer of.
+   **THERE IS NO CLIENT HERE EITHER, AND THAT SHAPES THE WHOLE BENCH.** A cable in jnext is a
+   **one-way** byte stream from a file — the guest's replies leave through joystick pin 7 and reach
+   nothing on the host — so the commands are **pre-recorded** and the answers are read back out of
+   jnext's own UART TX log (`uart.cpp:743`, at `debug`). The stream is self-framing because UART
+   mode prefixes every reply with `MESSAGE_START_BYTE`, which is upstream's documented serial
+   extension rather than a defect.
+   **J1** a freely running debuggee — carrying the Copper list itself, resumed with **no**
+   temporary breakpoint — is stopped by bytes on the cable: `MANUAL_BREAK`, `PC` at its spin, `SP`
+   its own, still serving. **J2** its control, W3's shape: the same run with the stream truncated
+   after `CMD_CONTINUE`, and nothing may come back, which is what excludes "the debuggee stopped by
+   itself" and "it never ran". **J5** the `PC break: ready` / `PC break: needs Joy 2` row, **read as
+   text** and validated against row 12 inside the same image — `show_ui`'s row 7 was added by the
+   same change, is what the HOWTO sends a user to when Pause does nothing, and was covered by
+   **nothing**.
+   **THE BREAK CANNOT DISCRIMINATE THE FIX, AND THAT WAS MEASURED RATHER THAN REASONED — SO J3 AND
+   J4 ASK THE DEBUGGEE INSTEAD.** The RX FIFO is 512 bytes and **nothing drains it on the resume
+   path** (`backup.asm:58-62` is `transport_flush`, then the macro, and no drain), so bytes that
+   arrived while the debugger was still stopped are still there when the debuggee starts running and
+   the first poll finds them. The recorded stream is ~190 bytes — ~2 ms of wire at 921600 — against
+   the several milliseconds `cmd_init` spends in `show_ui`, so **all of it is buffered before
+   `CMD_CONTINUE` is even read**. Measured: a run with the cable in socket 1 and the port-1
+   selection — which clears NR 0x0B on resume, i.e. **the pre-fix behaviour** — breaks in and
+   answers every command exactly as socket 2 does. **Shown red the decisive way: against a ROM with
+   the fix reverted, J1 is GREEN and J3 is RED.** A bench that judged only the break would have been
+   a green check that could not fail, which this project has shipped three times under other names.
+   So the **debuggee is the witness**: NR 0x0B reads back (`zxnext.vhd:5914`), and the fixture's
+   first instruction after the resume reads it and stores it. **J3** the subject ran with
+   `NR 0x0B = 0xB1` — io mode on, socket 2, UART1, the cable's RX live. **J4** the port-1 run
+   witnessed `0x00` — the same macro's other arm, **the pre-fix behaviour reproduced from shipped
+   bytes with no probe ROM**, and simultaneously state 1 of the HOWTO's seven. The comparison is
+   masked to the bits the VHDL guarantees (7, 5:4, 0), because jnext returns the byte as written
+   where hardware zeroes bits 6 and 3:1.
+   **J3 and J4 constrain the macro from BOTH sides**, which is #27's guard-too-wide lesson: an
+   over-wide "keep io mode on every port" probe ROM passes J3 and takes **J4** red at `0xA1`.
+   **Every check shown red**: the pre-fix ROM (J3), the over-wide ROM (J4), a fixture that never
+   starts its Copper list (J1 red, J3/J4 correctly *preconditions* — HOWTO state 4), the two screen
+   labels swapped (J5 — mfselect's M9 trap), and `STREAM_FRAME=100`, which spends the whole stream
+   before the stub exists and takes all four cable checks red on their delivery precondition,
+   quoting jnext's own `Current NR 0x0B = 0x01`. That precondition is asserted from jnext's one-shot
+   "all N byte(s) LOST" warning plus the attach line, so a run whose mux was never what this bench
+   assumed says so instead of passing over a path no byte took.
+   **NOT COVERED, and it is more than usual.** **Hardware**: nothing here has been near a Next, and
+   the user has no cable rig — acceptance route 1 of #43 is still open. **Whether joystick socket 1
+   can receive AT ALL**: the FPGA core is symmetric and the DB9 wiring is not in the VHDL, while
+   upstream's own `transport_activate` comment says *"RX = PIN 9 Joystick 2"* — so run 3's delivery
+   may be an emulator artefact, and if upstream is right port 1 has never received on silicon,
+   upstream's own port-1 selection included. It does not weaken J4, whose subject is the NR 0x0B the
+   debuggee witnessed rather than anything arriving. **A byte arriving strictly AFTER the resume**:
+   the FIFO makes that unstageable here, so what J1 shows is the poll → break → notify path running
+   against a live debuggee on this transport, and J3 shows the RX source survived — the feature is
+   those two facts, and neither alone is it. **`ESP_*` timing, the Sinclair/Cursor joystick cost,
+   and DeZog itself**, which has never driven the serial transport here. Not part of `make test`:
+   it is separate tooling and takes ~2.5 minutes. See `test/run-uart-break.sh`.
 5. **`build/ut.nex`** — the same tests, **DeZog-driven** (`"unitTests": true` + zsim + the
    `customCode` plugin) in VS Code. Still a manual layer, and still the only way to exercise the
    38 that 4d must skip. `make unit-tests` assembles it; nothing here runs it.
@@ -1271,6 +1342,7 @@ Two things the shortening may **never** touch, because they are interface rather
   | `K1`-`K4` | `test/run-cipsto.sh` | `make test-cipsto` |
   | `L1`-`L5` | `test/run-baud.sh` | `make test-baud` |
   | `D1`-`D8` | `test/run-wifi-assoc.sh` | `make test-wifi-assoc` |
+  | `J1`-`J5` | `test/run-uart-break.sh` | `make test-uart-break` |
   | `H1`-`H7` | `test/hardware-check.py` | `make test-hardware` |
   | `A0`-`A6` | `test/slot-ceiling-probe.py` | `make probe-slots` |
   | `B0`-`B5` | `test/vanished-peer-probe.py` | `make probe-vanished` |

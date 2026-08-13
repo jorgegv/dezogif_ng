@@ -308,9 +308,15 @@ else
     set -e
     printf '%s\n' "$subj_out" | sed 's/^/  | /'
 
+    # TWO SUBJECTS, TWO VERDICTS. The setup preconditions — the fixture landed,
+    # CMD_CONTINUE was answered — gate both; past them each is reported on its
+    # own line, because they fail for different reasons. A run whose debuggee
+    # never started its Copper list makes J1 BAD and J3 a precondition, and an
+    # earlier version reported the first of those as the second.
     if [ "$subj_rc" -ne 0 ]; then
-        fail "J1 precondition: $(printf '%s' "$subj_out" | sed -n 's/^PRECONDITION joy2 //p' | head -1)"
-        fail "J3 precondition: the run rendered no witness verdict"
+        why=$(printf '%s' "$subj_out" | sed -n 's/^PRECONDITION joy2 //p' | head -1)
+        fail "J1 precondition: $why"
+        fail "J3 precondition: $why"
     else
         if [ "$(printf '%s' "$subj_out" | grep -c '^RESULT joy2 break OK')" -eq 1 ]; then
             subj_ok=1
@@ -322,7 +328,7 @@ else
             subj_witness_ok=1
             pass "J3 the debuggee ran with the cable's RX still routed (NR 0x0B = 0xB1)"
         else
-            fail "J3 $(printf '%s' "$subj_out" | sed -n 's/^RESULT joy2 witness BAD //p' | head -1)"
+            fail "J3 $(printf '%s' "$subj_out" | sed -n 's/^RESULT joy2 witness \(BAD\|PRECONDITION\) //p' | head -1)"
         fi
     fi
 fi
@@ -397,7 +403,7 @@ else
         p1_witness_ok=1
         pass "J4 on joy port 1 the same macro clears NR 0x0B, as it did before the fix"
     else
-        fail "J4 $(printf '%s' "$p1_out" | sed -n 's/^RESULT joy1 witness BAD //p' | head -1)"
+        fail "J4 $(printf '%s' "$p1_out" | sed -n 's/^RESULT joy1 witness \(BAD\|PRECONDITION\) //p' | head -1)"
     fi
 fi
 
@@ -435,13 +441,16 @@ for pair in "joy2:$subj_shot:$READY_TEXT" "joy1:$p1_shot:$NEEDS_TEXT"; do
     fi
     got=$(read_row "$shot" "$BREAK_ROW" || true)
     log "  | $tag row $BREAK_ROW reads: $got"
-    [ "$got" = "$want" ] || j5_problems+=("$tag row read '$got', expected '$want'")
+    # Both strings begin "PC break: ", so the shared prefix is dropped from the
+    # verdict line: it is 3 words per row of nothing, and this line has to hold
+    # two rows inside the ~20-word budget.
+    [ "$got" = "$want" ] || j5_problems+=("$tag said '${got#PC break: }' not '${want#PC break: }'")
 done
 
 if [ ${#j5_problems[@]} -eq 0 ]; then
     pass "J5 the screen reads 'ready' on joy port 2 and 'needs Joy 2' on port 1"
 else
-    fail "J5 ${j5_problems[*]}"
+    joined=$(printf '; %s' "${j5_problems[@]}"); fail "J5 ${joined:2}"
 fi
 
 # ---------------------------------------------------------------------------

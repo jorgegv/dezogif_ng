@@ -258,7 +258,19 @@ def _notifications(fr):
 
 def verdict_subject(fr, expect_nr0b, label):
     """The full run: did the cable stop a running debuggee, and what did the
-    debuggee see NR 0x0B holding while it ran?"""
+    debuggee see NR 0x0B holding while it ran?
+
+    TWO VERDICTS, RENDERED INDEPENDENTLY, and that separation was earned by a
+    red-first rather than designed in. With the fixture's Copper list never
+    started the break correctly reports BAD — and the first version then threw
+    that away, because the witness (which the stub can only send once it HAS
+    broken in) reported a precondition and the single return code carried it.
+    A check that renders a verdict must report it; the two subjects fail for
+    different reasons and are answered on different lines.
+
+    The exit code is about the SETUP only: non-zero means neither subject was
+    reachable, so both are preconditions rather than verdicts.
+    """
     ans = _answers(fr)
     ntfs = _notifications(fr)
     problems = []
@@ -330,15 +342,25 @@ def verdict_subject(fr, expect_nr0b, label):
                   % (label, SPIN))
 
     # --- the witness --------------------------------------------------------
-    return verdict_witness(fr, expect_nr0b, label)
+    verdict_witness(fr, expect_nr0b, label)
+    return 0
 
 
 def verdict_witness(fr, expect_nr0b, label):
     """What the DEBUGGEE read out of NR 0x0B while it was running — which is
-    what TRANSPORT_DEACTIVATE left, sampled by the program itself."""
+    what TRANSPORT_DEACTIVATE left, sampled by the program itself.
+
+    THE WITNESS IS NOT INDEPENDENT OF THE BREAK, and that is a real dependency
+    rather than a wrinkle: the byte can only come back over the cable once the
+    stub has broken in and is reading commands again. So a run in which nothing
+    stopped the debuggee has no witness to report, and this says PRECONDITION —
+    the state was never sampled — rather than rendering a verdict on a byte
+    nobody sent.
+    """
     ans = _answers(fr)
     if SEQ_WITNESS not in ans or len(ans[SEQ_WITNESS]) < 1:
-        print("PRECONDITION %s the witness byte was never read back" % label)
+        print("RESULT %s witness PRECONDITION the byte never came back: nothing broke in"
+              % label)
         return 1
     raw = ans[SEQ_WITNESS][0]
     if raw == WITNESS_SEED:
@@ -368,7 +390,7 @@ def verdict_control(fr):
     if SEQ_READBACK not in ans or ans[SEQ_READBACK] != FIXTURE:
         print("PRECONDITION control the fixture did not land, so the debuggee ran nothing")
         return 1
-    late = [seq for seq, _ in _answers(fr).items() if seq > LAST_SETUP_SEQ]
+    late = [seq for seq in ans if seq > LAST_SETUP_SEQ]
     ntfs = _notifications(fr)
     if ntfs:
         print("RESULT control BAD a notification arrived with nothing sent after CMD_CONTINUE")

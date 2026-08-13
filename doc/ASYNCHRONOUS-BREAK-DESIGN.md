@@ -881,13 +881,67 @@ its `UT_transport_activate` assertions move to the new NR `0x0B` values.
 | `make test` — T1-T9 against the **UART** ROM, T9 driving `mf_nmi_poll` → `transport_poll_traffic` ~400 times per run | **run, 9/9** |
 | `make test-unit` — 5/5, 28 of 67 run | **run**, but see below |
 | `UT_transport_activate` / `UT_transport_deactivate` — the only checks that assert the NR `0x0B` values and the resume-path behaviour | **NOT RUN.** Both read a register back through `in a,(4)`, a port `src/simulation/uart.js` invents, so the marker rule excludes them headless. They run only under DeZog + zsim in VS Code, which is a manual layer nothing here drives |
-| **a byte arriving on the cable while a debuggee runs — i.e. the feature** | **NOT RUN, AND NOT RUNNABLE HERE.** §8.7 |
+| ~~**a byte arriving on the cable while a debuggee runs — i.e. the feature**~~ | ~~**NOT RUN, AND NOT RUNNABLE HERE.**~~ **RUN, 2026-08-13 — `make test-uart-break`, checks J1-J5.** See §8.0.1 |
 
-**So the thing this change exists to do has been demonstrated nowhere.** `make test`'s T9 shows the
-poll runs every frame against the UART ROM and declines correctly, which is the half that was
-already true; what no bench here can produce is the *stimulus*. §8.7 gives the reason and it has not
-changed: there is no CLI route into `inject_joy_uart_rx`, and using `--esp` as a stand-in for a cable
-would be green even against a completely wrong mux.
+~~**So the thing this change exists to do has been demonstrated nowhere.**~~ `make test`'s T9 shows
+the poll runs every frame against the UART ROM and declines correctly, which is the half that was
+already true; ~~what no bench here can produce is the *stimulus*~~. §8.7's reason held until
+**jnext#251** shipped the hook it asks for — a CLI-attachable serial source routed through
+`inject_joy_uart_rx` and gated on `joy_uart_en()` — in **0.99.155**, with this project as its
+demonstrated consumer. The `--esp`-as-a-stand-in trap §8.7 warns about is still a trap and is still
+refused; what changed is that there is now a real cable to use instead.
+
+### 8.0.1 AS BENCHED, 2026-08-13 — and the break turned out not to be the discriminator
+
+**`make test-uart-break`, three headless runs, five checks** (`test/run-uart-break.sh`,
+`test/dzrp/uart-cable.py`). **J1**: a freely running debuggee, carrying the Copper list itself and
+resumed with no temporary breakpoint, is stopped by bytes on a cable in joystick socket 2 —
+`MANUAL_BREAK`, `PC` at its spin, `SP` its own, still serving. **J2** is its control, W3's shape.
+**J5** reads the `PC break:` row back as text. So the feature runs, on the transport dezogif
+actually shipped, for the first time anywhere.
+
+**THERE IS NO CLIENT, AND THERE CANNOT BE.** A cable in jnext is a **one-way** byte stream from a
+file: the guest's replies leave through joystick pin 7 (`zxnext.vhd:3518-3531`) and reach nothing on
+the host. So the commands are **pre-recorded** and the stub's answers are read back out of jnext's
+own UART TX log. That works only because UART mode prefixes every reply with `MESSAGE_START_BYTE` —
+upstream's documented serial extension, which makes the transmitted stream self-framing.
+
+**AND THE BREAK CANNOT TELL THE TWO ARMS OF `TRANSPORT_DEACTIVATE` APART, WHICH WAS MEASURED
+BEFORE THE BENCH WAS DESIGNED AROUND IT.** The RX FIFO is 512 bytes and **nothing drains it on the
+resume path** — `restore_registers` is `transport_flush`, then the macro, and no drain
+(`src/backup.asm:58-62`). The recorded stream is ~190 bytes, about 2 ms of wire at 921600, against
+the several milliseconds `cmd_init` spends in `show_ui`; so the whole of it is buffered **before**
+`CMD_CONTINUE` is read, and the first poll after the resume finds bytes whatever the mux is doing.
+Measured: the port-1 run — which clears NR `0x0B` on resume, i.e. **exactly the pre-fix
+behaviour** — breaks in and answers every command as the port-2 run does. **Shown the decisive way:
+against a ROM with the fix reverted, J1 is GREEN and J3 is RED.** A bench that judged the break
+alone would have been a green check that could not fail.
+
+**SO THE DEBUGGEE IS THE WITNESS.** NR `0x0B` reads back —
+`port_253b_dat <= nr_0b_joy_iomode_en & '0' & nr_0b_joy_iomode & "000" & nr_0b_joy_iomode_0`,
+`zxnext.vhd:5914` — so the fixture's **first instruction after the resume** reads it and stores it,
+and that byte comes back afterwards as an ordinary `CMD_READ_MEM`. It is what the macro left,
+sampled by the debugged program itself at the only moment that matters, and it is immune to the
+FIFO, to the pacing and to when the poll happens to fire.
+
+| | NR `0x0B` witnessed | |
+|---|---|---|
+| **J3** joy port 2, the shipped default | **`0xB1`** | io mode on, socket 2, UART1 — the cable's RX lives |
+| **J4** joy port 1 | **`0x00`** | io mode off — the pre-fix behaviour, from **shipped bytes** |
+
+J4 needs no probe ROM, because the macro still clears NR `0x0B` on every selection but 2 and that is
+what it used to do unconditionally; it is simultaneously state 1 of the HOWTO's seven. **The two
+constrain the macro from both sides**, which is issue #27's guard-too-wide lesson: an over-wide
+"keep io mode on every port" probe passes J3 and takes **J4** red at `0xA1`.
+
+**WHAT THIS STILL DOES NOT SHOW.** A byte arriving **strictly after** the resume — the FIFO makes
+that unstageable here, so J1 is the poll → break → notify path running against a live debuggee on
+this transport, and J3 is the RX source surviving the resume; the feature is those two facts
+together and neither alone is it. **Whether joystick socket 1 can receive at all**, which is DB9
+wiring the VHDL cannot settle and which upstream's own comment denies (§8.10) — if upstream is
+right, run 3's delivery is an emulator artefact, though J4's subject is the witnessed register
+rather than anything arriving. And **hardware**, where acceptance route 1 of issue #43 — a cable on
+a real Next — is still open and still blocked on a rig.
 
 **AND `TRANSPORT_DEACTIVATE` IS NOT REACHED BY ANY HEADLESS RUN AT ALL**, which is worth separating
 out because it is the one line whose behaviour actually changed. It runs only from
@@ -897,6 +951,14 @@ out because it is the one line whose behaviour actually changed. It runs only fr
 Its logic is asserted by `UT_transport_deactivate` and that case cannot run headless either. The
 honest statement is that this change is **carried by inspection and by the unchanged benches not
 regressing**, and that its acceptance test is a serial cable on a real Next.
+
+> **SUPERSEDED 2026-08-13, and the first half more completely than the second.** `make
+> test-uart-break` drives the UART transport with a (pre-recorded) DZRP client and **executes
+> `TRANSPORT_DEACTIVATE` on both of its arms**, so "reached by no headless run" and "carried by
+> inspection" are both retired — see §8.0.1. What survives verbatim is the **acceptance test**: a
+> serial cable on a real Next is still owed and still blocked on a rig, and `UT_transport_deactivate`
+> still cannot run headless. The paragraph is kept because it is what the change shipped on, and
+> because its middle sentence is still the reason the bench had to be built the way it was.
 
 **The precedent that cuts the other way, and it is this project's own.** Issue #16 *declined* a fix
 because `AT+CIPCLOSE=<id>` existed in no bench, which would have meant shipping Z80 nothing could
@@ -1196,11 +1258,16 @@ NR `0x0B`, and `transport_activate` is idempotent.
 
 - **That any of it works.** ~~Nothing has run.~~ **BUILT 2026-08-12 and the benches are green, which
   is a much weaker statement than it sounds — see §8.0's ladder.** What has run is everything that
-  was already true: the poll, the entry and exit choreography, T1-T9 against the UART ROM. What has
+  was already true: the poll, the entry and exit choreography, T1-T9 against the UART ROM. ~~What has
   run **nowhere** is a byte arriving on the cable while a debuggee is running, and
   `TRANSPORT_DEACTIVATE` — the one line whose behaviour changed — is reached by no headless run at
   all, because it needs a DZRP client on the serial transport and nothing here has ever been one.
-  The mux half needs §8.7's jnext hook; the whole feature needs a cable on a real Next.
+  The mux half needs §8.7's jnext hook~~ — **BENCHED 2026-08-13, §8.0.1: `make test-uart-break`
+  stops a freely running debuggee with bytes on the cable and executes both arms of the macro,
+  because §8.7's hook shipped as jnext#251.** What is still owed is **a cable on a real Next**,
+  and what no bench here can stage is a byte arriving **strictly after** the resume — the RX FIFO
+  is not drained there, so the break is green against the pre-fix ROM too and the discrimination
+  had to come from the debuggee witnessing NR `0x0B`.
 - **Anything about a real Next.** And the precedent to keep in mind is this project's own:
   `doc/CONFIG-MODE-ROM-REPLACEMENT.md` was a five-times-reviewed VHDL analysis, correct in every
   mechanical claim, and defeated by a **NextZXOS runtime** fact no VHDL line could show. "Confirmed in

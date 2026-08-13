@@ -62,6 +62,16 @@ two routes to changing that are a serial cable on a real Next or **jnext#251**,
 which the user is implementing. A default is a decision about which untested
 behaviour a user meets first.
 
+*(**OVERTAKEN THE SAME DAY, IN THE EMULATOR HALF ONLY.** jnext#251 landed in
+0.99.155 and `make test-uart-break` uses it: a freely running debuggee is stopped
+by bytes on the cable, and **both arms of `TRANSPORT_DEACTIVATE` are executed and
+told apart** — not by the break, which is green against the pre-fix ROM too
+because nothing drains the RX FIFO on the resume path, but by the **debuggee
+reading NR `0x0B` while it runs**. So "validated nowhere" and "reached by no
+headless run" are retired; **"a serial cable on a real Next" is not**, and the
+default this entry decides still meets a user on hardware no run has been near.
+CLAUDE.md §4o, design doc §8.0.1.)*
+
 ---
 
 ## 2026-08-13 — The UART select is a shared POINTER, so we borrow it rather than forbid it; and the poll's headline cost turns out not to include the poll

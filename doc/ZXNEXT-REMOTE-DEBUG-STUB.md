@@ -193,9 +193,12 @@ build's poll was already present and already correct — so what looked like an 
 constraint was a line of ours. On joy port 2 `TRANSPORT_DEACTIVATE` no longer clears the register,
 and the joystick pin is routed to **UART1** (NR `0x0B` bit 0 = 1) rather than UART0, which is what
 keeps the ESP-01's own TX and RTR out of io mode's way. Port 1 keeps the old behaviour on purpose,
-so the debugged program has a connector for a real joystick. **Not shown to work anywhere**: no
-bench here can put a byte on that cable. See
-[ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md) §8, and §8.0 for the evidence ladder.*
+so the debugged program has a connector for a real joystick. ~~**Not shown to work anywhere**: no
+bench here can put a byte on that cable.~~ **BENCHED 2026-08-13 — `make test-uart-break`, issue #43**
+— once jnext#251 gave the joystick port a serial source: a freely running debuggee is stopped by
+bytes on the cable, and both arms of `TRANSPORT_DEACTIVATE` are told apart by the debuggee reading
+NR `0x0B` while it runs. **Still not shown on hardware.** See
+[ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md) §8, and §8.0.1 for the evidence ladder.*
 
 ```
    PC (dev machine)                        ZX Spectrum Next (real hardware)
@@ -932,9 +935,11 @@ Named DeZog remote type; contribute the transport abstraction back to dezogif if
    untouched. The cable's bytes reach the machine through the joystick pin, exactly as they do while
    the debugger is stopped — no ESP bring-up, no baud coincidence, and the poll that reads them
    (`transport_poll_traffic`) was already present and already correct. Port 2 only, so the debugged
-   program keeps a connector for a real joystick. **What is NOT established is that it works**: no
-   bench here can put a byte on that cable. See
-   [ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md) §8, and §8.0 for the evidence ladder.
+   program keeps a connector for a real joystick. ~~**What is NOT established is that it works**: no
+   bench here can put a byte on that cable.~~ **ESTABLISHED IN THE EMULATOR 2026-08-13** by
+   `make test-uart-break` (issue #43), which jnext#251's `--joy-uart-rx` made possible; **hardware
+   is still owed**. See
+   [ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md) §8, and §8.0.1 for the evidence ladder.
 
    *The route this question actually asked about — the ESP pin being the live RX source in a serial
    build — is **still unexplored and is now moot**, since it was only ever attractive while NR `0x0B`

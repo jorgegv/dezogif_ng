@@ -1236,7 +1236,7 @@ fi
 # IT RUNS A PROBE ROM, AND WHAT THAT COSTS THE CHECK IS STATED RATHER THAN
 # BURIED. jnext reports the UART select in BIT 3 of a 0x153B read
 # (src/peripheral/uart.cpp:751) where the hardware reports it in bit 6
-# (serial/uart.vhd:355 and :369; ports.txt:370 in words), while honouring bit 6
+# (serial/uart.vhd:355 and :371; ports.txt:370 in words), while honouring bit 6
 # on WRITES. So the shipped guard — which masks 0x40, because that is what a
 # real Next returns — never sees the debuggee's change here and this check
 # cannot go green against a shipped ROM however correct that ROM is. Measured:
@@ -1277,8 +1277,30 @@ else
     w9_ok=$(printf '%s' "$w9_out" | grep -c '^RESULT pause OK ' || true)
     w9_lines=$(printf '%s' "$w9_out" | grep -c '^RESULT pause ' || true)
 
+    # THE GUARD IS TWO-SIDED, AND THE LOWER HALF IS THE ONE THAT INVERTS THE
+    # STANDING RULE. An EXCESS means somebody else's client reached our stub,
+    # which is the documented hazard and comes out GREEN. A DEFICIT means the
+    # opposite — our own fixture reached somebody else's listener, so its frames
+    # are in that run's log and not in ours — and without this arm the run falls
+    # through to "the client rendered no verdict", which is RED WITH A PLAUSIBLE
+    # WRONG REASON, and a reader would go looking for a defect in the stub.
+    # Exactly the disease ERRORS.md records for W5, which was given its lower
+    # bound one day before this check was written; the lesson did not travel,
+    # and the reviewer of issue #42 is what caught that.
+    #
+    # TWO IS EXACT, NOT A MARGIN: start_stub's port probe makes one (its loop
+    # breaks on first success) and pause-running.py opens exactly one remote
+    # (its single open_remote), with no retry anywhere. A genuine W9 red still
+    # makes two, because the verdict block runs after both.
+    #
+    # DERIVED FROM THE FIXTURES RATHER THAN MEASURED AGAINST A RUN — the bench
+    # could not be run when this arm was written. If it is wrong it fails loudly
+    # on the first full run rather than passing something through, which is the
+    # right direction for a guard, but confirm the figure then.
     if [ "$w9_connects" -gt 4 ]; then
-        fail "W9 CONTAMINATED: $w9_connects connections in $jlog9 where this fixture makes 1"
+        fail "W9 CONTAMINATED: $w9_connects connections in $jlog9 where this fixture makes 2"
+    elif [ "$w9_connects" -lt 2 ]; then
+        fail "W9 only $w9_connects connections in $jlog9 where this fixture makes 2, so nothing here was tested"
     elif [ "$w8_ok" -eq 0 ]; then
         fail "W9 W8 is red, so this pair isolates nothing: fix W8 first"
     elif [ "$w9_rc" -ne 0 ] || [ "$w9_lines" -eq 0 ]; then

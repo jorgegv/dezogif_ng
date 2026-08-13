@@ -480,7 +480,7 @@ UART_SELECT:   equ 0x153b
 ; ESP_LINK_IDS family and for their reason: the shipped value is unreachable in
 ; the emulator, so a bench that needs to reach it moves the constant.
 ;
-; The hardware is not in doubt. serial/uart.vhd:369 returns `"01000" &
+; The hardware is not in doubt. serial/uart.vhd:371 returns `"01000" &
 ; uart1_prescalar_msb_r` for the UART1 case and `"00000" & ...` for UART0
 ; (:355), i.e. bit 6 and bit 3 = 0 in both; ports.txt:370 says bit 6 in words.
 ; jnext's `(select_ ? 0x08 : 0x00)` (src/peripheral/uart.cpp:751) is simply the

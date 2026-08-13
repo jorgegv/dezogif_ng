@@ -68,7 +68,7 @@ select.
 **IT NEEDS A PROBE ROM, AND THAT IS A jnext DEFECT RATHER THAN A CONVENIENCE.**
 **jnext reports the select in BIT 3** of a `0x153B` read
 (`src/peripheral/uart.cpp:751`), where the hardware reports it in **BIT 6**
-(`serial/uart.vhd:355` gives `"00000" & msb` for UART0 and `:369` gives
+(`serial/uart.vhd:355` gives `"00000" & msb` for UART0 and `:371` gives
 `"01000" & msb` for UART1; `ports.txt:370` says so in words). Its **write** path
 takes bit 6 correctly, so only the read-back disagrees. The shipped guard masks
 `0x40` — correct for silicon — and is therefore **inert in the emulator**, so W9
@@ -108,6 +108,69 @@ loop in one run — `test-pause-transparency` with a counter — which is not wr
 `test-unit` 5/5, `check-reproducible` both variants.** **NOT covered**: hardware,
 as ever — and here the bit position is exactly the thing hardware would settle,
 so a real Next is worth more to this fix than to most.
+
+**THE INDEPENDENT REVIEW REJECTED IT, AND THE BLOCKER WAS AN OWED TEST RATHER
+THAN A DEFECT IN THE CODE.** Every mechanical claim above it checked came back
+correct — the VHDL quoted rather than paraphrased, the jnext lines at the exact
+offsets, the byte figures reproduced pinned, every `transport_activate` call
+site enumerated, the flag contracts sound. What it would not pass was the
+coverage: **the UART half of this change was exercised by nothing executable.**
+W9 is WiFi-only; `make test`'s T9 runs the UART ROM but under jnext's bit-3
+defect never takes the common path; and nothing anywhere drives the serial
+transport headless. So that half shipped on inspection alone — which is the
+position `TRANSPORT_DEACTIVATE` was in one branch earlier, and is exactly what
+earned *it* a unit test.
+
+**The fix is `ut_uart.UT_transport_select_reclaimed` and
+`ut_uart.UT_transport_poll_borrows_select`, and getting there needed
+`src/simulation/uart.js` to model `0x153B` at all** — it modelled neither the
+read nor the write, which is *why* no test had been written. That file is where
+this project already invents ports (`0x0001`-`0x0004`, `0x8000`, `0x80AC`) to
+make debugger-internal state observable, so the precedent is its own.
+
+**BOTH NEW CASES ARE `UT-SKIP`, AND THE REASON IS NOT THE USUAL ONE.** The other
+39 are excluded because they need ports that exist only in zsim. These two are
+excluded because **jnext gets a real port wrong**: it reports the select in bit 3
+where the hardware reports it in bit 6, so the read cannot be judged there.
+`uart.js` models bit 6, i.e. the hardware. That marker **retires when jnext is
+fixed**, and these become the first cases ever to move from the excluded set to
+the runnable one — 69/41 now, with the number that RUN still 28 for the third
+change in a row.
+
+**The assertions are `a == 1`, never a literal channel**, because
+`UART_SELECT_OURS` is `01000000b` here and `0` in the WiFi build. Comparing
+against the variant's own constant is what makes one test source correct for
+both — and it is precisely what a **transposition** of the two constants fails,
+which a literal `0x40` would not.
+
+**A SECOND FINDING THE BRANCH HAD NOT MADE: jnext's defect INVERTS the poll in
+the UART build.** With `OURS = 01000000b`, the always-bit-6-clear read makes the
+compare fail every time, so under the emulator this build takes the borrow
+branch on *every* call and its restore leaves the select on UART0 where
+`transport_init` put UART1. The common path a real Next takes every frame is
+executed by no run here, and what the emulator does execute is wrong there.
+Harmless only while nothing drives that transport headless — which is what
+**jnext#251** is about to change.
+
+**And a third: W9's contamination guard was one-sided**, catching an excess and
+not a deficit, so a fixture that reached another agent's listener would report
+*"the client rendered no verdict"* — **red with a plausible wrong reason**. That
+is the identical disease `ERRORS.md` records for W5, given its lower bound
+**one day** before W9 was written. The lesson did not travel; the reviewer is
+what caught it. Two is exact for this run — `start_stub`'s probe plus
+`pause-running.py`'s single `open_remote` — though **derived from the fixtures
+rather than measured**, because the emulator was not available when the arm was
+written.
+
+Minors, all corrected: `serial/uart.vhd:369` is `end if;` and the quoted line is
+**`:371`**, propagated to seven sites including the commit message — *a citation
+is not a quotation*, which `ERRORS.md` carries by name; and a HOWTO
+cross-reference pointing "below" at a section above it.
+
+**The re-review, the twelve benches this branch has never run, and hardware are
+all still owed.** Today's changes moved **no ROM byte** — both variants hash
+identically to `3718e21` built pinned — so what they alter is coverage and prose,
+not the fix.
 
 ---
 

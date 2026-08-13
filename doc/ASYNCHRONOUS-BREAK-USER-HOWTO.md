@@ -191,9 +191,9 @@ PC-initiated break at the same time.
 machine has two UARTs so that two owners can coexist, and `0x153B` is only the pointer saying which
 one the CPU's UART registers currently refer to — not a resource the debugger owns. The poll now
 borrows the pointer for its one status read and hands it straight back, so **your program may use
-the other UART and still be paused from the PC**. See "using the other UART" below for the one
-thing you do have to know, and ASYNCHRONOUS-BREAK-DESIGN.md §8.5 for why guarding it was preferred
-to documenting it.)*
+the other UART and still be paused from the PC**. See "If your program uses the other UART" above
+for the one thing you do have to know, and ASYNCHRONOUS-BREAK-DESIGN.md §8.5 for why guarding it
+was preferred to documenting it.)*
 
 **7. After a reset, until the next M1 press (serial builds).** Any reset puts NR `0x0B` back to
 disabled (`zxnext.vhd:4939-4941`), so the cable's receive line is disconnected again and Pause

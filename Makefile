@@ -152,7 +152,7 @@ ifneq ($(IP_MAX),)
 endif
 
 # SELECT_MASK — the bit of port 0x153B the poll reads the UART channel select
-# from. The hardware puts it in bit 6 (serial/uart.vhd:355 and :369,
+# from. The hardware puts it in bit 6 (serial/uart.vhd:355 and :371,
 # ports.txt:370) and the shipped ROMs mask 0x40; jnext reports it in bit 3
 # (src/peripheral/uart.cpp:751) while honouring bit 6 on writes, so the guard
 # issue #42 added is inert there and bench W9 cannot go green against a shipped
@@ -434,11 +434,19 @@ UT_HL_FILES  = $(wildcard $(SRC)/unit_tests/headless/*) $(UT_ASM_FILES) $(UT_GEN
 #
 # 66/38 until UART-mode asynchronous break added ut_uart.UT_transport_deactivate,
 # which reads NR 0x0B back through `in a,(4)` and so is excluded by that same
-# marker rule. The number that RUN is again unchanged at 28 — and that is the
-# whole reason this change's headless evidence is `make test`'s T6-T9 against the
-# UART ROM rather than a unit test.
-UT_EXPECTED_TESTS   = 67
-UT_EXPECTED_SKIPPED = 39
+# marker rule. The number that RUN was again unchanged at 28.
+#
+# 67/39 until issue #42 added ut_uart.UT_transport_select_reclaimed and
+# ut_uart.UT_transport_poll_borrows_select, and THE NUMBER THAT RUN IS STILL 28,
+# which is the third time in a row and is worth reading rather than skimming:
+# every check this project can execute headless judges the debugger from OUTSIDE,
+# and the register these two are about is one a debuggee moves. They are excluded
+# by a marker of their own, because jnext reports the channel select in bit 3
+# where the hardware reports it in bit 6, so the read cannot be judged there at
+# all — that marker retires when jnext is fixed, and these two become the first
+# cases ever to MOVE from the excluded set to the runnable one.
+UT_EXPECTED_TESTS   = 69
+UT_EXPECTED_SKIPPED = 41
 
 MAIN_BIN    = $(OUT)/main$(VARIANT_SUFFIX).bin
 MF_NMI_BIN  = $(OUT)/mf_nmi$(VARIANT_SUFFIX).bin

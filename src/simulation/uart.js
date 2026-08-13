@@ -4,6 +4,7 @@ var portUartTxData = [];
 var portRegReset = 0;
 var whichNextReg = 0;
 var nextRegContents = new Map();	// Any values written to a next reg will be stored here as well.
+var uartSelect = 0;			// Port 0x153B bit 6: 0 = UART0 (esp), 1 = UART1 (pi)
 
 
 portUartTxData.length = 0;
@@ -48,6 +49,21 @@ API.readPort = (port) => {
         API.log("  portUartTxData.length = " + portUartTxData.length);
         return status;
     }
+    // Check for UART_SELECT=0x153B
+    //
+    // MODELLED IN BIT 6, WHICH IS WHERE THE HARDWARE PUTS IT AND IS NOT WHERE
+    // jnext PUTS IT. serial/uart.vhd:355 returns "00000" & uart0_prescalar_msb_r
+    // and :371 returns "01000" & uart1_prescalar_msb_r — five bits covering
+    // 7 downto 3, so the set bit is 6 and bit 3 is never set by either channel.
+    // ports.txt:370 says it in words. jnext returns it in bit 3, which is why
+    // the tests that read this back cannot run under the headless runner; see
+    // SKIP_MARKERS in tools/ut-headless-gen.py.
+    //
+    // The prescaler MSB in bits 2:0 is not modelled and reads back 0.
+    if (port == 0x153B) {
+        return uartSelect ? 0x40 : 0x00;
+    }
+
     // Check for PORT_UART_RX=0x143B
     if (port == 0x143B) {
         // Reads a byte
@@ -104,6 +120,15 @@ API.writePort = (port, value) => {
     else if (port == 0x133B) {
         // Store the written byte.
         portUartTxData.push(value);
+    }
+    // Check for UART_SELECT=0x153B
+    else if (port == 0x153B) {
+        // bit 6 = the channel select. bit 4 = 1 would mean bits 2:0 are a
+        // prescaler MSB write (serial/uart.vhd:281-287), which is not modelled;
+        // note the select at :280 is taken UNCONDITIONALLY, bit 4 or not, which
+        // is what makes the stub's restore safe.
+        uartSelect = (value & 0x40) ? 1 : 0;
+        API.log("  UART select = " + uartSelect + (uartSelect ? " (uart1/pi)" : " (uart0/esp)"));
     }
     // Check for port 2 = REG_RESET data that will be read on reading a next register.
     else if (port == 0x0002) {

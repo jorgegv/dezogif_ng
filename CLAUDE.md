@@ -535,7 +535,7 @@ strongest:
    `transport_init`. Shown red against `main`'s ROM with W8 green in the same run.
    **IT RUNS A PROBE ROM AND THAT IS NOT OPTIONAL: jnext reports the select in BIT 3
    (`src/peripheral/uart.cpp:751`) where the hardware reports it in BIT 6
-   (`serial/uart.vhd:355`/`:369`, `ports.txt:370`)**, while honouring bit 6 on writes — so the
+   (`serial/uart.vhd:355`/`:371`, `ports.txt:370`)**, while honouring bit 6 on writes — so the
    shipped mask is inert in the emulator and W9 cannot be green against a shipped ROM however
    correct it is. `SELECT_MASK=0x48` accepts either bit; it exercises the compare, the borrow, both
    writes, the read between them and the flags surviving the restore, and **not** the bit position,

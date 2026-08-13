@@ -70,8 +70,12 @@ UT_MANIFEST=${UT_MANIFEST:-$OUT/ut_headless/ut_manifest.txt}
 # 66/38 until UART-mode asynchronous break added ut_uart.UT_transport_deactivate,
 # which reads NR 0x0B back through `in a,(4)` and is excluded by the same rule —
 # UT_EXPECTED_RUN unchanged at 28 again.
-UT_EXPECTED_TESTS=67
-UT_EXPECTED_SKIPPED=39
+# 67/39 until issue #42 added ut_uart.UT_transport_select_reclaimed and
+# ut_uart.UT_transport_poll_borrows_select. Excluded by a marker of their own:
+# they read port 0x153B back, and jnext reports the channel select in bit 3 where
+# the hardware reports it in bit 6. UT_EXPECTED_RUN unchanged at 28 a third time.
+UT_EXPECTED_TESTS=69
+UT_EXPECTED_SKIPPED=41
 UT_EXPECTED_RUN=$((UT_EXPECTED_TESTS - UT_EXPECTED_SKIPPED))
 
 # jnext's magic debug port: guest writes appear on the emulator's stderr.

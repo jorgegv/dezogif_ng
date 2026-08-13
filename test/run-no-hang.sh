@@ -132,10 +132,12 @@
 # WHAT NOTHING HERE COVERS
 # ---------------------------------------------------------------------------
 #
-# * THE SERIAL BUILD. Part A changes transport_uart.asm identically and no
-#   bench in this repository can drive that transport headless — `make test`'s
-#   T6 runs the serial ROM but attaches no client, so it never reaches cmd_loop
-#   at all. The serial half of part A is unexercised, by construction.
+# * THE SERIAL BUILD. Part A changes transport_uart.asm identically, and this
+#   said no bench here could drive that transport headless. THAT EXPIRED ON
+#   2026-08-13: `make test-uart-break` drives it with a DZRP client and does
+#   reach cmd_loop. What is still uncovered is part A's BOUND, which needs a
+#   client going silent MID-COMMAND — that bench never does, so the gap is real
+#   and the reason for it has changed. The serial half of part A is unexercised, by construction.
 # * Part C at its SHIPPED limit, and part C against a module that is actually
 #   broken. See N4's scope above.
 # * Anything about a real ESP-01.

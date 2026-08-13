@@ -1200,6 +1200,20 @@ changes the debuggee's obligation to install the two Copper instructions.
 
 ### 8.7 IT CANNOT BE TESTED IN jnext TODAY, AND A BENCH THAT FAKED IT WOULD BE GREEN AGAINST A BROKEN MUX
 
+> **SUPERSEDED 2026-08-13 — jnext#251 LANDED AND THIS SECTION IS THE SPECIFICATION IT WAS BUILT
+> TO.** Everything below was written as a request, and it was granted in jnext 0.99.155: the hook is
+> gated on `joy_uart_en()` (bits 7 **and** 5, citing VHDL:3537) rather than `iomode_en()`, the channel
+> comes from `iomode_0()`, the **connector** gate is applied separately in the source's own sink
+> because `joy_uart_rx` is the line *after* the connector mux, and `delivered()`/`dropped()` counters
+> exist so a bench can assert the stream really reached the guest. CLI: `--joy-uart-rx`,
+> `--joy-uart-rx-delay-frames`, `--joy-uart-connector`.
+>
+> **`make test-uart-break` is the consumer** (issue #43, §8.0.1). The warning in this section's title
+> was not wasted: the bench it produced does **not** judge the break alone, precisely because a bench
+> that did would be green against a broken mux — measured, J1 green with J3 red against a ROM with the
+> fix reverted. Kept unedited below because it is the argument that shaped what was asked for and what
+> was built.
+
 jnext models the decision correctly — `src/input/iomode.h:87-88` computes bit 7 **and** bit 5, citing
 `zxnext.vhd:3537`. But:
 

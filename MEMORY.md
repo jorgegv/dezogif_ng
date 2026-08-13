@@ -242,6 +242,27 @@ executed by no run here, and what the emulator does execute is wrong there.
 Harmless only while nothing drives that transport headless — which is what
 **jnext#251** is about to change.
 
+*(**ANNOTATED 2026-08-13: BOTH CLAUSES ARE NOW FALSE, AND jnext#251 HAS
+LANDED.** jnext 0.99.155 carries **#253**, which moved the `0x153B` select
+read-back to bit 6 — so the compare succeeds, the poll takes the **common**
+path, and the inversion described above is gone — and **#251**, the joy-port
+UART RX injection hook. `make test-uart-break` uses both: it resumes a debuggee
+under a Copper-driven poll with nothing touching `0x153B`, and its own verdict
+(`NR 0x0B = 0xB1`) is evidence the common path ran. So "executed by no run
+here" and "is about to change" are both retired, on the same day this entry was
+written.*
+
+*Left standing and annotated rather than edited, per this file's rule. Recorded
+because of HOW it was found: the entry immediately above this one was annotated
+for jnext#253 and **this paragraph, four lines later, was not** — the same
+sweep, the same file, the same subject, one sentence apart. It is the fifth
+incomplete sweep of that day and it was caught by a reviewer rather than the
+author, which is now the pattern rather than the exception. The rule this file
+states — the enumeration is a grep, not a memory — is evidently not enough on
+its own: what would have caught it is grepping the **claim** (`executed by no
+run`, `about to change`) rather than the subject of whichever paragraph was
+being edited.)*
+
 **And a third: W9's contamination guard was one-sided**, catching an excess and
 not a deficit, so a fixture that reached another agent's listener would report
 *"the client rendered no verdict"* — **red with a plausible wrong reason**. That
@@ -7017,7 +7038,13 @@ have moved every other call site's failure semantics).
 **NOT COVERED, and said plainly.** A wedged peer's connection SLOT, above.
 The **serial build's** half of A: identical
 code, and nothing here can drive that transport headless — `make test`'s T6 runs
-the serial ROM but attaches no client, so it never reaches `cmd_loop`. C at its
+the serial ROM but attaches no client, so it never reaches `cmd_loop`.
+*(**ANNOTATED 2026-08-13: the PREMISE expired, the conclusion did not.**
+`make test-uart-break` drives the serial transport with a DZRP client and does
+reach `cmd_loop`, so "nothing here can drive that transport headless" is no
+longer true. **Part A's bound is still uncovered** — that needs a client which
+goes silent MID-COMMAND, which this bench does not stage, so the NOT-COVERED
+verdict stands for a different reason than the one given.)* C at its
 **shipped** limit, and C against a module that is actually broken. Anything at
 all about a real ESP-01. And the **head-of-line blocking** the manager measured
 the same day — one client that stops reading blocks the stub for as long as it

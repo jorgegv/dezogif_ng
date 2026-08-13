@@ -1878,7 +1878,8 @@ def chk_close(d):
     awaits it: `sendDzrpCmdClose()` is
     `await this.sendDzrpCmd(2, undefined, this.initCloseRespTimeoutTime)` in the
     installed 3.7.4, in `DzrpBufferRemote` — the class that owns `sendDzrpCmd` —
-    and NOT in `DzrpRemote`, which has no override at that level at all.
+    and NOT in `DzrpRemote`, whose own `sendDzrpCmdClose` is likewise an
+    `assert(false)` stub (`dzrpremote.ts:1852`; `RemoteBase` has none at all).
     Silence there blocks the client, which is issue #8's shape.
 
     Then that the remote is still there. This is the only command our stub

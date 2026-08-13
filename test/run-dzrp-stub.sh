@@ -160,10 +160,6 @@ JNEXT=${JNEXT:-$HOME/src/spectrum/jnext/build/gui-release/jnext}
 SD_IMAGE=${SD_IMAGE:-$HOME/.jnext/sdcard/cspect-next-1gb-fixed.img}
 OUT=${OUT:-build}
 ROM=${ROM:-$OUT/enNextMf-wifi.rom}
-# W9's ROM, and the only run that uses it. Same source, one assembler constant
-# apart: it accepts jnext's (wrong) bit 3 for the UART select as well as the
-# hardware's bit 6. See the W9 block below and the Makefile's SELECT_MASK.
-ROM_SELMASK=${ROM_SELMASK:-$OUT/enNextMf-wifi-selmask0x48.rom}
 DZRP_ARGS=${DZRP_ARGS:-}
 
 # The assembler's label table (--lstlab), for W7 alone. backup.speed and
@@ -1239,36 +1235,32 @@ fi
 # the pair proves nothing whatever W9 reports. Which is why W9's verdict names
 # W8 when W8 has already failed.
 #
-# IT RUNS A PROBE ROM, AND WHAT THAT COSTS THE CHECK IS STATED RATHER THAN
-# BURIED. jnext reports the UART select in BIT 3 of a 0x153B read
-# (src/peripheral/uart.cpp:751) where the hardware reports it in bit 6
+# IT RUNS THE SHIPPED ROM, AND IT DID NOT ALWAYS. jnext reported the UART select
+# in BIT 3 of a 0x153B read where the hardware reports it in bit 6
 # (serial/uart.vhd:355 and :371; ports.txt:370 in words), while honouring bit 6
-# on WRITES. So the shipped guard — which masks 0x40, because that is what a
-# real Next returns — never sees the debuggee's change here and this check
-# cannot go green against a shipped ROM however correct that ROM is. Measured:
-# it does not.
+# on WRITES — so the shipped guard, which masks 0x40 because that is what a real
+# Next returns, never saw the debuggee's change here and this check could not go
+# green against a shipped ROM however correct that ROM was. Measured: it did not.
+# Run 9 therefore installed a ROM built SELECT_MASK=0x48, one assembler constant
+# apart, which accepted either bit.
 #
-# So run 9 installs a ROM built SELECT_MASK=0x48, one assembler constant apart,
-# which accepts either bit. WHAT THAT STILL EXERCISES is everything except the
-# bit position: the compare, the borrow branch, both writes to 0x153B with bit 4
-# clear, the status read taken between them, the flags surviving the restore,
-# and the whole break-in path behind it. WHAT IT DOES NOT is whether 0x40 is the
-# right bit — that rests on the VHDL and on ports.txt, cited above, and on no
-# run anywhere. When jnext moves the select to bit 6 this run should be pointed
-# back at "$ROM" and the seam deleted.
+# jnext#253 (0.99.155) moved the read-back to bit 6, so the seam is deleted and
+# this run uses "$ROM". THAT IS STRICTLY MORE THAN THE PROBE BOUGHT: the probe
+# exercised the compare, the borrow branch, both writes with bit 4 clear, the
+# status read between them and the flags surviving the restore, but explicitly
+# NOT whether 0x40 is the right bit — which was the one thing left resting on the
+# VHDL alone. The shipped mask is now what runs, so a ROM masking the wrong bit
+# fails here rather than passing.
+#
+# WHAT IS STILL NOT COVERED is the bit position on SILICON. jnext agrees with the
+# VHDL now, which is two readings of one source rather than two sources; only a
+# real Next settles it.
 # ===========================================================================
 
 log ""
 log "== run 9: the debuggee takes the other UART's select, then is paused (#42)"
 
-# The probe ROM goes into the working image for this run alone, which is the
-# last one. Its ONLY difference from the shipped ROM is that its select mask
-# accepts jnext's bit 3 as well as the hardware's bit 6 — see ROM_SELMASK above.
-if [ ! -f "$ROM_SELMASK" ]; then
-    fail "W9 the SELECT_MASK probe ROM is missing: $ROM_SELMASK"
-elif ! mcopy -o -i "$sd@@$part_off" "$ROM_SELMASK" "$MF_ROM_PATH"; then
-    fail "W9 could not install the probe ROM into the working image"
-elif ! start_stub "$jlog9" "$shot9"; then
+if ! start_stub "$jlog9" "$shot9"; then
     fail "W9 the stub never listened on 127.0.0.1:$PORT for the stolen-select run"
 else
     set +e

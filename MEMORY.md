@@ -143,6 +143,18 @@ exercised — and **the bit position is not**, resting on the VHDL alone.
 **Rejected: masking both bits in the shipped ROM**, which would put an emulator's
 defect into the bytes a real Next runs, to make a check pass.
 
+*(**ANNOTATED 2026-08-13 — the probe ROM is GONE, and the paragraph above is why
+it existed rather than a description of today.** jnext#253 landed in 0.99.155 and
+the select now reads back in bit 6, so the `SELECT_MASK` seam is deleted and W9
+runs the **shipped** ROM. That buys the one thing this entry says the probe could
+not: **the bit position is now exercised**, so a ROM masking the wrong bit fails
+W9 instead of passing it. Re-measured red-first at the same time, with the
+shipped `0x40`: the pre-#42 ROM is **red on W9 with W8 green in the same run**,
+which is the control the probe version could only make with a second ROM. What is
+**unchanged** is the limit at the end: the bit position on **silicon** still rests
+on the VHDL, because jnext agreeing with `uart.vhd` is two readings of one source
+and not two sources. One real Next would settle it.)*
+
 **AND THE MEASUREMENT FOUND SOMETHING BIGGER THAN THE THING IT WAS MEASURING.**
 `make measure-poll-cost` reported **1288 T-states, 3903.1 iterations/frame,
 bit-identical before and after** — which looked like "the guard is free" and is
@@ -195,6 +207,15 @@ where the hardware reports it in bit 6, so the read cannot be judged there.
 fixed**, and these become the first cases ever to move from the excluded set to
 the runnable one — 69/41 now, with the number that RUN still 28 for the third
 change in a row.
+
+*(**ANNOTATED 2026-08-13: the marker retired, and "these" was one too many.**
+jnext#253 landed in 0.99.155 and `UT_transport_select_reclaimed` runs — the first
+case in this project's history to move from the excluded set to the runnable one,
+**69/40/29**. But `UT_transport_poll_borrows_select` stages its byte through
+`PORT_TEST_DATA`, zsim port `0x8000`, so it keeps a marker of its own and stays
+excluded. The prediction that BOTH would move was made here and was wrong; the
+count came from a `grep` over the test bodies rather than from this sentence,
+which is the only reason it was caught before the pins were set to it.)*
 
 **The assertions are `a == 1`, never a literal channel**, because
 `UART_SELECT_OURS` is `01000000b` here and `0` in the WiFi build. Comparing

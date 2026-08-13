@@ -51,13 +51,14 @@ API.readPort = (port) => {
     }
     // Check for UART_SELECT=0x153B
     //
-    // MODELLED IN BIT 6, WHICH IS WHERE THE HARDWARE PUTS IT AND IS NOT WHERE
-    // jnext PUTS IT. serial/uart.vhd:355 returns "00000" & uart0_prescalar_msb_r
-    // and :371 returns "01000" & uart1_prescalar_msb_r — five bits covering
-    // 7 downto 3, so the set bit is 6 and bit 3 is never set by either channel.
-    // ports.txt:370 says it in words. jnext returns it in bit 3, which is why
-    // the tests that read this back cannot run under the headless runner; see
-    // SKIP_MARKERS in tools/ut-headless-gen.py.
+    // MODELLED IN BIT 6, WHICH IS WHERE THE HARDWARE PUTS IT.
+    // serial/uart.vhd:355 returns "00000" & uart0_prescalar_msb_r and :371
+    // returns "01000" & uart1_prescalar_msb_r — five bits covering 7 downto 3,
+    // so the set bit is 6 and bit 3 is never set by either channel.
+    // ports.txt:370 says it in words. jnext returned it in bit 3 until #253
+    // (0.99.155), which is why the tests reading this back were excluded from
+    // the headless runner; that marker is retired and one of them runs there
+    // now — see the pins in the Makefile and test/run-unit-tests.sh.
     //
     // The prescaler MSB in bits 2:0 is not modelled and reads back 0.
     if (port == 0x153B) {

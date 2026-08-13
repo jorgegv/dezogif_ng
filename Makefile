@@ -151,26 +151,20 @@ ifneq ($(IP_MAX),)
   VARIANT_FLAGS  += -DESP_IP_MAX=$(IP_MAX)
 endif
 
-# SELECT_MASK — the bit of port 0x153B the poll reads the UART channel select
-# from. The hardware puts it in bit 6 (serial/uart.vhd:355 and :371,
-# ports.txt:370) and the shipped ROMs mask 0x40; jnext reports it in bit 3
-# (src/peripheral/uart.cpp:751) while honouring bit 6 on writes, so the guard
-# issue #42 added is inert there and bench W9 cannot go green against a shipped
-# ROM. SELECT_MASK=0x48 accepts either bit, which makes the borrow-and-restore
-# path reachable in the emulator; everything else about the ROM is unchanged.
+# SELECT_MASK IS GONE, AND WHAT IT WAS FOR IS WORTH ONE PARAGRAPH. Issue #42's
+# poll masks bit 6 of port 0x153B for the UART channel select, which is where
+# the hardware reports it (serial/uart.vhd:355 and :371, ports.txt:370). jnext
+# reported it in bit 3 while honouring bit 6 on writes, so the shipped guard was
+# inert in the emulator and bench W9 could not go green against a shipped ROM
+# however correct that ROM was; SELECT_MASK=0x48 built a probe ROM accepting
+# either bit, one assembler constant apart. jnext#253 (0.99.155) moved the
+# read-back to bit 6, so W9 runs the SHIPPED ROM now — strictly better evidence,
+# since the bit position is no longer the one thing the check cannot see.
 #
-# THIS IS NOT A TUNING KNOB AND MUST NEVER BECOME THE DEFAULT: it exists so the
-# emulator can exercise Z80 that is correct for silicon, not so the Z80 can be
-# made to suit the emulator. It retires when jnext reports the select in bit 6 (jnext#253).
-#
-# Same naming rule as IP_MAX: its own output name, so no probe ROM can be left
-# where a shipped one is read from.
-SELECT_MASK ?=
-
-ifneq ($(SELECT_MASK),)
-  VARIANT_SUFFIX := $(VARIANT_SUFFIX)-selmask$(SELECT_MASK)
-  VARIANT_FLAGS  += -DUART_SELECT_CHANNEL=$(SELECT_MASK)
-endif
+# The rule it was an instance of stands and is the reason to record it: a bound
+# the emulator can never reach is a bound with no test, and the answer is to
+# move the CONSTANT rather than to weaken the shipped ROM to suit the emulator.
+# IP_MAX, RX_WAIT, TX_PASSES, LINK_IDS and the rest are the same family.
 
 # RX_WAIT / TX_PASSES — the second bench seam, and the only way the SEND
 # timeout path can be reached, for the same reason IP_MAX exists: jnext answers
@@ -437,16 +431,20 @@ UT_HL_FILES  = $(wildcard $(SRC)/unit_tests/headless/*) $(UT_ASM_FILES) $(UT_GEN
 # marker rule. The number that RUN was again unchanged at 28.
 #
 # 67/39 until issue #42 added ut_uart.UT_transport_select_reclaimed and
-# ut_uart.UT_transport_poll_borrows_select, and THE NUMBER THAT RUN IS STILL 28,
-# which is the third time in a row and is worth reading rather than skimming:
-# every check this project can execute headless judges the debugger from OUTSIDE,
-# and the register these two are about is one a debuggee moves. They are excluded
-# by a marker of their own, because jnext reports the channel select in bit 3
-# where the hardware reports it in bit 6, so the read cannot be judged there at
-# all — that marker retires when jnext#253 is fixed, and these two become the first
-# cases ever to MOVE from the excluded set to the runnable one.
+# ut_uart.UT_transport_poll_borrows_select, both excluded by a marker of their
+# own because jnext reported the channel select in bit 3 where the hardware
+# reports it in bit 6, so the read could not be judged there at all. The number
+# that RUN was 28 for the third time in a row.
+#
+# 69/41/28 → 69/40/29 with jnext#253 (0.99.155), WHICH IS THE FIRST TIME A CASE
+# HAS EVER MOVED FROM THE EXCLUDED SET TO THE RUNNABLE ONE. Exactly ONE moves,
+# and that was derived from the sources rather than assumed: the marker retires,
+# so UT_transport_select_reclaimed runs — but UT_transport_poll_borrows_select
+# stages its byte through PORT_TEST_DATA (zsim port 0x8000), which jnext does not
+# have and which is a marker in its own right, so it stays excluded. A prediction
+# that both would move was wrong, and the check is `grep`, not memory.
 UT_EXPECTED_TESTS   = 69
-UT_EXPECTED_SKIPPED = 41
+UT_EXPECTED_SKIPPED = 40
 
 MAIN_BIN    = $(OUT)/main$(VARIANT_SUFFIX).bin
 MF_NMI_BIN  = $(OUT)/mf_nmi$(VARIANT_SUFFIX).bin
@@ -803,10 +801,8 @@ test-esp: $(ESP_BIN)
 # Run the DZRP conformance suite against OUR OWN WiFi stub in jnext (1 run + a TCP client)
 test-dzrp-stub:
 	@$(MAKE) --no-print-directory TRANSPORT=wifi mf-rom
-	@$(MAKE) --no-print-directory TRANSPORT=wifi SELECT_MASK=0x48 mf-rom
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
 	 ROM="$(OUT)/enNextMf-wifi.rom" \
-	 ROM_SELMASK="$(OUT)/enNextMf-wifi-selmask0x48.rom" \
 	 DZRP_ARGS="$(DZRP_ARGS)" $(TEST)/run-dzrp-stub.sh
 
 # The session line on the Next's own screen (issues #14, #23 and #28): eight

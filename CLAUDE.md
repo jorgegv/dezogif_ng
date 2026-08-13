@@ -533,13 +533,17 @@ strongest:
    worse than nothing**, turning "Pause does nothing" into "Pause stops the machine and the
    debugger never speaks again", because the select is established exactly once in
    `transport_init`. Shown red against `main`'s ROM with W8 green in the same run.
-   **IT RUNS A PROBE ROM AND THAT IS NOT OPTIONAL: jnext reports the select in BIT 3
-   (`src/peripheral/uart.cpp:751`) where the hardware reports it in BIT 6
-   (`serial/uart.vhd:355`/`:371`, `ports.txt:370`)**, while honouring bit 6 on writes — so the
-   shipped mask is inert in the emulator and W9 cannot be green against a shipped ROM however
-   correct it is. `SELECT_MASK=0x48` accepts either bit; it exercises the compare, the borrow, both
-   writes, the read between them and the flags surviving the restore, and **not** the bit position,
-   which rests on the VHDL alone. Point run 9 back at `$ROM` and delete the seam when jnext moves.
+   **IT RUNS THE SHIPPED ROM SINCE 2026-08-13, AND UNTIL THEN IT COULD NOT.** jnext reported the
+   select in BIT 3 where the hardware reports it in BIT 6 (`serial/uart.vhd:355`/`:371`,
+   `ports.txt:370`), while honouring bit 6 on writes — so the shipped 0x40 mask was inert in the
+   emulator and W9 could not be green against a shipped ROM however correct it was. A
+   `SELECT_MASK=0x48` probe ROM stood in, exercising the compare, the borrow, both writes, the
+   read between them and the flags surviving the restore, and **not** the bit position.
+   **jnext#253 (0.99.155) moved the read-back to bit 6, so the seam is deleted and run 9 uses
+   `$ROM`** — which buys exactly the thing the probe could not: the shipped mask is what runs, so
+   a ROM masking the wrong bit fails here. Re-measured red-first at the same time: the pre-#42 ROM
+   is **red on W9 with W8 green in the same run**, against the shipped mask. What is still open is
+   the bit position **on silicon** — jnext agreeing with the VHDL is two readings of one source.
    **NOT covered by `make measure-poll-cost`** — that instrument never reaches
    `transport_poll_traffic` at all (below), so #42's +39 T-states on the common path is arithmetic.
    **THE VERDICT IS `CMD_GET_REGISTERS`, NOT THE NOTIFICATION, AND READING IT FROM THE WRONG PLACE
@@ -750,12 +754,17 @@ strongest:
    See `doc/DZRP-TESTING.md`. Like `test-esp`, not part of `make test`: it binds a host TCP port.
    **It says nothing about hardware.**
 4d. **`make test-unit`** — the Z80 unit tests under `src/unit_tests/`, headless (issue #3). One
-   jnext run of `build/ut-headless.nex`, 5 checks. **28 of the 66 test cases run; 38 cannot and
-   are reported as `UT-SKIP` on every run.** Those 38 need ports invented by `src/simulation/uart.js`,
+   jnext run of `build/ut-headless.nex`, 5 checks. **29 of the 69 test cases run; 40 cannot and
+   are reported as `UT-SKIP` on every run.** Those 40 need ports invented by `src/simulation/uart.js`,
    a JavaScript peripheral DeZog's zsim loads as `customCode` — the Z80 cannot trap its own I/O,
    so they are unreachable from inside the guest, and a project-specific peripheral does not
    belong in jnext. **Do not read a green run as "the unit tests pass"**; read it as
-   "the 28 that can run, pass". What they cover is the banking and breakpoint code — all of
+   "the 29 that can run, pass". **It was 28 of 66 until 2026-08-13, and the 29th is the first case
+   ever to MOVE from the excluded set to the runnable one**: `ut_uart.UT_transport_select_reclaimed`
+   reads port `0x153B` back, which jnext returned in the wrong bit until jnext#253. Exactly one
+   moved, not the two that were predicted — `UT_transport_poll_borrows_select` also stages its byte
+   through `PORT_TEST_DATA` (zsim port `0x8000`), so it keeps a marker of its own. Derived by grep,
+   because the prediction was wrong. What the runnable set covers is the banking and breakpoint code — all of
    `ut_backup.asm` (9), all of `ut_breakpoints.asm` (8), all of `ut_utilities.asm` (4) — **plus
    seven the older wording of this sentence denied**: `ut_uart.UT_transport_read_byte_timeout`,
    and six of `ut_commands` (`UT_get_cmd_pointer`, `UT_04_cmd_set_register`'s `UT_SP_to_HL2` /

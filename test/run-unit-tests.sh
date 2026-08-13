@@ -72,10 +72,14 @@ UT_MANIFEST=${UT_MANIFEST:-$OUT/ut_headless/ut_manifest.txt}
 # UT_EXPECTED_RUN unchanged at 28 again.
 # 67/39 until issue #42 added ut_uart.UT_transport_select_reclaimed and
 # ut_uart.UT_transport_poll_borrows_select. Excluded by a marker of their own:
-# they read port 0x153B back, and jnext reports the channel select in bit 3 where
+# they read port 0x153B back, and jnext reported the channel select in bit 3 where
 # the hardware reports it in bit 6. UT_EXPECTED_RUN unchanged at 28 a third time.
+# 69/41/28 → 69/40/29 with jnext#253 (0.99.155), the first case ever to move from
+# the excluded set to the runnable one. ONE moves, not two:
+# UT_transport_poll_borrows_select also stages its byte through PORT_TEST_DATA
+# (zsim port 0x8000) and so keeps a marker of its own. Derived by grep.
 UT_EXPECTED_TESTS=69
-UT_EXPECTED_SKIPPED=41
+UT_EXPECTED_SKIPPED=40
 UT_EXPECTED_RUN=$((UT_EXPECTED_TESTS - UT_EXPECTED_SKIPPED))
 
 # jnext's magic debug port: guest writes appear on the emulator's stderr.

@@ -111,14 +111,6 @@ SKIP_MARKERS = [
                              '(uart.js)'),
     ('in a,(4)',             'reads a nextreg back through zsim port 0x0004 '
                              '(uart.js); no such port on real hardware'),
-    ('in a,(LOW UART_SELECT)',
-                             'reads the UART channel select back from port '
-                             '0x153B, which jnext reports in bit 3 where the '
-                             'hardware reports it in bit 6 (uart.vhd:355,:371 '
-                             'and ports.txt:370 against jnext '
-                             'src/peripheral/uart.cpp:751), so the same read '
-                             'cannot be judged there. uart.js models bit 6. '
-                             'This marker RETIRES when jnext#253 is fixed'),
     ('ld bc,0x0002',         'sets the NR 0x02 read-back value through zsim '
                              'port 0x0002 (uart.js); on a real Next that '
                              'write goes to the paging port instead'),

@@ -475,24 +475,22 @@ UART_SELECT:   equ 0x153b
 ; safe: with bit 4 clear the write changes only the select and leaves both
 ; 17-bit prescalers alone (ports.txt:371-372, serial/uart.vhd:280-287). A write
 ; with bit 4 set would take bits 2:0 as the prescaler's top three bits.
-; BIT 6 IS WHERE THE HARDWARE REPORTS THE SELECT ON A READ, AND jnext REPORTS IT
-; IN BIT 3 — so this mask is a build seam, of the ESP_IP_MAX / ESP_RX_WAIT /
-; ESP_LINK_IDS family and for their reason: the shipped value is unreachable in
-; the emulator, so a bench that needs to reach it moves the constant.
-;
-; The hardware is not in doubt. serial/uart.vhd:371 returns `"01000" &
+; BIT 6 IS WHERE THE HARDWARE REPORTS THE SELECT ON A READ, and the mask below
+; is that bit and no other. serial/uart.vhd:371 returns `"01000" &
 ; uart1_prescalar_msb_r` for the UART1 case and `"00000" & ...` for UART0
-; (:355), i.e. bit 6 and bit 3 = 0 in both; ports.txt:370 says bit 6 in words.
-; jnext's `(select_ ? 0x08 : 0x00)` (src/peripheral/uart.cpp:751) is simply the
-; wrong bit — its WRITE path takes bit 6 correctly (:712-720), so only the
-; read-back disagrees. Measured: with SELECT_MASK=0x48 bench W9 goes green and
-; with the shipped 0x40 it cannot, one constant apart.
+; (:355), i.e. bit 6, and bit 3 = 0 in both; ports.txt:370 says bit 6 in words.
 ;
-; DO NOT "FIX" THIS BY MASKING BOTH BITS IN THE SHIPPED ROM. That would put an
-; emulator's defect into the bytes a real Next executes, to make a check pass.
- IFNDEF UART_SELECT_CHANNEL
+; IT WAS A BUILD SEAM UNTIL 2026-08-13, of the ESP_IP_MAX / ESP_RX_WAIT /
+; ESP_LINK_IDS family and for their reason: jnext returned the select in bit 3
+; (`(select_ ? 0x08 : 0x00)`), so the shipped 0x40 mask read back as always-clear
+; and bench W9 could not go green against a shipped ROM however correct that ROM
+; was — measured, one constant apart. jnext#253 moved it to bit 6, so W9 now
+; runs the SHIPPED ROM and the seam is gone.
+;
+; DO NOT "FIX" A FUTURE VERSION OF THIS BY MASKING BOTH BITS IN THE SHIPPED ROM.
+; That would put an emulator's defect into the bytes a real Next executes, to
+; make a check pass.
 UART_SELECT_CHANNEL: equ 01000000b  ; the select bit, for masking a read
- ENDIF
 UART_SELECT_OURS:    equ 00000000b  ; UART0, the ESP's channel — see transport_init
 UART_SELECT_OTHER:   equ 01000000b  ; UART1, the Pi header's
 

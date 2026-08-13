@@ -2,7 +2,7 @@
 
 `make test-unit` runs the Z80 unit tests under `src/unit_tests/` in jnext, with no VS Code and no
 DeZog, and gates on the result. This document says how that works, what it does **not** cover, and
-why 38 of the 66 test cases cannot run at all outside DeZog.
+why 40 of the 69 test cases cannot run at all outside DeZog.
 
 Issue: [#3](https://github.com/jorgegv/dezogif_ng/issues/3).
 
@@ -125,7 +125,7 @@ identical to the single-run ones.
 
 ## 5. What does NOT run, and why
 
-**38 of the 66 test cases are excluded.** They are reported as `UT-SKIP` on every run rather than
+**40 of the 69 test cases are excluded.** They are reported as `UT-SKIP` on every run rather than
 dropped from the table, because an exclusion that does not appear in the output is an exclusion
 nobody will notice.
 
@@ -161,14 +161,32 @@ write to port `0x0002` does nothing on a real machine and the real NR `0x02` hap
 `nmi66h`'s cause check anyway. A test that passes without its own setup having worked is not
 evidence, so it is excluded too.
 
-### What the 28 that do run actually cover
+### The one exclusion that was jnext's fault, and has retired
+
+An eighth marker, `in a,(LOW UART_SELECT)`, existed from issue #42 until 2026-08-13 and is the
+only one that was never about a zsim-invented port. It excluded the two cases that read port
+`0x153B` — a **real** port, which jnext reported in **bit 3** where the hardware reports the UART
+channel select in **bit 6** (`serial/uart.vhd:355` and `:371`, `ports.txt:370` in words), so the
+same read could not be judged there at all. `src/simulation/uart.js` models bit 6, i.e. the
+hardware.
+
+**jnext#253 (0.99.155) fixed the read-back, so the marker is gone and
+`ut_uart.UT_transport_select_reclaimed` runs — the first case in this project's history to move
+from the excluded set to the runnable one.** Exactly one moved, and a prediction that both would
+was wrong: `UT_transport_poll_borrows_select` stages its byte through `PORT_TEST_DATA`
+(port `0x8000`) and so keeps a marker of its own. The check is a `grep` over the test bodies, not
+a memory of which tests carried which marker.
+
+### What the 29 that do run actually cover
 
 All of `ut_utilities.asm` (nextreg read/write, division, itoa), all of `ut_breakpoints.asm` (the
 temporary-breakpoint bookkeeping, 8 cases), all of `ut_backup.asm` (register save/restore
 including the shadow set, I and IM, and `read`/`write_debugged_prgm_mem` across the slot-7 and
 `0xFFFF`/`0x0000` bank boundaries — i.e. the **SWAP-window paging** the plan's §4.1 is about),
-`transport_read_byte`'s timeout path, and the parts of `ut_commands.asm` that do not need a
-simulated response (`get_cmd_pointer`, four `cmd_set_register` cases, `cmd_pause`).
+`transport_read_byte`'s timeout path, `ut_uart.UT_transport_select_reclaimed` (issue #42 — that
+the debugger takes the UART channel select back at every entry), and the parts of
+`ut_commands.asm` that do not need a simulated response (`get_cmd_pointer`, four
+`cmd_set_register` cases, `cmd_pause`).
 
 That is real coverage of the banking and breakpoint code M1 and M2 disturb. It is **not** coverage
 of the DZRP command layer — for that the gate is `make test-dzrp-stub`, which drives the real
@@ -178,8 +196,9 @@ protocol over a real socket and does not need any of this.
 
 - **Nothing about hardware.** This is jnext. The tests it runs include ones about MMU paging,
   which jnext models rather than is.
-- **Nothing about the transport.** `ut_uart.asm`'s one runnable case tests a timeout path; the
-  ESP transport has no unit tests at all, and its gate is `make test-dzrp-stub`.
+- **Almost nothing about the transport.** `ut_uart.asm`'s two runnable cases test a timeout path
+  and the select reclaim; the ESP transport has no unit tests at all, and its gate is
+  `make test-dzrp-stub`.
 - **It does not replace the DeZog path.** `make unit-tests` still builds `build/ut.nex`, and the
-  "Unit Tests" launch configuration still runs all 66 cases in VS Code with the plugin, which is
-  the only way the excluded 38 can ever be exercised.
+  "Unit Tests" launch configuration still runs all 69 cases in VS Code with the plugin, which is
+  the only way the excluded 40 can ever be exercised.

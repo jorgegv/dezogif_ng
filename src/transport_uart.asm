@@ -166,28 +166,18 @@ UART_SELECT:   equ 0x153b
 ; safe: with bit 4 clear the write changes only the select and leaves both
 ; 17-bit prescalers alone (ports.txt:371-372, serial/uart.vhd:280-287). A write
 ; with bit 4 set would take bits 2:0 as the prescaler's top three bits.
-; BIT 6 IS WHERE THE HARDWARE REPORTS THE SELECT ON A READ, AND jnext REPORTS IT
-; IN BIT 3 (src/peripheral/uart.cpp:751, against serial/uart.vhd:355/:371 and
-; ports.txt:370). The mask is therefore a build seam, of the ESP_IP_MAX family:
-; see transport_esp.asm, where the same constant carries the full argument and
-; the bench that moves it. DO NOT mask both bits in the shipped ROM.
 ;
-; AND IN THIS BUILD THAT DEFECT INVERTS THE POLL, WHICH IT DOES NOT DO IN THE
-; OTHER ONE. Here OURS is 01000000b, so jnext's always-bit-6-clear read makes
-; the `cp UART_SELECT_OURS` below fail EVERY TIME: under the emulator this
-; build's poll takes `.borrow_select` on every call, and its restore then leaves
-; the select on UART0 where transport_init put UART1. So the common path — the
-; one a real Next takes on every frame — is executed by NO run in this
-; repository, and what the emulator does execute is actively wrong there.
-; Harmless today only because nothing drives this transport headless. It stops
-; being harmless the moment jnext gains the joy-port injection hook (jnext#251):
-; the 0x143B read that follows a positive poll would go to the other channel,
-; and a bench built on that hook would fail for jnext's reason rather than ours.
-; None of this is a silicon defect — on hardware bit 6 reads back and the common
-; path is taken. It retires when jnext reports the select where the VHDL does (jnext#253).
- IFNDEF UART_SELECT_CHANNEL
+; BIT 6 IS WHERE THE HARDWARE REPORTS THE SELECT ON A READ (serial/uart.vhd:355
+; and :371, ports.txt:370 in words), and the mask below is that bit and no
+; other. It was a build seam until 2026-08-13: jnext reported the select in bit
+; 3, so the shipped mask read back as always-clear there and — in THIS build,
+; where OURS is 01000000b — inverted the poll, taking `.borrow_select` on every
+; call and leaving the select on UART0 where transport_init put UART1. The
+; common path a real Next takes every frame was executed by no run here at all.
+; jnext#253 fixed the read-back, so the mask is now exercised as shipped and the
+; SELECT_MASK seam is gone. Kept as history because it is the reason this
+; paragraph is long: DO NOT mask both bits to accommodate an emulator.
 UART_SELECT_CHANNEL: equ 01000000b  ; the select bit, for masking a read
- ENDIF
 UART_SELECT_OURS:    equ 01000000b  ; UART1 — see transport_init
 UART_SELECT_OTHER:   equ 00000000b  ; UART0, the ESP's channel
 

@@ -3,6 +3,37 @@
     "configurations": [
 
         {
+            // THE PR TEST. Run this from the Extension Development Host window
+            // that "Launch Extension" opens in ~/src/spectrum/dezog.jorgegv, so
+            // that the MODIFIED DeZog is the one talking.
+            //
+            // remoteType is "zxnext" — not "cspect" — with a hostname instead of
+            // a serial port. That is the whole subject: the zxnext remote speaks
+            // CMD_SET_BREAKPOINTS/CMD_RESTORE_MEM, which this stub implements and
+            // which cspect's CMD_ADD_BREAKPOINT is not.
+            //
+            // The fixture does NOT return: it repoints MMU slot 7 over where
+            // NextZXOS's stack lives. Reset the Next when done.
+            "type": "dezog",
+            "request": "launch",
+            "name": "Next: zxnext socket (PR test)",
+            "remoteType": "zxnext",
+            "zxnext": {
+                "hostname": "192.168.100.136",
+                "port": 11000,
+                "timeout": 50
+            },
+            "sjasmplus": [
+                {
+                    "path": "build/pause-transparency.sld"
+                }
+            ],
+            "load": "build/pause-transparency.nex",
+            "rootFolder": "${workspaceFolder}",
+            "startAutomatically": false,
+            "topOfStack": "0x9F00"
+        },
+        {
             "type": "dezog",
             "request": "launch",
             "name": "Real Next over WiFi",

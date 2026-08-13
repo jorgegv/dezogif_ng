@@ -5,6 +5,35 @@ attempting similar logic.
 
 ---
 
+## A zero-context patch applied into the WRONG ROUTINE, and it still assembled clean
+
+**Symptom.** While splitting a large `uart.asm` change into separately-buildable commits for an
+upstream pull request, two hunks were applied with **zero context lines**. Both landed in a
+different routine from the one they were written for. **The result assembled with 0 errors and
+0 warnings**, and the ROM came out the expected 8192 bytes.
+
+**Cause.** A patch with no context is matched on line numbers alone, so it lands wherever the
+offset points after earlier hunks have shifted the file. In assembly there is no type system and
+usually no cross-routine check to notice: a `nextreg` or an `ld` is syntactically valid anywhere,
+so the assembler has nothing to object to. A misplaced hunk is a *semantic* error in a language
+whose compiler checks almost nothing.
+
+**Fix.** Split by **content-matched edits** rather than by line-numbered patches, and read the
+file back afterwards. The commits were rebuilt that way.
+
+**Lesson, and it is the one this file keeps restating in new organs: "it assembles" is not "it
+applied where you meant".** The exit status answered a different question from the one being
+asked — the same shape as *"the screen changed" is not "the stub took over"* and *"these two
+differ" is not "this one is right"*. Where a mechanical operation can silently produce a
+plausible wrong result, the check is to **look at the artefact**, not at the return code of the
+tool that produced it.
+
+**Not reached by any test here**, and could not be: the misplacement was in a branch destined for
+another repository, and this repository's benches were never pointed at it. What caught it was
+reading the file.
+
+---
+
 ## A contamination guard that only looks in one direction, and a red that erases its own evidence
 
 **Not a fix — two properties of a bench, found while investigating something

@@ -173,10 +173,13 @@ UART_SELECT:   equ 0x153b
 ; 3, so the shipped mask read back as always-clear there and — in THIS build,
 ; where OURS is 01000000b — inverted the poll, taking `.borrow_select` on every
 ; call and leaving the select on UART0 where transport_init put UART1. The
-; common path a real Next takes every frame was executed by no run here at all.
-; jnext#253 fixed the read-back, so the mask is now exercised as shipped and the
-; SELECT_MASK seam is gone. Kept as history because it is the reason this
-; paragraph is long: DO NOT mask both bits to accommodate an emulator.
+; common path a real Next takes every frame was, until that day, executed by no
+; run in this repository at all. jnext#253 fixed the read-back and jnext#251
+; gave the joy port an RX source, so the mask is exercised as shipped AND the
+; common path now runs: `make test-uart-break` resumes a debuggee whose Copper
+; list drives this poll while a byte waits in the FIFO. Kept as history because
+; it is the reason this paragraph is long: DO NOT mask both bits to accommodate
+; an emulator.
 UART_SELECT_CHANNEL: equ 01000000b  ; the select bit, for masking a read
 UART_SELECT_OURS:    equ 01000000b  ; UART1 — see transport_init
 UART_SELECT_OTHER:   equ 00000000b  ; UART0, the ESP's channel

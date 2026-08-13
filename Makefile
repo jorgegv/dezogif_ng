@@ -805,6 +805,24 @@ test-dzrp-stub:
 	 ROM="$(OUT)/enNextMf-wifi.rom" \
 	 DZRP_ARGS="$(DZRP_ARGS)" $(TEST)/run-dzrp-stub.sh
 
+# Asynchronous break over the SERIAL cable (issue #43), which until jnext#251
+# could be exercised by nothing at all: `TRANSPORT_DEACTIVATE` runs only from
+# `restore_registers`, reached only from `cmd_continue`, which needs a DZRP
+# client on the joy-port transport — and nothing anywhere had ever been one.
+#
+# There is no client here either. A cable in jnext is a ONE-WAY byte stream from
+# a file, so the commands are pre-recorded and the stub's answers are read back
+# out of jnext's own UART TX log. J1 is the break; J3 and J4 are the two arms of
+# the macro, witnessed by the DEBUGGEE reading NR 0x0B while it runs — the break
+# itself cannot tell them apart, because nothing drains the 512-byte RX FIFO on
+# the resume path. See test/run-uart-break.sh.
+#
+# Run the serial-cable asynchronous-break bench (3 jnext runs; not part of `make test`)
+test-uart-break:
+	@$(MAKE) --no-print-directory mf-rom
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
+	 ROM="$(OUT)/enNextMf.rom" $(TEST)/run-uart-break.sh
+
 # The session line on the Next's own screen (issues #14, #23 and #28): eight
 # jnext runs. Five are judged by READING row 8 back as text with the ZX ROM font
 # rather than by comparing runs — comparing runs cannot tell a correct pair of

@@ -578,8 +578,14 @@ but here: it is traced from the source, measured in the emulator, and what hardw
 the fixed handlers behave there too.
 
 **The UART build's half is predicted, not run.** `commands.asm` is common code so the fix reaches
-both ROMs, but nothing has ever driven the serial transport with a DZRP client — which is equally
-true of the defect.
+both ROMs, but nothing has driven **these two commands** over the serial transport — which is
+equally true of the defect.
+
+*(**ANNOTATED 2026-08-13: the general claim expired, this narrower one did not.** This said
+"nothing has ever driven the serial transport with a DZRP client". `make test-uart-break`
+(issue #43) now does — `CMD_INIT`, `CMD_WRITE_MEM`, `CMD_READ_MEM`, `CMD_SET_REGISTER`,
+`CMD_CONTINUE`, `CMD_PAUSE`, `CMD_GET_REGISTERS` over a joy-port cable. It sends neither
+`CMD_SET_BREAKPOINTS` nor `CMD_RESTORE_MEM`, so C22/C23's own subject is still unrun there.)*
 
 ### C24 and C25: the commands DeZog actually sends for a breakpoint (issue #41)
 

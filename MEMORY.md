@@ -1980,7 +1980,13 @@ these checks are exposed to. **Hardware** — neither
 check has run on a Next, and the defect has never been observed anywhere but
 here. **The UART build's half**: `commands.asm` is shared and the fix reaches
 both ROMs, but nothing has ever driven the serial transport with a DZRP client,
-so that half is predicted and not run — which is also true of the defect. **What
+so that half is predicted and not run — which is also true of the defect.
+*(**ANNOTATED 2026-08-13: the premise expired, the conclusion did not.**
+`make test-uart-break` drives the serial transport with a DZRP client now — but
+it sends neither `CMD_SET_BREAKPOINTS` nor `CMD_RESTORE_MEM`, so C22/C23's own
+subject is still unrun there and this NOT-COVERED entry stands, for a narrower
+reason than the one given. Same correction as `doc/DZRP-TESTING.md`'s C22/C23
+section, which is where this sentence has its twin.)* **What
 a 64K breakpoint above `0xE000` destroyed in practice** on a real machine, which
 depends on where in `MAIN_BANK` it fell and which nothing here reproduces: the
 probe deliberately aims at dead space.

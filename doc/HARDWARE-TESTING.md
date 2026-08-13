@@ -1180,8 +1180,12 @@ predicted as one frame plus the measured ~11 ms WiFi round trip and never measur
 
   **This gap has GROWN, and that is worth saying plainly.** The serial path's only standing guard
   has been byte-identity — "the UART ROM did not change" — and issues **#7, #8, #9 and #12 each
-  changed it deliberately**, so that guard has answered nothing four times running. **Nothing has
-  ever executed the serial transport end to end**, in an emulator or on a machine.
+  changed it deliberately**, so that guard has answered nothing four times running. ~~**Nothing has
+  ever executed the serial transport end to end**, in an emulator or on a machine.~~
+  **CORRECTED 2026-08-13: the EMULATOR half is done.** `make test-uart-break` (issue #43) runs a
+  DZRP exchange over the serial transport from `CMD_INIT` through resume to a break, in jnext,
+  using jnext#251's joy-port RX hook. **On a machine it still has not**, which is what this bullet
+  is about and why it stays.
 - **Interleaved commands, on hardware.** H3's two exchanges are sequential, deliberately:
   interleaving them asks whether a reply can be flushed to the *wrong* connection because a second
   command arrived and moved `esp_conn_id` first, which is a property of our own buffering rather

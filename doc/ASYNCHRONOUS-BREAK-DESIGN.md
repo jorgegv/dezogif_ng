@@ -872,7 +872,11 @@ where either port idled the module's TX for as long as the debugger held the mac
 its `UT_transport_activate` assertions move to the new NR `0x0B` values.
 
 **THE EVIDENCE LADDER, AND THE TOP RUNG IS EMPTY.** *(It said TWO until 2026-08-13, when
-`make test-uart-break` filled the cable row. Hardware is the one that is left.)*
+`make test-uart-break` filled the **cable** row. What is left is the row above it —
+`UT_transport_activate` / `UT_transport_deactivate`, which need a zsim port `uart.js` invents and
+so run only under DeZog in VS Code, a manual layer nothing here drives. That is NOT the hardware
+gap: hardware is owed too and is not a row in this ladder at all. An earlier version of this
+parenthetical said hardware was what remained, which named the wrong rung.)*
 
 | | |
 |---|---|

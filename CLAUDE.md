@@ -933,9 +933,10 @@ strongest:
    recovered within ~3 s. **NOT covered**: the serial build's half of the bound — identical code,
    and nothing exercises it, ~~because nothing here can drive that transport headless — T6 attaches
    no client, so it never reaches `cmd_loop`~~ *(that reason expired on 2026-08-13: `make
-   test-uart-break` does drive the serial transport with a client, §4o. It simply does not test this
-   bound — its client never goes quiet mid-command — so the coverage gap is unchanged and only its
-   cause is)*; the recovery at its shipped limit, and anything about a real ESP-01. Not part of
+   test-uart-break` does drive the serial transport, §4o — with a **pre-recorded** command stream
+   rather than a live peer. It simply does not test this bound, and that distinction is why: the
+   bound needs a live client that falls silent mid-command, which a recorded stream cannot do by
+   construction. So the coverage gap is unchanged and only its cause is)*; the recovery at its shipped limit, and anything about a real ESP-01. Not part of
    `make test`: it binds a host TCP port.
 4i. **`make test-screen-agreement`** — the DZRP **screen reader**, 2 headless jnext runs, and the
    only bench here that judges one artefact against **two independent views of it**.

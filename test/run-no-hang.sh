@@ -134,10 +134,12 @@
 #
 # * THE SERIAL BUILD. Part A changes transport_uart.asm identically, and this
 #   said no bench here could drive that transport headless. THAT EXPIRED ON
-#   2026-08-13: `make test-uart-break` drives it with a DZRP client and does
-#   reach cmd_loop. What is still uncovered is part A's BOUND, which needs a
-#   client going silent MID-COMMAND — that bench never does, so the gap is real
-#   and the reason for it has changed.
+#   2026-08-13: `make test-uart-break` drives it with a PRE-RECORDED DZRP
+#   command stream — bytes from a file on the cable, not a live peer — and does
+#   reach cmd_loop. Part A's BOUND is still uncovered, and that distinction is
+#   why: the bound needs a LIVE client that falls silent MID-COMMAND, which a
+#   pre-recorded stream cannot do by construction. The gap is real and the
+#   reason for it is sharper than the one that was here.
 # * Part C at its SHIPPED limit, and part C against a module that is actually
 #   broken. See N4's scope above.
 # * Anything about a real ESP-01.

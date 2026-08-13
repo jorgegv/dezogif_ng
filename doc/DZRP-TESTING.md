@@ -583,7 +583,8 @@ equally true of the defect.
 
 *(**ANNOTATED 2026-08-13: the general claim expired, this narrower one did not.** This said
 "nothing has ever driven the serial transport with a DZRP client". `make test-uart-break`
-(issue #43) now does — `CMD_INIT`, `CMD_WRITE_MEM`, `CMD_READ_MEM`, `CMD_SET_REGISTER`,
+(issue #43) now drives it with a **pre-recorded** DZRP command stream — a file of bytes on the
+cable, replies read out of jnext's UART TX log, not a live peer — `CMD_INIT`, `CMD_WRITE_MEM`, `CMD_READ_MEM`, `CMD_SET_REGISTER`,
 `CMD_CONTINUE`, `CMD_PAUSE`, `CMD_GET_REGISTERS` over a joy-port cable. It sends neither
 `CMD_SET_BREAKPOINTS` nor `CMD_RESTORE_MEM`, so C22/C23's own subject is still unrun there.)*
 

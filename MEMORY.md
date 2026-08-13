@@ -205,9 +205,10 @@ earned *it* a unit test.
 annotation this one entry has needed. `make test-uart-break` drives the serial
 transport headless, so "nothing anywhere" has expired; the two clauses before
 it are scoped to jnext's bit-3 defect and remain accurate history. Recorded
-because of where it sits: four lines above a sibling sentence this same branch
-had already annotated for exactly this, which is the miss this session made
-seven times.)*
+because of where it sits: earlier in the SAME entry than a sibling sentence this
+branch had already annotated for exactly this — the miss this session made seven
+times. (An earlier draft said "four lines above"; the gap is about fifty. A
+number nobody measured, in an annotation about unmeasured numbers.))*
 
 **The fix is `ut_uart.UT_transport_select_reclaimed` and
 `ut_uart.UT_transport_poll_borrows_select`, and getting there needed
@@ -1989,7 +1990,8 @@ here. **The UART build's half**: `commands.asm` is shared and the fix reaches
 both ROMs, but nothing has ever driven the serial transport with a DZRP client,
 so that half is predicted and not run — which is also true of the defect.
 *(**ANNOTATED 2026-08-13: the premise expired, the conclusion did not.**
-`make test-uart-break` drives the serial transport with a DZRP client now — but
+`make test-uart-break` drives the serial transport with a **pre-recorded** DZRP
+command stream now — not a live client; see below — but
 it sends neither `CMD_SET_BREAKPOINTS` nor `CMD_RESTORE_MEM`, so C22/C23's own
 subject is still unrun there and this NOT-COVERED entry stands, for a narrower
 reason than the one given. Same correction as `doc/DZRP-TESTING.md`'s C22/C23
@@ -7053,11 +7055,14 @@ The **serial build's** half of A: identical
 code, and nothing here can drive that transport headless — `make test`'s T6 runs
 the serial ROM but attaches no client, so it never reaches `cmd_loop`.
 *(**ANNOTATED 2026-08-13: the PREMISE expired, the conclusion did not.**
-`make test-uart-break` drives the serial transport with a DZRP client and does
-reach `cmd_loop`, so "nothing here can drive that transport headless" is no
-longer true. **Part A's bound is still uncovered** — that needs a client which
-goes silent MID-COMMAND, which this bench does not stage, so the NOT-COVERED
-verdict stands for a different reason than the one given.)* C at its
+`make test-uart-break` drives the serial transport with a **pre-recorded DZRP
+command stream** — a file of bytes injected on the cable, with the stub's replies
+read back out of jnext's UART TX log, NOT a live peer — and it does reach
+`cmd_loop`, so "nothing here can drive that transport headless" is no longer
+true. **Part A's bound is still uncovered**, and the reason is exactly that
+distinction: the bound needs a **live client** that falls silent MID-COMMAND,
+which a pre-recorded stream cannot do by construction. So the NOT-COVERED
+verdict stands, for a different and sharper reason than the one given.)* C at its
 **shipped** limit, and C against a module that is actually broken. Anything at
 all about a real ESP-01. And the **head-of-line blocking** the manager measured
 the same day — one client that stops reading blocks the stub for as long as it

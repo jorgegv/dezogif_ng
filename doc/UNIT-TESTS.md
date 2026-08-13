@@ -133,8 +133,9 @@ to a name through the manifest — would likewise have named the wrong test.
 must carry that index's name, and `UT-BEGIN`/`UT-SKIP` must agree with its `RUN`/`SKIP`. Watched to
 fail against the 8-bit form — five lines, naming every displaced test, with U1-U5 still green.
 
-The three tests pass now that they run. That is luck rather than vindication: they had been unrun for
-three ROM-moving builds of the breakpoint code they cover.
+The three tests pass now that they run, which is luck rather than vindication: three ROM-moving builds
+shipped while they were providing no protection at all. `src/breakpoints.asm` itself did not move in any
+of them — checked — so nothing is known to have slipped past, but nothing was watching either.
 
 ## 4. Isolation between tests
 

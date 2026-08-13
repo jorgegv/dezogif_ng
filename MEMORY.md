@@ -5,6 +5,53 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-13 — Asynchronous break in UART mode ships ON BY DEFAULT, because the default port is upstream's own
+
+**Decided by the user**, after the question had been priority 1 for two sessions
+and been passed over twice. It needs no code: the cable's default selection is
+**Joy 2**, that selection is what arms the break, so the shipped serial ROM
+breaks by default.
+
+**WHAT MADE IT AN EASY CALL WAS READING THE FORK POINT RATHER THAN ARGUING FROM
+FIRST PRINCIPLES.** `ld a,2 ; Joy 2 selected` is **upstream's**, byte for byte at
+`dee4255` — we introduced no default and changed no default. Upstream also took
+the joy port over at all three entry sites and cleared NR `0x0B` on every resume,
+so its contract was already *io mode on while stopped, off while running*.
+
+**So the whole behavioural delta our break adds is one thing**: Sinclair, Cursor
+and user-defined joystick types stay dead **while the debuggee runs**, where
+before they died only while it was stopped. Kempston (port `0x1F`) and MD
+(`0x37`) are unaffected on **both** connectors, so a game reading Kempston on
+port 1 has a working stick throughout.
+
+**AND NO PORT CHOICE COULD EVER HAVE PRESERVED THE KEYBOARD-MAPPED TYPES**, which
+is the fact that decides this rather than the cost being small. NR `0x0B` bit 7
+kills the key injection **globally** — `membrane_stick.vhd:190` fed from
+`zxnext_top_issue4.vhd:1855` — so it is not a per-connector cost that a different
+selection could dodge. There is no configuration in which a debugger holds a joy
+port for a cable and those types keep working.
+
+**Rejected**, both costed and offered rather than waved away:
+
+- **a fourth selector state, "Joy 2, no break"** (key `4`) — one table entry, one
+  branch, two text lines, one `cp`; no MF ROM bytes at all, and UART-half only,
+  so the **141-byte** WiFi budget is untouched. It buys back exactly upstream's
+  behaviour on port 2 for a program that wants those joystick types more than it
+  wants Pause;
+- **the same state as the DEFAULT**, making break opt-in and preserving upstream
+  byte for byte until asked. Rejected as asymmetric with WiFi mode, where the
+  break is unconditional and nobody opts into anything, and as charging every
+  user a keypress per power-on for a case nobody has reported.
+
+**WHAT THIS DECISION DOES NOT DO IS MAKE THE FEATURE TESTED.** It ships on by
+default and is **validated nowhere** — issue #43. No bench here can put a byte on
+that cable, `TRANSPORT_DEACTIVATE` is reached by no headless run at all, and the
+two routes to changing that are a serial cable on a real Next or **jnext#251**,
+which the user is implementing. A default is a decision about which untested
+behaviour a user meets first.
+
+---
+
 ## 2026-08-13 — The UART select is a shared POINTER, so we borrow it rather than forbid it; and the poll's headline cost turns out not to include the poll
 
 **Built, issue #42**, and the decision worth recording is the one that was nearly

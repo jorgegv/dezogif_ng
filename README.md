@@ -17,9 +17,9 @@ Maintained by [jorgegv](https://github.com/jorgegv). Original author: maziac.
 |---|---|---|
 | Transport | serial on the joy port | **either**: the same serial link, or **ESP-01 WiFi over TCP** |
 | Cable | D-SUB 9 + USB serial adapter | **none** in WiFi mode |
-| Joysticks | taken over while stopped | **never touched** in WiFi mode |
-| Pause from the PC | impossible — press the NMI button | **yes** in WiFi mode |
-| Choosing a ROM | swap a file on the SD card in a PC | **from the machine**, both builds on the card |
+| Joysticks | taken over while stopped | **never taken over** in WiFi mode; in UART mode joy port 2 is held while the program runs too |
+| Pause from the PC | impossible — press the NMI button | **yes** over WiFi, and over the cable on joy port 2 |
+| Choosing a ROM | swap a file on the SD card in a PC | **from the machine**, live at the next NMI press |
 | Test bench | Z80 unit tests, DeZog-driven | those, **plus** a headless emulator-driven bench: `make test` |
 
 Everything above the byte stream is inherited unchanged: the memory choreography, the AltROM
@@ -29,22 +29,38 @@ trick, `RST 0` breakpoints, and the DZRP command layer.
 11000 and speaks DZRP through it. No cable, and the joysticks stay with the program permanently.
 The link negotiates up to 460800 baud, giving a round trip of about 6.6 ms and about 20 KB/s.
 
-**Pause from the PC.** In WiFi mode, Pause in DeZog stops a freely running program — no button
-press and no breakpoint. It needs two Copper instructions in **your** program, 44 bytes, because
-the Copper's instruction list is write-only and a debugger that installed its own could never give
-yours back. See [doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md](doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md) for
-the snippet, what it costs, and the states in which the break will not fire.
+**Pause from the PC.** Pause in DeZog stops a freely running program — no button press and no
+breakpoint. It needs two Copper instructions in **your** program, 44 bytes, because the Copper's
+instruction list is write-only and a debugger that installed its own could never give yours back.
+See [doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md](doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md) for the snippet,
+what it costs, and the seven states in which the break will not fire.
 
-UART mode has no PC-initiated break and cannot have one: a serial build hands the joy ports back
-when it resumes your program, which re-points the UART's receive line at the ESP-01 pin, so the
-cable's bytes have nowhere to land while the program runs. There the NMI button is the only way to
-stop it.
+**It works over the cable too, on joy port 2** — which is the default, so the serial ROM ships with
+it on. Upstream cleared the joy port's i/o mode when it resumed your program, which cut the cable's
+receive line; this fork keeps it on for port 2, so a byte from the PC still has somewhere to land.
+Port 1 keeps upstream's resume behaviour deliberately, so a debugged program can have a real
+joystick on the left connector. The stub's screen says which you have, on the row under the port selection:
+`PC break: ready` or `PC break: needs Joy 2`.
+
+What that costs is joystick types rather than a connector: while the port is held, Kempston and MD
+reads keep working on **both** connectors, but Sinclair, Cursor and user-defined types produce
+nothing and the MD 6-button extended buttons read as zero. Upstream paid that only while your
+program was stopped; on port 2 it is now paid while it runs as well. No port choice could avoid it —
+the register that reroutes the pin switches the key injection off globally.
+
+Two caveats there, and the first is the one that bites today. **DeZog's serial remote refuses to
+send Pause client-side** — it throws *"use the yellow NMI button"*, a refusal written when a cable
+genuinely could not carry a byte to a running program — so over a cable the button is still what
+you press until that refusal is lifted. The socket remote does send it, so WiFi mode is unaffected.
+And the serial break **has not run on hardware**: `make test-uart-break` stops a freely running
+debuggee with bytes on an emulated cable, and no real Next has been near it
+([#43](https://github.com/jorgegv/dezogif_ng/issues/43)).
 
 **Two ROMs, switched from the machine.** Both builds go on the SD card together, and either can be
-installed from a menu (`mfselect`) or from the NextZXOS command line and `AUTOEXEC.BAS`
-(`.mfinstall`). That matters because there is one ESP: a program that uses WiFi itself cannot be
-debugged over WiFi, and the serial ROM is the answer for it — a power cycle away rather than a PC
-session away.
+installed from the NextZXOS command line or `AUTOEXEC.BAS` (`.mfinstall`, live at the next NMI
+press) or from a menu (`mfselect`). That matters because there is one ESP: a program that uses WiFi
+itself cannot be debugged over WiFi, and the serial ROM is the answer for it — a command away
+rather than a PC session away.
 
 Read [doc/ZXNEXT-REMOTE-DEBUG-STUB.md](doc/ZXNEXT-REMOTE-DEBUG-STUB.md) for the design, the
 VHDL-verified hardware facts with citations, and which claims rest on hardware rather than on the
@@ -72,10 +88,11 @@ or on a Pause from the PC — the stub takes over, reports the state change to D
 pause notification, and waits for requests: read registers, read memory, set breakpoints. The
 program starts again when DeZog sends a continue request.
 
-In UART mode the joy ports are configured for the serial link while stopped and handed back to the
-program when it resumes, exactly as upstream does. In WiFi mode the joy ports are never touched,
-and UART0 stays on the ESP-01 pin permanently — which is what makes a byte from the PC able to
-arrive at any time, and so what makes Pause possible.
+In UART mode the joy ports are configured for the serial link while stopped. On **joy port 2** that
+configuration is left in place when the program resumes, so the cable's receive line stays live and
+a Pause has somewhere to land; on joy port 1, and with no port selected, the ports are handed back
+as upstream does. In WiFi mode the joy ports are never taken over, and UART0 stays on the ESP-01
+pin permanently — which is why a byte from the PC can arrive there at any time.
 
 See [doc/legacy/Design.md](doc/legacy/Design.md) for the memory choreography, the AltROM trick and
 the breakpoint design, all inherited.
@@ -110,57 +127,91 @@ make test
 is the gate: it installs the freshly built ROM into a copy of an SD card image, boots a Next,
 fires Multiface NMIs and judges the resulting screenshots.
 
-Behind it are seventeen more `test-*` targets, each with its own subject — the DZRP conformance suite
-against our own stub over an emulated ESP-01 (`make test-dzrp-stub`), the ROM switcher
-(`make test-mfselect`), the dot command (`make test-mfinstall`), the ESP transport's timeouts,
-recovery and baud negotiation, and the Z80 unit tests (`make test-unit`). Bare `make` lists them;
+Behind it are eighteen more `test-*` targets, each with its own subject — the DZRP conformance suite
+against our own stub over an emulated ESP-01 (`make test-dzrp-stub`), asynchronous break over the
+joy-port cable (`make test-uart-break`), the ROM switcher (`make test-mfselect`), the dot command
+(`make test-mfinstall`), the ESP transport's timeouts, recovery and baud negotiation, and the Z80
+unit tests (`make test-unit`). Bare `make` lists them;
 [doc/DZRP-TESTING.md](doc/DZRP-TESTING.md) and the other documents under `doc/` say what each one
 does and does not establish. `make test-hardware NEXT_IP=<ip>` runs the same conformance suite
 against a real Next.
 
 Two limits worth knowing. The benches bind host TCP ports or need a client running concurrently
 with the emulator, so most of them are deliberately not part of `make test`. And `make test-unit`
-runs 28 of the 66 unit test cases: the other 38 need ports invented by a JavaScript peripheral
+runs 29 of the 69 unit test cases: the other 40 need ports invented by a JavaScript peripheral
 that DeZog's zsim loads as `customCode`, and the Z80 cannot trap its own I/O, so those stay a
 manual VS Code layer.
 
 
 # Deployment
 
-The stub **is** the Multiface ROM: one of `build/enNextMf.rom` (UART) or
-`build/enNextMf-wifi.rom` (WiFi) replaces `machines/next/enNextMf.rom` on the Next's SD card.
-**The card already has one, and it is the stock Multiface ROM — you must keep a copy of it.**
-Without one you cannot get the normal Multiface back, and you will want it back every time the
-stub misbehaves.
+The stub **is** the Multiface ROM. There are two ways to put it there, and they differ in what they
+touch: `.mfinstall` writes it into Multiface memory for the current session and **never writes a ROM
+to the SD card** — only its `--configure` verb writes anything there, one config file and no ROM —
+while `mfselect` replaces `machines/next/enNextMf.rom` on the card permanently. Both live on the
+card together and one build produces the set.
 
-## Recommended: mfselect, on the Next itself
+**The card already carries the stock Multiface ROM, and you want a copy of it kept.** `mfselect`
+captures it on its first run, and `.mfinstall --unload` needs that copy — so run `mfselect` once
+even if you then use `.mfinstall` for everything.
 
-`mfselect` is a small NextZXOS utility that switches the installed Multiface ROM between the stock
-one and either of this project's two builds, with the card still in the machine. It captures the
-stock ROM the first time it runs, so the backup is made for you.
+## Getting the files onto the card
 
-`make mfselect` (or `make all`) leaves everything it needs in **`build/deploy/`**, under the exact
-names *and in the directories* the card expects:
+`make mfinstall` (or `make all`) leaves everything in **`build/deploy/`**, under the exact names
+*and in the directories* the card expects:
 
 ~~~
 build/deploy/  →  the root of the card
-    mfselect/mfselect.nex
-    mfselect/dezowifi.rom
-    mfselect/dezowifi.sum
+    dot/mfinstall
     mfselect/dezouart.rom
     mfselect/dezouart.sum
+    mfselect/dezowifi.rom
+    mfselect/dezowifi.sum
+    mfselect/mfinstall.yml
+    mfselect/mfselect.nex
 ~~~
 
 i.e. `cp -r build/deploy/* /path/to/card/`. **Nothing needs renaming and nothing needs placing by
-hand** — the ROMs are built under the name the Next's firmware loads at boot, and mfselect looks
-for them beside itself under different names, so the same bytes wearing two names in two
-directories is the build's problem rather than yours. `make mfinstall` adds `dot/mfinstall` and a
-default `mfselect/mfinstall.yml` to the same tree; see [doc/MFINSTALL.md](doc/MFINSTALL.md).
+hand** — the ROMs are built under the name the Next's firmware loads at boot, and both tools look
+for them beside themselves under different names, so the same bytes wearing two names in two
+directories is the build's problem rather than yours. (`make mfselect` alone leaves out
+`dot/mfinstall` and `mfselect/mfinstall.yml`.)
 
 One build produces the whole set with the same `BUILD_TIME`, which is what makes it coherent: the
 stamp goes into each ROM, so a `.rom` paired with a `.sum` from another build is refused.
 
-Then, from the NextZXOS command line:
+## Recommended: .mfinstall, from the NextZXOS command line
+
+A dot command that installs either build straight into Multiface ROM space:
+
+~~~
+.mfinstall --load wifi     install the WiFi build
+.mfinstall --load uart     install the UART build
+.mfinstall --unload        put the stock Multiface ROM back
+.mfinstall --auto          install whatever mfselect/mfinstall.yml says
+.mfinstall --configure wifi|uart|none    set that file; install nothing
+~~~
+
+It is the comfortable one, for three reasons. **An install is live at the next NMI press** — no
+reset and no power cycle, so switching between the two builds costs one command. **No ROM ever
+reaches the SD card**, so nothing can be lost by a mistake or an interrupted write. And it can be
+automated: put `.mfinstall --auto` in `AUTOEXEC.BAS` and the machine comes up with the debugger
+installed, with `--configure` deciding which build without editing the file by hand.
+
+The cost is that an install **lasts until power-off**, because it writes memory rather than the
+card — which is exactly why `--auto` exists. `install: none` is a clean success, so leaving `--auto`
+in `AUTOEXEC.BAS` on a day you are not debugging costs nothing. Full detail, including the
+`AUTOEXEC.BAS` requirements that are easy to get wrong: [doc/MFINSTALL.md](doc/MFINSTALL.md).
+
+## mfselect, the menu — and the one thing only it does
+
+`mfselect` switches the installed Multiface ROM between the stock one and either of this project's
+two builds, with the card still in the machine, by **replacing the file on the card**. Use it to
+make the choice permanent, and run it once regardless, because **capturing the stock ROM is its job
+alone**: `.mfinstall` deliberately does not duplicate that, since deciding whether what is installed
+really is the stock ROM is the step that can lose it.
+
+From the NextZXOS command line:
 
 ~~~
 .nexload /mfselect/mfselect.nex
@@ -189,13 +240,15 @@ Full detail, including the checksum scheme: [doc/MFSELECT.md](doc/MFSELECT.md).
 ## By hand
 
 Put the card in a PC, back up `machines/next/enNextMf.rom` somewhere safe, and copy the variant you
-want over it. Changing your mind later means doing it again; mfselect exists so that it does not.
+want over it. Changing your mind later means doing it again, and it also trips mfselect's first-run
+guard — the two tools above exist so that neither has to happen.
 
 ## Starting the stub
 
 Once installed, the stub starts after NextZXOS has booted, by pressing the yellow NMI button. To
 re-initialise later, hold Symbol Shift (or CTRL) while pressing it. In WiFi mode the screen then
-shows the address to connect to.
+shows the address to connect to; in UART mode it shows the joy port in use and whether Pause can
+reach you on it.
 
 
 # Connecting DeZog
@@ -208,27 +261,16 @@ In WiFi mode the Next is a TCP **server** on port 11000, and DeZog connects to i
 "zxnext": { "hostname": "192.168.1.42", "port": 11000 }
 ~~~
 
-Use `localhost` for a stub running inside jnext rather than on a real machine — the emulated ESP-01
-listens on a host port. A static DHCP reservation for the Next is worth setting up, so the address
-never moves and `launch.json` is written once.
+It is a `serial` property that selects a cable; **without one the socket transport is used**,
+configured by `hostname` and `port`, which default to `localhost:11000` — the defaults a stub
+running inside jnext wants, since the emulated ESP-01 listens on a host port. The two are mutually
+exclusive, and `hostname` or `port` beside a `serial` is an error. A static DHCP reservation for the
+Next is worth setting up, so the address never moves and `launch.json` is written once.
 
-**The socket form of the `zxnext` remote is not in a released DeZog yet**
-([maziac/DeZog#186](https://github.com/maziac/DeZog/pull/186)). Until it is, released DeZog can
-drive the stub through its `cspect` remote, which is a generic DZRP-over-socket client with a
-configurable hostname:
-
-~~~json
-"remoteType": "cspect",
-"cspect": { "hostname": "192.168.1.42", "port": 11000 }
-~~~
-
-Everything works that way **except breakpoints set in the editor**, which the `cspect` remote
-places with a DZRP command the stub does not implement, and which the stub therefore refuses. DeZog
-shows such a breakpoint as unverified and the session carries on; **the Next's own screen stays
-clean**, deliberately, because a refusal is expected behaviour and not a fault. The same applies to
-ASSERTIONs and LOGPOINTs, which DeZog places the same way. Stepping is unaffected — temporary
-breakpoints travel inside the continue command and touch none of this. If you need editor
-breakpoints today, build the `zxnext` remote from that pull request.
+The `cspect` remote reaches the stub too, being a generic DZRP-over-socket client, but it places
+editor breakpoints with a DZRP command the stub does not implement and explicitly refuses — so
+breakpoints, ASSERTIONs and LOGPOINTs set in the editor will not fire there. Stepping is unaffected
+either way, since temporary breakpoints travel inside the continue command. Use `zxnext`.
 
 Also note that nothing else may use the ESP during a session — NextSync and friends will
 reconfigure the module out from under the stub — and that a program using another ROM will not

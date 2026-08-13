@@ -132,7 +132,7 @@ make debugger-internal state observable, so the precedent is its own.
 39 are excluded because they need ports that exist only in zsim. These two are
 excluded because **jnext gets a real port wrong**: it reports the select in bit 3
 where the hardware reports it in bit 6, so the read cannot be judged there.
-`uart.js` models bit 6, i.e. the hardware. That marker **retires when jnext is
+`uart.js` models bit 6, i.e. the hardware. That marker **retires when jnext#253 is
 fixed**, and these become the first cases ever to move from the excluded set to
 the runnable one — 69/41 now, with the number that RUN still 28 for the third
 change in a row.

@@ -118,7 +118,7 @@ SKIP_MARKERS = [
                              'and ports.txt:370 against jnext '
                              'src/peripheral/uart.cpp:751), so the same read '
                              'cannot be judged there. uart.js models bit 6. '
-                             'This marker RETIRES when jnext is fixed'),
+                             'This marker RETIRES when jnext#253 is fixed'),
     ('ld bc,0x0002',         'sets the NR 0x02 read-back value through zsim '
                              'port 0x0002 (uart.js); on a real Next that '
                              'write goes to the paging port instead'),

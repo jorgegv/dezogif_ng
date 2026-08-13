@@ -184,7 +184,7 @@ UART_SELECT:   equ 0x153b
 ; the 0x143B read that follows a positive poll would go to the other channel,
 ; and a bench built on that hook would fail for jnext's reason rather than ours.
 ; None of this is a silicon defect — on hardware bit 6 reads back and the common
-; path is taken. It retires when jnext reports the select where the VHDL does.
+; path is taken. It retires when jnext reports the select where the VHDL does (jnext#253).
  IFNDEF UART_SELECT_CHANNEL
 UART_SELECT_CHANNEL: equ 01000000b  ; the select bit, for masking a read
  ENDIF

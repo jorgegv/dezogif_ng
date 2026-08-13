@@ -161,7 +161,7 @@ endif
 #
 # THIS IS NOT A TUNING KNOB AND MUST NEVER BECOME THE DEFAULT: it exists so the
 # emulator can exercise Z80 that is correct for silicon, not so the Z80 can be
-# made to suit the emulator. It retires when jnext reports the select in bit 6.
+# made to suit the emulator. It retires when jnext reports the select in bit 6 (jnext#253).
 #
 # Same naming rule as IP_MAX: its own output name, so no probe ROM can be left
 # where a shipped one is read from.
@@ -443,7 +443,7 @@ UT_HL_FILES  = $(wildcard $(SRC)/unit_tests/headless/*) $(UT_ASM_FILES) $(UT_GEN
 # and the register these two are about is one a debuggee moves. They are excluded
 # by a marker of their own, because jnext reports the channel select in bit 3
 # where the hardware reports it in bit 6, so the read cannot be judged there at
-# all — that marker retires when jnext is fixed, and these two become the first
+# all — that marker retires when jnext#253 is fixed, and these two become the first
 # cases ever to MOVE from the excluded set to the runnable one.
 UT_EXPECTED_TESTS   = 69
 UT_EXPECTED_SKIPPED = 41

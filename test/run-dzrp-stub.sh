@@ -1198,8 +1198,14 @@ else
         fi
     fi
 
+    # The count is TWO — start_stub's port probe plus pause-running.py's single
+    # open_remote — and was measured, not derived, when W9 was reviewed. It read
+    # "1" here until then, harmlessly, because this arm has only an upper bound.
+    # It is corrected because W9 below now has a LOWER one, and a stale figure in
+    # the comment beside it is a trap for whoever gives this check the same
+    # two-sided treatment.
     if [ "$w8_connects" -gt 4 ]; then
-        fail "W8 CONTAMINATED: $w8_connects connections in $jlog8 where this fixture makes 1"
+        fail "W8 CONTAMINATED: $w8_connects connections in $jlog8 where this fixture makes 2"
     elif [ "$w8_rc" -ne 0 ] || [ "$w8_lines" -eq 0 ]; then
         fail "W8 precondition: the client rendered no verdict, so nothing was judged"
     elif [ "$w8c_ok" -eq 0 ]; then

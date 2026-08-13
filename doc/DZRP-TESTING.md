@@ -796,7 +796,8 @@ ended, so the one command DeZog uses to say so had no coverage at all.
 The response first. The specification gives `CMD_CLOSE` a **Length=1 response** — the sequence
 number and nothing else, exactly as `CMD_PAUSE` has — and DeZog awaits it: `sendDzrpCmdClose()`
 is `await this.sendDzrpCmd(2, undefined, this.initCloseRespTimeoutTime)` in the installed 3.7.4,
-in `DzrpBufferRemote` (the class that owns `sendDzrpCmd`) rather than in `DzrpRemote`. Silence there blocks the client, which is issue #8's shape exactly.
+in `DzrpBufferRemote` (the class that owns `sendDzrpCmd`) rather than in `DzrpRemote`. Silence
+there blocks the client, which is issue #8's shape exactly.
 
 Then that the remote is **still there**. `CMD_CLOSE` is the only command our stub answers and then
 leaves through **`jp main`** (`src/commands.asm`), and `main`'s prologue is destructive by design:

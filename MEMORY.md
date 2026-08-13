@@ -7728,6 +7728,26 @@ installed DeZog 3.7.4 by locating both classes' bodies in `out/extension.js`.
 **Adopting a new client re-exposes defects the old client hid**, and this is the
 second one this project has met — issue #7's `cmd_init` was the first.
 
+*(**ANNOTATED 2026-08-13: the class named above is WRONG, and the conclusion is
+untouched.** `DzrpRemote.sendDzrpCmdPause` is an `assert(false)` stub; the
+`await this.sendDzrpCmd(7)` the `cspect` remote actually inherits is
+**`DzrpBufferRemote`'s**, the class that owns `sendDzrpCmd` —
+`DzrpBufferRemote extends DzrpQueuedRemote extends DzrpRemote`, and
+`CSpectRemote extends DzrpBufferRemote`. Re-read off both the installed 3.7.4
+bundle and the unmodified v3.7.4 source. It still sends command 7 and still
+blocks, so issue #8 is unaffected.*
+
+*The way this was found is the part worth keeping. The identical error was
+corrected in `src/commands.asm` and `doc/DZRP-TESTING.md` earlier the same day,
+and the commit doing it asserted "MEMORY.md is NOT touched", justifying that by
+checking the **`DzrpRemote.setBreakpoint()`** chain 7,100 lines above — which is
+**correct** and is a different claim. This site was never looked at. The grep
+that would have found it was run and its output truncated at fifteen lines. So:
+**a correction is not finished until the claim is gone from everywhere it was
+used as a premise, and the enumeration is a grep, not a memory** — this file's
+own rule, broken by the commit correcting a citation, and caught by the
+reviewer rather than the author.)*
+
 **Scope, stated because it is the thing most likely to be over-read.** This is
 **not** PC-initiated break. Breaking into a *freely running* debuggee is M2:
 `nmi66h` serves button NMIs only and bench T4 asserts that decline deliberately.

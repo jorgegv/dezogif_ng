@@ -5,6 +5,54 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-15 — MD extended buttons read 0 in io mode: the first hardware sighting of a cost we had only read
+
+**Measured by Maziac on a real Next**, alongside the option-3 regression: with
+the debugger holding joy port 2, a Mega Drive pad's **START** does not work on
+port 1. Tier: **reported by a third party on hardware** — one machine, one
+reporter, no re-runnable artefact — and until now this was VHDL only.
+
+**It is not a defect and it is not new.** In io mode the joystick scanner
+publishes `"000000" & not joy_raw` (`md6_joystick_connector_x2.vhd:188-190`),
+zeroing bits 11:6, and the Kempston and MD port reads take their bits 7:6 from
+exactly those (`zxnext.vhd:3477-3492`). Directions and the two main fire buttons
+survive; the extended buttons — START, MODE, X, Y, Z — do not. Maziac found his
+own note predicting it years ago: *"If UART is connected to the joyport only
+normal joysticks would work, not MD."*
+
+**WHAT ASYNCHRONOUS BREAK CHANGED IS WHEN YOU PAY, NOT WHETHER.** Upstream took
+the joy port over at every entry and handed it back on every resume, so the cost
+fell only while the debugger was stopped. The port-2 selection stops handing it
+back — that is the whole feature — so it now falls while the program runs too.
+
+**NO PORT CHOICE AVOIDS IT, AND THAT IS THE PART WORTH HAVING WRITTEN DOWN**,
+because it is the natural thing to reach for and it does not work. **One
+signal** — `zxn_joy_io_mode_en` — feeds both the md6 connector *pair* and the
+membrane stick (`zxnext_top_issue4.vhd:1680`, `:1855`, out of the core at
+`:2237`), so the switch does not name a connector and turning it on for one
+changes what both report. Verified rather than assumed.
+
+**THIS WEAKENS THE PORT-2 RATIONALE OF 2026-08-12, WHICH IS ANNOTATED RATHER
+THAN REWRITTEN.** That decision chose port 2 "to leave port 1 for the debugged
+program's joystick". What port 1 keeps is the **connector**; the joystick cost
+is global and symmetric. Preferring port 2 is convention — port 1 is where the
+first stick goes — not hardware. Giving port 1 the break instead is `cp 2` →
+`or a` with the branch inverted, a byte *smaller*, and is blocked on **whether
+joystick socket 1 can receive at all**, which is DB9 wiring the VHDL cannot
+settle and which upstream's own comment (`RX = PIN 9 Joystick 2`) denies. PR #4
+open question 1.
+
+**The escape hatch is selection 3**, and documenting the pairing is the whole
+point: io mode off, both joysticks fully working, no asynchronous break, cable
+on CN9. **That is exactly what the option-3 regression below had broken** — the
+option somebody reaches for when they need START was the one that did not work.
+
+Documented in the HOWTO as a table of what survives and what does not, with the
+"one line each" mechanism under it and the citations quoted rather than
+paraphrased. **No code change and no ROM byte**: there is nothing to fix.
+
+---
+
 ## 2026-08-15 — The UART channel follows the joy-port selection, and the finding that broke it was written down and mis-filed
 
 **Built, issue #44, and it is a regression we shipped to Maziac.** He ran the

@@ -146,16 +146,56 @@ put the cable in the right-hand connector.
 
 The reason it is one port and not both is that the port selector is what decides whether the
 cable's receive line stays connected while your program runs, and the connector holding the cable
-cannot also hold a joystick. Port 2 keeps the line live so a Pause can land; **port 1 is left
-alone so that the debugged program gets a real joystick on the left connector**, which is the more
-useful thing to have there. See ASYNCHRONOUS-BREAK-DESIGN.md §8.3.
+cannot also hold a joystick. Port 2 keeps the line live so a Pause can land; port 1 is left alone
+so that the debugged program keeps the left connector, which is where the first stick goes. See
+ASYNCHRONOUS-BREAK-DESIGN.md §8.3.
 
-**Joystick caveat, and it applies to both ports and to WiFi mode too.** While the debugger holds a
-joy port, **Kempston (port `0x1F`) and MD (port `0x37`) reads keep working on both connectors** —
-so a game reading Kempston on port 1 has a working stick. But **Sinclair, Cursor and user-defined
-joystick types produce nothing**, on either connector, because the keyboard-key injection those
-types rely on is switched off for the whole register. A game using those cannot be given a working
-joystick by any port choice.
+*(**That used to read "so that the debugged program gets a real joystick on the left connector",
+and it claimed more than the machine delivers.** What port 1 keeps is the *connector*, not a
+fully working joystick: i/o mode is global, so both connectors lose the same things whichever one
+holds the cable — see the table below. Preferring port 2 is convention, not hardware.)*
+
+### What holding a joy port costs your joysticks
+
+**It applies to both ports and to WiFi mode too, and NO PORT CHOICE AVOIDS ANY OF IT.** The
+switch is NR `0x0B` bit 7 — joystick i/o mode — and it is **global**: it does not name a
+connector, so turning it on for one changes what *both* report. Choosing port 2 over port 1
+decides where the cable goes and nothing else.
+
+| what your program reads | while the debugger holds a joy port |
+|---|---|
+| **Kempston** (port `0x1F`) — directions and the two fire buttons | **works**, both connectors |
+| **MD** (port `0x37`) — directions and the two fire buttons | **works**, both connectors |
+| **MD 6-button extended buttons** — START, MODE, X, Y, Z | **read as 0**, both connectors |
+| **Sinclair, Cursor, user-defined** joystick types | **nothing at all**, both connectors |
+
+So a game reading Kempston has a working stick throughout. A game that wants **START on a
+Mega Drive pad**, or that uses the Sinclair or Cursor mappings, does not — and cannot be given
+one by putting the cable in the other socket.
+
+**Why, in one line each.** In i/o mode the joystick scanner publishes `"000000" & not joy_raw`
+(`input/md6_joystick_connector_x2.vhd:188-190`), zeroing bits 11:6, and the Kempston and MD port
+reads take their bits 7:6 from exactly those (`zxnext.vhd:3477-3492`) — that is the extended
+buttons gone. The keyboard-key injection the Sinclair and Cursor types rely on is switched off
+outright (`input/membrane/membrane_stick.vhd:190`). Both are in words at `nextreg.txt:203-206`:
+*"While in i/o mode, keyboard joystick types (Sinclair, Cursor, etc) produce no readings but the
+current state of pins can still be read via the Kempston ports."*
+
+**THE ESCAPE HATCH IS SELECTION 3, AND IT IS THE ONE THING THAT GETS THEM ALL BACK.** With
+`3 = No joystick port` the debugger never turns i/o mode on, so both connectors behave exactly
+as they would with no debugger attached — every joystick type, every button. What you give up is
+**this feature**: the cable is then on the WiFi connector CN9 rather than a joy port, and Pause
+does nothing (see state 1 above). That is the whole trade, and it is a real one: if your program
+needs START, take option 3 and break in with the M1 button.
+
+*(**Do not read the extended-button row as new, or as a cost of asynchronous break.** It is
+inherent to running the UART on a joystick port and predates all of this — Maziac's own note on
+dezogif says so: *"If UART is connected to the joyport only normal joysticks would work, not MD.
+At the moment also MD works because I'm constantly switching the UART at the joyport."* That
+constant switching is exactly what the port-2 selection stops doing, so what asynchronous break
+changes is **when** you pay: before, only while the debugger was stopped; now, for as long as
+your program runs too. It was first seen on real hardware on 2026-08-15, having until then been
+a reading of the VHDL.)*
 
 *(**This state read "UART builds — in practice this is a WiFi-mode feature. Use the WiFi ROM"
 until 2026-08-12.** That was true of the code and was never a property of the machine: the poll

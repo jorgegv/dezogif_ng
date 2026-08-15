@@ -76,7 +76,9 @@
 #   run 7
 #     W8   A FREELY RUNNING DEBUGGEE IS STOPPED FROM THE PC — milestone M2's
 #          acceptance criterion, and the thing dezogif has never been able to do.
-#          The debuggee installs a two-instruction Copper list itself, is resumed
+#          THIS fixture installs a two-instruction Copper list itself, as a
+#          Copper-using program does — which is why W8 cannot see whether the
+#          DEBUGGER installed one, and why run 10 exists. It is resumed
 #          with NO temporary breakpoint (so nothing the debugger planted can
 #          bring it back), left running, and then paused with CMD_PAUSE. Its own
 #          run 8 is the CONTROL: identical up to the pause, which is withheld,
@@ -99,6 +101,22 @@
 #          W8 IS ITS CONTROL and no separate run is needed: same client, same
 #          fixture, same ROM, one env var apart. A red W8 makes the pair prove
 #          nothing, which W9's own verdict says rather than assumes.
+#
+#   run 10
+#     W10  A DEBUGGEE THAT INSTALLS NOTHING IS STILL STOPPED FROM THE PC — the
+#          only check anywhere that can see WHO installed the Copper list. Since
+#          2026-08-15 the DEBUGGER installs one, at cmd_init on a first attach,
+#          so an ordinary program is breakable with no source change at all
+#          (doc/ASYNCHRONOUS-BREAK-DESIGN.md §0.1). W8's fixture arms the Copper
+#          itself and is therefore green either way; W10's is THREE BYTES,
+#          `di : jr $`, with no NR 0x06 gate and no list, so the only thing that
+#          can raise a Multiface NMI 50 times a second is the list cmd_init
+#          armed. IT NEEDS ITS OWN EMULATOR RUN, and that is not tidiness: the
+#          Copper outlives the program that wrote the list — the whole premise of
+#          the feature — so a W10 sharing a machine with W8 would break in off
+#          W8's fixture's list and pass for the wrong reason. The fixture's shape
+#          is asserted from the client's own FIXTURE line, because "the env var
+#          was set" is not evidence that it was honoured.
 #
 #     W7   THE SAME PRESS LEAVES backup.speed AND backup.io_next_reg ALONE
 #          (issue #37) — the same defect two bytes along, saved two and eleven

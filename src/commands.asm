@@ -590,8 +590,11 @@ cmd_continue:
 ;    nothing polls the link and no command can be received at all."
 ;
 ; nmi66h serves a software Multiface NMI now, raised every frame by a Copper
-; list the DEBUGGED PROGRAM installs, and the poll reads the link while the
-; debuggee runs. Bench check W8 sends CMD_PAUSE to a debuggee resumed with no
+; list that the DEBUGGER installs at cmd_init on a first attach - or that the
+; debugged program installs itself, if it uses the Copper and so overwrites the
+; debugger's (doc/ASYNCHRONOUS-BREAK-DESIGN.md §0.1; this comment said only the
+; second until 2026-08-15) - and the poll reads the link while the debuggee
+; runs. Bench check W8 sends CMD_PAUSE to a debuggee resumed with no
 ; breakpoint at all and it stops. T4 still asserts a decline and its verdict is
 ; unchanged; what changed is its reason.
 ;

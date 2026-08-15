@@ -716,8 +716,11 @@ def chk_pause_while_stopped(d):
 
     EVERY CLAUSE OF THAT IS NOW FALSE (issue #22, built 2026-08-10). nmi66h
     serves a SOFTWARE Multiface NMI as well, raised by a two-instruction Copper
-    list the DEBUGGED PROGRAM installs; the poll reads the link while the
-    debuggee runs; and a check that breaks into a freely running program exists
+    list that the DEBUGGER installs at cmd_init on a first attach, or that the
+    debugged program installs itself if it uses the Copper and so overwrites the
+    debugger's (doc/ASYNCHRONOUS-BREAK-DESIGN.md §0.1 — this docstring said only
+    the second until 2026-08-15, which is what W10 exists to tell apart); the
+    poll reads the link while the debuggee runs; and a check that breaks into a freely running program exists
     and passes — bench W8, test/dzrp/pause-running.py, driven by
     test/run-dzrp-stub.sh. T4 still asserts a decline, and its verdict is
     unchanged, but its reason is not: the software cause is now SERVED and

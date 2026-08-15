@@ -1385,7 +1385,11 @@ deliberately not edited here.**
 `zxnext.vhd:1941-1944` puts both UARTs' RX requests in `im2_int_req`, the **maskable** IM2 bus;
 `nmi_activated` has exactly three terms and none is UART-derived (`:2093`, set at `:2107-2112`). §2's
 table is unchanged and the Copper remains the only periodic NMI source. Nothing in this section
-changes the debuggee's obligation to install the two Copper instructions.
+changes ~~the debuggee's obligation to install the two Copper instructions~~ **who installs the two
+Copper instructions — which moved on 2026-08-15 for a reason of its own (§0.1): the debugger
+installs them at `cmd_init` on a first attach, and only a Copper-USING program still carries its
+own.** The point that survives is the one this sentence was making: a list has to come from
+*somewhere*, because there is no UART route to NMI to fall back on.
 
 ### 8.7 IT CANNOT BE TESTED IN jnext TODAY, AND A BENCH THAT FAKED IT WOULD BE GREEN AGAINST A BROKEN MUX
 

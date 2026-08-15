@@ -562,7 +562,9 @@ strongest:
    "issue #26 is fixed on hardware" as covering the decline and **not** the press-while-stopped.
    **W8 IS MILESTONE M2's ACCEPTANCE CRITERION.** A freely running debuggee is stopped from the
    PC — the thing dezogif has never been able to do, and which nothing in this project had ever
-   shown. The debuggee installs the two Copper instructions itself, is resumed with **no temporary
+   shown. The debuggee installs the two Copper instructions itself — **W8's own fixture does that,
+   which is why W8 cannot see whether the DEBUGGER installs a list; that is W10's job, below** — is
+   resumed with **no temporary
    breakpoint** (so nothing the debugger planted can bring it back), left running a whole second,
    and then sent `CMD_PAUSE`. Its own run 8 is the **control**, `PAUSE_RUNNING_CONTROL=0` to
    disable: identical up to the pause, which is withheld, and nothing may come back — W3's

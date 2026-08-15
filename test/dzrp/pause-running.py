@@ -8,15 +8,22 @@ suite has ever tested (C10, C11) comes back through a temporary breakpoint the
 client planted in advance; the debuggee is stopped because it ran into something
 the debugger put there. Here it is stopped because somebody clicked Pause.
 
-THE DEBUGGED PROGRAM INSTALLS THE COPPER LIST, NOT THE DEBUGGER, and that is the
-design rather than a convenience of this fixture. The Copper's 1024-instruction
-list is write-only (zxnext.vhd:3959-3976, :3980-3998; no read decode for NR 0x60
-or 0x63 at :6286-6287), so a debugger that installed its own could never restore
-what it destroyed. A program that carries `WAIT line,0` / `MOVE $02,$08` itself
-keeps its own Copper program and can compile the two instructions out for
-release; a program that does not simply gets no asynchronous break. So the
-fixture below is what a real user's program start would look like, and the two
-instructions are encoded from device/copper.vhd:91-104 rather than from a wiki.
+THIS FIXTURE INSTALLS THE COPPER LIST ITSELF, WHICH IS WHAT A COPPER-USING
+PROGRAM DOES — IT IS NOT THE ONLY WAY ONE GETS THERE, AND THIS COMMENT SAID IT
+WAS UNTIL 2026-08-15. The debugger installs a list too, on a FIRST cmd_init, so
+an ordinary program needs no source change at all; see
+doc/ASYNCHRONOUS-BREAK-DESIGN.md §0.1, and W10, whose three-byte fixture
+installs nothing and is the only check that can see the difference. W8's own
+fixture arms the Copper, so W8 is green either way and cannot.
+
+What survives is why a Copper-USING program must still carry the two
+instructions, and it is the reason the debugger's write is confined to that one
+moment: the Copper's 1024-instruction list is write-only (zxnext.vhd:3959-3976,
+:3980-3998; no read decode for NR 0x60 or 0x63 at :6286-6287), so nothing can
+merge into a list it cannot read, and this fixture's own list overwrites the
+debugger's when it runs. So the fixture below is what such a program's start
+looks like, and the two instructions are encoded from device/copper.vhd:91-104
+rather than from a wiki.
 
 THE SEQUENCE, and why each step is the one it is:
 

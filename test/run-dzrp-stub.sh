@@ -1133,12 +1133,16 @@ fi
 # and the only thing that can stop it is an asynchronous break. Before M2 the
 # answer was a finger on the M1 button, which is dezogif's headline limitation.
 #
-# THE DEBUGGED PROGRAM INSTALLS THE COPPER LIST, WHICH IS THE DESIGN AND NOT A
-# CONVENIENCE OF THE FIXTURE. The Copper's instruction list is write-only, so a
-# debugger that installed its own could never restore what it destroyed; a
-# program that carries the two instructions itself keeps its Copper program and
-# compiles them out for release. See test/dzrp/pause-running.py and
-# doc/ASYNCHRONOUS-BREAK-DESIGN.md.
+# THIS FIXTURE INSTALLS THE COPPER LIST ITSELF, AS A COPPER-USING PROGRAM DOES —
+# AND THAT IS NOT THE ONLY WAY ONE GETS THERE, WHICH THIS COMMENT DENIED UNTIL
+# 2026-08-15. Since then the debugger installs a list on a FIRST cmd_init, so an
+# ordinary program needs no source change; W8 therefore CANNOT see that feature,
+# because its own fixture arms the Copper and it is green either way. Run 10's
+# three-byte fixture is what sees it. The Copper's instruction list is
+# write-only, so nothing can merge into a list it cannot read — which is why a
+# Copper-using program still carries the two instructions, its own list
+# overwriting the debugger's. See test/dzrp/pause-running.py and
+# doc/ASYNCHRONOUS-BREAK-DESIGN.md §0.1.
 #
 # RUN 8 IS THE CONTROL AND IT IS NOT OPTIONAL, for W3's reason exactly: without
 # it, a notification arriving after a CMD_PAUSE is not evidence that the PAUSE

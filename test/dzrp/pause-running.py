@@ -240,6 +240,11 @@ def main():
                _w(0) + _w(0))
     d.command(CMD_CONTINUE, payload)
 
+    # W10 asserts this line. The fixture's shape is the whole precondition
+    # there, and "the env var was set" is not evidence that it was honoured.
+    print("FIXTURE %d bytes, copper=%s"
+          % (len(FIXTURE), "no" if NO_COPPER else "yes"))
+
     print("RUNNING free at 0x%04X, no breakpoint set; letting it run %.1fs"
           % (DBG_CODE, RUN_SECONDS))
     sys.stdout.flush()

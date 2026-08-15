@@ -372,6 +372,7 @@ jlog6=$OUT/dzrp-stub-w6.log
 jlog8=$OUT/dzrp-stub-w8.log
 jlog8c=$OUT/dzrp-stub-w8c.log
 jlog9=$OUT/dzrp-stub-w9.log
+jlog10=$OUT/dzrp-stub-w10.log
 shot=$OUT/screenshots/dzrp-stub.png
 shot2=$OUT/screenshots/dzrp-stub-w2.png
 shot3=$OUT/screenshots/dzrp-stub-w3.png
@@ -381,6 +382,7 @@ shot6=$OUT/screenshots/dzrp-stub-w6.png
 shot8=$OUT/screenshots/dzrp-stub-w8.png
 shot8c=$OUT/screenshots/dzrp-stub-w8c.png
 shot9=$OUT/screenshots/dzrp-stub-w9.png
+shot10=$OUT/screenshots/dzrp-stub-w10.png
 
 jnext_pid=""
 cleanup() {
@@ -1311,14 +1313,69 @@ else
 fi
 
 # ===========================================================================
+# Run 10 - W10: THE DEBUGGER'S OWN COPPER LIST IS WHAT DRIVES THE BREAK
+#
+# W8's fixture installs the Copper list itself, so it is green whether or not
+# the debugger installs one and cannot see this feature at all. W10's fixture is
+# THREE BYTES - `di : jr $` - and installs nothing: no NR 0x06 gate, no list. So
+# the only thing that can raise a Multiface NMI 50 times a second is the list
+# cmd_init armed, and a break here is that list and nothing else.
+#
+# IT NEEDS ITS OWN EMULATOR RUN, and that is not tidiness. The Copper outlives
+# the program that wrote it - which is the whole premise of the feature - so a
+# W10 sharing a machine with W8 would break in off W8's fixture's list and pass
+# for the wrong reason.
+#
+# Shown red the decisive way, one ROM apart with this same fixture and client:
+# against main's ROM the client reports "no response to CMD_PAUSE within 25s".
+# ===========================================================================
+log ""
+log "== run 10: a debuggee that installs no Copper list, stopped from the PC"
+
+if ! start_stub "$jlog10" "$shot10"; then
+    fail "W10 the stub never listened on 127.0.0.1:$PORT for the no-Copper run"
+else
+    set +e
+    w10_out=$(W10_NO_COPPER=1 DZRP_PORT="$PORT" DZRP_TIMEOUT="$DZRP_TIMEOUT" \
+        python3 "$PAUSE_RUNNING" 2>&1)
+    w10_rc=$?
+    set -e
+    stop_stub
+    printf '%s\n' "$w10_out" | sed 's/^/  | /'
+
+    w10_connects=$(grep -c "accepted as cid" "$jlog10" || true)
+    w10_ok=$(printf '%s' "$w10_out" | grep -c '^RESULT pause OK ' || true)
+    w10_lines=$(printf '%s' "$w10_out" | grep -c '^RESULT pause ' || true)
+    # ASSERTED rather than taken by construction: if W10_NO_COPPER ever stopped
+    # being honoured this would silently become a second W8 - green, and testing
+    # nothing. Two-sided on connections for W9's reason.
+    w10_bare=$(printf '%s' "$w10_out" | grep -c '^FIXTURE 3 bytes, copper=no$' || true)
+
+    if [ "$w10_connects" -gt 4 ]; then
+        fail "W10 CONTAMINATED: $w10_connects connections in $jlog10 where this fixture makes 2"
+    elif [ "$w10_connects" -lt 2 ]; then
+        fail "W10 only $w10_connects connections in $jlog10 where this fixture makes 2, so nothing was tested"
+    elif [ "$w10_bare" -eq 0 ]; then
+        fail "W10 precondition: the fixture was not the bare 3-byte one, so it may have armed the Copper itself"
+    elif [ "$w10_rc" -ne 0 ] || [ "$w10_lines" -eq 0 ]; then
+        fail "W10 precondition: the client rendered no verdict, so nothing was judged"
+    elif [ "$w10_ok" -eq 0 ]; then
+        fail "W10 the debugger's own Copper list did not break in: $(printf '%s' "$w10_out" | sed -n 's/^RESULT pause BAD //p' | head -1)"
+    else
+        pass "W10 a debuggee that installs no Copper list is still stopped by CMD_PAUSE"
+    fi
+fi
+
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 
 log ""
 if [ "$failures" -ne 0 ]; then
     log "Diagnosis:"
-    log "  jnext logs:   $jlog  $jlog2  $jlog3  $jlog4  $jlog5  $jlog6  $jlog8  $jlog8c  $jlog9"
-    log "  screenshots:  $shot  $shot2  $shot3  $shot4  $shot5  $shot6  $shot8  $shot8c  $shot9"
+    log "  jnext logs:   $jlog  $jlog2  $jlog3  $jlog4  $jlog5  $jlog6  $jlog8  $jlog8c  $jlog9  $jlog10"
+    log "  screenshots:  $shot  $shot2  $shot3  $shot4  $shot5  $shot6  $shot8  $shot8c  $shot9  $shot10"
 fi
 
 exit "$((failures > 0 ? 1 : 0))"

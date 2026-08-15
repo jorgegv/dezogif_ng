@@ -1,7 +1,11 @@
 # Pausing a running program from the PC
 
-**How to make a program breakable from DeZog's Pause button, what it costs, and when it will
+**What makes a program breakable from DeZog's Pause button, what it costs, and when it will
 not work.**
+
+**Most programs need no change at all** — the debugger installs what is needed when a debug
+session opens. Read "What to add to the program" below only if your program uses the Copper, or
+if you want to turn the feature off.
 
 The design reasoning is in [ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md); it is
 not needed to use this.
@@ -18,18 +22,36 @@ Without it, once Continue is pressed there are two ways back into the debugger: 
 reaches a breakpoint, or somebody presses the **M1 button** on the Next.
 
 With it, **Pause in VS Code stops the program** wherever it is, and breakpoints and memory can
-be inspected without touching the machine.
+be inspected without touching the machine. For a program that does not use the Copper this now
+costs nothing at all.
 
 ## What to add to the program
+
+**Nothing at all, if your program does not use the Copper.** The debugger installs the
+two-instruction Copper list itself, when a debug session opens. An ordinary program is
+breakable from the PC with no source change whatsoever.
+
+That works for one reason, and the rest of this page follows from it: **the Copper has its own
+instruction memory and keeps executing after the program that wrote the list has gone.** So the
+debugger can install it as a client attaches — before your program has been pushed to the
+machine, let alone run — and it is still running once your program is.
+
+**If your program uses the Copper, add the two instructions to your own list.** The debugger
+cannot merge them into a list it cannot read: the Copper's instruction list is **write-only** —
+the instruction RAMs discard their CPU-side read output and NR `0x60`/`0x63` have no read
+decode — so nothing can save what was there, or add to it. Your program installs its own list
+when it runs, which overwrites the debugger's; carrying the two instructions is what keeps the
+break working across that.
+
+The **"C" key** on the stub's own screen turns the whole thing off, for a program that wants the
+frame back or would rather the debugger left the Copper alone. Row 14 says which it is:
+`C = PC break on` or `off`.
+
+### The two instructions
 
 **Forty-four bytes, once, at the start.** Two Copper instructions raise the Multiface NMI once
 per frame; the debugger's handler polls the debug link on each one and returns immediately
 unless the PC has sent something.
-
-The debugger cannot install them itself. The Copper's instruction list is **write-only** — the
-instruction RAMs discard their CPU-side read output and NR `0x60`/`0x63` have no read decode —
-so a debugger that installed its own list could never give the original back. The program owns
-the Copper, so the program installs the two instructions.
 
 ```asm
 ; --- asynchronous break: let the PC stop this program -------------------
@@ -213,10 +235,14 @@ call cannot be paused until it comes out.
 then dies **silently** — Pause does nothing and nothing says why — and the only way back is an
 M1 press. The poll cannot re-assert the bit, because the poll is the thing that stops running.
 
-**4. If the program stops or restarts its own Copper.** A write of NR `0x62` that *changes* the
-mode bits restarts the list from index 0, mode `00` stops it outright, and writing list content
-through NR `0x60` overwrites whatever was there. Since the two instructions belong to the
-program, this is under its control: restart the list and the break comes back with it.
+**4. If the program stops or restarts the Copper.** This now cuts both ways: whichever list is
+live — yours or the debugger's — is the one a write here affects, and a program that installs
+its own list *without* the two instructions silently replaces a working break with a
+non-working one. A write of NR `0x62` that *changes* the mode bits restarts the list from index
+0, mode `00` stops it outright, and writing list content through NR `0x60` overwrites whatever
+was there. If the list is your own this is entirely under your control: restart it, with the
+two instructions in it, and the break comes back. If you were relying on the debugger's, the
+cure is a fresh debug session, or the "C" key off and on again.
 
 **5. While `.mfinstall` is writing a ROM.** Config mode suppresses every Multiface NMI while it
 is active. It is a window of milliseconds and it self-recovers.
@@ -252,7 +278,9 @@ machine:
 - DeZog reports the stop as **`Manual break`**, the same reason an M1 press gives. DZRP has no
   break reason meaning "the PC asked".
 
-If Pause does nothing: on a **serial** build check the stub's screen reads `PC break: ready`
-rather than `PC break: needs Joy 2` (state 1), and that nothing has reset the machine since the
-last M1 press (state 7). On **either** build, check the two instructions really are in the list,
-and that NR `0x06` bit 3 has not been cleared (state 3). Then press M1, which always works.
+If Pause does nothing: check the stub's screen reads `C = PC break on` at row 14 — if it says
+`off`, press **C**. On a **serial** build check it also reads `PC break: ready` rather than
+`PC break: needs Joy 2` (state 1), and that nothing has reset the machine since the last M1
+press (state 7). On **either** build, if your program installs its own Copper list, check the
+two instructions really are in it (state 4), and that NR `0x06` bit 3 has not been cleared
+(state 3). Then press M1, which always works.

@@ -244,6 +244,11 @@ main_loop:
     ; main_redraw, not main: a debuggee may be loaded and stopped by the time
     ; this key is polled — see main_redraw.
     jp z,main_redraw   ; Jump if "B" pressed
+    ; The "C" key: PC-initiated break on/off. main_redraw and not main, for
+    ; check_key_border's reason - a debuggee may be loaded and stopped by the
+    ; time this key is polled.
+    call check_key_copper
+    jp z,main_redraw   ; Jump if "C" pressed
  IF ROM_VARIANT == ROM_VARIANT_UART
     ; The joy-port selector. UART mode only — WiFi mode never takes a joy port,
     ; so there is nothing for 1/2/3 to select. See ui.asm's read_key_joyport.

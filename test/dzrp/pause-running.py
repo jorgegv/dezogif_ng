@@ -128,6 +128,12 @@ RUN_SECONDS = float(os.environ.get("W8_RUN_SECONDS", "1.0"))
 # the same run differing in this one flag, so a red here is attributable to the
 # select and to nothing else.
 STEAL_SELECT = os.environ.get("W9_STEAL_SELECT", "") not in ("", "0")
+# W10: build a debuggee that installs NOTHING - no NR 0x06 gate, no Copper list,
+# just `di` and a spin. That is the ordinary program Maziac's observation is
+# about, and the only fixture that can tell whether the DEBUGGER installed the
+# list. With it, W10 is green on a ROM that arms the Copper at CMD_INIT and red
+# on one that does not; W8's fixture arms it itself and so passes either way.
+NO_COPPER = os.environ.get("W10_NO_COPPER", "") not in ("", "0")
 
 # Inside 0x8000-0x9FFF, which CMD_INIT maps to bank 4 — the same window
 # conformance.py's own fixture uses, and clear of the debugger's slots 6 and 7.
@@ -173,8 +179,7 @@ def _nextreg(reg, val):
 # device/copper.vhd:91-104.
 _wait = 0x8000 | COPPER_LINE
 _move = (REG_RESET << 8) | 0x08
-FIXTURE = (
-    b"\xF3" +                                   # di
+_COPPER_SETUP = (
     # NR 0x06 |= bit 3 — every MF NMI source is ANDed with it (zxnext.vhd:2090)
     b"\x01" + _w(TBBLUE_SELECT) +               # ld bc,0x243B
     b"\x3E" + bytes([REG_PERIPHERAL_2]) +       # ld a,0x06
@@ -192,7 +197,12 @@ FIXTURE = (
     _nextreg(REG_COPPER_DATA, (_move >> 8) & 0xFF) +
     _nextreg(REG_COPPER_DATA, _move & 0xFF) +
     # run it from index 0, looping
-    _nextreg(REG_COPPER_CONTROL, COPPER_RUN_LOOP) +
+    _nextreg(REG_COPPER_CONTROL, COPPER_RUN_LOOP)
+)
+
+FIXTURE = (
+    b"\xF3" +                                   # di
+    (b"" if NO_COPPER else _COPPER_SETUP) +
     # W9 only: take the UART select for our own channel, exactly as a program
     # using the Pi header's UART would. LAST, so that everything above is
     # byte-identical between the two runs and the spin address is the only

@@ -156,6 +156,11 @@ uart_joyport_selection: defb 0
 ; 1 = on
 slow_border_change:	defb 1
 
+; Asynchronous break: whether the DEBUGGER installs the Copper list that drives
+; mf_nmi_poll. On by default, so a program that does not use the Copper gets
+; PC-initiated break with no source change at all. The "C" key turns it off.
+copper_break_enabled:	defb 1
+
 
 ;===========================================================================
 ; Used by: text.asm

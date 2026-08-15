@@ -519,3 +519,12 @@ PRGM_IDLE:		equ 1	; Waiting for a new program (at program start and after CMD_CL
 PRGM_LOADING:	equ 2	; After CMD_INIT until the first CMD_CONTINUE
 PRGM_STOPPED:	equ 3	; After breakpoint or NMI
 PRGM_RUNNING:	equ 4	; After CMD_CONTINUE
+
+
+; The raster line at which the asynchronous-break Copper list raises its
+; Multiface NMI. Any line works; 100 is mid-screen and well clear of the
+; border. It is the same line the user-side listing in
+; doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md uses and the same one bench T5's
+; fixture has always used, so a program that installs its own list at 100
+; lands where this one did.
+COPPER_BREAK_LINE:	equ 100

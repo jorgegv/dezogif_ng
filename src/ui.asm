@@ -87,6 +87,118 @@ check_key_border:
     ret
 
 
+
+;===========================================================================
+; Installs the two-instruction Copper list that raises a Multiface NMI once per
+; frame - the clock mf_nmi_poll rides on, and therefore the whole of
+; PC-initiated break.
+;
+;   WAIT line,0    = 0x8000 | (hpos<<9) | line
+;   MOVE $02,$08   = (reg<<8) | value   -> NR 0x02 bit 3, the Multiface NMI
+;
+; Encoding from device/copper.vhd:91-104. It is the same listing a user's own
+; program carries in doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md.
+;
+; WHY THE DEBUGGER MAY INSTALL THIS AT ALL, having deliberately not done so
+; since M2 was built. The Copper's instruction list is WRITE-ONLY - both
+; instruction RAMs discard their CPU-side read output (zxnext.vhd:3959-3976,
+; :3980-3998) and NR 0x60/0x63 have no read decode (:6286-6287) - so whatever
+; is installed here can never be given back. That fact is unchanged and is why
+; the debugger did not install one. What makes it acceptable is WHEN: the only
+; caller is cmd_init, which runs as a debug client opens a session, BEFORE it
+; has pushed the program's banks and long before the program has run. There is
+; nothing there yet to destroy. A program that uses the Copper installs its own
+; list when it runs, overwriting this one - so it keeps its raster effects and
+; carries the two instructions itself, exactly as the HOWTO already tells it to.
+;
+; IT FOLLOWS THAT THIS MUST NOT BE CALLED FROM A RESUME OR FROM A BREAK. By
+; then the debuggee's own list may be live, and re-installing would destroy it
+; on every single CMD_CONTINUE - which would take the HOWTO's route away from
+; precisely the programs it was written for.
+; Changes:
+;   AF, BC
+;===========================================================================
+copper_break_arm:
+    ; The "C" key's state, tested here rather than at the call site so that
+    ; cmd_init carries one call and no branch.
+    ld a,(copper_break_enabled)
+    or a
+    ret z
+    ; Flow through
+
+
+copper_break_install:
+    ; NR 0x06 bit 3 gates EVERY Multiface NMI source and its power-on value is
+    ; 0. NextZXOS leaves it set, so this is insurance rather than setup - but a
+    ; debuggee that had cleared it would otherwise kill the break silently, and
+    ; nothing else here would ever put it back.
+    call mf_nmi_enable
+
+    ; Stop the Copper and put its write pointer at index 0.
+    nextreg REG_COPPER_CONTROL_H,RCCH_COPPER_STOP
+    nextreg REG_COPPER_CONTROL_L,0
+
+    ; The list, MSB first.
+    nextreg REG_COPPER_DATA,HIGH (0x8000+COPPER_BREAK_LINE)
+    nextreg REG_COPPER_DATA,LOW (0x8000+COPPER_BREAK_LINE)
+    nextreg REG_COPPER_DATA,REG_RESET
+    nextreg REG_COPPER_DATA,00001000b
+
+    ; Run from index 0, looping. The mode CHANGING to 01 is what resets the
+    ; pointer (device/copper.vhd:69-78), which the stop above guarantees.
+    nextreg REG_COPPER_CONTROL_H,RCCH_COPPER_RUN_LOOP_RESET
+    ret
+
+
+;===========================================================================
+; Stops the Copper outright.
+;
+; Note what this does NOT do: remove our two instructions. The list cannot be
+; read, so it cannot be edited - stopping the Copper is the only "off" there
+; is, and it stops a debuggee's OWN list too if the debuggee installed one.
+; That is the honest cost of the "C" key, and it is why the key exists rather
+; than the feature simply being unconditional.
+; Changes:
+;   AF, BC
+;===========================================================================
+copper_break_stop:
+    nextreg REG_COPPER_CONTROL_H,RCCH_COPPER_STOP
+    ret
+
+
+;===========================================================================
+; Checks key "C".
+; Turns PC-initiated break on and off. Off is worth having for two reasons: the
+; poll costs ~1288 T-states a frame, which is 0.230% of a frame at 28 MHz but
+; 1.84% at 3.5 MHz, and a program that owns the Copper may want the debugger to
+; keep its hands off it.
+; Returns:
+;   Z = C pressed
+;   NZ = C not pressed
+;===========================================================================
+check_key_copper:
+    ; Read port
+    ld bc,PORT_KEYB_VCXZCAPS
+    in a,(c)
+    bit 3,a ; "C"
+    ret nz
+    ; Wait on key release. BC still holds the port, as check_key_border relies
+    ; on too.
+    call wait_on_key_release
+    ; Toggle
+    ld a,(copper_break_enabled)
+    xor 1
+    ld (copper_break_enabled),a
+    jr z,.off
+    call copper_break_install
+    jr .ret
+.off:
+    call copper_break_stop
+.ret:
+    xor a   ; Z
+    ret
+
+
  IF ROM_VARIANT == ROM_VARIANT_UART
 ;===========================================================================
 ; Reads the joyport from the keyboard.
@@ -338,6 +450,17 @@ show_ui_body:
     jr z,.print_border
     ld de,BORDER_OFF_TEXT
 .print_border:
+    call text.ula.print_string
+
+    ; Show PC-break option. Row 14, which was the one free row on BOTH screens
+    ; - the benches that read this screen as text read rows 7, 8 and 12, so
+    ; nothing they look at moves.
+    ld de,COPPER_OFF_TEXT
+    ld a,(copper_break_enabled)
+    or a
+    jr z,.print_copper
+    ld de,COPPER_ON_TEXT
+.print_copper:
     call text.ula.print_string
 
     ; Print 3 lines debugging

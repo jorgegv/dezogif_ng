@@ -173,16 +173,24 @@ nmi66h:
 ;===========================================================================
 ; A SOFTWARE MULTIFACE NMI: the asynchronous-break poll (issue #22, M2).
 ;
-; Raised by a two-instruction Copper list — `WAIT line,0` / `MOVE $02,$08` —
-; that THE DEBUGGED PROGRAM installs, not the debugger. That division is the
-; whole design and it is worth stating here, because the obvious alternative
-; costs something irrecoverable: the Copper's 1024-instruction list is
-; WRITE-ONLY (both RAMs discard their CPU-side read output, zxnext.vhd:3959-3976
-; and :3980-3998; NR 0x60/0x63 have no read decode, :6286-6287), so a debugger
-; that installed the list could never restore what it overwrote. A program that
-; carries the two instructions itself keeps its own Copper program, and one that
-; does not simply gets no asynchronous break. See
-; doc/ASYNCHRONOUS-BREAK-DESIGN.md.
+; Raised by a two-instruction Copper list — `WAIT line,0` / `MOVE $02,$08`.
+;
+; WHO INSTALLS IT MOVED ON 2026-08-15 AND THIS COMMENT SAID THE OLD ANSWER: the
+; DEBUGGER installs one, in copper_break_arm, on a FIRST cmd_init — so an
+; ordinary program needs no source change. A program that uses the Copper still
+; carries the two instructions in its own list, because its list overwrites the
+; debugger's, and the "C" key turns the whole thing off. The reasoning below is
+; unchanged and is what confines the debugger's write to that one moment: the
+; Copper's 1024-instruction list is WRITE-ONLY (both RAMs discard their CPU-side
+; read output, zxnext.vhd:3959-3976 and :3980-3998; NR 0x60/0x63 have no read
+; decode, :6286-6287), so whatever is installed can never be given back — which
+; makes a first attach, before the debuggee's banks have been pushed, the one
+; instant at which the cost is zero. See doc/ASYNCHRONOUS-BREAK-DESIGN.md §0.1.
+;
+; NOTHING ON THIS PATH CARES WHERE THE LIST CAME FROM, which is why the change
+; above reaches no code here: a Copper-raised NMI cannot be told from a
+; CPU-raised one at all (design doc §3.3), and a poll-shaped handler does not
+; need to.
 ;
 ; THIS PATH RUNS ~50 TIMES A SECOND WHILE THE DEBUGGEE RUNS, so it is written
 ; to leave as fast as it can and to touch as little as possible:

@@ -55,9 +55,32 @@ has paid for an unstated ordering constraint before (issue #37).
 ordering trap for ~6 more bytes. It is worse *behaviour*, not merely dearer: after
 `CMD_CLOSE` and a fresh attach it would still refuse, so the common
 Shift+F5-then-F5 cycle would get no list if the previous debuggee had replaced it.
-The `prgm_state` test reinstalls exactly when the client has declared the previous
-session over. **What it deliberately does not guard** is that same `CMD_CLOSE`
-case: the old program's list is installed over. Accepted, and written down.
+The `prgm_state` test reinstalls exactly when the previous session is over.
+
+**AND "THE CLIENT HAS DECLARED IT OVER" WAS TOO NARROW A JUSTIFICATION — THE
+SECOND REVIEW ROUND ENUMERATED FIVE ROUTES WHERE I HAD NAMED ONE.** `main`'s
+prologue is what writes `PRGM_IDLE`, and it is entered from `cmd_close` **and
+from `drain_main`'s four callers**: `cmd_not_supported`,
+`error_payload_too_big`, `error_write_main_bank`, and `rx_timeout`/`rxtx_error`
+in **both** transports. An RX timeout is the stub deciding a session is over
+after a network hiccup, which is not the client saying anything.
+
+**The guard is unchanged; the reasoning is replaced by a better one that covers
+all five, and it was already written down in the code this builds on.** `main`'s
+prologue says in its own comment that coming there means *"there is no session to
+preserve"*, and it acts on that — it resets `backup.speed`,
+`backup.interrupt_state`, `backup.layer_2_port` and `slot_backup.slot0`. So by
+the time `PRGM_IDLE` is readable the debuggee **cannot be correctly resumed
+whatever we do about the Copper**, and destroying its list is a consequence of a
+loss that has already happened rather than a new one. Nothing stages it.
+
+**Rejected: `copper_break_stop` in `main`'s prologue**, which the reviewer
+offered as the structural close and which would make "PRGM_IDLE implies no live
+Copper" a real invariant instead of five separately-reasoned exceptions. It is
+strictly worse: it would stop a Copper-using debuggee's raster effects on
+**every** RX timeout, including the ones after which nobody re-attaches and
+nothing else was lost. Three bytes, out of nine, to make one case better and a
+commoner one worse.
 
 **The guard's check is a UNIT TEST and only tests one direction, on purpose.**
 `ut_utilities.UT_copper_break_arm_refuses_re_attach` sets `prgm_state` to
@@ -118,6 +141,20 @@ arithmetic: the figures are re-measured, said to be re-measured, and the next
 reader is told to measure `main_end` against `ROM_MAGIC_ADDR` from a fresh build
 rather than derive it. **A number maintained by subtraction is a number that
 drifts**, and this one had.
+
+**AND MY OWN SWEEP FOR STALE SITES MISSED ONE, IN THE ROUND WHOSE SUBJECT WAS
+STALE SITES.** I grepped, whitespace-flattened, for the **phrasings I had used**
+— "the debugger installs nothing", "gets no asynchronous break at all" — and
+found two. The reviewer widened the pattern to **paraphrases** and found a third:
+`src/mf_rom.asm`'s `nmi66h` header, which makes the identical claim in different
+words (*"that THE DEBUGGED PROGRAM installs, not the debugger. That division is
+the whole design"*) and shares not one of my search terms. This file has said
+since 2026-08-08 that the grep must be for **the thing being corrected, not the
+words you think you wrote**; I read that rule, cited it in the commit message,
+and then searched my own wording anyway. The clause that needs adding is that a
+claim can be restated in words with **no token in common** with the version you
+remember, so the pattern has to come from the *subject* — here `Copper` and
+`install` — and every hit read, rather than from a phrase.
 
 **NOT COVERED, and none of it is hidden.** **The re-attach path itself** — no
 bench stages a client vanishing and another reconnecting to a running debuggee,

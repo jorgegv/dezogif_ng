@@ -133,11 +133,29 @@ check_key_border:
 ; first attach is still running unless the debuggee replaced it, and the "C" key
 ; forces an install if a user really wants one.
 ;
-; WHAT THIS DOES *NOT* GUARD, deliberately: CMD_CLOSE sets PRGM_IDLE and does
-; not stop the Copper, so a CMD_INIT after one installs over whatever the closed
-; session's program left running. That is accepted - the client has said the
-; session is over, and the usual next act is to push and run a program, which
-; reinstalls its own list anyway. Nothing stages it.
+; WHAT THIS DOES *NOT* GUARD, AND THE REASON IS BETTER THAN THE ONE THIS COMMENT
+; FIRST GAVE. Nothing stops the Copper when a session ends, so a later CMD_INIT
+; installs over whatever the previous program left running. That is reached from
+; FIVE places, not the one this note used to name: `main`'s prologue is what
+; writes PRGM_IDLE, and it is entered from cmd_close (commands.asm) and from
+; drain_main's four callers - cmd_not_supported, error_payload_too_big,
+; error_write_main_bank, and rx_timeout/rxtx_error in BOTH transports. Only the
+; first of those is "the client said the session is over"; an RX timeout is the
+; stub deciding so after a network hiccup. Enumerated in review, 2026-08-15.
+;
+; It is accepted for all five, and by ONE argument rather than five: `main`'s
+; prologue says in its own comment that coming there means "there is no session
+; to preserve", and it acts on that - it resets backup.speed,
+; backup.interrupt_state, backup.layer_2_port and slot_backup.slot0. So by the
+; time PRGM_IDLE is readable the debuggee can no longer be correctly resumed
+; whatever we do about the Copper, and destroying its list is a consequence of a
+; loss that has already happened rather than a new one. Nothing stages it.
+;
+; THAT ARGUMENT IS ALSO WHY THE OBVIOUS STRUCTURAL FIX IS WRONG. Calling
+; copper_break_stop from main's prologue would make "PRGM_IDLE implies no live
+; Copper" a real invariant - and would stop a Copper-using debuggee's raster
+; effects on every RX timeout, including the ones after which nobody re-attaches
+; and nothing else was lost. Strictly worse, and three bytes there are not free.
 ; Changes:
 ;   AF, BC
 ;===========================================================================

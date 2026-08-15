@@ -749,7 +749,12 @@ that until M2 changes it, and none is written.~~
 
 **M2 IS BUILT (issue #22, 2026-08-10) AND EVERY CLAUSE OF THAT IS FALSE.** `nmi66h` serves a
 software Multiface NMI too, raised every frame by a two-instruction Copper list **the debugged
-program installs**; the poll reads the link while the debuggee runs; and the check that was never
+program installs** — *since 2026-08-15, **the DEBUGGER** installs one at `cmd_init` as well, so an
+ordinary program needs no source change; a Copper-using program still carries its own. The check
+for that is **W10**, whose three-byte `di : jr $` fixture installs nothing at all — W8's fixture
+arms the Copper itself and so cannot see the difference. See
+[ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md) §0.1* — the poll reads the link while
+the debuggee runs; and the check that was never
 written is **W8**, which sends `CMD_PAUSE` to a debuggee resumed with no breakpoint at all and
 passes. T4's verdict is unchanged and its reason is not — the software cause is now *served* and
 correctly *declined* where no debugger image is in `MAIN_BANK`. See

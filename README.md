@@ -30,10 +30,13 @@ trick, `RST 0` breakpoints, and the DZRP command layer.
 The link negotiates up to 460800 baud, giving a round trip of about 6.6 ms and about 20 KB/s.
 
 **Pause from the PC.** Pause in DeZog stops a freely running program — no button press and no
-breakpoint. It needs two Copper instructions in **your** program, 44 bytes, because the Copper's
-instruction list is write-only and a debugger that installed its own could never give yours back.
-See [doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md](doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md) for the snippet,
-what it costs, and the seven states in which the break will not fire.
+breakpoint, and **for most programs no source change either**: the debugger installs the Copper list
+the break rides on when a debug session opens, before your program has even been pushed to the
+machine. If your program uses the Copper it must carry the two instructions itself, because the
+Copper's instruction list is write-only and nothing can merge into a list it cannot read. The **"C"**
+key on the stub's screen turns the feature off. See
+[doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md](doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md) for the snippet, what it
+costs, and the seven states in which the break will not fire.
 
 **It works over the cable too, on joy port 2** — which is the default, so the serial ROM ships with
 it on. Upstream cleared the joy port's i/o mode when it resumed your program, which cut the cable's

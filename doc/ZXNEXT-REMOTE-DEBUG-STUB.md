@@ -310,6 +310,16 @@ Three, in increasing order of value:
    cannot have asynchronous break at all, unless its developer puts the two instructions into
    **their own** list, which is the supported route for that case. See
    [ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md) §3.1.
+
+   **CORRECTED 2026-08-15, AND THE COST FALLS ON ALMOST NOBODY NOW: the debugger installs the
+   list itself, at `cmd_init`.** Every word above about the list being write-only stands, and is
+   exactly *why* the write happens there and only there — `cmd_init` runs as a client attaches,
+   before the debuggee's banks are pushed and long before it runs, so there is provably nothing
+   to destroy. The Copper keeps executing after the program that wrote the list has gone, which
+   is what makes writing it that early work at all. **So an ordinary program gets PC-initiated
+   break with no source change whatsoever**; a Copper-using program still carries the two
+   instructions itself, for the reason above, and the **"C" key** turns the whole thing off. See
+   [ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md) §0.1.
 3. **UART RX interrupt** (§3.2) — cheapest of all when it applies, but requires the debuggee to
    be in a compatible interrupt mode with a cooperative vector table. Offer it as an opt-in mode
    for programs that can accept it.
@@ -849,6 +859,21 @@ nothing to opt into — the feature is opt-in in the *debuggee*, by construction
 other way instead: a program that does not carry them gets no asynchronous break at all, and the
 debugger cannot install one for it, because it cannot read what it would be overwriting.
 
+**AND IT MOVED BACK ON 2026-08-15, HALFWAY, WHICH REMOVES THE COST THE PARAGRAPH ABOVE ACCEPTED —
+Maziac's idea, bench check W10.** The debugger installs a list too, **at `cmd_init` and nowhere
+else**, so **an ordinary program is breakable from the PC with no source change at all**. The reason
+that is legal, and the reason it is confined to that one call site, is the same fact in both
+directions: the Copper's list is write-only and can never be given back, so the only defensible
+moment to write one is the moment at which there is provably nothing there — a client attaching,
+before its banks are pushed and long before the program runs. The Copper keeps executing after the
+program that wrote the list has gone, which is what makes that early write survive into the run.
+**NOT on the resume path**, which would destroy a debuggee's own list on every `CMD_CONTINUE`.
+What is unchanged: a **Copper-using** program still carries the two instructions itself, because its
+own list overwrites the debugger's. What is new: the **"C" key** on the stub's screen turns the
+feature off, and a program that installs a list without the two instructions now loses the break
+*silently*. Costs **+126 bytes in both ROMs**, taking WiFi headroom to **15**. See
+[ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md) §0.1. **Not on hardware.**
+
 The 2026-08-08 evaluation follows, annotated. Its VHDL and its reasoning stand; its verdict is
 superseded by the paragraph above.
 
@@ -888,7 +913,7 @@ Named DeZog remote type; contribute the transport abstraction back to dezogif if
 | **`nmi66h` filters the Copper NMI** | Inherited `mf_rom.asm` reads NR `0x02`, masks `00011100b` and returns unless zero — button causes only. The Copper `MOVE $02,$08` sets exactly that bit (`nmi_gen_nr_mf` covers CPU and Copper, `zxnext.vhd:3832`; latched at `:3843-3848`), so **M2's break mechanism is filtered out by the code M1 inherits**. Demonstrated: bench T4 | **DONE, 2026-08-11.** M2 modified the cause check to accept a software cause and clears the latch on the way out — for cause REPORTING rather than to re-arm, which RETN does in hardware. ~~and invert bench T4 in the same change~~: T4 did **not** need inverting, because the poll declines where no debugger image is in `MAIN_BANK`; its verdict is unchanged and only its reason moved. **T9** asserts the serving half |
 | **NR `0x06` bit 3 gates every MF NMI** | Power-on 0 (`zxnext.vhd:2090`, `:5166`), but **NextZXOS leaves it set** — measured 2026-08-04, see M0(c). So the live risk is not that the stub forgets to set it, it is that the **debuggee clears it** and the break then dies silently | Set on entry anyway (seven bytes, removes the dependency on what the firmware left); re-assert from the poll |
 | **Timing intrusiveness** | ~0.3%/frame for the NMI poll; contention-timed and tape/beeper code will notice. **The figure is an estimate nobody has measured**, and part of the entry path runs at the *debuggee's* clock before the handler switches to 28 MHz — a speed change 50 times a second is a different kind of perturbation from stolen cycles | Make the poll disableable; document; **measure it in M2** rather than inheriting the estimate |
-| **Copper contention — the debuggee's list is DESTROYED, not borrowed** | The 1024-instruction list is **write-only**: both instruction RAMs discard their CPU-side read output (`zxnext.vhd:3959-3976`, `:3980-3998`) and NR `0x60`/`0x63` have no read decode (`:6286-6287`). So the debugger cannot save and restore it. NR `0x61`/`0x62` read back the mode and the *load* pointer only (`:6083-6087`) | ~~**Make asynchronous break opt-in.**~~ **RESOLVED 2026-08-11 by making the escape hatch the ONLY route**: the debugged program carries `WAIT`/`MOVE $02,$08` in its own list, the debugger installs nothing, so nothing is destroyed and there is nothing to opt into. The write-only fact stands and is precisely why. There is still no fallback mechanism — the Copper is the only periodic NMI source on the machine |
+| **Copper contention — the debuggee's list is DESTROYED, not borrowed** | The 1024-instruction list is **write-only**: both instruction RAMs discard their CPU-side read output (`zxnext.vhd:3959-3976`, `:3980-3998`) and NR `0x60`/`0x63` have no read decode (`:6286-6287`). So the debugger cannot save and restore it. NR `0x61`/`0x62` read back the mode and the *load* pointer only (`:6083-6087`) | ~~**Make asynchronous break opt-in.**~~ ~~**RESOLVED 2026-08-11 by making the escape hatch the ONLY route**: the debugged program carries `WAIT`/`MOVE $02,$08` in its own list, the debugger installs nothing, so nothing is destroyed and there is nothing to opt into.~~ **RESOLVED DIFFERENTLY 2026-08-15: the debugger installs a list at `cmd_init`, BEFORE the debuggee's banks are pushed — the one moment at which there is provably nothing to destroy — so an ordinary program pays nothing and needs no source change. The escape hatch survives for a Copper-using program, whose own list overwrites the debugger's, and the "C" key turns the feature off.** The write-only fact stands and is precisely why the write is confined to that one call site and never to a resume. There is still no fallback mechanism — the Copper is the only periodic NMI source on the machine |
 | **The debuggee can switch the break off silently, and it cannot be restored** | NR `0x06` bit 3 gates every MF NMI source; and a write of NR `0x62` that **changes** the mode bits restarts the list from index 0, mode `00` stopping it outright (`device/copper.vhd:69-78`). The plan's "re-assert from the poll" cannot work here: once the Copper stops, **the poll is what would have re-asserted it** | Document as best-effort. Recovery is an M1 press — the button the feature exists to remove. Detecting it from the PC side is not possible either: the stub simply goes quiet |
 | **NR `0x02` read-modify-write resets the machine** | Bits 1:0 *written* trigger a soft/hard reset (`zxnext.vhd:6370-6371`); *read* they are reset history (`:1306`, `:1732-1739`) and are non-zero in ordinary operation. The handler must clear the cause latch on the way out, so it writes this register every frame | Upstream's `and 10000000b` mask is what makes the existing path safe — **load-bearing, do not lose it**. Prefer a literal constant to a read-modify-write |
 | **Latency** | 10-100 ms per round trip | Batch; DZRP's bounded reads help |

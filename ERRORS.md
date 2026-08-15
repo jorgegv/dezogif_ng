@@ -5,6 +5,54 @@ attempting similar logic.
 
 ---
 
+## An unqualified `gh` command in this checkout targets SOMEBODY ELSE'S repository
+
+**Symptom.** `gh issue comment 44 ...`, `gh issue create`, `gh pr view` — anything without `-R` —
+resolves to **`maziac/dezogif`** from this working copy, not to `jorgegv/dezogif_ng`. Measured
+rather than assumed, and it takes one command with no side effects:
+
+```
+$ git remote -v
+origin    git@github.com:jorgegv/dezogif_ng.git
+upstream  https://github.com/maziac/dezogif.git
+$ gh repo view --json nameWithOwner -q .nameWithOwner
+maziac/dezogif
+```
+
+**Cause.** No default repository is set for this checkout (`gh repo set-default --view` says so),
+and with **more than one remote** `gh` chooses by its own preference order rather than by `origin`.
+Here that order puts **`upstream` ahead of `origin`**. That is the reproduction above and not a
+reading of `gh`'s source; what matters is only that it does *not* pick `origin`, so "there is an
+origin, so `gh` will use it" is false.
+
+**Why this is worth an entry rather than a footnote.** Most of the traps in this file cost a rebuild
+or a wrong number. This one **writes to a third party's public issue tracker**. A mis-aimed
+`gh issue create` files an internal note as a bug report on Maziac's project under the user's name; a
+mis-aimed `gh issue comment` posts a paragraph of our own jargon onto his thread. Neither can be
+un-posted — edited or deleted, both visibly — and neither produces any error at the moment it
+happens. **It fails silently, outward-facing, and irreversibly**, which is the worst combination
+available.
+
+**Fix: name the target on every `gh` command, both ways.** `-R jorgegv/dezogif_ng` for ours and
+`-R maziac/dezogif` for his. Being explicit *in both directions* is what makes it a habit that
+survives — a rule of "add `-R` when you mean ours" is a rule you have to remember to be in danger
+first, which is exactly the state this bug leaves you in.
+
+**`gh repo set-default` is deliberately NOT the fix here.** This checkout genuinely works with both
+trackers: `upstream` exists because PRs #3 and #4 live at `maziac/dezogif` and are worked from these
+worktrees. Setting a default silently re-points unqualified *reads* the other way, which is the same
+trap aimed at the other repository — `gh pr list` would stop showing the two PRs somebody is in the
+middle of. The user may still want it; it is their call, not a cleanup to perform on their behalf.
+
+**Lesson.** A tool that infers its target from ambient state will infer wrongly the moment the
+ambient state has two answers, and adding the second remote is exactly the thing you do when the
+work gets interesting. Where the inference is *read-only* an inference is fine; where it **writes,
+and to somebody else**, name the target. This was noticed and written down as "an ERRORS.md entry is
+owed" on two separate days before anyone wrote it — which is its own small lesson about the gap
+between noticing a trap and disarming it.
+
+---
+
 ## A zero-context patch applied into the WRONG ROUTINE, and it still assembled clean
 
 **Symptom.** While splitting a large `uart.asm` change into separately-buildable commits for an

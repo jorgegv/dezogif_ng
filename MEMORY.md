@@ -5,6 +5,91 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-15 — The DEBUGGER installs the Copper list after all, at `cmd_init` and nowhere else
+
+**Built (Maziac's idea), and it half-retracts this file's own 2026-08-11 decision
+that the *program* installs the list.** An ordinary program is now breakable from
+DeZog's Pause with **no source change at all**: the debugger writes the
+two-instruction list itself when a DZRP client opens a session.
+
+**THE 2026-08-11 DECISION WAS NOT WRONG — IT ANSWERED A QUESTION NOBODY HAD ASKED
+PRECISELY ENOUGH.** It weighed *"may the debugger install a list?"* as though the
+answer could not depend on **when**, and with the write placed at resume time the
+answer really is no. The fact that changes it is one property of the hardware:
+**the Copper has its own instruction memory and keeps executing after the CPU
+program that wrote the list has gone.** So a list can be written *before the
+debuggee exists* and still be running once it does.
+
+**`cmd_init` IS THE ONLY SAFE MOMENT, AND THAT IS THE WHOLE DESIGN.** It runs as a
+client attaches — before `CMD_WRITE_BANK` has pushed a single bank, and long
+before anything runs. There is provably nothing there to destroy. So §3.1's
+write-only finding is untouched and is what *confines* the write rather than what
+forbids it: because the list can never be given back, the only defensible instant
+to write one is the instant at which there is nothing to lose.
+
+**Rejected: the resume path**, which is where §4.4 originally put it. It would
+overwrite a debuggee's own list on **every** `CMD_CONTINUE`, taking the HOWTO's
+route away from precisely the programs it was written for. One call site, and the
+reasoning is in `ui.asm`'s `copper_break_arm` where the next reader will be
+standing.
+
+**Rejected: making it unconditional, with no off switch.** The poll costs ~1288
+T-states a frame — 1.84% of a frame at 3.5 MHz — and a program that owns the
+Copper may want the debugger's hands off it entirely. Hence the **"C" key** and
+row 14. **Row 14 was the one free row on both screens**, and the benches that read
+this screen as text read rows 7, 8 and 12, so nothing they look at moved.
+
+**WHAT "OFF" DOES IS BLUNTER THAN THE KEY SUGGESTS, and it is stated at the key
+rather than discovered**: it *stops the Copper*, because the list cannot be read
+and therefore cannot be edited — two instructions cannot be taken out of it. So it
+stops a **debuggee's own** list too, raster effects included. That is the honest
+cost of the key, and it is also why the key exists rather than the feature being
+unconditional.
+
+**THE CHECK IS W10 AND W8 IS STRUCTURALLY BLIND TO THIS FEATURE**, which is the
+part worth keeping. W8's fixture arms the Copper *itself*, so it is green whether
+or not the debugger arms one — it cannot see this change at all. W10's fixture is
+**three bytes**, `di : jr $`: no NR `0x06` gate, no list. The only thing that can
+then raise a Multiface NMI 50 times a second is the list `cmd_init` armed.
+**Shown red the decisive way, one ROM apart with the same fixture and the same
+client**: against `main`'s ROM, *"no response to `CMD_PAUSE` within 25s"*.
+
+**It needs its own emulator run, and that is not tidiness**: the Copper outlives
+the program that wrote the list — this feature's whole premise — so a W10 sharing
+a machine with W8 would break in off **W8's fixture's** list and pass for the
+wrong reason. The fixture's shape is asserted from the client's own
+`FIXTURE 3 bytes, copper=no` line rather than from the env var having been
+exported, because a `W10_NO_COPPER` that silently stopped being honoured would
+turn W10 into a second W8 — green, and testing nothing.
+
+**Cost: +126 bytes in BOTH ROMs** (41 for the mechanism, the rest for the key and
+its row). `main_end` UART `0xF394` → `0xF412`, WiFi `0xFDE3` → `0xFE61`, both
+against `ROM_MAGIC_ADDR` `0xFE70`. **WiFi headroom 141 → 15 bytes**, taken with
+that known: **assume the WiFi build cannot grow at all** from here. A ROM moved,
+so the merge carries a `make bump`.
+
+**A SECOND, SMALLER FINDING FROM MEASURING THAT: `CLAUDE.md`'s historical byte
+figures do not reconcile.** It carried "UART 2908 / WiFi 178" since #41; #42 took
+37 from each and #44 took 18 from the UART, which should give 2853, and the
+measured figure on `main` was **2780**. The WiFi column *does* reconcile (178 − 37
+= 141). Nobody has chased the 73-byte discrepancy in the UART column and this
+entry does not either — what it does is stop the paragraph inviting the
+arithmetic: the figures are re-measured, said to be re-measured, and the next
+reader is told to measure `main_end` against `ROM_MAGIC_ADDR` from a fresh build
+rather than derive it. **A number maintained by subtraction is a number that
+drifts**, and this one had.
+
+**NOT COVERED, and none of it is hidden.** **Hardware** — nothing in this change
+has been near a Next; Maziac's 2026-08-15 confirmation covers the *pre-existing*
+UART break, not this. **A program that installs its own Copper list WITHOUT the
+two instructions** now replaces a working break with a non-working one
+**silently**, where before the break simply never existed and its absence was
+expected — a genuinely new cost, staged by no run, written into the HOWTO as state
+4. **`copper_break_stop` stopping a debuggee's own list**, likewise unstaged. And
+**DeZog itself has not driven it**: W10 speaks DZRP directly.
+
+---
+
 ## 2026-08-15 — MD extended buttons read 0 in io mode: the first hardware sighting of a cost we had only read
 
 **Measured by Maziac on a real Next**, alongside the option-3 regression: with

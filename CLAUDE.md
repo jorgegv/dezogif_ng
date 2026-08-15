@@ -28,10 +28,20 @@ it is feasible and must be **opt-in**, because the Copper instruction list is wr
 enabling the break therefore destroys any Copper program the debuggee had.~~ **The opt-in half of
 that is retracted**: the user's call (2026-08-10) is that the **debuggee's own program** installs
 the two Copper instructions, so the debugger installs nothing, destroys nothing, and needs no
-switch. The write-only fact is unchanged and is precisely *why* the program owns the list. See
-@doc/ASYNCHRONOUS-BREAK-DESIGN.md for the design and
-@doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md for what a user has to add to their program (44 bytes) and
-the five states in which the break will not fire. ~~**Nothing in M2 has run on hardware.**~~
+switch. The write-only fact is unchanged and is precisely *why* the program owns the list.
+**AND THAT MOVED BACK HALFWAY ON 2026-08-15 (Maziac's idea, bench W10): THE DEBUGGER INSTALLS A
+LIST TOO, AT `cmd_init` AND NOWHERE ELSE, SO AN ORDINARY PROGRAM NEEDS NO SOURCE CHANGE AT ALL.**
+The write-only fact is *still* unchanged and is now what confines the write to that one call
+site — `cmd_init` runs as a client attaches, before its banks are pushed and long before the
+program runs, so there is provably nothing there to destroy; the Copper keeps executing after the
+program that wrote the list has gone, which is what makes so early a write survive into the run.
+**Never on the resume path**, which would destroy a debuggee's own list on every `CMD_CONTINUE`.
+A **Copper-using** program still carries the two instructions itself, and the **"C" key** on the
+stub's screen turns the whole thing off. See
+@doc/ASYNCHRONOUS-BREAK-DESIGN.md for the design — **§0.1 first** — and
+@doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md for what a user has to add to their program (**nothing**,
+unless it uses the Copper, in which case 44 bytes) and
+the seven states in which the break will not fire. ~~**Nothing in M2 has run on hardware.**~~
 **IT HAS, 2026-08-11, AND IT PASSED** — bench check **H7** on the user's own Next: a freely
 running debuggee, resumed with no breakpoint, stopped by `CMD_PAUSE` from the PC, with its control
 run silent. `PC` came back at the fixture's spin and `SP` at the fixture's own stack, and NR `0xC0`
@@ -86,13 +96,19 @@ to work.
   instruction list is write-only and so enabling asynchronous break **destroys** any Copper
   program the debuggee had" is **superseded and annotated in place**: the debuggee's program
   installs the two instructions now, so the debugger installs nothing and there is nothing to opt
-  into. Still true and still load-bearing: open question 5b (a Copper-caused NMI cannot be
+  into. **AND THAT IS ITSELF HALF SUPERSEDED SINCE 2026-08-15 — READ §0.1 FIRST**: the debugger
+  installs a list at **`cmd_init`**, so an ordinary program needs no source change; the write-only
+  fact is what confines that write to the one moment at which there is nothing to destroy, and the
+  program's own route survives for a Copper-using program. Still true and still load-bearing: open question 5b (a Copper-caused NMI cannot be
   distinguished from a CPU-caused one — and a poll-shaped handler does not need to), the Copper
   being the **only** periodic NMI source on the machine, the NR `0x02` read-modify-write reset
   landmine, and — answered while building it — **open question 5**: any live DivMMC automap
   session blocks every Multiface NMI, poll and M1 button alike, for its whole duration.
-- **@doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md** — the user's half of M2: the 44 bytes a program adds
-  to make itself breakable from DeZog's Pause, what the poll costs (**1288 T-states/frame**,
+- **@doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md** — the user's half of M2: ~~the 44 bytes a program adds
+  to make itself breakable from DeZog's Pause~~ **since 2026-08-15, NOTHING for an ordinary
+  program — the debugger installs the list at `cmd_init`; the 44 bytes are what a Copper-USING
+  program adds, because its own list overwrites the debugger's** — what the poll costs
+  (**1288 T-states/frame**,
   measured; the plan estimate it retired was 6-13× low, which is recorded in the design doc §5
   rather than here), and the **seven** states in which the break
   will not fire. Read it before answering "why does Pause do nothing" — the first of the seven is
@@ -248,7 +264,21 @@ the figures then were **UART 3201, WiFi 818** free to the identity block.
 
 **SINCE M2 (issue #22) THEY WERE UART 2946 AND WiFi 216, AND SINCE ISSUE #41 THEY ARE UART 2908 AND
 WiFi 178**, measured, and the WiFi number is the one
-to plan against. M2 spent it twice over, which is exactly what this section warns about: 48 bytes of
+to plan against.
+
+**THEY ARE NOW UART 2654 AND WiFi 15, RE-MEASURED 2026-08-15 — AND THE WiFi BUILD IS EFFECTIVELY
+CLOSED.** `ROM_MAGIC_ADDR` is `0xFE70`; `main_end` is `0xF412` (UART) and `0xFE61` (WiFi), read off
+`build/*.list`, and the free figure is the difference. Fifteen bytes is not headroom, it is the
+rounding error left over: **assume the WiFi build cannot grow at all** and cost any new feature
+accordingly. What spent it, in order: issue #42's UART-select borrow (+37 both), issue #44's
+runtime channel (+18, UART only), and the debugger installing the async-break Copper list at
+`cmd_init` with its "C" key and screen row (**+126 both**, taken with the consequence known).
+*(The `2908`/`178` above were the figures of the day and are left as the measurement they were; do
+not try to reconcile them arithmetically with these — one of the historical numbers does not
+subtract cleanly and nobody has chased which. **Measure `main_end` against `ROM_MAGIC_ADDR` from a
+fresh build rather than deriving it from this paragraph.**)*
+
+M2 spent it twice over, which is exactly what this section warns about: 48 bytes of
 the MF ROM half (three `ALIGN` steps) cost 48 bytes of the debugger half as well, because
 `ROM_MAGIC_ADDR` came down with `main_prg_copy`, and the poll's own code in `mf.asm` and the
 transports cost the rest. **Anything further that grows the MF ROM half should expect to pay 32
@@ -265,6 +295,8 @@ bytes per byte** and should put its code in the debugger half instead, as `mf_nm
 - **Growing the MF ROM half still spends 16 bytes of the debugger half**, and that is unchanged by
   #31: the image ends at `0xE000 + 0x2000 - MF.main_prg_copy`, so a step moves `ROM_MAGIC_ADDR` down
   by 16 as well. The two halves share **one** budget. M2 grows both, so plan against 818, not 3201.
+  *(Those two are the 2026-08-09 figures. Plan against **15** today, and see the re-measurement
+  above.)*
 
 *(This paragraph previously said the half "CANNOT GROW" and called the address the contract. That was
 wrong and would have told a future session that M2's entry path is blocked when it is not — see
@@ -573,6 +605,23 @@ strongest:
    *debugger* address there. Shown red two ways — a ROM whose stackless branch reports zero
    (`PC 0x0000`, i.e. the old symptom reproduced from a genuinely broken stub) and one that puts
    `0x1234` in the breakpoint field.
+   **W10 IS THE ONLY CHECK ANYWHERE THAT CAN SEE WHO INSTALLED THE COPPER LIST, AND W8 IS
+   STRUCTURALLY BLIND TO IT.** Since 2026-08-15 the **debugger** arms the list at `cmd_init`, so an
+   ordinary program is breakable with no source change — and W8's fixture arms it *itself*, which
+   makes W8 green whether the debugger does or not. W10's fixture is **three bytes**, `di : jr $`:
+   no NR `0x06` gate, no list, nothing. So the only thing that can raise a Multiface NMI 50 times a
+   second is the list `cmd_init` armed, and a break there is that list and nothing else. Shown red
+   the decisive way, one ROM apart with the same fixture and client — against `main`'s ROM the
+   client reports *"no response to `CMD_PAUSE` within 25s"*.
+   **IT NEEDS ITS OWN EMULATOR RUN, AND THAT IS NOT TIDINESS**: the Copper outlives the program that
+   wrote the list — the feature's whole premise — so a W10 sharing a machine with W8 would break in
+   off **W8's fixture's** list and pass for the wrong reason. The fixture's shape is asserted from
+   the client's own `FIXTURE 3 bytes, copper=no` line rather than from the env var having been set,
+   because "the variable was exported" is not evidence that it was honoured — without that,
+   `W10_NO_COPPER` silently ceasing to work would turn W10 into a second W8: green, and testing
+   nothing. **NOT covered**: hardware; and a debuggee that installs a Copper list of its **own**
+   without the two instructions, which now loses the break *silently* — HOWTO state 4, staged by no
+   run.
    **W7 RIDES ON W6's PRESS AND IS THE SAME DEFECT TWO BYTES ALONG** (issue #37): the entry path
    saved the clock speed and the `IO_NEXTREG_REG` latch into `backup.*` on every press too, two and
    eleven instructions after the slot-7 byte #26 fixed, so a press while stopped handed the debuggee
@@ -1336,7 +1385,7 @@ Two things the shortening may **never** touch, because they are interface rather
   | `M1`-`M10` | `test/run-mfselect.sh` | `make test-mfselect` |
   | `E1`-`E4` | `test/esp-echo-client.py` | `make test-esp` |
   | `U1`-`U6` | `test/run-unit-tests.sh` | `make test-unit` |
-  | `W1`-`W9` | `test/run-dzrp-stub.sh` | `make test-dzrp-stub` |
+  | `W1`-`W10` | `test/run-dzrp-stub.sh` | `make test-dzrp-stub` |
   | `C1`-`C25` | `test/dzrp/conformance.py` | `test-dzrp-stub`, `test-dzrp`, `test-hardware` |
   | `B1`-`B2` | `test/run-ip-boundary.sh` | `make test-ip-boundary` |
   | `P1`-`P3` | `test/run-tx-patience.sh` | `make test-tx-patience` |

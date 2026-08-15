@@ -112,8 +112,17 @@ always in the same place.
 
 ### Turning it off
 
-Assemble it out for release. It is a contiguous block with no other dependency, so an
+**Your** copy: assemble it out for release. It is a contiguous block with no other dependency, so an
 `IFDEF DEBUG` around it is enough; nothing else in the program changes.
+
+**The debugger's** copy: press **C** on the stub's screen. Row 14 then reads `C = PC break off`, and
+the setting survives until the next re-initialisation (a power cycle, or Symbol Shift + M1).
+
+Note what "off" does, because it is blunter than it sounds: it **stops the Copper**. The list cannot
+be read, so it cannot be edited and two instructions cannot be taken out of it — stopping is the only
+"off" there is. **So it stops your own list too, if you installed one**, along with any raster effect
+in it. If your program owns the Copper, prefer leaving the key alone and simply installing your list
+when the program runs: yours overwrites the debugger's, which is the supported route above.
 
 ## What it costs while it is in
 
@@ -158,7 +167,12 @@ saved there yet.
 
 ## When it will not work
 
-Seven states, in rough order of how likely they are to be met. None of them damages anything: in
+**First, the setting rather than a state: check row 14 says `C = PC break on`.** If it says `off`,
+somebody pressed **C** — press it again. That is deliberately not one of the seven below, because it
+is a switch you can see and change rather than a condition the machine has fallen into; it is
+mentioned first because it is the cheapest thing to rule out.
+
+Then seven states, in rough order of how likely they are to be met. None of them damages anything: in
 each, Pause simply does nothing until the state passes, and the M1 button always still works.
 
 **1. A UART (serial) build with the cable on joy port 1.** Over a cable the break works on

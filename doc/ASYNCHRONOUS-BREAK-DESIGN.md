@@ -3,15 +3,20 @@
 **Issue [#22](https://github.com/jorgegv/dezogif_ng/issues/22), milestone M2.** Written 2026-08-08,
 before any M2 code existed, to answer one question the plan parked and one it did not think to ask.
 **Built 2026-08-10, and the build changed the shape of the thing** — see the next section, which is
-the one to read first. Everything below it is the pre-build evaluation, annotated where the build
-falsified it and left standing where it did not, because this project annotates superseded claims
-rather than editing evidence.
+the one to read first. **Then read §0.1: on 2026-08-15 the ownership decision moved BACK, and §0's
+headline is half superseded.** Everything below is the pre-build evaluation, annotated where the
+build falsified it and left standing where it did not, because this project annotates superseded
+claims rather than editing evidence.
 
 ---
 
 ## 0. AS BUILT, 2026-08-10 — and the decision that reshaped it
 
 **THE DEBUGGED PROGRAM INSTALLS THE COPPER LIST, NOT THE DEBUGGER** (user's call, before any code).
+***HALF SUPERSEDED 2026-08-15 — READ §0.1.*** *The debugger installs one too, at `cmd_init` and
+nowhere else, so an ordinary program needs no source change at all. What survives verbatim is the
+route for a **Copper-using** program, which is still the only one available to it and still exactly
+these two instructions. Everything below stands as the record of the decision it was.*
 That single decision removes this document's headline cost. §3.1's argument — that enabling
 asynchronous break **destroys** the debuggee's Copper program irrecoverably, because the list is
 write-only and cannot be saved — was correct and is now **moot**: the debugger installs nothing, so
@@ -70,7 +75,11 @@ version it replaces.
    **A lost diagnostic, not a lost guarantee.** The bytes are already gone by the time the flag is
    set, and their loss still surfaces as a DZRP desynchronisation or a timeout, exactly as it would
    have. What is lost is being told which fault it was. Nothing covers it and no run stages it.
-4. **The debuggee must carry the two Copper instructions**, or it gets no asynchronous break at all.
+4. ~~**The debuggee must carry the two Copper instructions**, or it gets no asynchronous break at
+   all.~~ **RETRACTED 2026-08-15, §0.1**: the debugger installs a list at `cmd_init`, so an ordinary
+   program carries nothing. It is still true of a program that installs a Copper list **of its own**,
+   which overwrites the debugger's — and that program's failure is now *silent where it used to be
+   expected*, which is a new cost and is HOWTO state 4.
 
 ### §4.3's open question is decided: BREAK ON ANY BYTE
 
@@ -164,6 +173,71 @@ deliberately not seen by DivMMC as its own.
 **None of this has been observed running.** It is read from the VHDL, and no run anywhere stages a
 poll landing inside a DivMMC automap window.
 
+### 0.1 AS BUILT AGAIN, 2026-08-15 — the DEBUGGER installs a list, at `cmd_init` and nowhere else
+
+**Maziac's idea, and it costs an ordinary program nothing at all: no source change, no 44 bytes, no
+raster line to pick.** §0's decision is therefore half retracted — not because its reasoning was
+wrong, but because it answered a question nobody had asked precisely enough. It weighed *"may the
+debugger install a list?"* as though the answer could not depend on **when**.
+
+**THE PREMISE IS ONE PROPERTY OF THE HARDWARE, AND IT IS WHAT MAKES THIS LEGAL.** The Copper has its
+own instruction memory and **keeps executing after the CPU program that wrote the list has gone.**
+So a list can be written *before the debuggee exists*, and still be running once it does. Nothing in
+§3.1 contemplated that, because §0's framing put the write at resume time, where the debuggee's own
+list is already live.
+
+**`cmd_init` IS THE ONLY SAFE MOMENT AND THAT IS THE WHOLE DESIGN.** It runs as a DZRP client opens a
+session — before `CMD_WRITE_BANK` has pushed a single bank, and long before anything runs. There is
+provably nothing there to destroy. So the debugger writes a list at exactly the one instant at which
+§3.1's irrecoverable cost is zero.
+
+**IT MUST NOT BE CALLED FROM A RESUME OR FROM A BREAK, and that is the constraint §3.1 now serves
+rather than the prohibition it used to be.** By then a debuggee's own list may be live, and
+re-installing would destroy it on **every** `CMD_CONTINUE` — taking §3.1's escape hatch away from
+precisely the programs it was written for. The write-only finding is untouched, cited in
+`ui.asm`'s `copper_break_arm`, and is exactly why there is one call site and it is where it is.
+
+**What each half of §0 becomes:**
+
+| §0 said | now |
+|---|---|
+| the debugger installs nothing | it installs one, at `cmd_init` |
+| a program that does not cooperate gets no break at all | **retracted** — an ordinary program gets it free |
+| a Copper-using program carries the two instructions itself | **unchanged, and still the only route it has** |
+| opt-in in the *debuggee*, by construction | opt-**out** in the *debugger*, by the **"C" key** |
+
+**THE "C" KEY IS AN OFF SWITCH AND NOT A SETTING, WHICH IS WORTH STATING BECAUSE ITS "OFF" IS
+BLUNTER THAN IT LOOKS.** It exists for two reasons: the poll costs ~1288 T-states a frame (§5), 1.84%
+of a frame at 3.5 MHz, which a contended-memory or beeper program may not want to pay; and a program
+that owns the Copper may simply want the debugger's hands off it. What "off" *does* is stop the
+Copper — because the list cannot be read, it cannot be edited, so there is no way to remove two
+instructions from it. **It therefore stops a debuggee's own list too, if the debuggee installed
+one.** That is the honest cost of the key, and it is why the key exists rather than the feature being
+unconditional.
+
+**THE CHECK IS W10, AND ITS FIXTURE IS THREE BYTES.** `di : jr $`, installing nothing — no NR `0x06`
+gate, no list. So the only thing that can raise a Multiface NMI 50 times a second is the list
+`cmd_init` armed, and a break there is that list and nothing else. **W8 cannot see this feature at
+all**: its fixture arms the Copper itself, so it is green either way. Shown red the decisive way, one
+ROM apart with the same fixture and the same client — against `main`'s ROM the client reports *"no
+response to `CMD_PAUSE` within 25s"*.
+
+**W10 needs its own emulator run, and that is not tidiness**: the Copper outlives the program that
+wrote the list, which is this feature's whole premise, so a W10 sharing a machine with W8 would break
+in off *W8's fixture's* list and pass for the wrong reason.
+
+**Cost: +126 bytes in BOTH ROMs** — 41 for the mechanism, the rest for the "C" key and its screen
+row. **WiFi headroom 141 → 15 bytes**, which effectively closes that build; taken with that known.
+Row **14** was the one free row on both screens, and the benches that read this screen as text read
+rows 7, 8 and 12, so nothing they look at moved.
+
+**NOT COVERED.** **Hardware** — nothing in this change has been near a Next; Maziac's confirmation of
+2026-08-15 covers the pre-existing UART break, not this. **A program that installs its own list
+WITHOUT the two instructions** now replaces a working break with a non-working one **silently**,
+where before the break simply never existed and its absence was expected — a real new cost, staged by
+no run, and written into the HOWTO as state 4. And **`copper_break_stop` stopping a debuggee's list**,
+above, which nothing exercises either.
+
 ---
 
 **Verdict (2026-08-08, before the build): it can be done, and it should be OPT-IN rather than
@@ -198,7 +272,9 @@ WAIT line,N        ; N is the raster line; not fixed anywhere here.
 MOVE $02,$08       ; NR 0x02 bit 3 = generate Multiface NMI. T5's fixture uses line 100.
 ```
 
-**That is destructive, and it is why the feature is opt-in rather than default.** The Copper's
+**That is destructive, and it is why the feature is opt-in rather than default.** *(**As built it is
+not**, because of **when** the stub writes it — `cmd_init`, before the debuggee exists. §0.1. The
+destructiveness below is real and is what confines the write to that one moment.)* The Copper's
 1024-instruction list is write-only — both instruction RAMs discard their CPU-side read output
 (`zxnext.vhd:3959-3976`, `:3980-3998`) and NR `0x60`/`0x63` have no read decode (`:6286-6287`) — so
 the debugger cannot save and restore whatever the debuggee had there. Installing this destroys it,
@@ -423,6 +499,16 @@ changed is who writes it: the debugged program does, so the debugger destroys no
 "cannot be debugged with asynchronous break enabled" consequence does not arise. The escape hatch at
 the end of this section became the primary route. See §0.
 
+**ANNOTATED AGAIN 2026-08-15, and the facts hold a second time while the conclusion moves a second
+time (§0.1).** The debugger does install a list now — **at `cmd_init`, and nowhere else**. That is
+not a weakening of this section, it is this section applied: because the list can never be given
+back, the only defensible moment to write one is the one at which there is **provably nothing there
+to lose**, and `cmd_init` runs before the debuggee's banks have even been pushed. Everything below
+is what forbids the obvious alternative — a write on the resume path — which would destroy a
+debuggee's own list on every `CMD_CONTINUE`. The escape hatch at the end of this section is
+**unchanged and is still the only route a Copper-using program has**; what changed is that a program
+which uses no Copper no longer needs a route at all.
+
 The plan says async break "consumes the Copper, which the debuggee may want". That is too gentle.
 
 Both Copper instruction stores are `dpram2` instances whose CPU-facing read output is **discarded at
@@ -593,10 +679,17 @@ design decision and both have a visible cost.
 
 ### 4.4 Installing and removing the list
 
-The stub writes the list through NR `0x61`/`0x62`/`0x60` when it resumes a debuggee and stops it when
-it breaks back in. NR `0x62` bits 7:6 start it (`01` = run from index 0 and loop). Nothing in `src/`
-touches the Copper today — greped, no hits — so M2 owns it outright with no existing behaviour to
-preserve.
+**ANNOTATED: struck 2026-08-10 when the program took ownership, and REINSTATED IN PART 2026-08-15 —
+but at `cmd_init`, which is the one place this paragraph did NOT propose.** The mechanism below is
+what `ui.asm`'s `copper_break_install` does, verbatim; the *timing* below is what §0.1 forbids, and
+forbids for §3.1's reason. Read the paragraph as correct about NR `0x61`/`0x62`/`0x60` and wrong
+about when. "Nothing in `src/` touches the Copper" is no longer true — `copper_break_install`,
+`copper_break_stop` and `copper_break_arm` do, and they are the only things that do.
+
+> ~~The stub writes the list through NR `0x61`/`0x62`/`0x60` when it resumes a debuggee and stops it
+> when it breaks back in.~~ NR `0x62` bits 7:6 start it (`01` = run from index 0 and loop).
+> ~~Nothing in `src/` touches the Copper today — greped, no hits — so M2 owns it outright with no
+> existing behaviour to preserve.~~
 
 ### 4.5 Byte budget — not a blocker, and an earlier claim of ours was wrong
 
@@ -784,6 +877,13 @@ T4's verdict is unchanged because the poll declines at a machine with no debugge
 struck — the program installs the list (§4.4). Item 5 **is done**: §5 carries the measurement, and
 `make measure-poll-cost` makes it re-runnable. Item 6 changes shape with §0 — what a user needs to be told is how to add the two
 instructions, not what the debugger will destroy — and the HOWTO is deliberately not written here.
+
+**ANNOTATED AGAIN 2026-08-15 (§0.1), and item 3 is the one that moves.** It is **half unstruck**: the
+debugger does install the list, at **`cmd_init`** — not "around resume and break", which §0.1 shows
+would destroy a debuggee's own list on every `CMD_CONTINUE`. There is still no *removal*, because
+the list cannot be read and therefore cannot be edited; the **"C" key** stops the Copper instead, and
+that is a blunter instrument than "remove". Item 6 moves with it: what a user needs to be told is now
+mostly *nothing*, and the HOWTO leads with that.
 
 The original recommendation follows for the record.
 

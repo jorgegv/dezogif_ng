@@ -31,9 +31,11 @@ at the start of their program, or into their own Copper list, and compiles it ou
 Measured cost in the program: **44 bytes** (16 for the NR 0x06 bit-3 read-modify-write, 28 for seven
 `nextreg` writes; 28 if you trust NextZXOS to have left the gate set, which it does).
 
-**The cost, stated in the direction it now falls:** a program that does not cooperate gets no
+**The cost, stated in the direction it now falls:** ~~a program that does not cooperate gets no
 asynchronous break at all, and the debugger cannot install one for it — because it cannot read what
-it would be overwriting. That is a strictly smaller price than the one this document was written to
+it would be overwriting.~~ **RETRACTED 2026-08-15, §0.1: the debugger installs one on a first
+`cmd_init`, before there is anything to overwrite. It remains true that it cannot install one for a
+program that has ALREADY run and may own the Copper, which is what the guard there refuses to do.** That is a strictly smaller price than the one this document was written to
 weigh, and it is why the feature no longer needs to be "opt-in" in the debugger at all: it is opt-in
 in the *debuggee*, by construction.
 

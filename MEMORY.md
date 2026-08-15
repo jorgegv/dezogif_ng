@@ -1229,6 +1229,17 @@ of *why*, and no issue is filed on it.
 
 ## 2026-08-11 — M2: the PROGRAM installs the Copper list, so the debugger destroys nothing, and asynchronous break stops being opt-in
 
+***HALF SUPERSEDED 2026-08-15 — see the entry at the top of this file.*** *The
+debugger installs a list too, on a **first** `cmd_init`, so an ordinary program
+needs no source change and "the debugger installs nothing" / "a non-cooperating
+program gets no asynchronous break at all" are both retracted below. What
+survives verbatim is the route for a **Copper-using** program — still these two
+instructions, still 44 bytes, still the only route it has — and the write-only
+argument, which is now what confines the debugger's write to the one moment at
+which there is provably nothing to destroy. Annotated here rather than edited,
+and annotated at the TOP of the entry rather than only at the two sentences,
+because a reader arriving by grep lands wherever the phrase is.*
+
 **Built, issue #22, milestone M2 — the headline functional advance over upstream
 dezogif, and the only "impossible → yes" row in the plan's delta table.** A
 freely running debuggee is now stopped by `CMD_PAUSE` from the PC, with no

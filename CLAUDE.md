@@ -1331,7 +1331,8 @@ strongest:
    the program that wrote the list, so sharing a machine with run 1 would break in off run 1's list
    and pass for the wrong reason. **Shown red the decisive way — against `main`'s UART ROM, which
    has no `copper_break_arm` at all, J6 reports *"the running debuggee was never stopped"* WITH J1
-   GREEN IN THE SAME RUN**, which is #44's J1-green/J3-red shape. **That control must be run by
+   GREEN IN THE SAME RUN**, which is **#43's own** J1-green/J3-red shape — this bench's founding
+   design, not #44's, whose bench is the `ut_uart` unit test and which touches no J check. **That control must be run by
    invoking `test/run-uart-break.sh` DIRECTLY**: the Makefile recipe passes `ROM=` explicitly and
    silently overrides the environment, so through `make` it comes out green — ERRORS.md.
    **J1** a freely running debuggee — carrying the Copper list itself, resumed with **no**

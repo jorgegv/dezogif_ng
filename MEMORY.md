@@ -157,7 +157,9 @@ was twenty minutes' work.
 setup — measured at exactly the **44 bytes** the HOWTO quotes, which is a
 pleasing independent check of that figure — `di`, the witness read, `jr $`.
 **Shown red against `main`'s UART ROM with J1 GREEN in the same run**, which is
-#44's J1-green/J3-red shape and is the only pairing that proves anything here:
+**#43's own** J1-green/J3-red shape — this bench's founding design, and not #44's,
+whose bench is a unit test and which touches no J check — and it is the only
+pairing that proves anything here:
 J1 passes there precisely because its own fixture arms the Copper.
 
 **AND THE RED-FIRST NEARLY DID NOT HAPPEN, WHICH IS ITS OWN ENTRY IN

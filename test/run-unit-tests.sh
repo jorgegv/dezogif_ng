@@ -81,7 +81,7 @@ UT_MANIFEST=${UT_MANIFEST:-$OUT/ut_headless/ut_manifest.txt}
 # the excluded set to the runnable one. ONE moves, not two:
 # UT_transport_poll_borrows_select also stages its byte through PORT_TEST_DATA
 # (zsim port 0x8000) and so keeps a marker of its own. Derived by grep.
-UT_EXPECTED_TESTS=69
+UT_EXPECTED_TESTS=70
 UT_EXPECTED_SKIPPED=40
 UT_EXPECTED_RUN=$((UT_EXPECTED_TESTS - UT_EXPECTED_SKIPPED))
 

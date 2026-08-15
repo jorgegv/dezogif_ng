@@ -443,7 +443,7 @@ UT_HL_FILES  = $(wildcard $(SRC)/unit_tests/headless/*) $(UT_ASM_FILES) $(UT_GEN
 # stages its byte through PORT_TEST_DATA (zsim port 0x8000), which jnext does not
 # have and which is a marker in its own right, so it stays excluded. A prediction
 # that both would move was wrong, and the check is `grep`, not memory.
-UT_EXPECTED_TESTS   = 69
+UT_EXPECTED_TESTS   = 70
 UT_EXPECTED_SKIPPED = 40
 
 MAIN_BIN    = $(OUT)/main$(VARIANT_SUFFIX).bin

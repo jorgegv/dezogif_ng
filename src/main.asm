@@ -78,17 +78,24 @@ main_bank_entry:
     ; text.font_map is what makes the window valid. That gives the bank its top
     ; 768 bytes back, which is most of the headroom M2 was told it already had.
 
+    ; The main program has been copied into MAIN_BANK.
+    ;
+    ; THIS COMES BEFORE transport_init AND NOT AFTER IT, since issue #44: that
+    ; routine picks the UART channel from this byte — UART1 for a joystick
+    ; port, UART0 for a cable on CN9 — so setting the default afterwards would
+    ; configure the ESP's channel first and ours second, leaving the module
+    ; carrying our baud rate. In the WiFi build this block emits nothing and
+    ; the ROM does not move.
+ IF ROM_VARIANT == ROM_VARIANT_UART
+    ld a,2  ; Joy 2 selected
+    ld (uart_joyport_selection),a
+ ENDIF
+
     ; Set baudrate
     call transport_init
 
     ; Init text printing
     call text.init
-
-    ; The main program has been copied into MAIN_BANK
- IF ROM_VARIANT == ROM_VARIANT_UART
-    ld a,2  ; Joy 2 selected
-    ld (uart_joyport_selection),a
- ENDIF
 
     ; Enable flashing border
     call transport_flashing_border.enable

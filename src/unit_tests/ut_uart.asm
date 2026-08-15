@@ -130,29 +130,82 @@ UT_transport_deactivate:
 ; move the pointer, and a debugger entered afterwards would read and write the
 ; WRONG CHANNEL for the rest of the session. Not merely unbreakable: mute.
 ;
-; THE ASSERTION IS `a == 1` RATHER THAN A LITERAL CHANNEL VALUE, DELIBERATELY.
-; UART_SELECT_OURS is 01000000b in this build and 0 in the WiFi one, so
-; comparing against the variant's own constant is what makes one test source
-; correct for both — and it is exactly what a transposition of the two
-; constants would fail, which a literal 0x40 here would not.
+; THE ASSERTION IS `a == 1` RATHER THAN A LITERAL CHANNEL VALUE, DELIBERATELY,
+; AND THE CHANNEL IS ASKED FOR RATHER THAN NAMED. Which UART is ours differs
+; between the two builds and, since issue #44, between joy-port selections
+; within this one — UART1 on a joystick port, UART0 on the CN9 cable. So the
+; test establishes a selection, reads back the channel that produced, and
+; derives the other by flipping the select bit. One source, correct for both
+; variants and every selection; and it is exactly what a transposition of the
+; two channels would fail, which a literal 0x40 would not.
 UT_transport_select_reclaimed:
+    ; Establish a known channel, and learn which one it is.
+    MEMSETBYTE uart_joyport_selection, 2
+    call transport_activate
+    ld a,HIGH UART_SELECT
+    in a,(LOW UART_SELECT)
+    and UART_SELECT_CHANNEL
+    ld d,a	; D = ours. Preserved by both builds' transport_activate.
+
     ; A debuggee has pointed the select at the other channel.
+    xor UART_SELECT_CHANNEL
     ld bc,UART_SELECT
-    ld a,UART_SELECT_OTHER
     out (c),a
 
     ; Entering the debugger must take it back.
-    MEMSETBYTE uart_joyport_selection, 2
     call transport_activate
 
     ld a,HIGH UART_SELECT
     in a,(LOW UART_SELECT)
     and UART_SELECT_CHANNEL
-    cp UART_SELECT_OURS
+    cp d
     ld a,0
     jr nz,.not_ours	; ld a,0 does not touch the flags, so this is still the cp
     inc a
 .not_ours:
+    nop ; TEST ASSERTION a == 1
+
+ TC_END
+
+
+; Tests that the UART CHANNEL FOLLOWS THE JOY-PORT SELECTION (issue #44), for
+; the selection where getting it wrong made the debugger deaf on hardware.
+;
+; "3 = No joystick port" means the cable is on the WiFi connector CN9, which is
+; upstream's original setup and the alternative to a joystick port rather than
+; the other way round. With io mode off the two channels listen to different
+; pins (zxnext.vhd:3340-3341):
+;
+;   uart0_rx <= joy_uart_rx when ... nr_0b_joy_iomode_0 = '0' else i_UART0_RX;
+;   uart1_rx <= joy_uart_rx when ... nr_0b_joy_iomode_0 = '1' else pi_uart_rx;
+;
+; — UART0's is the CN9 pin the cable is on, UART1's is the Raspberry Pi header.
+; Asynchronous break needs UART1 while io mode is ON (see UT_transport_activate
+; on bit 0), and selecting it unconditionally for that reason pointed this
+; selection at the wrong pin: nothing arrived at all, reported by Maziac on real
+; hardware, 2026-08-15.
+;
+; ASSERTED ONLY FOR THE NO-PORT SELECTION, BECAUSE THAT IS THE HALF THAT IS TRUE
+; IN BOTH BUILDS — the WiFi build owns UART0 outright and never takes a joy
+; port, so this passes there for its own reason. The joy-port half is
+; variant-specific and is covered where it can be exercised rather than merely
+; read: `make test-uart-break`'s J1 breaks a running debuggee with bytes on a
+; cable in socket 2, which only reaches the FIFO of the channel NR 0x0B bit 0
+; routes the pin to.
+;
+; It reads a real port and calls only real code, so unlike its neighbours it
+; runs headless as well as under zsim.
+UT_transport_channel_follows_selection:
+    MEMSETBYTE uart_joyport_selection, 0
+    call transport_activate
+
+    ld a,HIGH UART_SELECT
+    in a,(LOW UART_SELECT)
+    and UART_SELECT_CHANNEL	; Z = UART0, which is CN9's
+    ld a,0
+    jr nz,.not_cn9	; ld a,0 does not touch the flags, so this is still the and
+    inc a
+.not_cn9:
     nop ; TEST ASSERTION a == 1
 
  TC_END
@@ -175,9 +228,19 @@ UT_transport_select_reclaimed:
 ; register" from "wrote back the same value" on the common path — the model
 ; sees only the final value.
 UT_transport_poll_borrows_select:
+    ; Establish a known channel and derive the debuggee's — see the test above
+    ; for why neither is written as a literal.
+    MEMSETBYTE uart_joyport_selection, 2
+    call transport_activate
+    ld a,HIGH UART_SELECT
+    in a,(LOW UART_SELECT)
+    and UART_SELECT_CHANNEL
+    xor UART_SELECT_CHANNEL
+    ld d,a	; D = the debuggee's channel. Preserved by the poll.
+
     ; The debuggee owns the pointer and has it on the other channel.
     ld bc,UART_SELECT
-    ld a,UART_SELECT_OTHER
+    ld a,d
     out (c),a
 
     ; Nothing on the link: the poll must answer "quiet"...
@@ -192,7 +255,7 @@ UT_transport_poll_borrows_select:
     ld a,HIGH UART_SELECT
     in a,(LOW UART_SELECT)
     and UART_SELECT_CHANNEL
-    cp UART_SELECT_OTHER
+    cp d
     ld a,0
     jr nz,.quiet_select
     inc a
@@ -206,7 +269,7 @@ UT_transport_poll_borrows_select:
     out (c),a
 
     ld bc,UART_SELECT
-    ld a,UART_SELECT_OTHER
+    ld a,d
     out (c),a
 
     call transport_poll_traffic
@@ -219,7 +282,7 @@ UT_transport_poll_borrows_select:
     ld a,HIGH UART_SELECT
     in a,(LOW UART_SELECT)
     and UART_SELECT_CHANNEL
-    cp UART_SELECT_OTHER
+    cp d
     ld a,0
     jr nz,.busy_select
     inc a

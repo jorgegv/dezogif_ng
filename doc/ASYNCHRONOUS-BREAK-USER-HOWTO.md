@@ -103,6 +103,13 @@ Add `WAIT <line>,0` and `MOVE $02,$08` **to the existing list**, at any raster p
 leave the rest of it alone. That is all the debugger needs — it does not care where in the list
 the two instructions sit or what else the list does.
 
+**Once your list is in, the debugger leaves it alone.** It installs only on the *first* attach of
+a session — before your program has been pushed to the machine, let alone run — and never again
+while a program is loaded, running or stopped. So reconnecting a client to a running program,
+which is an ordinary thing to do if your PC or your network drops out, does **not** overwrite your
+raster effects. The one thing that still will is pressing **C** twice: off stops the Copper and on
+installs the debugger's own list over yours.
+
 ### Choosing a line
 
 Any line works. `100` is mid-screen and well clear of the border. The NMI arrives at that

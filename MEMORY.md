@@ -33,6 +33,45 @@ route away from precisely the programs it was written for. One call site, and th
 reasoning is in `ui.asm`'s `copper_break_arm` where the next reader will be
 standing.
 
+**AND "cmd_init" WAS NOT NARROW ENOUGH EITHER — THE INDEPENDENT REVIEW REJECTED
+THE BRANCH FOR IT, AND WAS RIGHT.** The claim "there is provably nothing there to
+destroy" is true of a *first* attach and false of a **re-attach**, and the path is
+ordinary rather than exotic: a debuggee resumed with no temporary breakpoint is
+this feature's own headline use case; its client can be lost with no `CMD_CLOSE`
+(`KNOWN-ISSUES.md` #18/#19, and nothing detects that while it is genuinely
+`PRGM_RUNNING`); a new client's `CMD_INIT` is then the first byte the poll sees,
+so the poll breaks in and `cmd_call` — which dispatches on the command byte and
+carries no `prgm_state` guard — hands it to `cmd_init`. Unguarded, that reconnect
+overwrites the debuggee's own live list, irrecoverably.
+
+`copper_break_arm` installs only while **`prgm_state` is `PRGM_IDLE`**, which is
+exact for the question: that value holds only while nothing is loaded, running or
+stopped. **The call moves ABOVE `cmd_init`'s `PRGM_LOADING` write, and that
+ordering is the whole safety of it** — below, the guard reads `PRGM_LOADING` every
+time and is **silently inert**. Said at both sites for that reason; this project
+has paid for an unstated ordering constraint before (issue #37).
+
+**Rejected: a sticky "a debuggee has been continued" flag**, which removes the
+ordering trap for ~6 more bytes. It is worse *behaviour*, not merely dearer: after
+`CMD_CLOSE` and a fresh attach it would still refuse, so the common
+Shift+F5-then-F5 cycle would get no list if the previous debuggee had replaced it.
+The `prgm_state` test reinstalls exactly when the client has declared the previous
+session over. **What it deliberately does not guard** is that same `CMD_CLOSE`
+case: the old program's list is installed over. Accepted, and written down.
+
+**The guard's check is a UNIT TEST and only tests one direction, on purpose.**
+`ut_utilities.UT_copper_break_arm_refuses_re_attach` sets `prgm_state` to
+`PRGM_STOPPED`, clears NR `0x06` bit 3 — the first thing `copper_break_install`
+writes, and a register whose read-back shipped code already relies on — and
+requires it to stay clear. That is the **dangerous** direction: an inert guard
+installs where it must not. W10 covers the other direction end to end.
+**Asserting the install direction from a unit test was tried and must not be**:
+shown red by deleting the three guard instructions, the case reports `UT-FAIL`
+**and takes the whole suite down**, 5 of 71 cases with no `UT-DONE`, because the
+list it should have refused raises a Multiface NMI 50 times a second and the
+image's **stock** Multiface ROM takes the machine. Reasoned first, then measured,
+and the measurement is what turned it from a worry into the documented reason.
+
 **Rejected: making it unconditional, with no off switch.** The poll costs ~1288
 T-states a frame — 1.84% of a frame at 3.5 MHz — and a program that owns the
 Copper may want the debugger's hands off it entirely. Hence the **"C" key** and
@@ -62,10 +101,11 @@ wrong reason. The fixture's shape is asserted from the client's own
 exported, because a `W10_NO_COPPER` that silently stopped being honoured would
 turn W10 into a second W8 — green, and testing nothing.
 
-**Cost: +126 bytes in BOTH ROMs** (41 for the mechanism, the rest for the key and
-its row). `main_end` UART `0xF394` → `0xF412`, WiFi `0xFDE3` → `0xFE61`, both
-against `ROM_MAGIC_ADDR` `0xFE70`. **WiFi headroom 141 → 15 bytes**, taken with
-that known: **assume the WiFi build cannot grow at all** from here. A ROM moved,
+**Cost: +132 bytes in BOTH ROMs** (41 for the mechanism, 6 for the first-attach
+guard, the rest for the key and its row). `main_end` UART `0xF394` → `0xF418`,
+WiFi `0xFDE3` → `0xFE67`, both against `ROM_MAGIC_ADDR` `0xFE70`. **WiFi headroom
+141 → 9 bytes**, taken with that known: **assume the WiFi build cannot grow at
+all** from here. A ROM moved,
 so the merge carries a `make bump`.
 
 **A SECOND, SMALLER FINDING FROM MEASURING THAT: `CLAUDE.md`'s historical byte
@@ -79,8 +119,10 @@ reader is told to measure `main_end` against `ROM_MAGIC_ADDR` from a fresh build
 rather than derive it. **A number maintained by subtraction is a number that
 drifts**, and this one had.
 
-**NOT COVERED, and none of it is hidden.** **Hardware** — nothing in this change
-has been near a Next; Maziac's 2026-08-15 confirmation covers the *pre-existing*
+**NOT COVERED, and none of it is hidden.** **The re-attach path itself** — no
+bench stages a client vanishing and another reconnecting to a running debuggee,
+so what is checked is the *guard*, not the reconnect. **Hardware** — nothing in
+this change has been near a Next; Maziac's 2026-08-15 confirmation covers the *pre-existing*
 UART break, not this. **A program that installs its own Copper list WITHOUT the
 two instructions** now replaces a working break with a non-working one
 **silently**, where before the break simply never existed and its absence was

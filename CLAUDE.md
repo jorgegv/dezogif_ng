@@ -30,12 +30,17 @@ that is retracted**: the user's call (2026-08-10) is that the **debuggee's own p
 the two Copper instructions, so the debugger installs nothing, destroys nothing, and needs no
 switch. The write-only fact is unchanged and is precisely *why* the program owns the list.
 **AND THAT MOVED BACK HALFWAY ON 2026-08-15 (Maziac's idea, bench W10): THE DEBUGGER INSTALLS A
-LIST TOO, AT `cmd_init` AND NOWHERE ELSE, SO AN ORDINARY PROGRAM NEEDS NO SOURCE CHANGE AT ALL.**
-The write-only fact is *still* unchanged and is now what confines the write to that one call
-site — `cmd_init` runs as a client attaches, before its banks are pushed and long before the
-program runs, so there is provably nothing there to destroy; the Copper keeps executing after the
-program that wrote the list has gone, which is what makes so early a write survive into the run.
-**Never on the resume path**, which would destroy a debuggee's own list on every `CMD_CONTINUE`.
+LIST TOO, ON A **FIRST** `cmd_init` AND NOWHERE ELSE, SO AN ORDINARY PROGRAM NEEDS NO SOURCE CHANGE
+AT ALL.** The write-only fact is *still* unchanged and is now what confines the write to that one
+call site — a first `cmd_init` runs as a client attaches, before its banks are pushed and long
+before the program runs, so there is provably nothing there to destroy; the Copper keeps executing
+after the program that wrote the list has gone, which is what makes so early a write survive into
+the run. **Never on the resume path**, which would destroy a debuggee's own list on every
+`CMD_CONTINUE`. **AND NEVER ON A RE-ATTACH**: `copper_break_arm` installs only while `prgm_state`
+is `PRGM_IDLE`, because a reconnect to a running debuggee reaches `cmd_init` too — the poll breaks
+in on the new client's first byte and `cmd_call` has no `prgm_state` guard — and would otherwise
+overwrite that debuggee's own list. **The call sits ABOVE `cmd_init`'s `PRGM_LOADING` write and
+must stay there**; below it the guard reads `PRGM_LOADING` every time and is silently inert.
 A **Copper-using** program still carries the two instructions itself, and the **"C" key** on the
 stub's screen turns the whole thing off. See
 @doc/ASYNCHRONOUS-BREAK-DESIGN.md for the design — **§0.1 first** — and
@@ -266,13 +271,14 @@ the figures then were **UART 3201, WiFi 818** free to the identity block.
 WiFi 178**, measured, and the WiFi number is the one
 to plan against.
 
-**THEY ARE NOW UART 2654 AND WiFi 15, RE-MEASURED 2026-08-15 — AND THE WiFi BUILD IS EFFECTIVELY
-CLOSED.** `ROM_MAGIC_ADDR` is `0xFE70`; `main_end` is `0xF412` (UART) and `0xFE61` (WiFi), read off
-`build/*.list`, and the free figure is the difference. Fifteen bytes is not headroom, it is the
+**THEY ARE NOW UART 2648 AND WiFi 9, RE-MEASURED 2026-08-15 — AND THE WiFi BUILD IS CLOSED.**
+`ROM_MAGIC_ADDR` is `0xFE70`; `main_end` is `0xF418` (UART) and `0xFE67` (WiFi), read off
+`build/*.list`, and the free figure is the difference. Nine bytes is not headroom, it is the
 rounding error left over: **assume the WiFi build cannot grow at all** and cost any new feature
 accordingly. What spent it, in order: issue #42's UART-select borrow (+37 both), issue #44's
 runtime channel (+18, UART only), and the debugger installing the async-break Copper list at
-`cmd_init` with its "C" key and screen row (**+126 both**, taken with the consequence known).
+`cmd_init` with its "C" key, its first-attach guard and its screen row (**+132 both**, taken with
+the consequence known).
 *(The `2908`/`178` above were the figures of the day and are left as the measurement they were; do
 not try to reconcile them arithmetically with these — one of the historical numbers does not
 subtract cleanly and nobody has chased which. **Measure `main_end` against `ROM_MAGIC_ADDR` from a
@@ -296,7 +302,7 @@ bytes per byte** and should put its code in the debugger half instead, as `mf_nm
   #31: the image ends at `0xE000 + 0x2000 - MF.main_prg_copy`, so a step moves `ROM_MAGIC_ADDR` down
   by 16 as well. The two halves share **one** budget. M2 grows both, so plan against 818, not 3201.
   *(Those two are the 2026-08-09 figures. Plan against **15** today, and see the re-measurement
-  above.)*
+  above — **9**, not 15, since the first-attach guard.)*
 
 *(This paragraph previously said the half "CANNOT GROW" and called the address the contract. That was
 wrong and would have told a future session that M2's entry path is blocked when it is not — see
@@ -619,7 +625,18 @@ strongest:
    the client's own `FIXTURE 3 bytes, copper=no` line rather than from the env var having been set,
    because "the variable was exported" is not evidence that it was honoured — without that,
    `W10_NO_COPPER` silently ceasing to work would turn W10 into a second W8: green, and testing
-   nothing. **NOT covered**: hardware; and a debuggee that installs a Copper list of its **own**
+   nothing.
+   **THE GUARD THAT KEEPS `cmd_init` HONEST HAS A CHECK OF ITS OWN, AND IT IS A UNIT TEST RATHER
+   THAN A BENCH**: `ut_utilities.UT_copper_break_arm_refuses_re_attach` sets `prgm_state` to
+   `PRGM_STOPPED`, clears NR `0x06` bit 3 and requires `copper_break_arm` to leave it clear — the
+   **dangerous** direction, since an inert guard installs where it must not. W10 covers the other
+   direction end to end, and the install direction is deliberately NOT asserted from a unit test:
+   shown red by deleting the three guard instructions, the case reports `UT-FAIL` **and takes the
+   whole suite down with it**, 5 of 71 cases run with no `UT-DONE`, because the list it should have
+   refused raises a Multiface NMI 50 times a second and the image's stock Multiface ROM takes the
+   machine.
+   **NOT covered**: hardware; **the re-attach path itself**, which no bench stages — what is checked
+   is the guard, not the reconnect; and a debuggee that installs a Copper list of its **own**
    without the two instructions, which now loses the break *silently* — HOWTO state 4, staged by no
    run.
    **W7 RIDES ON W6's PRESS AND IS THE SAME DEFECT TWO BYTES ALONG** (issue #37): the entry path
@@ -810,13 +827,16 @@ strongest:
    See `doc/DZRP-TESTING.md`. Like `test-esp`, not part of `make test`: it binds a host TCP port.
    **It says nothing about hardware.**
 4d. **`make test-unit`** — the Z80 unit tests under `src/unit_tests/`, headless (issue #3). One
-   jnext run of `build/ut-headless.nex`, 6 checks. **30 of the 70 test cases run; 40 cannot and
+   jnext run of `build/ut-headless.nex`, 6 checks. **31 of the 71 test cases run; 40 cannot and
    are reported as `UT-SKIP` on every run.** Those 40 need ports invented by `src/simulation/uart.js`,
    a JavaScript peripheral DeZog's zsim loads as `customCode` — the Z80 cannot trap its own I/O,
    so they are unreachable from inside the guest, and a project-specific peripheral does not
    belong in jnext. **Do not read a green run as "the unit tests pass"**; read it as
-   "the 30 that can run, pass". **The 30th is `ut_uart.UT_transport_channel_follows_selection`,
-   issue #44** — the no-joystick-port selection must select **UART0**, whose receiver is the CN9
+   "the 31 that can run, pass". **The 31st is
+   `ut_utilities.UT_copper_break_arm_refuses_re_attach`**, which requires the debugger's
+   asynchronous-break Copper list to be installed on a FIRST attach only — see W10 above for why
+   its pair lives in a bench rather than beside it. **The 30th is
+   `ut_uart.UT_transport_channel_follows_selection`, issue #44** — the no-joystick-port selection must select **UART0**, whose receiver is the CN9
    pin a serial adapter is on, where the async-break work had made it UART1 unconditionally and
    the debugger heard nothing. It runs headless because it reads a real port and calls only real
    code; it asserts **only** the no-port half, which is true in both builds, and the joy-port half

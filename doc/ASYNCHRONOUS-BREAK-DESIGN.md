@@ -186,10 +186,41 @@ So a list can be written *before the debuggee exists*, and still be running once
 §3.1 contemplated that, because §0's framing put the write at resume time, where the debuggee's own
 list is already live.
 
-**`cmd_init` IS THE ONLY SAFE MOMENT AND THAT IS THE WHOLE DESIGN.** It runs as a DZRP client opens a
-session — before `CMD_WRITE_BANK` has pushed a single bank, and long before anything runs. There is
-provably nothing there to destroy. So the debugger writes a list at exactly the one instant at which
-§3.1's irrecoverable cost is zero.
+**A *FIRST* `cmd_init` IS THE ONLY SAFE MOMENT AND THAT IS THE WHOLE DESIGN.** It runs as a DZRP
+client opens a session — before `CMD_WRITE_BANK` has pushed a single bank, and long before anything
+runs. There is provably nothing there to destroy. So the debugger writes a list at exactly the one
+instant at which §3.1's irrecoverable cost is zero.
+
+**"A FIRST" IS LOAD-BEARING AND THE FIRST VERSION OF THIS SECTION SAID ONLY "`cmd_init`", WHICH WAS
+WRONG — found in review before it shipped.** A *re-attach* also reaches `cmd_init`, and by then a
+debuggee may own the Copper. The path is ordinary rather than exotic, which is what makes it worth
+the paragraph: a debuggee resumed with `CMD_CONTINUE` and no temporary breakpoint is this feature's
+own headline use case; its client can then be lost with no `CMD_CLOSE` — `KNOWN-ISSUES.md` #18 and
+#19, and nothing detects that while a debuggee is genuinely `PRGM_RUNNING`; a new client connects and
+its `CMD_INIT` is the first byte the poll sees, so the poll breaks in and `cmd_call` — which
+dispatches on the command byte and carries no `prgm_state` guard of its own — hands it to `cmd_init`.
+Unguarded, that reconnect overwrites the debuggee's own live list, irrecoverably.
+
+So `copper_break_arm` installs only while **`prgm_state` is `PRGM_IDLE`**, which is exact for the
+question: that value holds only while nothing is loaded, running or stopped. **The call in `cmd_init`
+sits ABOVE the `PRGM_LOADING` write it used to sit below, and that ordering is the whole safety of
+it** — below, the guard reads `PRGM_LOADING` every time and is **silently inert**. It is stated at
+both sites for that reason.
+
+**Refusing loses no break**: the list installed on the first attach is still running unless the
+debuggee replaced it, and the "C" key forces an install. **What it deliberately does NOT guard**:
+`CMD_CLOSE` sets `PRGM_IDLE` and does not stop the Copper, so a `CMD_INIT` after one installs over
+whatever the closed session's program left running — accepted, because the client has said the
+session is over and the usual next act is to push and run a program that reinstalls its own list.
+Nothing stages that.
+
+**The guard's check is `ut_utilities.UT_copper_break_arm_refuses_re_attach`, headless, on the
+dangerous direction** — inert guard means it installs when it must not — with **W10** covering the
+other direction end to end. Shown red by removing the three guard instructions, and the red is
+double: the case reports `UT-FAIL`, **and it takes the whole suite down**, 5 of 71 cases run with no
+`UT-DONE`, because the install left a Copper list raising a Multiface NMI 50 times a second and the
+image's stock Multiface ROM took the machine. That is measured, and it is also why the install
+direction is not asserted from inside a unit test.
 
 **IT MUST NOT BE CALLED FROM A RESUME OR FROM A BREAK, and that is the constraint §3.1 now serves
 rather than the prohibition it used to be.** By then a debuggee's own list may be live, and
@@ -226,8 +257,9 @@ response to `CMD_PAUSE` within 25s"*.
 wrote the list, which is this feature's whole premise, so a W10 sharing a machine with W8 would break
 in off *W8's fixture's* list and pass for the wrong reason.
 
-**Cost: +126 bytes in BOTH ROMs** — 41 for the mechanism, the rest for the "C" key and its screen
-row. **WiFi headroom 141 → 15 bytes**, which effectively closes that build; taken with that known.
+**Cost: +132 bytes in BOTH ROMs** — 41 for the mechanism, 6 for the first-attach guard, the rest for
+the "C" key and its screen row. **WiFi headroom 141 → 9 bytes**, which closes that build; taken with
+that known.
 Row **14** was the one free row on both screens, and the benches that read this screen as text read
 rows 7, 8 and 12, so nothing they look at moved.
 

@@ -238,6 +238,15 @@ UT_itoa_5digits:
 ; writes (through mf_nmi_enable), so it is set whenever the guard lets anything
 ; through. It reads back (zxnext.vhd:5900) and shipped code already relies on
 ; that read, unlike NR 0x62's.
+;
+; SHOWN RED, and the red did two things. With the three guard instructions taken
+; out and nothing else changed, this test reports UT-FAIL — so it can fail, and
+; it fails on exactly the thing it is about. It ALSO took the whole suite down
+; with it: 5 of 71 cases ran and no UT-DONE line was printed, because the install
+; it should have refused left a Copper list raising a Multiface NMI 50 times a
+; second and the image's stock Multiface ROM took the machine. That is the
+; hazard the paragraph above gives as the reason for not asserting the install
+; direction here, measured rather than argued.
 UT_copper_break_arm_refuses_re_attach:
     ; The "C" key is on, so the only thing that can refuse is the guard.
     MEMSETBYTE copper_break_enabled, 1

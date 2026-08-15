@@ -871,7 +871,7 @@ program that wrote the list has gone, which is what makes that early write survi
 What is unchanged: a **Copper-using** program still carries the two instructions itself, because its
 own list overwrites the debugger's. What is new: the **"C" key** on the stub's screen turns the
 feature off, and a program that installs a list without the two instructions now loses the break
-*silently*. Costs **+126 bytes in both ROMs**, taking WiFi headroom to **15**. See
+*silently*. Costs **+132 bytes in both ROMs**, taking WiFi headroom to **9**. See
 [ASYNCHRONOUS-BREAK-DESIGN.md](ASYNCHRONOUS-BREAK-DESIGN.md) §0.1. **Not on hardware.**
 
 The 2026-08-08 evaluation follows, annotated. Its VHDL and its reasoning stand; its verdict is

@@ -2,7 +2,7 @@
 
 `make test-unit` runs the Z80 unit tests under `src/unit_tests/` in jnext, with no VS Code and no
 DeZog, and gates on the result. This document says how that works, what it does **not** cover, and
-why 40 of the 70 test cases cannot run at all outside DeZog.
+why 40 of the 71 test cases cannot run at all outside DeZog.
 
 Issue: [#3](https://github.com/jorgegv/dezogif_ng/issues/3).
 
@@ -158,7 +158,7 @@ identical to the single-run ones.
 
 ## 5. What does NOT run, and why
 
-**40 of the 70 test cases are excluded.** They are reported as `UT-SKIP` on every run rather than
+**40 of the 71 test cases are excluded.** They are reported as `UT-SKIP` on every run rather than
 dropped from the table, because an exclusion that does not appear in the output is an exclusion
 nobody will notice.
 
@@ -210,9 +210,16 @@ was wrong: `UT_transport_poll_borrows_select` stages its byte through `PORT_TEST
 (port `0x8000`) and so keeps a marker of its own. The check is a `grep` over the test bodies, not
 a memory of which tests carried which marker.
 
-### What the 29 that do run actually cover
+### What the 31 that do run actually cover
 
-All of `ut_utilities.asm` (nextreg read/write, division, itoa), all of `ut_breakpoints.asm` (the
+*(This heading read **29** until 2026-08-15 and was already two behind: issue #44 added
+`ut_uart.UT_transport_channel_follows_selection` and did not move it, and the asynchronous-break
+guard adds `ut_utilities.UT_copper_break_arm_refuses_re_attach`. The totals were pinned in the
+Makefile and the bench throughout, which is why nothing could drift except this prose — the same
+shape CLAUDE.md records for the 28.)*
+
+All of `ut_utilities.asm` (nextreg read/write, division, itoa, and the first-attach guard on the
+asynchronous-break Copper list), all of `ut_breakpoints.asm` (the
 temporary-breakpoint bookkeeping, 8 cases), all of `ut_backup.asm` (register save/restore
 including the shadow set, I and IM, and `read`/`write_debugged_prgm_mem` across the slot-7 and
 `0xFFFF`/`0x0000` bank boundaries — i.e. the **SWAP-window paging** the plan's §4.1 is about),
@@ -237,5 +244,5 @@ protocol over a real socket and does not need any of this.
   its gate is `make test-dzrp-stub`. The channel-choice case in particular says which channel was
   **selected** and nothing about what arrives on it: no bench here can put a byte on CN9.
 - **It does not replace the DeZog path.** `make unit-tests` still builds `build/ut.nex`, and the
-  "Unit Tests" launch configuration still runs all 70 cases in VS Code with the plugin, which is
+  "Unit Tests" launch configuration still runs all 71 cases in VS Code with the plugin, which is
   the only way the excluded 40 can ever be exercised.

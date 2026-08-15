@@ -823,6 +823,15 @@ transport_init:
 ; user pressing "3" comes back through here (read_key_joyport -> main_redraw),
 ; where the newly selected channel gets configured before anything reads it.
 ;
+; REPROGRAMMING THE LINK AT EVERY ENTRY CANNOT DISTURB A BYTE IN FLIGHT, which
+; matters because the poll can break in on a CMD_PAUSE with more of the client's
+; traffic still arriving. The receiver latches its prescaler and frame bits when
+; it sees a start bit and holds them for the whole character
+; (serial/uart_rx.vhd:51, :143-151), and the transmitter samples at the moment a
+; byte is sent (uart_tx.vhd:37-38) — so a write landing mid-character is picked
+; up by the NEXT one. The one bit that WOULD abort a transfer is the frame
+; register's bit 7, and transport_init always writes it clear.
+;
 ; This is the right single place: all three entries into the debugger come
 ; through here (main.asm, mf.asm, breakpoints.asm) and none of them has touched
 ; the link yet.

@@ -138,6 +138,14 @@ UT_transport_deactivate:
 ; derives the other by flipping the select bit. One source, correct for both
 ; variants and every selection; and it is exactly what a transposition of the
 ; two channels would fail, which a literal 0x40 would not.
+;
+; "CORRECT FOR BOTH VARIANTS" IS AN ARGUMENT AND NOT A MEASUREMENT, and that was
+; found by an independent reviewer trying it: `make TRANSPORT=wifi ut-headless`
+; does not assemble at all, here or on main, and has not for some time — it dies
+; on an unrelated missing label in this very file's first test. So no run
+; anywhere has ever built these against the WiFi transport. The variant-neutral
+; style still costs nothing and is still the right way to write them; what it
+; does not have is a check behind it.
 UT_transport_select_reclaimed:
     ; Establish a known channel, and learn which one it is.
     MEMSETBYTE uart_joyport_selection, 2

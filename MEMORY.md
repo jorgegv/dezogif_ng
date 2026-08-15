@@ -54,12 +54,18 @@ who might send is not the same as one that enumerates who used to.
    header had claimed it did for years — an over-claim that would have made this
    call look unsafe and, believed the other way round, would have corrupted
    every breakpoint's reported reason.
-3. **Issue #42's poll guard became a runtime value.** It compared the live select
-   against the build-time constant `UART_SELECT_OURS`; under the no-port
-   selection that constant is the wrong channel, so the guard would borrow on
-   *every* call and poll the Pi header for ever. Not a second bug — the same one
-   arriving through the guard. The guard now pushes HL to read the channel out
-   of RAM: ~31 T-states on a poll measured at ~1288.
+3. **Issue #42's poll guard became a runtime value**, and this one is a
+   **counterfactual rather than a description of the shipped defect** — worth
+   saying, because the reviewer read it the other way first. As shipped the
+   guard was *consistent* with the bug: `transport_init` wrote UART1, the
+   constant said UART1, so the poll took the fast path and read UART1 for ever.
+   What the item records is what fixing items 1 and 2 **alone** would have
+   produced: `transport_init` writing UART0 while the constant still said
+   UART1, so the guard would have borrowed on *every* call, pointed the
+   hardware back at the Pi header for the read, and never seen the cable. Not a
+   second bug — the same one arriving through the guard, and the reason the
+   guard could not be left alone. It now pushes HL to read the channel out of
+   RAM: ~31 T-states on a poll measured at ~1288.
 
 **Rejected: configuring BOTH channels at start-up**, which is the obvious way to
 make a runtime switch safe. It writes UART0's frame and prescaler on a joy-port
@@ -84,7 +90,11 @@ debuggee at all if the channel and NR `0x0B` bit 0 disagreed. Counts 69/29/40 �
 The two tests that named the removed constants now **derive** the channel at run
 time instead, which is the same move their own comment already argued for: which
 UART is ours differs between builds and, since this change, between selections
-within one.
+within one. **And that comment's "one source, correct for both variants" turns
+out to be an argument with no check behind it**, found by the reviewer trying
+it: `make TRANSPORT=wifi ut-headless` does not assemble at all, here or on
+`main`, dying on an unrelated missing label. Pre-existing, not caused by this
+change, and now said out loud where the claim is made.
 
 **Cost: UART `main_end` 0xF382 → 0xF394, +18 bytes. The WiFi ROM is
 byte-identical** to `main`'s pinned (`ea0a33ec…` both sides, `build/*.bin`

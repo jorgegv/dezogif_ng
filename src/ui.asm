@@ -115,10 +115,39 @@ check_key_border:
 ; then the debuggee's own list may be live, and re-installing would destroy it
 ; on every single CMD_CONTINUE - which would take the HOWTO's route away from
 ; precisely the programs it was written for.
+;
+; AND "cmd_init RUNS BEFORE THE PROGRAM HAS RUN" IS ONLY TRUE OF A *FIRST*
+; ATTACH, WHICH IS WHY prgm_state IS TESTED BELOW. Found in review, and the
+; path is ordinary rather than exotic: a debuggee resumed with CMD_CONTINUE and
+; no breakpoint is exactly this feature's headline use case; the client's
+; connection can then be lost with no CMD_CLOSE (KNOWN-ISSUES.md #18/#19, and
+; nothing detects that while a debuggee is genuinely running); a new client
+; connects and its CMD_INIT is the first byte the poll sees, which breaks in and
+; dispatches it here. cmd_call has no prgm_state guard of its own - the dispatch
+; is on the command byte alone - so without the test below that reconnect would
+; silently overwrite the debuggee's own live list, irrecoverably.
+;
+; PRGM_IDLE is exact for the question: it holds only while nothing is loaded,
+; running or stopped. Anything else means a debuggee exists and may own the
+; Copper. The break itself is not lost by refusing - the list installed on the
+; first attach is still running unless the debuggee replaced it, and the "C" key
+; forces an install if a user really wants one.
+;
+; WHAT THIS DOES *NOT* GUARD, deliberately: CMD_CLOSE sets PRGM_IDLE and does
+; not stop the Copper, so a CMD_INIT after one installs over whatever the closed
+; session's program left running. That is accepted - the client has said the
+; session is over, and the usual next act is to push and run a program, which
+; reinstalls its own list anyway. Nothing stages it.
 ; Changes:
 ;   AF, BC
 ;===========================================================================
 copper_break_arm:
+    ; A FIRST attach only. Its caller reads prgm_state BEFORE overwriting it
+    ; with PRGM_LOADING - see the ordering note at the call site in cmd_init,
+    ; because getting that wrong makes this test silently inert.
+    ld a,(prgm_state)
+    cp PRGM_IDLE
+    ret nz
     ; The "C" key's state, tested here rather than at the call site so that
     ; cmd_init carries one call and no branch.
     ld a,(copper_break_enabled)
@@ -159,7 +188,9 @@ copper_break_install:
 ; That is the honest cost of the "C" key, and it is why the key exists rather
 ; than the feature simply being unconditional.
 ; Changes:
-;   AF, BC
+;   nothing. `nextreg n,n` is the Z80N immediate-immediate form (ED 91 rr nn)
+;   and touches no register; this header said "AF, BC" until the review counted
+;   the bytes. Its one caller clobbers AF on return regardless.
 ;===========================================================================
 copper_break_stop:
     nextreg REG_COPPER_CONTROL_H,RCCH_COPPER_STOP

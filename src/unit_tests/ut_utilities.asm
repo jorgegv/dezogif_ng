@@ -213,4 +213,60 @@ UT_itoa_5digits:
 .output:	defb 0,0,0,0,0,0
 
 
+; Tests that copper_break_arm REFUSES to install the asynchronous-break Copper
+; list unless prgm_state says nothing is loaded, running or stopped.
+;
+; THE DIRECTION TESTED HERE IS THE DANGEROUS ONE. If the guard ever goes inert —
+; and the way it goes inert is quiet, by somebody moving cmd_init's call BELOW
+; the write of PRGM_LOADING two instructions under it — then a re-attach to a
+; running debuggee installs over that debuggee's OWN Copper list. The list is
+; write-only (zxnext.vhd:3959-3976, :3980-3998), so its raster effects are gone
+; for the session and nothing can put them back. That path is ordinary: the
+; client vanishes with no CMD_CLOSE, a new one connects, its CMD_INIT is the
+; first byte the poll sees, and cmd_call dispatches on the command byte with no
+; prgm_state guard of its own. Found in review, 2026-08-15.
+;
+; The OTHER direction — a first attach really does install — is covered end to
+; end by bench W10, whose three-byte fixture installs no list of its own and is
+; still stopped by CMD_PAUSE. It is deliberately not repeated here: asserting it
+; would mean leaving a live Copper list raising a Multiface NMI 50 times a
+; second inside a unit-test run whose SD image carries the STOCK Multiface ROM,
+; which would take the screen. Refusing installs nothing, so this test starts no
+; Copper and cannot flake that way.
+;
+; NR 0x06 bit 3 is the observable, and it is the FIRST thing copper_break_install
+; writes (through mf_nmi_enable), so it is set whenever the guard lets anything
+; through. It reads back (zxnext.vhd:5900) and shipped code already relies on
+; that read, unlike NR 0x62's.
+UT_copper_break_arm_refuses_re_attach:
+    ; The "C" key is on, so the only thing that can refuse is the guard.
+    MEMSETBYTE copper_break_enabled, 1
+    ; A debuggee exists. PRGM_STOPPED is what a re-attach really sees: the poll
+    ; breaks in through send_ntf_pause, which sets it, before cmd_loop reads the
+    ; command that caused the break.
+    MEMSETBYTE prgm_state, PRGM_STOPPED
+
+    ; Clear the MF NMI gate so that "still clear" means "nothing installed".
+    ; The ORIGINAL byte is kept, not the masked one, so the restore below puts
+    ; back what was there rather than asserting what it must have been.
+    ld a,REG_PERIPHERAL_2
+    call read_tbblue_reg
+    push af		; The original, bit 3 and all
+    and 11110111b
+    nextreg REG_PERIPHERAL_2,a
+
+    call copper_break_arm
+
+    ld a,REG_PERIPHERAL_2
+    call read_tbblue_reg
+    and 00001000b
+    nop ; TEST ASSERTION A == 0
+
+    ; Put the gate back exactly as it was found. Safe with no list installed:
+    ; the Copper is not running, so re-arming the gate cannot produce an NMI.
+    pop af
+    nextreg REG_PERIPHERAL_2,a
+ TC_END
+
+
     ENDMODULE

@@ -38,6 +38,18 @@
 #          TRANSPORT_DEACTIVATE left, sampled by the debugged program.
 #     J5   and the stub's screen says so, on the row the HOWTO sends a user to.
 #
+#   run 4  a debuggee that installs NOTHING — the same fixture minus its 44
+#          bytes of Copper setup: `di`, the witness read, `jr $`.
+#     J6   THE DEBUGGER'S OWN COPPER LIST BREAKS IT IN, over the cable. Since
+#          2026-08-15 cmd_init installs a list on a first attach, in common code
+#          with no ROM_VARIANT guard, so the serial build gets it too and the
+#          joy-port default of 2 means the serial ROM ships with PC-initiated
+#          break ON. J1 CANNOT SEE THAT — its fixture arms the Copper itself and
+#          is green either way — which is exactly W10's argument on this
+#          transport. Needs its own run for W10's reason too: the Copper outlives
+#          the program that wrote the list, so sharing a machine with run 1 would
+#          break in off run 1's list and pass for the wrong reason.
+#
 #   run 2  the control — identical, stream truncated after CMD_CONTINUE.
 #     J2   NOTHING may come back. Without it a green J1 is not evidence that the
 #          CABLE caused the break rather than the debuggee stopping by itself,
@@ -207,6 +219,7 @@ sd=$OUT/sd-uart-break.img
 font=$OUT/font-48-uart-break.rom
 stream=$OUT/uart-break-stream.bin
 stream_ctl=$OUT/uart-break-stream-control.bin
+stream_nc=$OUT/uart-break-stream-nocopper.bin
 
 jnext_pid=""
 cleanup() {
@@ -234,6 +247,8 @@ mcopy -o -i "$sd@@$part_off" "$FONT_ROM_PATH" "$font" \
 log "== building the recorded command streams"
 python3 "$CABLE" build "$stream"           | sed 's/^/  | /'
 python3 "$CABLE" build "$stream_ctl" --control | sed 's/^/  | /'
+nc_build=$(J6_NO_COPPER=1 python3 "$CABLE" build "$stream_nc")
+printf '%s\n' "$nc_build" | sed 's/^/  | /'
 
 failures=0
 pass() { printf 'PASS  %s\n' "$*"; }
@@ -408,6 +423,75 @@ else
 fi
 
 # ===========================================================================
+# Run 4 — J6: A DEBUGGEE THAT INSTALLS NOTHING, BROKEN IN OVER THE CABLE.
+#
+# THE SERIAL BUILD GETS THE DEBUGGER'S OWN COPPER LIST TOO, AND NOTHING HERE
+# EXERCISED THAT. `cmd_init`'s call to copper_break_arm is common code with no
+# ROM_VARIANT guard anywhere near it, so the install-at-first-attach behaviour
+# is identical in both builds — but run 1's fixture arms the Copper ITSELF, as
+# a Copper-using program does, so J1 is green whether the debugger armed one or
+# not and cannot see the feature at all. This is W10's argument on the serial
+# transport, and it matters more here than there: the joy-port default is 2, so
+# the serial ROM ships with PC-initiated break ON, and this is the build a user
+# with a cable actually runs.
+#
+# The fixture is THE SAME ONE minus its 44 bytes of Copper setup — `di`, the
+# witness read, `jr $` — so the only thing that can raise a Multiface NMI 50
+# times a second is the list cmd_init armed. Its shape is asserted from the
+# build line rather than from J6_NO_COPPER having been exported, for the reason
+# that line prints it.
+#
+# IT NEEDS ITS OWN RUN for W10's reason: the Copper outlives the program that
+# wrote the list, which is the whole premise, so sharing a machine with run 1
+# would break in off run 1's fixture's list and pass for the wrong reason.
+#
+# The witness is asserted too, and costs nothing extra: the read is the
+# fixture's first instruction in both shapes, so NR 0x0B must still be 0xB1.
+# That is J3's subject re-observed on a debuggee that installed nothing, which
+# is worth having free rather than worth a sixth id.
+#
+# SHOWN RED THE DECISIVE WAY: against main's UART ROM — which contains no
+# copper_break_arm at all — J6 reports "no notification: the running debuggee
+# was never stopped" WITH J1 GREEN IN THE SAME RUN. That pairing is the whole
+# evidence, and it is #44's J1-green/J3-red shape: J1 passes there because its
+# own fixture arms the Copper, which is precisely why J1 cannot be the check for
+# this. Reproduce it with
+#
+#   ROM=<a main-built enNextMf.rom> ./test/run-uart-break.sh
+#
+# INVOKED DIRECTLY AND NOT THROUGH make, because the recipe passes ROM=
+# explicitly and silently overrides the environment — through make, the control
+# runs the branch's own ROM and comes out GREEN. That is recorded in
+# MEMORY.md for W5, it bit again here, and it is now in ERRORS.md.
+# ===========================================================================
+
+log ""
+log "== run 4: a debuggee that installs no Copper list, stopped over the cable"
+
+nc_log=$OUT/uart-break-nocopper.log
+nc_shot=$OUT/screenshots/uart-break-nocopper.png
+run_stub nocopper 2 "$stream_nc"
+
+if [ "$(printf '%s' "$nc_build" | grep -c 'copper=no')" -ne 1 ]; then
+    fail "J6 precondition: the stream was not built with the bare fixture, so it may have armed the Copper itself"
+elif ! stream_delivered "$nc_log"; then
+    fail "J6 the cable delivered nothing: $(grep -o 'Current NR 0x0B = .*' "$nc_log" | head -1)"
+else
+    set +e
+    nc_out=$(J6_NO_COPPER=1 python3 "$CABLE" verdict "$nc_log" --label nocopper --expect-nr0b 0xB1 2>&1)
+    nc_rc=$?
+    set -e
+    printf '%s\n' "$nc_out" | sed 's/^/  | /'
+    if [ "$nc_rc" -ne 0 ]; then
+        fail "J6 precondition: $(printf '%s' "$nc_out" | sed -n 's/^PRECONDITION nocopper //p' | head -1)"
+    elif [ "$(printf '%s' "$nc_out" | grep -c '^RESULT nocopper break OK')" -eq 1 ]; then
+        pass "J6 the debugger's own Copper list breaks a bare debuggee in over the cable"
+    else
+        fail "J6 $(printf '%s' "$nc_out" | sed -n 's/^RESULT nocopper break BAD //p' | head -1)"
+    fi
+fi
+
+# ===========================================================================
 # J5 — the screen row the HOWTO sends a user to, read as TEXT.
 #
 # READ, NOT DIFFED, and that is mfselect's M9 lesson: two runs differing in the
@@ -455,13 +539,13 @@ fi
 
 # ---------------------------------------------------------------------------
 
-rm -f "$stream" "$stream_ctl" "$font"
+rm -f "$stream" "$stream_ctl" "$stream_nc" "$font"
 
 log ""
 if [ "$failures" -eq 0 ]; then
-    log "All 5 checks passed."
+    log "All 6 checks passed."
 else
-    log "$failures of 5 checks FAILED."
+    log "$failures of 6 checks FAILED."
 fi
 # Referenced so `set -u` cannot turn an unused bookkeeping variable into a late
 # abort if a future check reads them; they are the run-level summaries.

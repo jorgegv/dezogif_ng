@@ -142,6 +142,36 @@ reader is told to measure `main_end` against `ROM_MAGIC_ADDR` from a fresh build
 rather than derive it. **A number maintained by subtraction is a number that
 drifts**, and this one had.
 
+**THE LAST REVIEW ROUND FOUND A COVERAGE GAP RATHER THAN A CLAIM, AND IT IS THE
+ONE THAT MATTERED MOST TO A USER.** `cmd_init`'s call to `copper_break_arm` is
+common code with **no `ROM_VARIANT` guard**, so install-on-first-attach applies
+identically to the **serial** build — and the joy-port default is 2, so the
+serial ROM ships with PC-initiated break **on**. Nothing exercised it there:
+`test-uart-break`'s J1-J5 all use a fixture that carries its own 44 bytes, which
+is exactly the shape W8 had before W10 was written. The reviewer judged a
+documented gap proportionate and did not require a check; **it got one anyway**,
+because this is the build a user with a cable actually runs and the fixture split
+was twenty minutes' work.
+
+**J6** is W10's argument on that transport: the same fixture minus its Copper
+setup — measured at exactly the **44 bytes** the HOWTO quotes, which is a
+pleasing independent check of that figure — `di`, the witness read, `jr $`.
+**Shown red against `main`'s UART ROM with J1 GREEN in the same run**, which is
+#44's J1-green/J3-red shape and is the only pairing that proves anything here:
+J1 passes there precisely because its own fixture arms the Copper.
+
+**AND THE RED-FIRST NEARLY DID NOT HAPPEN, WHICH IS ITS OWN ENTRY IN
+[[ERRORS.md]].** `ROM=… make test-uart-break` **silently ignores the override** —
+the recipe passes `ROM=` explicitly, and its first line rebuilds the ROM — so the
+control ran the branch's own bytes and came out **fully green**, J6 included,
+against a ROM with no `copper_break_arm` in it at all. The only reason that was
+caught is that the check had been red-firsted against a defect certain **by
+construction**, so a pass was impossible and had to be a fault in the experiment.
+`MEMORY.md` has recorded this exact trap since 2026-08-11 — for W5, in an entry
+about something else — and knowing it existed for one bench did not stop me
+walking into it on another. **A control that passes is a result about the
+harness, never about the code.**
+
 **AND MY OWN SWEEP FOR STALE SITES MISSED ONE, IN THE ROUND WHOSE SUBJECT WAS
 STALE SITES.** I grepped, whitespace-flattened, for the **phrasings I had used**
 — "the debugger installs nothing", "gets no asynchronous break at all" — and

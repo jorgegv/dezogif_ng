@@ -1307,8 +1307,8 @@ strongest:
    60 seconds is the right period; and the outage arriving **while a DZRP session is open**, which
    the stub deliberately does not re-query through. See `test/run-wifi-assoc.sh`.
 4o. **`make test-uart-break`** — **ASYNCHRONOUS BREAK OVER THE SERIAL CABLE (issue #43), and the
-   first run of any kind to drive the joy-port transport with a DZRP client.** 3 headless jnext
-   runs, 5 checks. It fills in the top rung of `doc/ASYNCHRONOUS-BREAK-DESIGN.md` §8.0's evidence
+   first run of any kind to drive the joy-port transport with a DZRP client.** 4 headless jnext
+   runs, 6 checks. It fills in the top rung of `doc/ASYNCHRONOUS-BREAK-DESIGN.md` §8.0's evidence
    ladder: `TRANSPORT_DEACTIVATE` — the one line the feature turns on — was reached by **no
    headless run at all**, because it runs only from `restore_registers`, reached only from
    `cmd_continue`, which needs a client on that transport and nothing had ever been one, in jnext
@@ -1320,6 +1320,20 @@ strongest:
    jnext's own UART TX log (`uart.cpp:743`, at `debug`). The stream is self-framing because UART
    mode prefixes every reply with `MESSAGE_START_BYTE`, which is upstream's documented serial
    extension rather than a defect.
+   **J6 IS THE SERIAL BUILD'S W10, AND IT IS THE ONLY CHECK THAT SEES THE DEBUGGER'S OWN COPPER
+   LIST ON THIS TRANSPORT** (2026-08-15). `cmd_init`'s call to `copper_break_arm` is common code
+   with **no `ROM_VARIANT` guard**, so install-on-first-attach applies identically to the serial
+   build — and since the joy-port default is 2, **the serial ROM ships with PC-initiated break
+   ON**, which is the build a user with a cable actually runs. J1 cannot see any of that: its
+   fixture arms the Copper itself and is green either way. J6's fixture is the same one **minus its
+   44 bytes of Copper setup** — `di`, the witness read, `jr $` — so the only thing that can raise a
+   Multiface NMI is the list `cmd_init` armed. Its own run, for W10's reason: the Copper outlives
+   the program that wrote the list, so sharing a machine with run 1 would break in off run 1's list
+   and pass for the wrong reason. **Shown red the decisive way — against `main`'s UART ROM, which
+   has no `copper_break_arm` at all, J6 reports *"the running debuggee was never stopped"* WITH J1
+   GREEN IN THE SAME RUN**, which is #44's J1-green/J3-red shape. **That control must be run by
+   invoking `test/run-uart-break.sh` DIRECTLY**: the Makefile recipe passes `ROM=` explicitly and
+   silently overrides the environment, so through `make` it comes out green — ERRORS.md.
    **J1** a freely running debuggee — carrying the Copper list itself, resumed with **no**
    temporary breakpoint — is stopped by bytes on the cable: `MANUAL_BREAK`, `PC` at its spin, `SP`
    its own, still serving. **J2** its control, W3's shape: the same run with the stream truncated
@@ -1420,7 +1434,7 @@ Two things the shortening may **never** touch, because they are interface rather
   | `K1`-`K4` | `test/run-cipsto.sh` | `make test-cipsto` |
   | `L1`-`L5` | `test/run-baud.sh` | `make test-baud` |
   | `D1`-`D8` | `test/run-wifi-assoc.sh` | `make test-wifi-assoc` |
-  | `J1`-`J5` | `test/run-uart-break.sh` | `make test-uart-break` |
+  | `J1`-`J6` | `test/run-uart-break.sh` | `make test-uart-break` |
   | `H1`-`H7` | `test/hardware-check.py` | `make test-hardware` |
   | `A0`-`A6` | `test/slot-ceiling-probe.py` | `make probe-slots` |
   | `B0`-`B5` | `test/vanished-peer-probe.py` | `make probe-vanished` |

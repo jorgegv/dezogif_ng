@@ -5,6 +5,65 @@ attempting similar logic.
 
 ---
 
+## `ROM=` on the make command line is SILENTLY IGNORED, so the red-first control runs the ROM it was meant to replace
+
+**Symptom.** A brand-new bench check, written to catch a defect that `main`'s ROM has by
+construction, **passed against `main`'s ROM**:
+
+```
+$ ROM=~/tmp/scratchpads/copper-land/main-uart.rom make test-uart-break
+PASS  J6 the debugger's own Copper list breaks a bare debuggee in over the cable
+All 6 checks passed.
+```
+
+`main` contains no `copper_break_arm` — `grep -c` says 0 in both `src/ui.asm` and
+`src/commands.asm` — so nothing there can raise the NMI the check depends on. The check had to be
+red and was green.
+
+**Cause.** The bench honours `ROM=${ROM:-$OUT/enNextMf.rom}`, but the **Makefile recipe passes it
+explicitly**:
+
+```make
+test-uart-break:
+	@$(MAKE) --no-print-directory mf-rom
+	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \
+	 ROM="$(OUT)/enNextMf.rom" $(TEST)/run-uart-break.sh
+```
+
+A recipe-level assignment beats the environment, so the override reaches `make` and dies there.
+Worse, the recipe's **first line rebuilds the ROM**, so the file the bench actually loads is the
+branch's own, freshly assembled — the exact thing the control was trying to avoid. Nothing warns:
+no unused-variable message, no echo of which ROM was used.
+
+**Fix.** Invoke the script directly, with the variables the recipe would have set:
+
+```sh
+JNEXT=~/src/spectrum/jnext/build/gui-release/jnext \
+SD_IMAGE=~/.jnext/sdcard/cspect-next-1gb-fixed.img \
+OUT=build ROM=<the other ROM> ./test/run-uart-break.sh
+```
+
+Then J6 reports *"no notification: the running debuggee was never stopped"* **with J1 green in the
+same run**, which is the pair that was wanted.
+
+**THIS WAS ALREADY WRITTEN DOWN AND IT BIT ANYWAY.** `MEMORY.md`'s 2026-08-11 entry on the W5 race
+says it in as many words — *"`make` cannot do this: its recipe passes `ROM=` explicitly and
+overrides the environment, so `run-dzrp-stub.sh` is invoked directly"* — for a different bench, in
+an entry about a different subject. Knowing a trap exists for one bench does not stop you walking
+into it on another, which is why it is here, in the file that is meant to be checked *before*
+attempting something rather than read once.
+
+**The transferable lesson is about what caught it, not about make.** Nothing in the tooling
+complained; the run was a clean, plausible, fully green sweep. What exposed it was **the control
+coming out green when it had to come out red** — i.e. the only reason this was caught is that the
+check was red-firsted at all, and against a ROM whose defect was certain by construction rather
+than by argument. **A control that passes is a result about your harness, never about the code**;
+treat it as a fault in the experiment and go and prove which file ran, exactly as this file's
+`cp --reflink` entry says. Cheap ways to be sure: `md5sum` the ROM the bench loaded, or have the
+bench log the path and hash of what it ran.
+
+---
+
 ## An unqualified `gh` command in this checkout targets SOMEBODY ELSE'S repository
 
 **Symptom.** `gh issue comment 44 ...`, `gh issue create`, `gh pr view` — anything without `-R` —

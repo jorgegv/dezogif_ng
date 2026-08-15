@@ -281,6 +281,15 @@ that known.
 Row **14** was the one free row on both screens, and the benches that read this screen as text read
 rows 7, 8 and 12, so nothing they look at moved.
 
+**AND THE SERIAL BUILD GETS THIS TOO, WHICH IS COVERED BY `J6` RATHER THAN BY AN ARGUMENT.**
+`cmd_init`'s call to `copper_break_arm` is common code with **no `ROM_VARIANT` guard**, so
+install-on-first-attach applies identically to the UART build — and since the joy-port default is 2,
+**the serial ROM ships with PC-initiated break on**. `make test-uart-break`'s run 4 is W10's
+argument on that transport: the same fixture minus its 44 bytes of Copper setup, broken in over the
+cable by the list `cmd_init` armed. **Shown red against `main`'s UART ROM with J1 green in the same
+run** — J1 cannot see this feature, because its own fixture arms the Copper. Found by the reviewer
+as a coverage gap that would otherwise have shipped as a documented one.
+
 **NOT COVERED.** **Hardware** — nothing in this change has been near a Next; Maziac's confirmation of
 2026-08-15 covers the pre-existing UART break, not this. **A program that installs its own list
 WITHOUT the two instructions** now replaces a working break with a non-working one **silently**,
@@ -1046,7 +1055,7 @@ parenthetical said hardware was what remained, which named the wrong rung.)*
 | `make test` — T1-T9 against the **UART** ROM, T9 driving `mf_nmi_poll` → `transport_poll_traffic` ~400 times per run | **run, 9/9** |
 | `make test-unit` — 6/6, 29 of 69 run | **run**, but see below |
 | `UT_transport_activate` / `UT_transport_deactivate` — the only checks that assert the NR `0x0B` values and the resume-path behaviour | **NOT RUN.** Both read a register back through `in a,(4)`, a port `src/simulation/uart.js` invents, so the marker rule excludes them headless. They run only under DeZog + zsim in VS Code, which is a manual layer nothing here drives |
-| ~~**a byte arriving on the cable while a debuggee runs — i.e. the feature**~~ | ~~**NOT RUN, AND NOT RUNNABLE HERE.**~~ **RUN, 2026-08-13 — `make test-uart-break`, checks J1-J5.** See §8.0.1 |
+| ~~**a byte arriving on the cable while a debuggee runs — i.e. the feature**~~ | ~~**NOT RUN, AND NOT RUNNABLE HERE.**~~ **RUN, 2026-08-13 — `make test-uart-break`, checks J1-J5; J6 joined them 2026-08-15.** See §8.0.1 |
 
 ~~**So the thing this change exists to do has been demonstrated nowhere.**~~ `make test`'s T9 shows
 the poll runs every frame against the UART ROM and declines correctly, which is the half that was

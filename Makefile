@@ -817,7 +817,7 @@ test-dzrp-stub:
 # itself cannot tell them apart, because nothing drains the 512-byte RX FIFO on
 # the resume path. See test/run-uart-break.sh.
 #
-# Run the serial-cable asynchronous-break bench (3 jnext runs; not part of `make test`)
+# Run the serial-cable asynchronous-break bench (4 jnext runs, 6 checks; not part of `make test`)
 test-uart-break:
 	@$(MAKE) --no-print-directory mf-rom
 	@JNEXT="$(JNEXT)" SD_IMAGE="$(SD_IMAGE)" OUT="$(OUT)" \

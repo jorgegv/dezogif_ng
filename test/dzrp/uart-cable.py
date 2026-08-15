@@ -128,9 +128,16 @@ def _read_nextreg_to(reg, addr):
 # that a fact about the resume rather than about the rest of the fixture.
 _wait = 0x8000 | COPPER_LINE
 _move = (REG_RESET << 8) | 0x08
-FIXTURE = (
-    b"\xF3" +                                   # di
-    _read_nextreg_to(REG_JOYSTICK_IO_MODE, WITNESS) +
+
+# J6: build the fixture with NO Copper setup at all — no NR 0x06 gate, no list.
+# That is the ordinary program the debugger's own install-at-cmd_init exists for,
+# and the only fixture here that can tell whether the DEBUGGER armed the Copper:
+# the one below arms it itself, so J1 is green either way and cannot see it. Set
+# for BOTH the `build` and the `verdict` invocation of a run, since FIXTURE and
+# SPIN are what the verdict compares against.
+NO_COPPER = os.environ.get("J6_NO_COPPER", "") not in ("", "0")
+
+_COPPER_SETUP = (
     # NR 0x06 |= bit 3 — every MF NMI source is ANDed with it (zxnext.vhd:2090)
     b"\x01" + _w(TBBLUE_SELECT) +               # ld bc,0x243B
     b"\x3E" + bytes([REG_PERIPHERAL_2]) +       # ld a,0x06
@@ -148,7 +155,16 @@ FIXTURE = (
     _nextreg(REG_COPPER_DATA, (_move >> 8) & 0xFF) +
     _nextreg(REG_COPPER_DATA, _move & 0xFF) +
     # run it from index 0, looping
-    _nextreg(REG_COPPER_CONTROL, COPPER_RUN_LOOP) +
+    _nextreg(REG_COPPER_CONTROL, COPPER_RUN_LOOP)
+)
+
+# THE WITNESS READ STAYS IN BOTH SHAPES, and it is why J6 costs no new
+# machinery: J3/J4's subject is the NR 0x0B the debuggee saw at its first
+# instruction after the resume, which has nothing to do with who owns the list.
+FIXTURE = (
+    b"\xF3" +                                   # di
+    _read_nextreg_to(REG_JOYSTICK_IO_MODE, WITNESS) +
+    (b"" if NO_COPPER else _COPPER_SETUP) +
     b"\x18\xFE"                                 # jr $   <- the spin
 )
 SPIN = DBG_CODE + len(FIXTURE) - 2
@@ -423,8 +439,13 @@ def main():
         data = build_stream(control=a.control)
         with open(a.path, "wb") as fh:
             fh.write(data)
-        print("stream %d bytes, fixture %d at 0x%04X, spin 0x%04X, witness 0x%04X"
-              % (len(data), len(FIXTURE), DBG_CODE, SPIN, WITNESS))
+        # The shape is PRINTED so the bench can assert it. "the env var was
+        # exported" is not evidence that it was honoured, and a J6_NO_COPPER
+        # that silently stopped working would turn run 4 into a second J1 —
+        # green, and testing nothing. Same reasoning as W10's FIXTURE line.
+        print("stream %d bytes, fixture %d at 0x%04X, spin 0x%04X, witness 0x%04X, copper=%s"
+              % (len(data), len(FIXTURE), DBG_CODE, SPIN, WITNESS,
+                 "no" if NO_COPPER else "yes"))
         return 0
 
     fr = frames(tx_bytes(a.log))

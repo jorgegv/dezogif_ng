@@ -761,12 +761,18 @@ strongest:
    See `doc/DZRP-TESTING.md`. Like `test-esp`, not part of `make test`: it binds a host TCP port.
    **It says nothing about hardware.**
 4d. **`make test-unit`** — the Z80 unit tests under `src/unit_tests/`, headless (issue #3). One
-   jnext run of `build/ut-headless.nex`, 6 checks. **29 of the 69 test cases run; 40 cannot and
+   jnext run of `build/ut-headless.nex`, 6 checks. **30 of the 70 test cases run; 40 cannot and
    are reported as `UT-SKIP` on every run.** Those 40 need ports invented by `src/simulation/uart.js`,
    a JavaScript peripheral DeZog's zsim loads as `customCode` — the Z80 cannot trap its own I/O,
    so they are unreachable from inside the guest, and a project-specific peripheral does not
    belong in jnext. **Do not read a green run as "the unit tests pass"**; read it as
-   "the 29 that can run, pass". **It was 28 of 66 until 2026-08-13, and the 29th is the first case
+   "the 30 that can run, pass". **The 30th is `ut_uart.UT_transport_channel_follows_selection`,
+   issue #44** — the no-joystick-port selection must select **UART0**, whose receiver is the CN9
+   pin a serial adapter is on, where the async-break work had made it UART1 unconditionally and
+   the debugger heard nothing. It runs headless because it reads a real port and calls only real
+   code; it asserts **only** the no-port half, which is true in both builds, and the joy-port half
+   is exercised rather than read by `test-uart-break`'s J1. Shown red against a build with the
+   channel forced back. **It was 28 of 66 until 2026-08-13, and the 29th is the first case
    ever to MOVE from the excluded set to the runnable one**: `ut_uart.UT_transport_select_reclaimed`
    reads port `0x153B` back, which jnext returned in the wrong bit until jnext#253. Exactly one
    moved, not the two that were predicted — `UT_transport_poll_borrows_select` also stages its byte

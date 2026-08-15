@@ -826,6 +826,16 @@ coincidence. And the coincidence is not even reliable: that default is restored 
 load"), so **no reset a guest can cause ever puts it back**. A program that had configured UART1
 differently would leave the debugger running at its frame settings. The select is written first now.
 
+*(**ANNOTATED 2026-08-15, issue #44: per-channel turned out to reach further than the write order.**
+If the frame register and the prescaler belong to the channel, then so does the question of **which
+channel to configure at all** — and once the channel follows the joy-port selection, a user pressing
+"3" moves it. So `transport_activate` calls `transport_init` now rather than writing the select by
+hand, which is what makes the selector keys configure the channel they switch to instead of leaving
+it at whatever baud rate the machine happened to have. Configuring **both** channels at start-up
+would have been the obvious alternative and is wrong: it writes UART0's frame and prescaler on a
+joy-port build, destroying the settings of a debuggee that owns the ESP — the population the UART
+build exists to serve.)*
+
 **2. NR `0xA0` IS NOT A PRECONDITION, WHICH THE CHANGE LIST HAD AS AN OPEN RISK.**
 `ports.txt:373` attaches "pi gpio must be configured for uart, see nextreg 0xa0" to 0x153B bit 6,
 and if that gated the joystick path the change list would have been incomplete. It does not:
@@ -986,6 +996,30 @@ poll read UART0, whose RX with io mode cleared is `i_UART0_RX` — **the ESP-01 
 existed and pointed at the module instead; in practice nothing arrives from either, because the
 serial build never brings the ESP up and nothing here configures NR `0xA0`. Unstaged by any run, in
 either direction.
+
+> **AND THOSE TWO PARAGRAPHS ARE THE WHOLE OF ISSUE #44, WRITTEN DOWN AND MIS-FILED.** They identify
+> the exact mux line, the exact selections, and the exact pin the poll moved onto — and then weigh
+> only what a **spurious** byte might do, calling it "benign at worst" and "a move rather than a new
+> exposure". Both halves are true of a spurious byte and neither is true of a **wanted** one:
+> `i_UART0_RX` is the WiFi connector **CN9**, which is where upstream's own serial adapter goes
+> (`documentation/Design.md:17-20` — the joy port is the alternative *to* it), so the same sentence
+> that says the poll stopped listening to the ESP pin also says it stopped listening to the cable.
+> **The "no joystick port" selection received nothing at all**, reported by Maziac on real hardware
+> on 2026-08-15 and fixed the same day: the channel follows the selection now — UART1 for joy ports
+> 1 and 2, UART0 otherwise — so with io mode off there is no ESP to sever and that case is
+> upstream's behaviour exactly. Bench: `ut_uart.UT_transport_channel_follows_selection`, headless.
+>
+> **What survives untouched is the spurious-break exposure itself**, which is still real, still
+> narrow, and now confined to the **port-1** selection: with a joy port chosen the channel is UART1
+> whether io mode is on or off, so a device on the Pi header could still break a debuggee in. Port 2
+> keeps io mode across a resume and so keeps reading the joystick pin; no-port now reads CN9, where
+> the peer is the debugger's own client. Unstaged by any run, as before.
+>
+> **The lesson is about the shape of the miss rather than the mux.** Nothing here was unknown or
+> uncited. What went wrong is that a finding was filed under the first consequence somebody thought
+> of, and the sentence "the poll now reads a different pin" was never asked the second question —
+> *what was arriving on the old one?* A cost paragraph that enumerates who might send is not the
+> same as one that enumerates who used to.
 
 This document, the plan and the HOWTO all say asynchronous break is a WiFi-mode feature. The
 mechanism they give for that has always been cited correctly. **What was underclaimed is whether it
@@ -1309,7 +1343,8 @@ NR `0x0B`, and `transport_activate` is idempotent.
 | **UART1's RX engine is unconditionally clocked**, with no clock-enable anywhere, and is stalled only by `i_reset` or the frame register's own bit 7 | **verified** — `zxnext.vhd:3363`, `:3366-3367`; `serial/uart.vhd:38-42`; `serial/uart_rx.vhd:219-224`. Answers §8.11's second falsifier |
 | Bit 0 = 1 forces `uart1_tx_pi` idle and `pi_uart_rtr_n` not-ready — the mirror of what bit 0 = 0 does to the ESP — and GPIO **direction** is unaffected either way | **verified** — the eight muxes at `zxnext.vhd:3340-3350`; `:2323-2326` against `:2328-2331` |
 | **The SEND direction is symmetric with receive**: in io mode the joystick's pin 7 carries `uart1_tx` when bit 0 = 1 and `uart0_tx` when it is 0, so both of our encodings transmit from UART1 | **verified** — `zxnext.vhd:3518-3531`, reaching the pin at `:1593`. **Found in review; §8.0's earlier claim that the enumeration was complete over `:3340-3350` was wrong**, and the send half had not been traced at all |
-| With port 1 or no port selected, the poll reads UART1 fed from the **Pi header**, so a device there could cause a spurious break | **verified** as a mechanism — `zxnext.vhd:3341` else branch — and **unstaged by any run**. A move rather than a new exposure: before this change the same shape pointed at the ESP-01 pin through UART0 |
+| ~~With port 1 or no port selected~~ **With port 1 selected**, the poll reads UART1 fed from the **Pi header**, so a device there could cause a spurious break | **verified** as a mechanism — `zxnext.vhd:3341` else branch — and **unstaged by any run**. A move rather than a new exposure: before this change the same shape pointed at the ESP-01 pin through UART0. **The no-port half of this row was ISSUE #44 and is fixed**: that selection reads UART0 again, i.e. CN9, where the peer is the debugger's own client — see §8.0 |
+| **The channel follows the joy-port selection**: UART1 for ports 1 and 2, UART0 otherwise, because with io mode off `uart0_rx` is CN9's pin and `uart1_rx` is the Pi header's | **verified**, VHDL — `zxnext.vhd:3340-3341` — and the defect it repairs was **reported on hardware** (Maziac, 2026-08-15: the no-port selection received nothing). The fix is exercised headless by `ut_uart.UT_transport_channel_follows_selection`, shown red against a build with the channel forced back; **the CN9 path itself has still been received on by no run here**, since jnext has no PCB serial adapter and `jnext#251`'s injection is gated on io mode being on |
 | In io mode both connectors are sampled alternately, so the core is symmetric and either could carry RX | **verified** — `input/md6_joystick_connector_x2.vhd:106-117`, `:180-195`. **But the DB9 wiring is not in the VHDL**, and upstream's own `transport_activate` comment says "RX = PIN 9 Joystick 2" — so whether port 1 can receive at all is **unverified** and only hardware can say |
 | Both UARTs' joy routing share `joy_iomode_uart_en`; NR `0x0B` = 0 severs both | **verified**, VHDL — `zxnext.vhd:3536`, `:3340-3341`, sole assignments and sole uses |
 | Bit 7+5 enable, bit 4 connector, bit 0 channel | **verified** — `zxnext.vhd:3538-3539`, `:5201-5203` + `nextreg.txt:198-202` |

@@ -5,6 +5,118 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-08-15 — The UART channel follows the joy-port selection, and the finding that broke it was written down and mis-filed
+
+**Built, issue #44, and it is a regression we shipped to Maziac.** He ran the
+UART build on a real Next with the selector on **`3 = No joystick port`** — a
+serial adapter on the WiFi connector **CN9**, which is upstream's original
+setup and the alternative *to* a joystick port rather than the other way round
+(`documentation/Design.md:17-20`, upstream) — and **the debugger received
+nothing at all**.
+
+**THE CAUSE IS ONE LINE OF THE ASYNCHRONOUS-BREAK WORK, AND ITS REASONING WAS
+RIGHT FOR THE CASES IT CONSIDERED.** `transport_init` selected **UART1**
+unconditionally, because io mode with NR `0x0B` bit 0 clear idles the ESP-01's
+TX and de-asserts its RTR (`zxnext.vhd:3343`, `:3349`), so a port-2 resume that
+left io mode on would have severed the module for the whole session. Bit 0 set
+routes the joystick pin to UART1 and leaves the ESP alone. **All of that covers
+only the selections that turn io mode ON.** With it off the two channels listen
+to different pins (`zxnext.vhd:3340-3341`): `uart0_rx` falls back to
+`i_UART0_RX`, the CN9 pin the cable is on, and `uart1_rx` to `pi_uart_rx`, the
+Raspberry Pi header.
+
+**The channel follows the selection now** — UART1 for joy ports 1 and 2, UART0
+otherwise. With io mode off there is no ESP to sever, so that case is upstream's
+behaviour exactly.
+
+**THE PART WORTH KEEPING IS HOW IT WAS MISSED, BECAUSE NOTHING WAS UNKNOWN.**
+The design doc's §8.0 names the exact mux line, the exact selections and the
+exact pin the poll moved onto — *"with port 1 or no port selected, the poll
+reads UART1 fed from the Pi header"* — and then files it as a **spurious-break**
+risk, "benign at worst", **"a move rather than a new exposure"**. Both of those
+are true of a byte that might arrive and neither is true of the bytes that used
+to. The sentence "the poll now reads a different pin" was never asked the second
+question: **what was arriving on the old one?** A cost paragraph that enumerates
+who might send is not the same as one that enumerates who used to.
+
+**THREE THINGS MOVED WITH IT, AND THE THIRD IS THE ONE THAT WOULD HAVE BITTEN.**
+
+1. `transport_init` configures the frame register and prescaler **of the channel
+   it selects** — they are per-channel — so `main.asm` must set the joy-port
+   default **before** calling it. Set afterwards, the first configure lands on
+   the ESP's channel and the second on ours, leaving the module carrying our
+   baud rate.
+2. `transport_activate` calls `transport_init` rather than writing the select by
+   hand, so the selector keys reconfigure the channel they switch to instead of
+   leaving it at whatever baud the machine had. **It preserves DE, which is
+   load-bearing rather than incidental**: `breakpoints.asm:244-256` holds the
+   break reason in D across that call. `transport_init` never touched DE and its
+   header had claimed it did for years — an over-claim that would have made this
+   call look unsafe and, believed the other way round, would have corrupted
+   every breakpoint's reported reason.
+3. **Issue #42's poll guard became a runtime value.** It compared the live select
+   against the build-time constant `UART_SELECT_OURS`; under the no-port
+   selection that constant is the wrong channel, so the guard would borrow on
+   *every* call and poll the Pi header for ever. Not a second bug — the same one
+   arriving through the guard. The guard now pushes HL to read the channel out
+   of RAM: ~31 T-states on a poll measured at ~1288.
+
+**Rejected: configuring BOTH channels at start-up**, which is the obvious way to
+make a runtime switch safe. It writes UART0's frame and prescaler on a joy-port
+build, destroying the settings of a debuggee that owns the ESP — the population
+the UART build exists to serve (plan §10, ESP contention).
+
+**Also rejected: leaving the poll's constant alone** on the grounds that
+asynchronous break only works on port 2 anyway. The same routine is the idle
+poll in `main_loop`, so a wrong channel there is a debugger that never notices a
+client at all.
+
+**THE CHECK IS A UNIT TEST AND IT RUNS HEADLESS**, which is more than the defect
+itself gets: `ut_uart.UT_transport_channel_follows_selection` sets the no-port
+selection, calls `transport_activate` and reads `0x153B` back. **Shown red**
+against a build with the channel forced back to UART1. It asserts **only** the
+no-port half, because that half is true in **both** builds — the WiFi build owns
+UART0 outright — so one source stays correct for both; the joy-port half is
+exercised rather than read by `test-uart-break`'s J1, which could not break a
+debuggee at all if the channel and NR `0x0B` bit 0 disagreed. Counts 69/29/40 →
+**70/30/40**, pinned in the Makefile and the bench as always.
+
+The two tests that named the removed constants now **derive** the channel at run
+time instead, which is the same move their own comment already argued for: which
+UART is ours differs between builds and, since this change, between selections
+within one.
+
+**Cost: UART `main_end` 0xF382 → 0xF394, +18 bytes. The WiFi ROM is
+byte-identical** to `main`'s pinned (`ea0a33ec…` both sides, `build/*.bin`
+deleted first) — which is what says nothing leaked across the transport
+boundary, since `transport_esp.asm` was not touched and `main.asm`'s moved block
+is inside `IF ROM_VARIANT == ROM_VARIANT_UART`. **A ROM moved, so the merge
+carries a `make bump`.**
+
+**Gates: `make test` 9/9, `make test-uart-break` 5/5, `make test-unit` 6/6
+(30 run, 40 excluded), `check-reproducible` both variants.** The WiFi benches
+were **not** re-run and did not need to be: that ROM's bytes did not move, which
+is this project's own standing proof and here it runs the other way round.
+
+**NOT COVERED, and it is the same gap the issue names.** **Nothing here can
+receive on CN9**: jnext has no PCB serial adapter, and `jnext#251`'s injection
+hook is gated on `joy_uart_en()`, i.e. on io mode being **on** — which is
+exactly what this selection turns off. So what is shown headless is that the
+right **channel** is selected, never that a byte arrives on it. Acceptance is a
+cable on a real Next, and the machine that found this is the one that can say.
+**Hardware in general**, as ever. And the **spurious-break exposure survives**,
+narrowed to the port-1 selection: with a joy port chosen the channel is UART1
+whether io mode is on or off, so a device on the Pi header could still break a
+debuggee in. Unstaged by any run, as before.
+
+**Why it was urgent rather than merely wrong.** Maziac's other finding the same
+day is that the **MD 6-button extended buttons read 0 while io mode is on**, on
+both connectors and by no port choice — so **option 3 is the escape hatch from
+it**, and the option somebody reaches for when they need START was the one that
+did not work.
+
+---
+
 ## 2026-08-13 — Asynchronous break in UART mode ships ON BY DEFAULT, because the default port is upstream's own
 
 **Decided by the user**, after the question had been priority 1 for two sessions

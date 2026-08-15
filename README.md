@@ -138,7 +138,7 @@ against a real Next.
 
 Two limits worth knowing. The benches bind host TCP ports or need a client running concurrently
 with the emulator, so most of them are deliberately not part of `make test`. And `make test-unit`
-runs 29 of the 69 unit test cases: the other 40 need ports invented by a JavaScript peripheral
+runs 30 of the 70 unit test cases: the other 40 need ports invented by a JavaScript peripheral
 that DeZog's zsim loads as `customCode`, and the Z80 cannot trap its own I/O, so those stay a
 manual VS Code layer.
 

@@ -2,7 +2,7 @@
 
 `make test-unit` runs the Z80 unit tests under `src/unit_tests/` in jnext, with no VS Code and no
 DeZog, and gates on the result. This document says how that works, what it does **not** cover, and
-why 40 of the 69 test cases cannot run at all outside DeZog.
+why 40 of the 70 test cases cannot run at all outside DeZog.
 
 Issue: [#3](https://github.com/jorgegv/dezogif_ng/issues/3).
 
@@ -158,7 +158,7 @@ identical to the single-run ones.
 
 ## 5. What does NOT run, and why
 
-**40 of the 69 test cases are excluded.** They are reported as `UT-SKIP` on every run rather than
+**40 of the 70 test cases are excluded.** They are reported as `UT-SKIP` on every run rather than
 dropped from the table, because an exclusion that does not appear in the output is an exclusion
 nobody will notice.
 
@@ -217,7 +217,10 @@ temporary-breakpoint bookkeeping, 8 cases), all of `ut_backup.asm` (register sav
 including the shadow set, I and IM, and `read`/`write_debugged_prgm_mem` across the slot-7 and
 `0xFFFF`/`0x0000` bank boundaries — i.e. the **SWAP-window paging** the plan's §4.1 is about),
 `transport_read_byte`'s timeout path, `ut_uart.UT_transport_select_reclaimed` (issue #42 — that
-the debugger takes the UART channel select back at every entry), and the parts of
+the debugger takes the UART channel select back at every entry),
+`ut_uart.UT_transport_channel_follows_selection` (issue #44 — that the "no joystick port"
+selection takes UART0, whose receiver is the CN9 pin a serial adapter is on, where selecting
+UART1 for it made the debugger deaf on hardware), and the parts of
 `ut_commands.asm` that do not need a simulated response (`get_cmd_pointer`, four
 `cmd_set_register` cases, `cmd_pause`).
 
@@ -229,9 +232,10 @@ protocol over a real socket and does not need any of this.
 
 - **Nothing about hardware.** This is jnext. The tests it runs include ones about MMU paging,
   which jnext models rather than is.
-- **Almost nothing about the transport.** `ut_uart.asm`'s two runnable cases test a timeout path
-  and the select reclaim; the ESP transport has no unit tests at all, and its gate is
-  `make test-dzrp-stub`.
+- **Almost nothing about the transport.** `ut_uart.asm`'s three runnable cases test a timeout
+  path, the select reclaim and the channel choice; the ESP transport has no unit tests at all, and
+  its gate is `make test-dzrp-stub`. The channel-choice case in particular says which channel was
+  **selected** and nothing about what arrives on it: no bench here can put a byte on CN9.
 - **It does not replace the DeZog path.** `make unit-tests` still builds `build/ut.nex`, and the
-  "Unit Tests" launch configuration still runs all 69 cases in VS Code with the plugin, which is
+  "Unit Tests" launch configuration still runs all 70 cases in VS Code with the plugin, which is
   the only way the excluded 40 can ever be exercised.

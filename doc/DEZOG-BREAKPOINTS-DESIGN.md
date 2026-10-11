@@ -112,7 +112,7 @@ stub already implements and which C19-C21 verified on hardware — and `cspect`'
 - **Against**: it is **upstream's repository and upstream's release schedule**. Nothing ships until
   Maziac merges and cuts a version. **The licence decision has to be made when the code is written**
   — GPLv3 code cannot go into an MIT project, so this must be authored to be offerable under MIT
-  (plan §6).
+  (plan §6). *(Moot since 2026-10-11: this repository is MIT too.)*
 
 ## 7. Option D — a PC-side proxy that translates 40/41 into 13/14
 
@@ -257,7 +257,8 @@ exactly `2 1 0` in the 2026-08-11 capture.
 
 New TypeScript, written from scratch, **licensed MIT** so it fits DeZog — decided now rather than
 afterwards (plan §6). Nothing from this GPLv3 tree may be pasted into it; nothing there is worth
-copying anyway.
+copying anyway. *(Written while this tree was GPLv3. It has been MIT since 2026-10-11, so that
+restriction no longer applies; the code was written from scratch regardless.)*
 
 ### ~~Not started~~ Built
 

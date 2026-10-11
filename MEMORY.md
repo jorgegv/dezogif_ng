@@ -5,6 +5,61 @@ decided, why, and what was rejected. Read this at the start of every session.
 
 ---
 
+## 2026-10-11 — Relicensed under MIT, upstream's licence; the GPLv3 decision is reversed
+
+**Decided (user).** The whole repository is MIT. `LICENSE` is upstream's MIT text
+(`LICENSE.txt` at `maziac/dezogif`), byte for byte, with one line added:
+our copyright notice, under Maziac's. `NOTICE` keeps upstream's MIT block verbatim
+and its header now says the project is under that licence, rather than that the
+MIT block is "not an alternative licence for the combination". It also records the
+GPLv3 period, 2026-08-03 to 2026-10-11.
+
+**Why.** It is what the upstream-first direction needs (D2 in the unmerged
+`doc/UPSTREAM-PLAN.md`): GPLv3 code cannot be merged into an MIT project, so as
+long as this tree was GPLv3 every PR to `maziac/dezogif` had to be written to be
+offerable under MIT. The 2026-08-03 entry below predicted exactly that cost.
+
+**Why the user could do it alone, and it was checked rather than assumed.**
+`git log` has exactly two authors: `maziac` (upstream, already MIT) and `ZXjogv`
+(the user, every post-fork commit). Nothing in the tree is anyone else's code. A
+grep for copied, ported or derived material found only the fork's own code. The
+one third-party credit is NDS-NextDevSystem's baud-rate routine in
+`transport_uart.asm`, and that is Maziac's own 2020 comment on code that has been
+under his MIT since then. **No source file carries a licence header**, so no code
+file changed. The ROMs do not change either: no file under `src/` or the
+`Makefile` was touched, so there is no `make bump`.
+
+**The copyright line uses the form the user already uses elsewhere**,
+`ZXjogv <zx@jogv.es> (Jorge Gonzalez Villalonga)`, copied from their other
+projects rather than composed here.
+
+**What changed with it.** CLAUDE.md's *Licensing* and *Fork hygiene* rules; the
+reviewer agent's escalation list; README's License section; plan §6 and two
+paragraphs of `doc/DEZOG-BREAKPOINTS-DESIGN.md`, struck through and annotated
+rather than rewritten, per this project's rule. The HOWTO's "exception note" for
+the Copper example went entirely: once the whole repository is MIT the example is
+no exception. The rule that replaces the GPL constraint is narrower and points the
+other way: **nothing may come in under a licence MIT cannot carry**. GPL code
+copied from jnext is the obvious way to undo this by accident; the benches only
+ever run jnext.
+
+**Rejected.** Dual-licensing (the 2026-08-03 entry's reason still holds: no
+demonstrated need); deleting `NOTICE` now that `LICENSE` carries Maziac's notice
+(it holds the attribution to Chris Kirby and the history of the GPL period, and
+CLAUDE.md has always forbidden rewording its MIT block); renaming `LICENSE` to
+upstream's `LICENSE.txt` (churn in every link, and GitHub detects either).
+
+**Not touched, deliberately.** `CHANGELOG.md` (updated only when the user asks);
+`doc/UPSTREAM-PLAN.md`, which lives on the unmerged `docs/upstream-plan` branch and
+lists this as decision D2 still open; and the historical entries in this file, which are annotated where they state
+the GPL as current.
+
+**Not established.** Nothing legal beyond the authorship check above. Copies
+distributed during the GPL period remain available to their recipients under
+GPLv3; relicensing does not and cannot revoke that.
+
+---
+
 ## 2026-08-15 — The DEBUGGER installs the Copper list after all, at `cmd_init` and nowhere else
 
 **Built (Maziac's idea), and it half-retracts this file's own 2026-08-11 decision
@@ -1071,7 +1126,8 @@ is a real decision rather than a patch: implement 40/41 in the stub (needs an
 id → address+opcode table, and a decision about whether to patch at ADD time or
 defer to continue — the latter being *why* 13/14 exist); a DeZog-side remote
 speaking 13/14 over a socket (plan M4, upstream's repo, and the GPLv3-vs-MIT
-constraint); or document it as a limitation. See
+constraint — *gone since this tree became MIT on 2026-10-11*); or document it as
+a limitation. See
 `doc/DEZOG-BREAKPOINTS-DESIGN.md`.
 
 **Cost: no `src/` change and no ROM byte** — this entry is a measurement.
@@ -9710,6 +9766,10 @@ budget as though it settled this.
 ---
 
 ## 2026-08-03 — The combined work is GPLv3; upstream's MIT notice is kept
+
+*(**REVERSED 2026-10-11 — the project is MIT now; see the entry at the top of
+this file.** The consequence below is what drove the reversal. Left as written,
+as the record of the decision it was.)*
 
 **Decided.** `LICENSE` is the GPLv3 text and covers this project as a whole.
 Upstream's MIT licence moved to `NOTICE`, unchanged, with a header explaining

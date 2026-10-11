@@ -283,15 +283,13 @@ work in ROM code. Both are inherited constraints.
 
 # License
 
-This project is licensed under the [GNU General Public License v3](LICENSE).
+This project is licensed under the [MIT License](LICENSE), the same licence as upstream.
 
-It is a derivative work of [maziac/dezogif](https://github.com/maziac/dezogif), which is under the
-MIT licence. That notice is retained in [NOTICE](NOTICE) and still governs maziac's original code;
-the GPLv3 covers the combined work.
+It is a derivative work of [maziac/dezogif](https://github.com/maziac/dezogif). [LICENSE](LICENSE)
+carries maziac's copyright notice alongside this fork's, and [NOTICE](NOTICE) keeps upstream's
+licence verbatim, as upstream ships it.
 
-Example code meant to be copied into your own program — currently the 44-byte Copper snippet in
-[doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md](doc/ASYNCHRONOUS-BREAK-USER-HOWTO.md) — carries its own
-licence note in that document.
+From 2026-08-03 to 2026-10-11 this fork was under the GNU GPL v3; it has been MIT since.
 
 
 # Acknowledgements

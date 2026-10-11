@@ -173,10 +173,13 @@ to work.
 - **A stub that assembles is not a stub that runs.** Any change to the transport, the NMI path or
   bank handling needs evidence from an actual run — in jnext at minimum, on hardware for anything
   touching the ESP.
-- **Licensing.** The combined work is **GPLv3** (`LICENSE`). Upstream's MIT notice is retained
-  verbatim in `NOTICE`, as the MIT licence requires, and still governs Maziac's original code.
-  The attribution to Maziac and to Chris Kirby (NDS-NextDevSystem) stays. Never remove or
-  reword the MIT block in `NOTICE`.
+- **Licensing.** The project is **MIT** (`LICENSE`), the same licence as upstream — relicensed
+  from GPLv3 on 2026-10-11 (MEMORY.md). `LICENSE` is upstream's MIT text carrying both Maziac's
+  copyright line and ours; `NOTICE` keeps upstream's MIT block verbatim. The attribution to
+  Maziac and to Chris Kirby (NDS-NextDevSystem) stays. Never remove or reword the MIT block in
+  `NOTICE`, nor Maziac's copyright line in `LICENSE`. **Nothing may come in under a licence
+  that MIT cannot carry**: code copied from a GPL project — jnext included, which the benches
+  only ever *run* — would quietly undo this, so ask first.
 - **Two transports, one interface** (design rule for M1 onwards; not yet built). The ROM will be
   assembled in either UART mode or WiFi mode, and upstream's serial path is never deleted.
   `commands.asm`, `message.asm` and `breakpoints.asm` must not be able to tell which mode they
@@ -184,11 +187,10 @@ to work.
   assumption may leak above the transport interface. **UART mode is the regression check on that
   boundary**: if a change breaks the serial build, the abstraction leaked, and that is a bug in
   the change, not in the serial path.
-- **Fork hygiene.** Keeping upstream's transport intact also keeps upstreaming plausible. Note
-  that contributing anything back to dezogif is now a
-  **licensing** question as well as a technical one: GPLv3 code cannot simply be merged into an
-  MIT project, so anything genuinely intended for upstream must be written to be offered under
-  MIT as well, and that decision has to be made when it is written, not afterwards.
+- **Fork hygiene.** Keeping upstream's transport intact also keeps upstreaming plausible. Since
+  the 2026-10-11 relicensing, contributing back to dezogif is a technical question only: both
+  repositories are MIT. *(Until then this rule said it was a licensing question too, because
+  GPLv3 code cannot be merged into an MIT project. That was the reason to relicense.)*
 
 ## Building
 

@@ -1,5 +1,12 @@
 # Changelog
 
+# dezogif_ng (this fork)
+
+## Unreleased
+- Licence: the project is now MIT, upstream's licence (it was GPLv3 from 2026-08-03 to 2026-10-11).
+
+# Upstream dezogif
+
 # 2.2.1
 - Fixed support for command 23 (cmd_interrupt_on_off).
 
